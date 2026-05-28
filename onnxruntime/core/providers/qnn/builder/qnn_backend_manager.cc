@@ -2188,8 +2188,6 @@ void QnnBackendManager::ReleaseResources() {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
   }
 
-  backend_setup_completed_ = false;
-
   if (backend_lib_handle_) {
     result = UnloadLib(backend_lib_handle_);
     if (!result.IsOK()) {
@@ -2209,6 +2207,8 @@ void QnnBackendManager::ReleaseResources() {
     }
     validator_backend_lib_handle_ = nullptr;
   }
+
+  backend_setup_completed_ = false;
 }
 
 Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::ProfilingInfo& profiling_info) {

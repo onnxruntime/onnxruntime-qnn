@@ -614,20 +614,9 @@ void GenieBackendTests::SetUp() {
 }
 
 static BackendSupport GetIRSupport() {
-  // Probe for QnnIr.dll availability by attempting a transient library load.
-  // QnnIr is a serializer backend (no hardware device type), so it cannot be
-  // detected via the EP registration + GetEpDevices pattern used by GetGPUSupport().
-#if defined(_WIN32)
-  constexpr const char* kQnnIrLibName = "QnnIr.dll";
-#else
-  constexpr const char* kQnnIrLibName = "libQnnIr.so";
-#endif
-  void* handle = LoadDynamicLibraryImpl(kQnnIrLibName);
-  if (handle == nullptr) {
-    return BackendSupport::UNSUPPORTED;
-  }
-  UnloadDynamicLibraryImpl(handle);
-  return BackendSupport::SUPPORTED;
+  // QnnIr should be able to serialize any model supported by the QNN reference spec.
+  // Use a model that works on QnnCpu to verify QnnIr availability.
+  return GetCPUSupport();
 }
 
 void QnnIRBackendTests::SetUp() {
