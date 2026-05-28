@@ -103,5 +103,4 @@ export LSAN_OPTIONS="exitcode=1:suppressions=${REPO_ROOT}/tools/ci_build/lsan_su
 # ---------------------------------------------------------------------------
 log_info "--- Running onnxruntime_provider_test under ASan ---"
 "${REPO_ROOT}/qcom/scripts/linux/asan_filter_leaks.sh" \
-    "./onnxruntime_provider_test" \
-    "--gtest_output=xml:${PWD}/onnxruntime_provider_test.results.xml"
+    "./onnxruntime_provider_test"
