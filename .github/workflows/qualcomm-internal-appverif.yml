@@ -15,7 +15,7 @@ jobs:
     runs-on: ["self-hosted", "windows", "ARM64", "Build"]
     defaults:
       run:
-        shell: pwsh
+        shell: powershell
 
     steps:
       - name: Print runner info
