@@ -33,8 +33,8 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/htp_usr_drv_utils.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
@@ -2593,9 +2593,10 @@ void QnnEp::CreateHtpPowerConfigId() const {
 }
 
 void QnnEp::WarnIfHnrdPathActive() {
-  if (hnrd_warning_emitted_.exchange(true)) {
+  if (hnrd_warning_emitted_) {
     return;
   }
+  hnrd_warning_emitted_ = true;
   const uint32_t htp_arch = static_cast<uint32_t>(qnn_backend_manager_->GetHtpArch());
   if (htp_arch == static_cast<uint32_t>(QNN_HTP_DEVICE_ARCH_NONE)) {
     return;
