@@ -169,6 +169,14 @@ jobs:
           for /f "tokens=*" %%i in ('venv\Scripts\python qcom/scripts/all/package_manager.py --package %pkg_name% --print-content-dir') do set ORT_HOME=%%i
           echo path=%ORT_HOME%>>%GITHUB_OUTPUT%
 
+      - name: Resolve ORT Home path (linux)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'linux' }}
+        run: echo "ORT_HOME=${{ steps.ort_home_linux.outputs.path }}" >> "$GITHUB_ENV"
+
+      - name: Resolve ORT Home path (windows)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'windows' }}
+        run: echo ORT_HOME=${{ steps.ort_home_windows.outputs.path }}>>%GITHUB_ENV%
+
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
@@ -177,7 +185,7 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home_linux.outputs.path || steps.ort_home_windows.outputs.path) || '' }}
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', env.ORT_HOME) || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
@@ -186,7 +194,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
-          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home_linux.outputs.path || steps.ort_home_windows.outputs.path) || '' }}
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', env.ORT_HOME) || '' }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
@@ -342,11 +350,19 @@ jobs:
           for /f "tokens=*" %%i in ('venv\Scripts\python qcom/scripts/all/package_manager.py --package %pkg_name% --print-content-dir') do set ORT_HOME=%%i
           echo path=%ORT_HOME%>>%GITHUB_OUTPUT%
 
+      - name: Resolve ORT Home path (linux)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'linux' }}
+        run: echo "ORT_HOME=${{ steps.ort_home_linux.outputs.path }}" >> "$GITHUB_ENV"
+
+      - name: Resolve ORT Home path (windows)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'windows' }}
+        run: echo ORT_HOME=${{ steps.ort_home_windows.outputs.path }}>>%GITHUB_ENV%
+
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
-          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home_linux.outputs.path || steps.ort_home_windows.outputs.path) || '' }}
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', env.ORT_HOME) || '' }}
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
