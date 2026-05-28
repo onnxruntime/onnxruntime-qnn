@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y \
        python3.14 python3.14-dev python3.14-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g $BUILD_GID $BUILD_USER && useradd -u $BUILD_UID -g $BUILD_USER $BUILD_USER
+RUN groupadd -g $BUILD_GID $BUILD_USER && useradd -m -u $BUILD_UID -g $BUILD_USER $BUILD_USER
 
 ARG ORT_NIGHTLY_BUILD=0
 ENV ORT_NIGHTLY_BUILD=$ORT_NIGHTLY_BUILD
