@@ -1,0 +1,100 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: App Verifier Leak Detection (Windows ARM64)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  appverif-leak-detection:
+    name: App Verifier Leak Detection
+    runs-on: ["self-hosted", "windows", "ARM64"]
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build Windows ARM64
+        shell: cmd
+        run: >
+          python.exe qcom/build_and_test.py
+          build_ort_windows_arm64
+
+      - name: Check admin privileges
+        run: |
+          $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Write-Host "IsAdmin: $isAdmin"
+          if (-not $isAdmin) {
+            Write-Host "::warning::Runner does not have admin privileges — App Verifier requires admin. Skipping leak detection."
+            echo "SKIP_APPVERIF=1" >> $env:GITHUB_ENV
+          }
+
+      - name: Register App Verifier
+        if: env.SKIP_APPVERIF != '1'
+        run: |
+          appverif -enable Leak `
+                   -for onnxruntime_provider_test.exe `
+                   -with Leak.ExcludeDlls=QnnCpu.dll,QnnHtp.dll,QnnGpu.dll,QnnIr.dll,QnnSaver.dll
+          appverif -query onnxruntime_provider_test.exe
+
+      - name: Run tests with App Verifier
+        if: env.SKIP_APPVERIF != '1'
+        working-directory: build/windows-arm64/Release/Release
+        run: |
+          $exitCode = 0
+          try {
+            .\onnxruntime_provider_test.exe --gtest_filter=Qnn*
+          } catch {
+            $exitCode = $LASTEXITCODE
+          }
+          $exitCode = $LASTEXITCODE
+          Write-Host "Test exit code: $exitCode"
+          # -1073740767 (0xC0000409) = App Verifier killed process due to leak
+          # Any non-zero exit is a failure, but we continue to export the log
+          echo "TEST_EXIT_CODE=$exitCode" >> $env:GITHUB_ENV
+
+      - name: Export App Verifier log
+        if: env.SKIP_APPVERIF != '1' && always()
+        working-directory: build/windows-arm64/Release/Release
+        run: |
+          appverif -export log `
+                   -for onnxruntime_provider_test.exe `
+                   -with to="${{ github.workspace }}\appverif_result.xml"
+
+      - name: Parse App Verifier log
+        if: env.SKIP_APPVERIF != '1' && always()
+        run: |
+          $xml = [xml](Get-Content "${{ github.workspace }}\appverif_result.xml")
+          $entries = $xml.logfile.logSession.logEntry
+          if ($entries) {
+            Write-Host "::error::Leak detected in onnxruntime_providers_qnn.dll"
+            foreach ($entry in $entries) {
+              Write-Host "--- Leak entry ---"
+              Write-Host "Message: $($entry.message)"
+              Write-Host "Address: $($entry.parameter1)"
+              foreach ($trace in $entry.stackTrace.trace) {
+                Write-Host "  $trace"
+              }
+            }
+            exit 1
+          } else {
+            Write-Host "No leaks detected."
+          }
+
+      - name: Upload App Verifier log
+        if: env.SKIP_APPVERIF != '1' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: appverif-result
+          retention-days: 7
+          path: appverif_result.xml
+
+      - name: Teardown App Verifier
+        if: env.SKIP_APPVERIF != '1' && always()
+        run: |
+          appverif -delete tests -for onnxruntime_provider_test.exe
