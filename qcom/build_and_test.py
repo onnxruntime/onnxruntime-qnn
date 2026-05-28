@@ -303,6 +303,24 @@ class TaskLibrary:
             )
         )
 
+    @implementation_detail
+    @depends(["create_venv"])
+    def _test_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        """In-container test steps for x86_64-ubuntu_22_04. Not to be used outside of Docker."""
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "x86_64",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "test",
+            )
+        )
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -1051,17 +1069,18 @@ class TaskLibrary:
         @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
         def test_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
             return plan.add_step(
-                BuildEpLinuxTask(
+                BuildEpDockerTask(
                     "Testing ONNX Runtime for Linux x86_64 Ubuntu 22.04",
-                    self.__venv_path,
-                    "linux",
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
-                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
-                    "test",
-                )
+                    self.__docker_ccache_root,
+                    self.__build_archive,
+                    inner_task="_test_ort_linux_x86_64_ubuntu_22_04",
+                    docker_tag=UBUNTU_22_04_X86_64_TAG,
+                    platform="linux/amd64",
+                ),
             )
 
     if is_host_linux() and is_host_arm64():
