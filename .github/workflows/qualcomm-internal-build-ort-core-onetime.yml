@@ -76,6 +76,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install uv
           uv pip install -r tools/ci_build/github/linux/python/requirements.txt
+          # cmake/ninja aren't on the Build runner PATH; install pip wheels.
+          uv pip install "cmake>=3.28" ninja
 
           # Build stock ORT core (no --use_qnn). --wheel_name_suffix=qcom_internal
           # produces `onnxruntime_qcom_internal-<ver>-cp310-cp310-linux_x86_64.whl`,
