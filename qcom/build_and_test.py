@@ -384,7 +384,7 @@ class TaskLibrary:
             )
 
     @task
-    @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
+    @depends(["build_ort_linux_x86_64_ubuntu_22_04", "create_venv"])
     def archive_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
         return plan.add_step(
             BuildEpLinuxTask(
