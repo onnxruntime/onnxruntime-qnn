@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     pkg-config \
     ca-certificates \
+    libc++1 \
+    libc++abi1 \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update \
     && apt-get install -y \
