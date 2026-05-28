@@ -434,6 +434,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:RandomUniformLike||
 |ai.onnx:Reciprocal||
 |ai.onnx:ReduceL2||
+|ai.onnx:ReduceLogSumExp|Decomposed into ReduceMax->Sub->Exp->ReduceSum->Log->Add. Quantized input not supported.|
 |ai.onnx:ReduceMax||
 |ai.onnx:ReduceMean||
 |ai.onnx:ReduceMin||

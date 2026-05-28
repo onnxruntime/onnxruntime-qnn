@@ -56,6 +56,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
   CreateReciprocalOpBuilder("Reciprocal", *this);
   CreateReduceOpBuilder("ReduceL2", *this);
+  CreateReduceOpBuilder("ReduceLogSumExp", *this);
   CreateReduceOpBuilder("ReduceMax", *this);
   CreateReduceOpBuilder("ReduceMean", *this);
   CreateReduceOpBuilder("ReduceMin", *this);
