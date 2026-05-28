@@ -21,29 +21,27 @@ permissions:
   id-token: write
 
 on:
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "If true, build but do NOT twine-upload. Flip to false to publish."
-        type: boolean
-        default: true
-      ort_versions:
-        description: "JSON list of upstream ORT tags to build."
-        type: string
-        default: "['v1.24.2','v1.25.0','v1.26.0']"
-      py_version:
-        description: "Python version to build wheels for."
-        type: string
-        default: "3.10"
+  # Push-triggered so this can run from a feature branch without first
+  # merging to main. (workflow_dispatch is gated on the default branch.)
+  # Delete the branch when done to stop further runs.
+  push:
+    branches:
+      - "yuduow/build-ort-core-wheels-onetime"
+
+env:
+  ORT_VERSIONS_JSON: "['v1.24.2','v1.25.0','v1.26.0']"
+  PY_VERSION: "3.10"
+  # Set DRY_RUN to "true" via a force-push commit if you want to skip the upload step.
+  DRY_RUN: "false"
 
 jobs:
   build:
-    name: "Build ORT core ${{ matrix.ort_version }} py${{ inputs.py_version }}"
+    name: "Build ORT core ${{ matrix.ort_version }} py3.10"
     runs-on: ["self-hosted", "Linux", "X64", "Build"]
     strategy:
       fail-fast: false
       matrix:
-        ort_version: ${{ fromJSON(inputs.ort_versions) }}
+        ort_version: ["v1.24.2", "v1.25.0", "v1.26.0"]
 
     steps:
       - name: Check out upstream ORT at ${{ matrix.ort_version }}
@@ -62,12 +60,12 @@ jobs:
           BUILD_DIR="${GITHUB_WORKSPACE}/build/linux-x86_64"
           mkdir -p "${BUILD_DIR}"
 
-          # Provision a Python ${{ inputs.py_version }} venv.
-          if command -v "python${{ inputs.py_version }}" >/dev/null; then
-            "python${{ inputs.py_version }}" -m venv "${BUILD_DIR}/venv"
+          # Provision a Python ${PY_VERSION} venv.
+          if command -v "python${PY_VERSION}" >/dev/null; then
+            "python${PY_VERSION}" -m venv "${BUILD_DIR}/venv"
           else
             # uv is preinstalled on the Build runners.
-            uv venv --seed --python "${{ inputs.py_version }}" "${BUILD_DIR}/venv"
+            uv venv --seed --python "${PY_VERSION}" "${BUILD_DIR}/venv"
           fi
           source "${BUILD_DIR}/venv/bin/activate"
 
@@ -95,7 +93,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ort-core-${{ matrix.ort_version }}-py${{ inputs.py_version }}
+          name: ort-core-${{ matrix.ort_version }}-py3.10
           path: build/linux-x86_64/Release/dist/onnxruntime_qcom_internal-*.whl
           if-no-files-found: error
           retention-days: 7
@@ -117,8 +115,8 @@ jobs:
         run: |
           set -euxo pipefail
           ls -la build/dist/
-          # Confirm we have the expected count (one per ort_version).
-          expected=$(echo '${{ inputs.ort_versions }}' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          # Confirm we have the expected count (one per matrix entry).
+          expected=$(echo "${ORT_VERSIONS_JSON}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           actual=$(find build/dist -name "onnxruntime_qcom_internal-*.whl" | wc -l)
           if [ "$actual" -ne "$expected" ]; then
             echo "ERROR: expected $expected wheel(s), found $actual"
@@ -150,7 +148,7 @@ jobs:
           chmod 600 build/pypirc
 
       - name: Publish (twine upload)
-        if: ${{ !inputs.dry_run }}
+        if: env.DRY_RUN != 'true'
         run: |
           . venv/bin/activate
           twine upload --skip-existing \
@@ -166,8 +164,8 @@ jobs:
               echo "- \`$(basename "$whl")\`"
             done
             echo
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "**dry_run=true** — wheels were built but NOT uploaded. Re-run with dry_run=false to publish."
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "**DRY_RUN=true** — wheels were built but NOT uploaded."
             else
               echo "**Uploaded** to http://ort-ep-win-01.na.qualcomm.com:8080."
             fi
