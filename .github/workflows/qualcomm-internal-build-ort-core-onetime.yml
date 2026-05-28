@@ -136,9 +136,10 @@ jobs:
           python3 -m venv venv
           . venv/bin/activate
           pip install --upgrade pip
-          # twine >=6 rejects --skip-existing against repos that don't advertise
-          # support (the internal ort-ep-win-01 index does not).
-          pip install "twine<6"
+          # Need twine>=6 because setuptools 82 emits Metadata-Version 2.4,
+          # which twine<6 rejects in `twine check`. The trade-off is twine 6
+          # disallows --skip-existing on this index; we drop that flag below.
+          pip install "twine>=6"
 
       - name: twine check
         run: |
@@ -161,7 +162,9 @@ jobs:
         if: env.DRY_RUN != 'true'
         run: |
           . venv/bin/activate
-          twine upload --skip-existing \
+          # No --skip-existing: twine>=6 rejects it on this index, and the
+          # date-suffixed wheel names (dev<YYYYMMDD>) make collisions unlikely.
+          twine upload \
             --config-file=build/pypirc -r local \
             build/dist/onnxruntime_qcom_internal-*.whl
 
