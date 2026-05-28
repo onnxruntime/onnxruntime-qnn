@@ -42,5 +42,5 @@ jobs:
   appverif-leak:
     name: App Verifier Leak Detection
     if: github.event_name == 'pull_request'
-    uses: ./.github/workflows/qualcomm-internal-appverif-leak.yml
+    uses: ./.github/workflows/qualcomm-internal-appverif.yml
     secrets: inherit
