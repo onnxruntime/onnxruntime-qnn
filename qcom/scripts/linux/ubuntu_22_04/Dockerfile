@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM docker-registry.qualcomm.com/library/ubuntu:22.04
 
 ARG BUILD_USER
 ARG BUILD_UID
