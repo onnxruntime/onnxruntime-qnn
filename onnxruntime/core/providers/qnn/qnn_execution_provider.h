@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -121,6 +122,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
+  // Emit a one-shot WARNING when the QNN EP is running on the HTP user-driver (HNRD) fallback path.
+  // Safe to call repeatedly; the underlying std::call_once guarantees at most one emission per session.
+  void WarnIfHnrdPathActive();
+
   void InitQnnHtpGraphConfigs(
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
@@ -216,6 +221,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::QnnCompatibilityInfo compatibility_info_;
   // Format: <BackendId>:<SDK>:<BackendApi>:<ContextBlob>:<HtpArch>:<IsHtpUsrDrv>.
   std::string compatibility_info_string_ = "";
+
+  // One-shot guard for the HNRD (Host No Resident Driver) fallback warning emitted from GetCapabilityImpl.
+  std::atomic<bool> hnrd_warning_emitted_{false};
 
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).
