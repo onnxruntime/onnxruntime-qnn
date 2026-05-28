@@ -28,12 +28,19 @@ concurrency:
 jobs:
   build-and-test-all:
     name: Build & Test
+    if: false  # Temporarily disabled for App Verifier branch testing
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
       do_all: true
 
   coverage:
-    if: github.event_name == 'pull_request'
+    if: false  # Temporarily disabled for App Verifier branch testing
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
+    secrets: inherit
+
+  appverif-leak:
+    name: App Verifier Leak Detection
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/qualcomm-internal-appverif-leak.yml
     secrets: inherit
