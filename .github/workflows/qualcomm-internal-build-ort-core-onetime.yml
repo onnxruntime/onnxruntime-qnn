@@ -61,6 +61,10 @@ jobs:
           set -euxo pipefail
 
           BUILD_DIR="${GITHUB_WORKSPACE}/build/linux-x86_64"
+          # Self-hosted runners reuse _work/ across jobs, so a prior matrix entry
+          # (different ORT version) can leave stale CMake cache + _deps/ headers
+          # that cause cross-version compile failures (e.g. timestamp_ns operator<<).
+          rm -rf "${BUILD_DIR}"
           mkdir -p "${BUILD_DIR}"
 
           # Provision a Python ${PY_VERSION} venv.
