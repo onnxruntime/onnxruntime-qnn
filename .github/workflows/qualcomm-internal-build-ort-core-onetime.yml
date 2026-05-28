@@ -29,7 +29,6 @@ on:
       - "yuduow/build-ort-core-wheels-onetime"
 
 env:
-  ORT_VERSIONS_JSON: "['v1.24.2','v1.25.0','v1.26.0']"
   PY_VERSION: "3.10"
   # Set DRY_RUN to "true" via a force-push commit if you want to skip the upload step.
   DRY_RUN: "false"
@@ -120,8 +119,8 @@ jobs:
         run: |
           set -euxo pipefail
           ls -la build/dist/
-          # Confirm we have the expected count (one per matrix entry).
-          expected=$(echo "${ORT_VERSIONS_JSON}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          # Confirm we have one wheel per matrix entry (v1.24.2, v1.25.0, v1.26.0).
+          expected=3
           actual=$(find build/dist -name "onnxruntime_qcom_internal-*.whl" | wc -l)
           if [ "$actual" -ne "$expected" ]; then
             echo "ERROR: expected $expected wheel(s), found $actual"
