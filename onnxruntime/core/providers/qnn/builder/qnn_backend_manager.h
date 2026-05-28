@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "CPU/QnnCpuCommon.h"
+#include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpDevice.h"
 #include "GPU/QnnGpuBackend.h"
 #include "QnnCommon.h"
@@ -189,6 +190,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size,
       bool is_multi_soc_buffer = false);
+
+  // Reload a QNN context from disk (embed_mode=0) after an SSR (NPU Subsystem Restart).
+  // Releases the stale context handle, reads the binary from context_bin_filepath, creates a
+  // fresh context, and re-deserializes the graph info into the existing QnnModel. The model's
+  // SetupQnnInputOutput() must be called by the caller after this returns successfully.
+  Ort::Status ReloadContextForModel(const std::string& context_bin_filepath,
+                                    const std::string& node_name,
+                                    int64_t max_spill_fill_size,
+                                    Qnn_ContextHandle_t old_context,
+                                    QnnModel& model);
 
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
@@ -564,6 +575,26 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     UniqueQnnContextHandle context_handle;
     std::unique_ptr<QnnContextMemHandleManager> mem_handles;
   };
+
+  // Holds stack-allocated QNN context config objects and a null-terminated pointer array suitable
+  // for passing to contextCreateFromBinary. Populated by BuildContextConfigs().
+  struct ContextConfigHolder {
+    QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
+    QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+    QnnHtpContext_CustomConfig_t custom_config = {};
+#endif
+    // Null-terminated array of pointers into the fields above.
+    // Populated by BuildContextConfigs(); valid for the lifetime of this struct.
+    const QnnContext_Config_t* configs[3] = {nullptr, nullptr, nullptr};
+  };
+
+  // Populate a ContextConfigHolder with priority and spill/fill buffer configuration.
+  Ort::Status BuildContextConfigs(int64_t max_spill_fill_size, ContextConfigHolder& holder);
+
+  // Remove a single context handle from all tracking structures (context_map_, contexts_,
+  // ep_context_handle_map_) and free it via contextFree.
+  void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
 
   Ort::Status LoadOpPackage() {
     // assume op_packages passed in represented in

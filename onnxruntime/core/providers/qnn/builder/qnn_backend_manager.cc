@@ -1768,34 +1768,9 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   } else {
 #endif
-    QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
-    RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
-
-    // Register spill fill buffer for multi context
-    QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
-
-    // The spill fill buffer is available since 2.28, API version starts from 2.21
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
-    QnnHtpContext_CustomConfig_t custom_config;
-    custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-    QnnHtpContext_GroupRegistration_t group_info;
-    size_t current_contexts_size = GetQnnContextSize();
-    // set to 0x0 (new group) if this is the first context, otherwise point to the first context handle
-    // note that we already move the context with max spill fill size to the beginning of the list
-    group_info.firstGroupHandle = (max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
-    group_info.maxSpillFillBuffer = max_spill_fill_size;  // Max spill-fill buffer across contexts. Must be >0
-    custom_config.groupRegistration = group_info;
-    spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    spill_fill_config.customConfig = &custom_config;
-
-#endif
-
-    QnnContext_Config_t* spill_fill_config_pointer = max_spill_fill_size > 0 ? &spill_fill_config : nullptr;
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
-
-    const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_config_pointer, nullptr};
+    ContextConfigHolder config_holder;
+    RETURN_IF_ERROR(BuildContextConfigs(max_spill_fill_size, config_holder));
+    const QnnContext_Config_t** context_configs = config_holder.configs;
 
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
               "Invalid function pointer for contextCreateFromBinary.");
@@ -1884,6 +1859,10 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     // the graph name from the context binary may not match the EPContext node name
     auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
     RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[0], context));
+    // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
+    if (!context_bin_filepath.empty()) {
+      qnn_model->SetContextRecoveryInfo(context_bin_filepath, node_name, max_spill_fill_size);
+    }
     qnn_models.emplace(node_name, std::move(qnn_model));
   } else {
     for (uint32_t i = 0; i < graph_count; ++i) {
@@ -3096,6 +3075,138 @@ Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle
     return MAKE_EP_FAIL("Unsupported context binary info version.");
   }
 
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::BuildContextConfigs(int64_t max_spill_fill_size,
+                                                   ContextConfigHolder& holder) {
+  RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, holder.qnn_context_config));
+
+  // Register spill-fill buffer for multi-context sharing (available since QNN 2.28 / API 2.21).
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+  holder.custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+  QnnHtpContext_GroupRegistration_t group_info;
+  size_t current_contexts_size = GetQnnContextSize();
+  // Use 0x0 (new group) for the first context; otherwise point to the first existing handle.
+  // Note: contexts with max spill-fill size are moved to the front of the list by the caller.
+  group_info.firstGroupHandle =
+      (max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
+  group_info.maxSpillFillBuffer = max_spill_fill_size;
+  holder.custom_config.groupRegistration = group_info;
+  holder.spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+  holder.spill_fill_config.customConfig = &holder.custom_config;
+#endif
+
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
+
+  holder.configs[0] = &holder.qnn_context_config;
+  holder.configs[1] = max_spill_fill_size > 0 ? &holder.spill_fill_config : nullptr;
+  holder.configs[2] = nullptr;
+
+  return Ort::Status();
+}
+
+void QnnBackendManager::ReleaseSpecificContextHandle(Qnn_ContextHandle_t old_context) {
+  // Remove name→handle mappings that reference this context.
+  {
+    std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+    for (auto it = ep_context_handle_map_.begin(); it != ep_context_handle_map_.end();) {
+      if (it->second == old_context) {
+        it = ep_context_handle_map_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // Remove from the non-owning vector.
+  contexts_.erase(std::remove(contexts_.begin(), contexts_.end(), old_context), contexts_.end());
+
+  // Remove from the owning map — triggers contextFree via UniqueQnnContextHandle deleter.
+  context_map_.erase(old_context);
+}
+
+Ort::Status QnnBackendManager::ReloadContextForModel(const std::string& context_bin_filepath,
+                                                     const std::string& node_name,
+                                                     int64_t max_spill_fill_size,
+                                                     Qnn_ContextHandle_t old_context,
+                                                     QnnModel& model) {
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("SSR recovery: reloading context for node: " + node_name).c_str());
+
+  // 1. Release the stale context (frees the QNN context handle via contextFree).
+  ReleaseSpecificContextHandle(old_context);
+
+  // 2. Read the context binary from disk.
+  //    Always use direct file I/O for recovery; file mapping is intentionally skipped here
+  //    because the DMA callback infrastructure tied to the old mapping was freed with the
+  //    old context.
+  std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
+  RETURN_IF(!cache_file || !cache_file.good(),
+            ("SSR recovery: failed to open context file: " + context_bin_filepath).c_str());
+  cache_file.seekg(0, cache_file.end);
+  const size_t buffer_size = static_cast<size_t>(cache_file.tellg());
+  RETURN_IF(buffer_size == 0, ("SSR recovery: context binary file is empty: " + context_bin_filepath).c_str());
+  cache_file.seekg(0, cache_file.beg);
+  auto buffer = std::make_unique<char[]>(buffer_size);
+  RETURN_IF(buffer == nullptr, "SSR recovery: failed to allocate buffer for context binary.");
+  cache_file.read(buffer.get(), static_cast<std::streamsize>(buffer_size));
+  RETURN_IF(!cache_file, ("SSR recovery: failed to read context binary file: " + context_bin_filepath).c_str());
+  cache_file.close();
+
+  // 3. Extract graph metadata from the binary.
+  //    graphs_info lifetime is tied to sys_ctx_handle — must not outlive this scope.
+  auto sys_ctx_handle = GetSystemContextHandle();
+  RETURN_IF(sys_ctx_handle == nullptr, "SSR recovery: failed to create system context handle.");
+
+  uint32_t graph_count = 0;
+  QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_Version_t blob_version = {0, 0, 0};
+  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
+                                            static_cast<void*>(buffer.get()),
+                                            static_cast<Qnn_ContextBinarySize_t>(buffer_size),
+                                            blob_version,
+                                            graph_count,
+                                            &graphs_info));
+#else
+  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
+                                            static_cast<void*>(buffer.get()),
+                                            static_cast<Qnn_ContextBinarySize_t>(buffer_size),
+                                            graph_count,
+                                            &graphs_info));
+#endif
+
+  RETURN_IF(graph_count != 1,
+            ("SSR recovery: multi-graph context reload is not supported (graph_count=" +
+             std::to_string(graph_count) + ", node=" + node_name + ").").c_str());
+  RETURN_IF(graphs_info == nullptr, "SSR recovery: graphs_info is null after binary parsing.");
+
+  // 4. Create a new QNN context from the binary.
+  ContextConfigHolder config_holder;
+  RETURN_IF_ERROR(BuildContextConfigs(max_spill_fill_size, config_holder));
+
+  RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
+            "Invalid function pointer for contextCreateFromBinary.");
+
+  Qnn_ContextHandle_t new_context = nullptr;
+  auto rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
+                                                   device_handle_,
+                                                   config_holder.configs,
+                                                   static_cast<void*>(buffer.get()),
+                                                   static_cast<Qnn_ContextBinarySize_t>(buffer_size),
+                                                   &new_context,
+                                                   profile_backend_handle_);
+  RETURN_IF(QNN_SUCCESS != rt,
+            ("SSR recovery: contextCreateFromBinary failed. Error: " + QnnErrorHandleToString(rt)).c_str());
+  RETURN_IF_ERROR(AddQnnContextHandle(new_context));
+
+  // 5. Re-populate graph_info_ on the existing model instance.
+  RETURN_IF_ERROR(model.DeserializeGraphInfoFromBinaryInfo(graphs_info[0], new_context));
+
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("SSR recovery: context reloaded successfully for node: " + node_name).c_str());
   return Ort::Status();
 }
 

@@ -145,6 +145,15 @@ class QnnModel {
 
   const std::string& Name() const { return graph_info_->Name(); }
 
+  // Store info needed to reload the QNN context from disk after an SSR.
+  // Only applicable to embed_mode=0 (external context binary file); the filepath is empty
+  // for embed_mode=1, which disables SSR recovery for that model.
+  void SetContextRecoveryInfo(std::string filepath, std::string node_name, int64_t max_spill_fill_size) {
+    context_bin_filepath_ = std::move(filepath);
+    node_name_ = std::move(node_name);
+    max_spill_fill_size_ = max_spill_fill_size;
+  }
+
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
@@ -157,6 +166,10 @@ class QnnModel {
                         const std::string& graph_name,
                         const std::string& json_qnn_graph_path,
                         const Ort::Logger& logger) const;
+
+  // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
+  // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
+  Ort::Status RecoverFromSSR(const Ort::Logger& logger);
 
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
@@ -180,6 +193,11 @@ class QnnModel {
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
   const ApiPtrs api_ptrs_;
+
+  // SSR recovery state (embed_mode=0 only). An empty filepath disables recovery.
+  std::string context_bin_filepath_;
+  std::string node_name_;
+  int64_t max_spill_fill_size_ = 0;
 };
 
 }  // namespace qnn
