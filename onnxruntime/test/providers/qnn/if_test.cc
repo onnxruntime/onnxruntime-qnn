@@ -6,9 +6,10 @@
 #include <string>
 #include <vector>
 
+#include "test/providers/qnn/qnn_test_utils.h"
+
 #include <onnx/onnx_pb.h>
 #include "gtest/gtest.h"
-#include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
