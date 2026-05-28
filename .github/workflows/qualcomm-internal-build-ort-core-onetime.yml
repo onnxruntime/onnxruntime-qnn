@@ -1,0 +1,174 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+#
+# One-time, manually-triggered workflow that builds stock upstream ORT core
+# wheels (no QNN EP) at v1.24.2, v1.25.0, and v1.26.0 for Python 3.10, then
+# uploads them to ort-ep-win-01 as `onnxruntime_qcom_internal-*.whl`.
+#
+# Background: tetracode pins a hand-baked `onnxruntime_qcom_internal` whose
+# last update (1.24.1.dev20260212) is too old for the current QNN EP wheel,
+# which is built against ORT 1.26's plugin-EP API and therefore fails at
+# session creation with "Must provide one or more OrtEpDevice instances".
+# This workflow refreshes that hand-bake so AI Hub can pick a version that
+# actually exposes the API the QNN wheel needs.
+#
+# Delete this workflow file once the durable per-nightly action lands.
+
+name: One-time build of ORT core wheels (qcom_internal)
+
+permissions:
+  contents: read
+  id-token: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "If true, build but do NOT twine-upload. Flip to false to publish."
+        type: boolean
+        default: true
+      ort_versions:
+        description: "JSON list of upstream ORT tags to build."
+        type: string
+        default: "['v1.24.2','v1.25.0','v1.26.0']"
+      py_version:
+        description: "Python version to build wheels for."
+        type: string
+        default: "3.10"
+
+jobs:
+  build:
+    name: "Build ORT core ${{ matrix.ort_version }} py${{ inputs.py_version }}"
+    runs-on: ["self-hosted", "Linux", "X64", "Build"]
+    strategy:
+      fail-fast: false
+      matrix:
+        ort_version: ${{ fromJSON(inputs.ort_versions) }}
+
+    steps:
+      - name: Check out upstream ORT at ${{ matrix.ort_version }}
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/onnxruntime
+          ref: ${{ matrix.ort_version }}
+          submodules: recursive
+          path: ort-src
+
+      - name: Build wheel
+        working-directory: ort-src
+        run: |
+          set -euxo pipefail
+
+          BUILD_DIR="${GITHUB_WORKSPACE}/build/linux-x86_64"
+          mkdir -p "${BUILD_DIR}"
+
+          # Provision a Python ${{ inputs.py_version }} venv.
+          if command -v "python${{ inputs.py_version }}" >/dev/null; then
+            "python${{ inputs.py_version }}" -m venv "${BUILD_DIR}/venv"
+          else
+            # uv is preinstalled on the Build runners.
+            uv venv --seed --python "${{ inputs.py_version }}" "${BUILD_DIR}/venv"
+          fi
+          source "${BUILD_DIR}/venv/bin/activate"
+
+          python -m pip install --upgrade pip
+          pip install uv
+          uv pip install -r tools/ci_build/github/linux/python/requirements.txt
+
+          # Build stock ORT core (no --use_qnn). --wheel_name_suffix=qcom_internal
+          # produces `onnxruntime_qcom_internal-<ver>-cp310-cp310-linux_x86_64.whl`,
+          # matching what tetracode's `third_party/onnxruntime-dev` consumes.
+          python tools/ci_build/build.py \
+            --build --update --parallel \
+            --build_wheel \
+            --wheel_name_suffix=qcom_internal \
+            --nightly_build \
+            --build_shared_lib \
+            --cmake_extra_defines CMAKE_BUILD_RPATH_USE_ORIGIN:BOOL=TRUE \
+            --cmake_generator Ninja \
+            --config Release \
+            --build_dir "${BUILD_DIR}" \
+            --skip_tests
+
+          ls -la "${BUILD_DIR}/Release/dist/"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ort-core-${{ matrix.ort_version }}-py${{ inputs.py_version }}
+          path: build/linux-x86_64/Release/dist/onnxruntime_qcom_internal-*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: "Publish ORT core wheels to ort-ep-win-01"
+    needs: [build]
+    runs-on: ["Linux", "self-hosted", "Build"]
+
+    steps:
+      - name: Download all built wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: build/dist
+          pattern: ort-core-*
+          merge-multiple: true
+
+      - name: List wheels
+        run: |
+          set -euxo pipefail
+          ls -la build/dist/
+          # Confirm we have the expected count (one per ort_version).
+          expected=$(echo '${{ inputs.ort_versions }}' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          actual=$(find build/dist -name "onnxruntime_qcom_internal-*.whl" | wc -l)
+          if [ "$actual" -ne "$expected" ]; then
+            echo "ERROR: expected $expected wheel(s), found $actual"
+            exit 1
+          fi
+
+      - name: Set up twine
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install twine
+
+      - name: twine check
+        run: |
+          . venv/bin/activate
+          twine check build/dist/onnxruntime_qcom_internal-*.whl
+
+      - name: Write pypirc
+        run: |
+          cat > build/pypirc <<EOF
+          [distutils]
+          index-servers = local
+          [local]
+          repository: http://ort-ep-win-01.na.qualcomm.com:8080
+          username = OrtQnnEpUploader
+          password = ${{ secrets.UPLOADER_PASSWORD }}
+          EOF
+          chmod 600 build/pypirc
+
+      - name: Publish (twine upload)
+        if: ${{ !inputs.dry_run }}
+        run: |
+          . venv/bin/activate
+          twine upload --skip-existing \
+            --config-file=build/pypirc -r local \
+            build/dist/onnxruntime_qcom_internal-*.whl
+
+      - name: Summary
+        run: |
+          {
+            echo "### ORT core wheels"
+            echo
+            for whl in build/dist/onnxruntime_qcom_internal-*.whl; do
+              echo "- \`$(basename "$whl")\`"
+            done
+            echo
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "**dry_run=true** — wheels were built but NOT uploaded. Re-run with dry_run=false to publish."
+            else
+              echo "**Uploaded** to http://ort-ep-win-01.na.qualcomm.com:8080."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
