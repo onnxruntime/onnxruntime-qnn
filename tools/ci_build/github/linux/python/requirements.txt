@@ -4,6 +4,7 @@ mypy
 pytest
 setuptools>=68.2.2
 wheel
+auditwheel
 protobuf==6.33.0
 sympy==1.14
 flatbuffers
