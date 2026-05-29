@@ -401,6 +401,36 @@ block()
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()
 
+  if(onnxruntime_USE_QNN AND NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB AND WIN32)
+    # ---------------------------------------------------------------------------
+    # QnnMockSSR shared library — wraps QnnHtp.dll and injects a QNN_COMMON_ERROR_SYSTEM_COMMUNICATION
+    # error (SSR) at a configurable call-site to exercise the SSR recovery paths in QNN EP.
+    # ---------------------------------------------------------------------------
+    add_library(QnnMockSSR SHARED
+      ${TEST_SRC_DIR}/providers/qnn/ssr/qnn_mock_ssr.cc
+      ${TEST_SRC_DIR}/providers/qnn/ssr/qnn_mock_ssr.def
+    )
+
+    target_include_directories(QnnMockSSR PRIVATE
+      ${onnxruntime_QNN_HOME}/include/QNN
+      ${TEST_SRC_DIR}/providers/qnn/ssr
+    )
+
+    set_target_properties(QnnMockSSR PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED ON
+      FOLDER "ONNXRuntimeTest"
+    )
+
+    # Copy QnnMockSSR next to the test executable so the test can load it by name.
+    add_custom_command(
+      TARGET QnnMockSSR POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:QnnMockSSR>
+        $<TARGET_FILE_DIR:onnxruntime_provider_test>
+      COMMENT "Copying QnnMockSSR to test output directory"
+    )
+  endif()
 endblock()
 endif()
 
