@@ -99,6 +99,8 @@ jobs:
       upload_wheel: true
       build_archive: true
       upload_archive: true
+      build_test_same_runner: false
+      test_runner_arch: X64
 
   build-and-test-linux-arm64:
     if: ${{ inputs.do_all }}
