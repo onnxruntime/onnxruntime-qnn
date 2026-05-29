@@ -1057,7 +1057,7 @@ class TaskLibrary:
                     "linux",
                     "x86_64_ubuntu_22_04",
                     self.__config,
-                    self.__target_py_version,
+                    None,  # Tests run against the activated host venv; no per-version wheel venv needed.
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
