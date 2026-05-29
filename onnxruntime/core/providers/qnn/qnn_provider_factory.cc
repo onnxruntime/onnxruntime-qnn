@@ -13,6 +13,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/soc_utils.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
@@ -22,13 +23,8 @@
 // If the EP library is co-located with the OnnxRuntime library, then this is consistent with the existing behavior,
 // but an EP library that is shipped 'out-of-band' will use a backend relative to itself.
 static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBackends = {
-#if defined(_WIN32)
-    {OrtHardwareDeviceType_NPU, "QnnHtp.dll"},
-    {OrtHardwareDeviceType_GPU, "QnnGpu.dll"},
-#else
-    {OrtHardwareDeviceType_NPU, "libQnnHtp.so"},
-    {OrtHardwareDeviceType_GPU, "libQnnGpu.so"},
-#endif
+    {OrtHardwareDeviceType_NPU, onnxruntime::utils::MakeSharedLibraryPath("QnnHtp")},
+    {OrtHardwareDeviceType_GPU, onnxruntime::utils::MakeSharedLibraryPath("QnnGpu")},
 };
 
 static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBackendTypes = {
