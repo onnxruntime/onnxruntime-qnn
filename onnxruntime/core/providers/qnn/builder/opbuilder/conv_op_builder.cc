@@ -12,6 +12,7 @@
 namespace onnxruntime {
 namespace qnn {
 
+namespace {
 // HTP BQ Conv: supported bitwidths and their block_size divisor constraints.
 // block_size must be a multiple of the corresponding value (same as MatMulNBits HTP constraints).
 const std::unordered_map<uint32_t, int64_t> kHtpConvBQBitsAndBlockSizeMultipliers{
@@ -33,6 +34,7 @@ static uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
       return 0;
   }
 }
+}  // namespace
 
 // ONNX convolution types supported by this builder.
 // We translate node_unit.OpType() into this enum to avoid repeated string comparisons.
@@ -137,11 +139,9 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // Validate quantization axis for per-channel quantized weights.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
-    // Detect block-quantized weight. Two supported scale layouts:
-    //   (a) Standard (ONNX opset 21): scale rank == weight rank, e.g. [OC, IC/bs, H, W] for
-    //       axis=1; scale_shape[1] == IC/block_size < weight_shape[1].
-    //   (b) Legacy rank-2: [OC, num_blocks]; scale_shape[1] == IC/block_size.
-    // In both cases scale_shape[1] == num_blocks_per_oc for 1x1 or IC-axis blocking.
+    // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight
+    // rank: for a Conv2D weight [OC, IC, H, W] blocked on axis=1 the scale is
+    // [OC, IC/block_size, H, W], so scale_shape[1] == num_blocks_per_oc < weight_shape[1].
     if (inputs[1].quant_param.has_value() && inputs[1].quant_param->scale != nullptr) {
       const auto weight_scale_shape = utils::GetInitializerShape(inputs[1].quant_param->scale,
                                                                  qnn_model_wrapper.GetOrtApi());
@@ -150,11 +150,10 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
           weight_shape.size() != 4) {
         // BQ only supported for Conv2D (rank-4 weight); skip for Conv1D (rank-3) and Conv3D (rank-5).
       } else {
-        const bool is_rank2_scale = (weight_scale_shape.size() == 2);
-        const bool is_rankN_scale = (weight_scale_shape.size() == weight_shape.size() &&
+        const bool is_block_quant = (weight_scale_shape.size() == weight_shape.size() &&
                                      weight_scale_shape.size() > 1 &&
                                      weight_scale_shape[1] < weight_shape[1]);
-        if (is_rank2_scale || is_rankN_scale) {
+        if (is_block_quant) {
           const int64_t num_blocks_per_oc = weight_scale_shape[1];
           RETURN_IF(num_blocks_per_oc <= 0, "QNN EP: BQ num_blocks must be positive");
           const int64_t ic = static_cast<int64_t>(weight_shape[1]);
@@ -177,10 +176,10 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
           // Return success; full QNN validation is done in the NHWC IsOpSupported path.
           return Ort::Status();
-        }  // end is_rank2_scale || is_rankN_scale
+        }  // end is_block_quant
       }  // end else (weight shape obtainable)
     }  // end quant_param check
-
+    // checking for per-channel quantization
     const auto& input_1 = inputs[1];  // weight
     bool is_per_axis_quant = false;
     int64_t quant_axis = 0;
@@ -250,11 +249,9 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   //
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
-  // Detect block-quantized weight. Accepted scale layouts:
-  //   Standard (ONNX opset 21): scale rank == weight rank, scale_shape[1] < weight_shape[1].
-  //     Weight is always NCHW [OC,IC,H,W] in both NCHW and NHWC domains; IC at index 1.
-  //   Legacy rank-2: [OC, num_blocks].
-  // scale_shape[1] == num_blocks_per_oc in all supported cases.
+  // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight rank
+  // with scale_shape[1] < weight_shape[1] (the blocked IC axis). Weight is always NCHW
+  // [OC,IC,H,W] in both NCHW and NHWC domains; IC at index 1, so scale_shape[1] == num_blocks_per_oc.
   bool is_bq_weight = false;
   std::vector<int64_t> bq_scale_shape;
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
@@ -266,11 +263,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
         bq_scale_shape.size() > 1 &&
         bq_weight_shape.size() == 4) {  // BQ only for Conv2D (rank-4 weight); not Conv3D (rank-5)
       // Weight is NCHW [OC,IC,H,W]: IC is always at index 1.
-      const bool rank2 = (bq_scale_shape.size() == 2);
-      const bool rankN = (bq_scale_shape.size() == bq_weight_shape.size() &&
-                          bq_weight_shape.size() > 1 &&
-                          bq_scale_shape[1] < static_cast<int64_t>(bq_weight_shape[1]));
-      is_bq_weight = rank2 || rankN;
+      is_bq_weight = (bq_scale_shape.size() == bq_weight_shape.size() &&
+                      bq_scale_shape[1] < static_cast<int64_t>(bq_weight_shape[1]));
     }
   }
 
@@ -289,11 +283,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     // Activation handling: BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via Dequantize.
     //                      LPBQ kernel (BLOCKWISE_EXPANSION) accepts INT16 as-is.
     if (!is_lpbq) {
-      const std::string act_name = input_names.back();  // copy before pop_back invalidates ref
+      const std::string act_name = input_names[0];  // activation (input 0), pushed by ProcessInput above
       const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
       const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
       if (act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
-        input_names.pop_back();
         const std::string fp16_act_name = utils::UniqueNameGenerator().New(act_name, "_fp16");
         std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
         QnnTensorWrapper fp16_act_wrapper(fp16_act_name, QNN_TENSOR_TYPE_NATIVE,
@@ -306,11 +299,11 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                           QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
                           {act_name}, {fp16_act_name}, {}, do_op_validation),
                       "Failed to add INT16→FP16 Dequantize node for BQ Conv activation.");
-        input_names.push_back(fp16_act_name);
+        input_names[0] = fp16_act_name;
       }
     }
 
-    // Common: transpose weight data from OIHW→HWCN (or CNHW→HWCN for ConvTranspose).
+    // Common: transpose weight data from OIHW→HWIO (or IOHW→HWIO for ConvTranspose).
     // TransposeFromNchwToHwcn unpacks INT4 to INT8 internally (1 byte per element).
     const bool is_3d = (input_info.shape.size() == 5);
     std::vector<uint8_t> unpacked_tensor;
@@ -541,8 +534,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
         RETURN_IF_NOT(quant_param_wrapper.IsPerTensor(),
                       "Conv's INT16 weight inputs only support INT16 per-tensor quantization");
 
-        // Pop Conv weight. Insert Convert op after Weight
-        input_names.pop_back();
+        // Insert Convert op after Weight, replacing the weight name (last element) in place.
         std::string convert_output_name = utils::UniqueNameGenerator().New(weight_input_name, "_convert");
 
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
@@ -555,7 +547,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                                transformed_input1_shape,
                                                true,  // Symmetric
                                                do_op_validation));
-        input_names.push_back(convert_output_name);
+        input_names.back() = convert_output_name;
       }
     }
   }  // end else (non-BQ weight path)
@@ -578,7 +570,9 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor,
                                                               raw_bias_bytes));
       std::vector<float> bias_scale_vals;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scale_vals));
+      if (inputs[2].quant_param.has_value() && inputs[2].quant_param->scale != nullptr) {
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scale_vals));
+      }
       const float bias_scale = bias_scale_vals.empty() ? 1.0f : bias_scale_vals[0];
 
       // Dequantize INT32 → FP16 (stored as uint16 in memory).

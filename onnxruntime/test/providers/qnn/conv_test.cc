@@ -3153,45 +3153,44 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
                   /*fp32_abs_err=*/1e-2f);
 }
 
-// INT2, block_size=16: ORT rejects tensor(int2) as a DequantizeLinear input type at model
-// load time (ONNX type check), so session initialization throws. Use EXPECT_THROW to
-// actively guard against silent regressions. When ONNX spec and ORT model validation
-// accept tensor(int2), replace with a normal RunQnnModelTest (verify_outputs=false until
-// the CPU DQ kernel also supports int2).
-TEST_F(QnnHTPBackendTests, ConvBQ_U16Int2_1x1_BlockSize16) {
+// INT2, block_size=16: DISABLED. Two independent blockers:
+//   1. ORT CPU backend does not support 2-bit Q/DQ — it rejects tensor(int2) as a
+//      DequantizeLinear input type at model load time (ONNX type check).
+//   2. QAIRT HTP backend does not support 2-bit BQ until QAIRT 2.47.
+// Re-enable once both are available (with verify_outputs=false until the CPU DQ
+// kernel supports int2 for accuracy comparison).
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16Int2_1x1_BlockSize16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  EXPECT_THROW(
-      RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{4, 32, 1, 1},
-                                          /*block_size=*/16,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/2),
-                      GetBQConvProviderOptions(),
-                      /*opset=*/21,
-                      ExpectedEPNodeAssignment::All,
-                      /*fp32_abs_err=*/0.0f,
-                      OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                      /*verify_outputs=*/false),
-      std::exception);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/0.0f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
 }
 
-// UINT2, block_size=16: same blocker as ConvBQ_U16Int2_1x1_BlockSize16.
-TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt2_1x1_BlockSize16) {
+// UINT2, block_size=16: DISABLED. Same blockers as ConvBQ_U16Int2_1x1_BlockSize16 —
+// ORT CPU backend does not support 2-bit Q/DQ, and QAIRT HTP backend does not
+// support 2-bit BQ until QAIRT 2.47.
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16UInt2_1x1_BlockSize16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  EXPECT_THROW(
-      RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{4, 32, 1, 1},
-                                          /*block_size=*/16,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/2,
-                                          /*weight_is_unsigned=*/true),
-                      GetBQConvProviderOptions(),
-                      /*opset=*/21,
-                      ExpectedEPNodeAssignment::All,
-                      /*fp32_abs_err=*/0.0f,
-                      OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                      /*verify_outputs=*/false),
-      std::exception);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/0.0f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
 }
 
 // UINT4 weight, block_size=8: exercises TransformUnsignedToSignedFixedPoint for 4-bit.

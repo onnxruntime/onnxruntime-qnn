@@ -32,8 +32,8 @@
 #include "onnxruntime_run_options_config_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
-#include "core/providers/qnn/common/int4.h"
 #include "core/providers/qnn/common/int2.h"
+#include "core/providers/qnn/common/int4.h"
 #include "core/providers/qnn/common/qnn_safeint.h"
 
 namespace onnxruntime {
