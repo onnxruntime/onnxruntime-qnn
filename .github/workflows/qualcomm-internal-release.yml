@@ -94,7 +94,10 @@ jobs:
       - name: Install Dependencies
         run: |
           python3 -m venv venv
-          source venv/bin/activate && pip3 install twine
+          # Pin twine <6.2.0: 6.2.0 dropped --skip-existing for non-Warehouse
+          # indexes (the internal pypiserver at ort-ep-win-01), causing
+          # `UnsupportedConfiguration` on upload.
+          source venv/bin/activate && pip3 install 'twine<6.2.0'
 
       - name: Check wheel
         run: |
