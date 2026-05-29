@@ -8,7 +8,10 @@
 
 # QNN EP udo tests not require CPU EP op implementations for accuracy evaluation
 find_package(Python REQUIRED COMPONENTS Interpreter)
+# Must match qcom/packages.yml:llvm_linux_x86_64.version.
 set(_LLVM_VERSION "21.1.8")
+# Must match qcom/packages.yml:hexagon_linux_x86_64.version (also referenced from
+# onnxruntime/test/providers/qnn/udo/HTP_Makefile HEXAGON_SDK_ROOT_V*).
 set(_HEXAGON_SDK_VERSION "6.5.0.0")
 # qnn-op-package-generator requires Python 3.10. Skip the UDO unit test build when the
 # discovered interpreter is any other version (e.g. Windows CI uses 3.11+).
@@ -23,7 +26,9 @@ if(UNIX)
         # Linux CPU
         set(_TOOLS_DIR "$ENV{ORT_BUILD_TOOLS_PATH}")
         if(NOT _TOOLS_DIR)
-            set(_TOOLS_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../tools")
+            # Mirrors qcom/scripts/linux/tools.sh:get_tools_dir() and qcom/ep_build/tools.py:get_tools_dir().
+            # CMAKE_SOURCE_DIR for onnxruntime is <repo>/cmake, so its parent is the repo root.
+            set(_TOOLS_DIR "${CMAKE_SOURCE_DIR}/../build/tools")
         endif()
         get_filename_component(LLVM_TOOL_DIR
             "llvm_linux_x86_64-${_LLVM_VERSION}/LLVM-${_LLVM_VERSION}-Linux-X64"

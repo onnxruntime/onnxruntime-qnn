@@ -92,7 +92,6 @@ GraphStatus myaddImpl(TensorType& out_0, const TensorType& in_0, const Tensor& c
       for (Idx w = 0; w < w_in; w++) {
         for (Idx d = 0; d < d_in; d++) {
           out_0(b, h, w, d) = in_0(b, h, w, d) + constant(0, 0, 0, 0);
-          ;
         }
       }
     }

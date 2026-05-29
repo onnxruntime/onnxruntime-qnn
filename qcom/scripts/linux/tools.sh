@@ -1,6 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 source "${REPO_ROOT}/qcom/scripts/linux/common.sh"

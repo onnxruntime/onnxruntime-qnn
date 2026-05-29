@@ -45,12 +45,12 @@ struct MyAdd {
     for (int i = 0; i < X.NumberOfElement(); i++) {
       output_data[i] = input_data[i] + constant_;
     }
-    return Ort::Status(nullptr);
+    return Ort::Status{nullptr};
   }
   static Ort::Status InferOutputShape(Ort::ShapeInferContext& ctx) {
     Ort::ShapeInferContext::Shape shape = ctx.GetInputShape(0);
     ctx.SetOutputShape(0, shape);
-    return Ort::Status(nullptr);
+    return Ort::Status{nullptr};
   }
   float constant_ = 1.0;
 };
@@ -113,8 +113,8 @@ static void RunOpTestOnCPU(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["op_packages"] = op_packages;
   Ort::CustomOpDomain v2_domain{kUdoDomain.data()};
-  std::unique_ptr<Ort::Custom::OrtLiteCustomOp> MyAdd_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
-  v2_domain.Add(MyAdd_op_ptr.get());
+  std::unique_ptr<Ort::Custom::OrtLiteCustomOp> my_add_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
+  v2_domain.Add(my_add_op_ptr.get());
 
   RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
                   provider_options,
@@ -139,21 +139,21 @@ static void RunOpTestOnHTP(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["op_packages"] = op_packages;
   Ort::CustomOpDomain v2_domain{kUdoDomain.data()};
-  std::unique_ptr<Ort::Custom::OrtLiteCustomOp> MyAdd_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
-  v2_domain.Add(MyAdd_op_ptr.get());
+  std::unique_ptr<Ort::Custom::OrtLiteCustomOp> my_add_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
+  v2_domain.Add(my_add_op_ptr.get());
 
-  TestQDQModelAccuracy<uint8_t>(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),       // baseline float32 model
-                                BuildUDOQDQTestCase<uint8_t>(op_type, input_def, attrs, std::string(kUdoDomain)),  // QDQ model
+  TestQDQModelAccuracy<uint8_t>(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),       // f32_model_fn
+                                BuildUDOQDQTestCase<uint8_t>(op_type, input_def, attrs, std::string(kUdoDomain)),  // qdq_model_fn
                                 provider_options,
                                 opset_version,
                                 expected_ep_assignment,
                                 QDQTolerance(),
                                 OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                                "",
-                                {},
-                                std::nullopt,
-                                nullptr,
-                                &v2_domain);
+                                /*qnn_ctx_model_path=*/"",
+                                /*session_option_pairs=*/{},
+                                /*graph_optimization_level=*/std::nullopt,
+                                /*qnn_ep_graph_checker=*/nullptr,
+                                /*custom_op_domain=*/&v2_domain);
 }
 
 std::string getLibPath(std::string backend) {
@@ -182,6 +182,11 @@ TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd) {
 }
 
 TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
+  // Skip cleanly on hosts where the HTP backend / x86 simulator libs are not usable.
+  // QnnHTPBackendTests::SetUp() already gates on cached_htp_support_; this macro adds the
+  // arch-floor check that the rest of the HTP test suite uses (no-op on Linux x86_64 today,
+  // but keeps the test consistent with TestAddEpUsingPublicApi et al.).
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
   std::filesystem::path path = getLibPath("htp");
   if (!std::filesystem::exists(path)) {

@@ -3,7 +3,7 @@
 
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
 
-#include <filesystem>
+#include <cctype>
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"  // Ort::Logger full definition + ORT_CXX_LOG_PTR / IsNullLogger
@@ -19,19 +19,20 @@ void ParseOpPackages(const std::string& op_packages_string,
   for (const auto& op_package : qnn::utils::SplitString(op_packages_string, ",", true)) {
     auto splitStrings = qnn::utils::SplitString(op_package, ":", true);
 #if defined(_WIN32)
-    // On Windows, paths include a drive letter followed by ":" (e.g., "C:\").
+    // On Windows, paths include a drive letter followed by ":" (e.g., "C:\foo.dll").
     // The split-on-':' produces a separate token for the drive letter; rejoin it with the
-    // following segment when the merged result is an existing absolute path.
-    // `merged_win_path` owns the merged string so `splitStrings[1]` (a string_view) remains valid
-    // for the rest of this iteration.
+    // following segment when token[1] looks like a single-letter drive prefix. Gate on
+    // token shape only — parsing of the config string must be deterministic in the input
+    // and must not depend on filesystem state.
+    // `merged_win_path` owns the merged string so `splitStrings[1]` (a string_view) remains
+    // valid for the rest of this iteration.
     std::string merged_win_path;
-    if (splitStrings.size() >= 3) {
+    if (splitStrings.size() >= 3 &&
+        splitStrings[1].size() == 1 &&
+        std::isalpha(static_cast<unsigned char>(splitStrings[1][0]))) {
       merged_win_path = std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]);
-      if (std::filesystem::path(merged_win_path).is_absolute() &&
-          std::filesystem::exists(merged_win_path)) {
-        splitStrings[1] = merged_win_path;
-        splitStrings.erase(splitStrings.begin() + 2);
-      }
+      splitStrings[1] = merged_win_path;
+      splitStrings.erase(splitStrings.begin() + 2);
     }
 #endif
     if (splitStrings.size() < 3 || splitStrings.size() > 4) {

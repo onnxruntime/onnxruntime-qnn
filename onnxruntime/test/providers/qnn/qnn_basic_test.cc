@@ -271,9 +271,39 @@ TEST(QnnEP, ParseOpPackages_AbsolutePath) {
 #endif
 }
 
+#if defined(_WIN32)
+// Regression test for the Windows drive-letter merge: parsing of the config string must be
+// deterministic in the input — same string → same parse, regardless of filesystem state.
+// If the merge were gated on std::filesystem::exists(), a missing DLL would silently mis-parse
+// `MyOp:C:\path\foo.dll:Symbol` as 4 tokens with "C" landing in the path slot.
+TEST(QnnEP, ParseOpPackages_AbsolutePath_NotYetOnDisk) {
+  Ort::Logger logger;
+  std::vector<onnxruntime::qnn::OpPackage> op_packages;
+
+  // Path that does NOT exist on disk — only the token shape (single-letter drive prefix) drives the merge.
+  const std::string non_existent_path = "C:\\does\\not\\exist\\ort_qnn_parse_oppkg_not_on_disk.dll";
+  ASSERT_FALSE(std::filesystem::exists(non_existent_path));
+
+  const std::string entry = "MyOp:" + non_existent_path + ":MyAddOpPackageInterfaceProvider";
+  onnxruntime::ParseOpPackages(entry, op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].op_type, "MyOp");
+  EXPECT_EQ(op_packages[0].path, non_existent_path);
+  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_TRUE(op_packages[0].target.empty());
+
+  // Variant with explicit ":CPU" target — the merge must leave room for the trailing target token.
+  op_packages.clear();
+  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].path, non_existent_path);
+  EXPECT_EQ(op_packages[0].target, "CPU");
+}
+#endif
+
 // Verifies that ParseOpPackages preserves a relative path as-is. Relative paths must NOT
-// trigger the Windows drive-letter merge branch (which is gated by std::filesystem::is_absolute
-// && exists), so the parser should pass the path through to op_packages unchanged.
+// trigger the Windows drive-letter merge branch (which is gated on splitStrings[1] being a
+// single ASCII letter), so the parser should pass the path through to op_packages unchanged.
 TEST(QnnEP, ParseOpPackages_RelativePath) {
   Ort::Logger logger;
   std::vector<onnxruntime::qnn::OpPackage> op_packages;
