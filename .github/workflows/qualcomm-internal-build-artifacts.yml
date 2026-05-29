@@ -198,6 +198,13 @@ jobs:
       build_pdb_archive: true
       upload_pdb_archive: true
 
+  build-and-test-ort-home:
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-ort-home.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+
   setup-debug-matrix:
     if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
     runs-on: ubuntu-latest

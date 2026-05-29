@@ -81,11 +81,6 @@ jobs:
       # immutable reviewed commit, so the normal full matrix validates that SHA.
       do_all: true
 
-  build-and-test-ort-home:
-    name: Build & Test (ORT HOME)
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-ort-home.yml
-    secrets: inherit
-
   coverage:
     needs: select-ci-tier
     if: ${{ needs.select-ci-tier.outputs.tier == 'full' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) }}
