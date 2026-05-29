@@ -204,16 +204,30 @@ jobs:
       build_pdb_archive: true
       upload_pdb_archive: true
 
+  setup-debug-matrix:
+    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          items='[]'
+          if [ "${{ inputs.build_windows_arm64_debug }}" = "true" ]; then
+            items=$(jq -nc --argjson a "$items" '$a + [{"build_config":"Debug","suffix":"debug"}]')
+          fi
+          if [ "${{ inputs.build_windows_arm64_relwithdebinfo }}" = "true" ]; then
+            items=$(jq -nc --argjson a "$items" '$a + [{"build_config":"RelWithDebInfo","suffix":"relwithdebinfo"}]')
+          fi
+          echo "matrix={\"include\":$items}" >> "$GITHUB_OUTPUT"
+
   build-windows-arm64-debug-builds:
+    needs: [setup-debug-matrix]
+    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
     name: build-windows-arm64-${{ matrix.suffix }}
-    if: ${{ (matrix.build_config == 'Debug' && inputs.build_windows_arm64_debug) || (matrix.build_config == 'RelWithDebInfo' && inputs.build_windows_arm64_relwithdebinfo) }}
     strategy:
-      matrix:
-        include:
-          - build_config: Debug
-            suffix: debug
-          - build_config: RelWithDebInfo
-            suffix: relwithdebinfo
+      matrix: ${{ fromJSON(needs.setup-debug-matrix.outputs.matrix) }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
