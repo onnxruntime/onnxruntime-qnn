@@ -327,8 +327,6 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
     // kept_shape: input shape with reduced axes set to 1 (full input rank). All internal reduce/elementwise
     // outputs share this shape, so broadcasting and the final Add work without rank mismatches.
-    std::set<AxesOnnxIntType> axes_set;
-    RETURN_IF_ERROR(GetAxesSet(qnn_model_wrapper, node_unit, axes_set));
     std::vector<uint32_t> kept_shape = input_shape;
     for (auto ax : axes_set) {
       RETURN_IF_NOT(ax >= 0 && static_cast<size_t>(ax) < input_shape.size(),
