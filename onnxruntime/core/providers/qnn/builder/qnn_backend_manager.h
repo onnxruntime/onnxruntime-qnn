@@ -23,6 +23,7 @@
 
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
+#include "GPU/QnnGpuBackend.h"
 #include "QnnLog.h"
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
@@ -367,7 +368,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       bool& initialized_flag,
                                       const std::string& backend_label);
 
-  Ort::Status InitializeBackend();
+  Ort::Status InitializeBackend(bool enable_gpu_weight_sharing);
 
   Ort::Status InitializeValidatorBackend();
 
