@@ -1,0 +1,53 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: App Verifier Probe (Windows ARM64)
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+
+jobs:
+  appverif-probe:
+    name: App Verifier Admin Probe
+    runs-on: ["self-hosted", "windows", "ARM64", "Build"]
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Print runner info
+        run: |
+          Write-Host "Runner name: $env:RUNNER_NAME"
+          Write-Host "Runner OS: $env:RUNNER_OS"
+          Write-Host "Runner arch: $env:RUNNER_ARCH"
+          Write-Host "Whoami: $(whoami)"
+
+      - name: Check admin privileges
+        run: |
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]$identity
+          $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Write-Host "IsAdmin: $isAdmin"
+          Write-Host "User: $($identity.Name)"
+          Write-Host "Groups:"
+          whoami /groups | findstr /C:"Mandatory Level"
+
+      - name: Try registering App Verifier
+        run: |
+          $output = appverif -enable Leak -for dummy.exe 2>&1
+          Write-Host "appverif output:"
+          Write-Host $output
+          Write-Host "Exit code: $LASTEXITCODE"
+
+      - name: Query App Verifier setting
+        run: |
+          appverif -query dummy.exe 2>&1
+          Write-Host "Exit code: $LASTEXITCODE"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          appverif -delete tests -for dummy.exe 2>&1
