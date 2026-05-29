@@ -564,8 +564,9 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
       RETURN_IF(!bias_info.is_initializer, "QNN EP: BQ Conv bias must be a constant initializer");
 
-      // Read the INT32 quantized bias and its scale, then dequantize to FP16.
+      // Read the INT32 quantized bias and its scale(s), then dequantize to FP16.
       // QNN BW_FLOAT_BLOCK Conv2d requires FP16 bias matching the computation precision.
+      // Bias scale may be per-tensor (1 value) or per-channel (one value per output channel).
       std::vector<uint8_t> raw_bias_bytes;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor,
                                                               raw_bias_bytes));
@@ -573,16 +574,22 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       if (inputs[2].quant_param.has_value() && inputs[2].quant_param->scale != nullptr) {
         RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scale_vals));
       }
-      const float bias_scale = bias_scale_vals.empty() ? 1.0f : bias_scale_vals[0];
 
-      // Dequantize INT32 → FP16 (stored as uint16 in memory).
+      // Dequantize INT32 → FP16 (stored as uint16 in memory): bias[i] = q[i] * scale[i or 0].
       const size_t num_elems = bias_info.shape[0];
       RETURN_IF_NOT(raw_bias_bytes.size() == num_elems * sizeof(int32_t), "BQ bias size mismatch");
+      // Scale is per-tensor (1), per-channel (num_elems == OC), or absent (defaults to 1.0f).
+      const bool is_per_channel_bias = bias_scale_vals.size() == num_elems;
+      RETURN_IF_NOT(bias_scale_vals.size() <= 1 || is_per_channel_bias,
+                    "QNN EP: BQ Conv bias scale count must be 1 (per-tensor) or OC (per-channel)");
       std::vector<uint8_t> fp16_bias_bytes(num_elems * sizeof(uint16_t));
       const auto* i32_ptr = reinterpret_cast<const int32_t*>(raw_bias_bytes.data());
       auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bias_bytes.data());
       for (size_t i = 0; i < num_elems; ++i) {
-        const float f = static_cast<float>(i32_ptr[i]) * bias_scale;
+        const float scale = bias_scale_vals.empty() ? 1.0f
+                                                    : (is_per_channel_bias ? bias_scale_vals[i]
+                                                                           : bias_scale_vals[0]);
+        const float f = static_cast<float>(i32_ptr[i]) * scale;
         const Ort::Float16_t fp16_val(f);
         memcpy(&u16_ptr[i], &fp16_val.val, sizeof(uint16_t));
       }

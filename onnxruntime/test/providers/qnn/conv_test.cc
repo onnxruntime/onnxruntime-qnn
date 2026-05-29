@@ -2909,14 +2909,17 @@ namespace {
 // block_size constraints: must be a multiple of 8 (4-bit), 4 (8-bit), or 16 (2-bit) per HTP.
 // weight_is_unsigned: true → use UINT weight type (UINT4 or UINT8); tests the
 //   unsigned→signed conversion path in conv_op_builder.cc (TransformUnsignedToSignedFixedPoint).
+// bias_per_channel: when include_bias is true, true → per-channel bias scale ([OC] values,
+//   axis=0); false → per-tensor bias scale (scalar). Exercises both bias dequant paths.
 GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
                                      const std::vector<int64_t>& weight_shape,
                                      int64_t block_size,
                                      bool include_bias = false,
                                      int weight_bits = 4,
-                                     bool weight_is_unsigned = false) {
+                                     bool weight_is_unsigned = false,
+                                     bool bias_per_channel = false) {
   return [input_shape, weight_shape, block_size, include_bias, weight_bits,
-          weight_is_unsigned](ModelTestBuilder& builder) -> void {
+          weight_is_unsigned, bias_per_channel](ModelTestBuilder& builder) -> void {
     const int64_t OC = weight_shape[0];
     const int64_t IC = weight_shape[1];
     const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
@@ -3001,12 +3004,29 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     if (include_bias) {
       // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
       // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
-      const float bias_scale = act_scale * 0.03f;
-      builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
-      builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
-      builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(OC), 0));
-      builder.AddNode("bias_dql", "DequantizeLinear",
-                      {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+      if (bias_per_channel) {
+        // Per-channel bias: distinct quantized value and scale per output channel (DQ axis=0).
+        // Non-zero quant values ensure the per-channel scale indexing is actually exercised.
+        // Omit zero_point (symmetric): ORT per-axis DQ requires zp be null or 1D of size OC.
+        std::vector<int32_t> bias_quant(static_cast<size_t>(OC));
+        std::vector<float> bias_scales(static_cast<size_t>(OC));
+        for (size_t i = 0; i < bias_quant.size(); ++i) {
+          bias_quant[i] = static_cast<int32_t>(i) - static_cast<int32_t>(OC) / 2;
+          bias_scales[i] = act_scale * (0.02f + 0.01f * static_cast<float>(i));
+        }
+        builder.Make1DInitializer<int32_t>("bias_quant", bias_quant);
+        builder.Make1DInitializer<float>("bias_scale", bias_scales);
+        builder.AddNode("bias_dql", "DequantizeLinear",
+                        {"bias_quant", "bias_scale"}, {"bias_dql_out"}, "",
+                        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+      } else {
+        const float bias_scale = act_scale * 0.03f;
+        builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
+        builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
+        builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(OC), 0));
+        builder.AddNode("bias_dql", "DequantizeLinear",
+                        {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+      }
       conv_inputs.push_back("bias_dql_out");
     }
     builder.AddNode("conv", "Conv",
@@ -3068,6 +3088,23 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
                                       /*bias=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with per-channel quantized bias (DQ axis=0, [OC] scales).
+// Exercises the per-channel branch of the INT32→FP16 bias dequantization.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBiasPerChannel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
                   ExpectedEPNodeAssignment::All,
