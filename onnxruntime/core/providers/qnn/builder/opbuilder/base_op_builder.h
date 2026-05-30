@@ -410,55 +410,14 @@ inline Ort::Status ComputePadAndOutputShape(const int64_t in_dim,
 //
 // input_shape / output_shape must be NHWC / NDHWC layout with matching rank (rank 4 NHWC for 2D
 // pool, rank 5 for 3D); spatial dims are at indices [1 .. rank-2].
-inline Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
-                                         gsl::span<const uint32_t> input_shape,
-                                         gsl::span<const uint32_t> output_shape,
-                                         std::vector<uint32_t>& filter_size,
-                                         std::vector<uint32_t>& stride,
-                                         std::vector<uint32_t>& dilations,
-                                         std::vector<uint32_t>& pad_amount,
-                                         int32_t& rounding_mode) {
-  const size_t rank = input_shape.size();
-  const size_t spatial_rank = rank - 2;
-
-  {
-    auto raw = node_helper.Get("kernel_shape", std::vector<uint32_t>(spatial_rank, 1));
-    filter_size = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
-  }
-  {
-    auto raw = node_helper.Get("strides", std::vector<uint32_t>(spatial_rank, 1));
-    stride = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
-  }
-  {
-    auto raw = node_helper.Get("dilations", std::vector<uint32_t>(spatial_rank, 1));
-    dilations = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
-  }
-  {
-    auto raw = node_helper.Get("pads", std::vector<uint32_t>(spatial_rank * 2, 0));
-    pad_amount = (raw.size() == 2) ? std::vector<uint32_t>{0, raw[0], 0, raw[1]} : std::move(raw);
-  }
-
-  const auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
-  if (auto_pad != "NOTSET") {
-    for (size_t axis = 0; axis < spatial_rank; ++axis) {
-      if (auto_pad == "SAME_UPPER" || auto_pad == "SAME_LOWER") {
-        const uint32_t total_pads = (output_shape[axis + 1] - 1) * stride[axis] +
-                                    (filter_size[axis] - 1) * dilations[axis] + 1 -
-                                    input_shape[axis + 1];
-        if (auto_pad == "SAME_LOWER") {
-          pad_amount[axis + spatial_rank] = total_pads / 2;
-          pad_amount[axis] = total_pads - pad_amount[axis + spatial_rank];
-        } else {
-          pad_amount[axis] = total_pads / 2;
-          pad_amount[axis + spatial_rank] = total_pads - pad_amount[axis];
-        }
-      }
-    }
-  }
-
-  rounding_mode = node_helper.Get("ceil_mode", rounding_mode);
-  return Ort::Status();
-}
+Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
+                                  gsl::span<const uint32_t> input_shape,
+                                  gsl::span<const uint32_t> output_shape,
+                                  std::vector<uint32_t>& filter_size,
+                                  std::vector<uint32_t>& stride,
+                                  std::vector<uint32_t>& dilations,
+                                  std::vector<uint32_t>& pad_amount,
+                                  int32_t& rounding_mode);
 
 constexpr inline int64_t ComputeTotalPad(int64_t in_size,
                                          int64_t stride,

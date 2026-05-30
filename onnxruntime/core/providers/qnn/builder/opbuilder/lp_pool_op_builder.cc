@@ -77,11 +77,11 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF(rank == 5 && IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
             "QNN LpPool: rank-5 (3D pooling) is not supported on the QNN GPU backend.");
 
-  // Rank-5 native-float QNN_OP_POOL_AVG_3D fails NHWC dry-run validation on the HTP backend
-  // for FP32 / FP16 inputs (mirrors the rank-5 PoolMax3d rejection in
-  // pool_op_builder.cc::PoolOpBuilder::IsOpSupported, lines 146-148).
-  // BF16 (htp_bf16_enable=1) does have a working PoolAvg3d kernel on V81+ HTP, so we allow
-  // rank-5 in that mode. QDQ rank-5 support is deferred to the QDQ follow-up PR.
+  // On HTP, PoolAvg3d fails NHWC dry-run validation for native FP32 / FP16 inputs. (cf. the
+  // rank-5 PoolMax3d NPU rejection in pool_op_builder.cc::PoolOpBuilder::IsOpSupported, lines
+  // 146-148 — same rank==5 && NPU rejection shape, different pool-op family.)
+  // BF16 (htp_bf16_enable=1) does have a working PoolAvg3d kernel on V81+ HTP, so we allow rank-5
+  // in that mode. QDQ rank-5 support is deferred to the QDQ follow-up PR.
   const bool htp_bf16_mode =
       IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
       qnn_model_wrapper.GetModelSettings().htp_bf16_enable;
@@ -96,11 +96,16 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   const auto ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
   if (ceil_mode != 0) {
-    // QNN's CPU PoolAvg2d silently ignores rounding_mode and produces a floor-shape output, leaving
-    // the extra ceil-mode positions filled with garbage / NaN.
-    // QNN's HTP PoolAvg2d reads out-of-bounds memory at ceil-mode boundary windows (positions
-    // whose window extends past the input), producing NaN or garbage values regardless of
-    // count_pad_for_edges setting. Only the QNN GPU backend honors rounding_mode correctly.
+    // This decomposition lowers LpPool onto QNN PoolAvg2d / PoolAvg3d, so ceil_mode is realized through that AvgPool's rounding_mode
+    // param (QNN_OP_POOL_AVG_2D_PARAM_ROUNDING_MODE;
+    // Two backend-specific problems make ceil_mode=1 unsafe outside GPU:
+    //  - QNN CPU PoolAvg2d/3d silently ignores rounding_mode and emits a floor-shape output,
+    //    leaving the extra ceil-mode positions filled with garbage / NaN.
+    //  - QNN HTP PoolAvg2d/3d reads out-of-bounds memory at ceil-mode boundary windows (positions
+    //    whose window extends past the input), producing NaN / garbage regardless of the
+    //    count_pad_for_edges setting.
+    // Only the QNN GPU backend honors rounding_mode correctly,
+    // so reject ceil_mode=1 elsewhere.
     RETURN_IF(IsCpuBackend(qnn_model_wrapper.GetQnnBackendType()) ||
                   IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
               "QNN LpPool: ceil_mode=1 is only supported on the QNN GPU backend.");
