@@ -5,6 +5,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -67,40 +68,6 @@ Ort::Status GatherOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
 }
 
-// Makes negative indices positive and converts int64 indices to another integer type (typically int32 or uint32).
-// The input and output are both represented as byte arrays.
-template <typename SrcType, typename DstType>
-static bool MakeStaticIndicesPositiveAndValidate(const std::vector<uint8_t>& onnx_bytes,
-                                                 int64_t input0_axis_dim,
-                                                 /*out*/ std::vector<uint8_t>& qnn_bytes,
-                                                 /*out*/ bool* has_negative_indices) {
-  const size_t num_elems = onnx_bytes.size() / sizeof(SrcType);
-  gsl::span<const SrcType> onnx_indices{reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_elems};
-
-  qnn_bytes.resize(num_elems * sizeof(DstType));
-  gsl::span<DstType> qnn_indices{reinterpret_cast<DstType*>(qnn_bytes.data()), num_elems};
-
-  for (size_t i = 0; i < num_elems; i++) {
-    SrcType onnx_index = onnx_indices[i];
-
-    // Try to make a negative index positive by adding rank.
-    if (onnx_index < 0) {
-      if (has_negative_indices != nullptr) {
-        *has_negative_indices = true;
-      }
-      onnx_index += static_cast<SrcType>(input0_axis_dim);
-    }
-
-    if (onnx_index < 0 || static_cast<int64_t>(onnx_index) >= input0_axis_dim) {
-      return false;  // QNN does not support out-of-bounds indices.
-    }
-
-    qnn_indices[i] = static_cast<DstType>(onnx_index);
-  }
-
-  return true;
-}
-
 // Gets the size of input0 on the axis dimension.
 static Ort::Status GetInput0AxisDimValue(const QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
@@ -154,15 +121,15 @@ static Ort::Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
 
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
-      RETURN_IF_NOT((MakeStaticIndicesPositiveAndValidate<int64_t, int32_t>(onnx_indices_bytes, input0_axis_dim,
-                                                                            qnn_indices_bytes,
-                                                                            &has_negative_indices)),
+      RETURN_IF_NOT((utils::MakeStaticIndicesPositiveAndValidate<int64_t, int32_t>(onnx_indices_bytes, input0_axis_dim,
+                                                                                   qnn_indices_bytes,
+                                                                                   &has_negative_indices)),
                     "QNN does not support negative index values for Gather* ops");
       indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
     } else if (indices_info.qnn_data_type == QNN_DATATYPE_INT_32) {
-      RETURN_IF_NOT((MakeStaticIndicesPositiveAndValidate<int32_t, int32_t>(onnx_indices_bytes, input0_axis_dim,
-                                                                            qnn_indices_bytes,
-                                                                            &has_negative_indices)),
+      RETURN_IF_NOT((utils::MakeStaticIndicesPositiveAndValidate<int32_t, int32_t>(onnx_indices_bytes, input0_axis_dim,
+                                                                                   qnn_indices_bytes,
+                                                                                   &has_negative_indices)),
                     "QNN does not support negative index values for Gather* ops");
     } else {
       qnn_indices_bytes = std::move(onnx_indices_bytes);
