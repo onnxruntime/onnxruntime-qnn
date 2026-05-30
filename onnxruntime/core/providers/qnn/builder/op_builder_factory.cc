@@ -38,6 +38,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
+  CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
