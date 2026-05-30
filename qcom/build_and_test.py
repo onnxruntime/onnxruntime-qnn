@@ -158,7 +158,7 @@ Environment variables
         "--target-py-version",
         choices=["3.10", "3.11", "3.12", "3.13", "3.14", "None"],
         default="3.10" if is_host_linux() else "3.12",
-        help="[Windows only] Build a wheel for this version of Python",
+        help="Build a wheel for this version of Python",
     )
     parser.add_argument(
         "--venv-path",
