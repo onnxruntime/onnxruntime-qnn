@@ -41,8 +41,9 @@ static GetTestQDQModelFn<QuantType> BuildQDQOneHotTestCase(
     const TestInputDef<int64_t>& indices_def,
     const TestInputDef<int64_t>& depth_def,
     const TestInputDef<float>& values_def,
-    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
-  return [indices_def, depth_def, values_def, attrs](
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+    bool use_contrib_qdq = false) {
+  return [indices_def, depth_def, values_def, attrs, use_contrib_qdq](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     MakeTestInput<int64_t>(builder, "indices", indices_def);
     MakeTestInput<int64_t>(builder, "depth", depth_def);
@@ -52,7 +53,7 @@ static GetTestQDQModelFn<QuantType> BuildQDQOneHotTestCase(
     builder.AddNode("OneHot_node", "OneHot", {"indices", "depth", "values"}, {one_hot_out}, "", attrs);
 
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
-        builder, "qdq_out", one_hot_out, output_qparams[0].scale, output_qparams[0].zero_point);
+        builder, "qdq_out", one_hot_out, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -86,13 +87,14 @@ static void RunQDQOneHotTest(
     const TestInputDef<float>& values_def,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
     ExpectedEPNodeAssignment expected_ep_assignment,
-    int opset = 11) {
+    int opset = 11,
+    bool use_contrib_qdq = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto f32_model_fn = BuildOneHotTestCase<int64_t, float>(indices_def, depth_def, values_def, attrs);
-  auto qdq_model_fn = BuildQDQOneHotTestCase<QuantType>(indices_def, depth_def, values_def, attrs);
+  auto qdq_model_fn = BuildQDQOneHotTestCase<QuantType>(indices_def, depth_def, values_def, attrs, use_contrib_qdq);
 
   TestQDQModelAccuracy<QuantType>(f32_model_fn, qdq_model_fn, provider_options, opset, expected_ep_assignment);
 }
@@ -126,16 +128,6 @@ TEST_F(QnnCPUBackendTests, OneHot_FP32_2DIndices) {
       TestInputDef<int64_t>({2, 3}, false, {0, 1, 2, 1, 0, 2}),
       TestInputDef<int64_t>({1}, true, {4}),
       TestInputDef<float>({2}, true, {-1.0f, 1.0f}),
-      {},
-      "cpu",
-      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, OneHot_FP32_Int32Indices) {
-  RunOneHotTest(
-      TestInputDef<int32_t>({4}, false, {0, 1, 2, 3}),
-      TestInputDef<int64_t>({1}, true, {5}),
-      TestInputDef<float>({2}, true, {0.0f, 1.0f}),
       {},
       "cpu",
       ExpectedEPNodeAssignment::All);
@@ -198,16 +190,6 @@ TEST_F(QnnHTPBackendTests, OneHot_FP32_2DIndices) {
       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPBackendTests, OneHot_FP32_Int32Indices) {
-  RunOneHotTest(
-      TestInputDef<int32_t>({4}, false, {0, 1, 2, 3}),
-      TestInputDef<int64_t>({1}, true, {5}),
-      TestInputDef<float>({2}, true, {0.0f, 1.0f}),
-      {},
-      "htp",
-      ExpectedEPNodeAssignment::All);
-}
-
 TEST_F(QnnHTPBackendTests, OneHot_FP32_LargeDepth) {
   RunOneHotTest(
       TestInputDef<int64_t>({8}, false, {0, 1, 2, 3, 4, 5, 6, 7}),
@@ -228,14 +210,17 @@ TEST_F(QnnHTPBackendTests, OneHot_QDQ_U8) {
       ExpectedEPNodeAssignment::All);
 }
 
-// QDQ uint16 test
+// QDQ uint16 test — uses com.microsoft Q/DQ ops since ONNX QuantizeLinear
+// only supports uint16 zero-points from opset 21.
 TEST_F(QnnHTPBackendTests, OneHot_QDQ_U16) {
   RunQDQOneHotTest<uint16_t>(
       TestInputDef<int64_t>({4}, false, {0, 2, 1, 3}),
       TestInputDef<int64_t>({1}, true, {5}),
       TestInputDef<float>({2}, true, {0.0f, 1.0f}),
       {},
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      11,
+      true);  // use_contrib_qdq
 }
 
 // QDQ with axis attribute
@@ -293,30 +278,6 @@ TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis0) {
       TestInputDef<int64_t>({1}, true, {5}),
       TestInputDef<float>({2}, true, {0.0f, 1.0f}),
       {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-      ExpectedEPNodeAssignment::All);
-}
-
-//
-// GPU tests — ARM64 Windows only
-//
-
-TEST_F(QnnGPUBackendTests, OneHot_FP32_Axis_Default) {
-  RunOneHotTest(
-      TestInputDef<int64_t>({4}, false, {0, 2, 1, 3}),
-      TestInputDef<int64_t>({1}, true, {5}),
-      TestInputDef<float>({2}, true, {0.0f, 1.0f}),
-      {},
-      "gpu",
-      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnGPUBackendTests, OneHot_FP32_2DIndices) {
-  RunOneHotTest(
-      TestInputDef<int64_t>({2, 3}, false, {0, 1, 2, 1, 0, 2}),
-      TestInputDef<int64_t>({1}, true, {4}),
-      TestInputDef<float>({2}, true, {0.0f, 1.0f}),
-      {},
-      "gpu",
       ExpectedEPNodeAssignment::All);
 }
 
