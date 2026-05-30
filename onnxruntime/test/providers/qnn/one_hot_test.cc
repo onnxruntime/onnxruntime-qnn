@@ -23,10 +23,8 @@ static GetTestModelFn BuildOneHotTestCase(
     const TestInputDef<IndicesType>& indices_def,
     const TestInputDef<int64_t>& depth_def,
     const TestInputDef<ValuesType>& values_def,
-    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-    int opset = 11) {
-  return [indices_def, depth_def, values_def, attrs, opset](ModelTestBuilder& builder) {
-    ORT_UNUSED_PARAMETER(opset);
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
+  return [indices_def, depth_def, values_def, attrs](ModelTestBuilder& builder) {
     MakeTestInput<IndicesType>(builder, "indices", indices_def);
     MakeTestInput<int64_t>(builder, "depth", depth_def);
     MakeTestInput<ValuesType>(builder, "values", values_def);
@@ -73,7 +71,7 @@ static void RunOneHotTest(
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOneHotTestCase<IndicesType, ValuesType>(indices_def, depth_def, values_def, attrs, opset),
+  RunQnnModelTest(BuildOneHotTestCase<IndicesType, ValuesType>(indices_def, depth_def, values_def, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment,
@@ -93,7 +91,7 @@ static void RunQDQOneHotTest(
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_fn = BuildOneHotTestCase<int64_t, float>(indices_def, depth_def, values_def, attrs, opset);
+  auto f32_model_fn = BuildOneHotTestCase<int64_t, float>(indices_def, depth_def, values_def, attrs);
   auto qdq_model_fn = BuildQDQOneHotTestCase<QuantType>(indices_def, depth_def, values_def, attrs);
 
   TestQDQModelAccuracy<QuantType>(f32_model_fn, qdq_model_fn, provider_options, opset, expected_ep_assignment);
