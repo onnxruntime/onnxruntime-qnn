@@ -41,6 +41,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
+  CreateOneHotOpBuilder("OneHot", *this);
   CreatePadOpBuilder("Pad", *this);
   CreatePoolOpBuilder("AveragePool", *this);
   CreatePoolOpBuilder("GlobalAveragePool", *this);
