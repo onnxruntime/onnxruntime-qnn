@@ -139,8 +139,8 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
 }
 
 // Float reference model for accuracy comparison (plain MatMul on dequantized inputs).
-static GetTestModelFn BuildFloatMatMulRef(const std::vector<int64_t>& shape_a,
-                                          const std::vector<int64_t>& shape_b) {
+[[maybe_unused]] static GetTestModelFn BuildFloatMatMulRef(const std::vector<int64_t>& shape_a,
+                                                           const std::vector<int64_t>& shape_b) {
   return [shape_a, shape_b](ModelTestBuilder& builder) {
     const size_t num_a = static_cast<size_t>(
         std::accumulate(shape_a.begin(), shape_a.end(), int64_t{1}, std::multiplies<int64_t>()));

@@ -224,13 +224,13 @@ Ort::Status QLinearMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wra
   QnnQuantParamsWrapper quant_a;
   RETURN_IF_ERROR(BuildQuantParam(qnn_model_wrapper, inputs[kIdxAScale],
                                   inputs.size() > kIdxAZeroPoint ? inputs[kIdxAZeroPoint]
-                                                                  : OrtNodeUnitIODef{},
+                                                                 : OrtNodeUnitIODef{},
                                   quant_a));
 
   QnnQuantParamsWrapper quant_b;
   RETURN_IF_ERROR(BuildQuantParam(qnn_model_wrapper, inputs[kIdxBScale],
                                   inputs.size() > kIdxBZeroPoint ? inputs[kIdxBZeroPoint]
-                                                                  : OrtNodeUnitIODef{},
+                                                                 : OrtNodeUnitIODef{},
                                   quant_b));
 
   // Determine QNN data types for A and B.
@@ -407,7 +407,7 @@ Ort::Status QLinearMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper&
   QnnQuantParamsWrapper quant_a;
   RETURN_IF_ERROR(BuildQuantParam(qnn_model_wrapper, inputs[kIdxAScale],
                                   inputs.size() > kIdxAZeroPoint ? inputs[kIdxAZeroPoint]
-                                                                  : OrtNodeUnitIODef{},
+                                                                 : OrtNodeUnitIODef{},
                                   quant_a));
 
   const bool b_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxB].name);
@@ -422,7 +422,7 @@ Ort::Status QLinearMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper&
   QnnQuantParamsWrapper quant_y;
   RETURN_IF_ERROR(BuildQuantParam(qnn_model_wrapper, inputs[kIdxYScale],
                                   inputs.size() > kIdxYZeroPoint ? inputs[kIdxYZeroPoint]
-                                                                  : OrtNodeUnitIODef{},
+                                                                 : OrtNodeUnitIODef{},
                                   quant_y));
 
   // Determine output QNN data type from the ONNX output type.
