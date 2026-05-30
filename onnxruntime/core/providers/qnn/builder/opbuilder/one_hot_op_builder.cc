@@ -205,10 +205,10 @@ static Ort::Status ExtractScalarFromInitializer(QnnModelWrapper& qnn_model_wrapp
 }
 
 Ort::Status OneHotOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                            const OrtNodeUnit& node_unit,
-                                            const Ort::Logger& logger,
-                                            std::vector<std::string>& input_names,
-                                            bool do_op_validation) const {
+                                           const OrtNodeUnit& node_unit,
+                                           const Ort::Logger& logger,
+                                           std::vector<std::string>& input_names,
+                                           bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
   RETURN_IF(inputs.size() < 3, "OneHot requires 3 inputs: indices, depth, values.");
 
@@ -226,8 +226,8 @@ Ort::Status OneHotOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], indices_info));
     const Qnn_DataType_t idx_type = indices_info.qnn_data_type;
     RETURN_IF(idx_type != QNN_DATATYPE_INT_32 &&
-              idx_type != QNN_DATATYPE_INT_64 &&
-              idx_type != QNN_DATATYPE_UINT_32,
+                  idx_type != QNN_DATATYPE_INT_64 &&
+                  idx_type != QNN_DATATYPE_UINT_32,
               "OneHot: indices must be INT_32, INT_64, or UINT_32.");
 
     // Reject unsupported values types (string and complex have no QNN equivalent).
@@ -267,10 +267,10 @@ Ort::Status OneHotOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Ort::Status OneHotOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                          const OrtNodeUnit& node_unit,
-                                                          std::vector<std::string>&& input_names,
-                                                          const Ort::Logger& logger,
-                                                          bool do_op_validation) const {
+                                                         const OrtNodeUnit& node_unit,
+                                                         std::vector<std::string>&& input_names,
+                                                         const Ort::Logger& logger,
+                                                         bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
   std::vector<std::string> param_tensor_names;
 
