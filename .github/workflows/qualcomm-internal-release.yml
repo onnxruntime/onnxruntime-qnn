@@ -450,6 +450,44 @@ jobs:
             echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
           fi
 
+      - name: Collect Test Archives
+        run: |
+          TEST_ARCHIVES_DIR="${{ github.workspace }}/test_archives"
+          if [ -d "$TEST_ARCHIVES_DIR" ]; then
+            echo "Folder already exists: $TEST_ARCHIVES_DIR"
+          else
+            mkdir -p "$TEST_ARCHIVES_DIR"
+          fi
+          find "${{ github.workspace }}/build" -maxdepth 3 -type f -name "*-tests.*" \
+            \( -name "*.zip" -o -name "*.tar" -o -name "*.tar.gz" -o -name "*.tar.bz2" -o -name "*.tgz" \) \
+            -exec mv {} "$TEST_ARCHIVES_DIR/" \;
+
+      - name: Prepare Test Package Archive
+        run: |
+          ./qcom/scripts/all/prepare_test_package.sh \
+            "${{ github.workspace }}/test_archives" \
+            "${{ github.workspace }}" \
+            "${{ env.QA_TAG }}"
+
+      - name: Publish Test Package Archive to Artifactory
+        if: ${{ !inputs.skip_publish_qa }}
+        run: |
+          NETRC_FILE=$(mktemp -p /tmp)
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" <<EOF
+          machine re-artifactory.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+          ZIP_NAME="onnxruntime-qnn-${{ env.QA_TAG }}-test_package.zip"
+          REPO_ROOT=$(git rev-parse --show-toplevel)
+          curl --fail -s -T "${{ github.workspace }}/test_package/${ZIP_NAME}" \
+            --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
+            --netrc-file "$NETRC_FILE" \
+            "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/${{ env.QA_TAG }}/test_package/${ZIP_NAME}" > /dev/null
+          echo "Successfully uploaded ${ZIP_NAME}"
+          rm -f "$NETRC_FILE"
+
       - name: Upload Artifacts to QA Artifactory
         if: ${{ !inputs.skip_publish_qa }}
         uses: ./.github/actions/upload-qa-artifact
