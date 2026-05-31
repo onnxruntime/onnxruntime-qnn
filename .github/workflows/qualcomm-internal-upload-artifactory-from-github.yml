@@ -468,8 +468,7 @@ jobs:
           else
             mkdir -p "$TEST_ARCHIVES_DIR"
           fi
-          find "${{ github.workspace }}/build" -maxdepth 3 -type f -name "*-tests.*" \
-            \( -name "*.zip" -o -name "*.tar" -o -name "*.tar.gz" -o -name "*.tar.bz2" -o -name "*.tgz" \) \
+          find "${{ github.workspace }}/build" -type f -name "onnxruntime-tests-*" \
             -exec mv {} "$TEST_ARCHIVES_DIR/" \;
 
       - name: Prepare Test Package Archive
