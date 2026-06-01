@@ -575,6 +575,14 @@ BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   return cached_ir_support_;
 }
 
+BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
+  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_ir_support_ = test::GetIRSupport();
+  }
+
+  return cached_ir_support_;
+}
+
 // TODO: Consider using public DeviceCompatibility API for this function
 static BackendSupport GetCPUSupport() {
   return BackendSupport::SUPPORTED;
@@ -644,6 +652,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
@@ -815,6 +824,21 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version) {
   const auto it = opset_with_axes_as_input.find(op_type);
 
   return (it != opset_with_axes_as_input.cend()) && (it->second <= opset_version);
+}
+
+void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
+                         const GetTestModelFn& model_build_fn,
+                         int opset_version) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
+  result = std::make_unique<ModelAndBuilder>();
+  model_build_fn(result->builder);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  result->builder.model_.SerializeToString(&result->model_data);
 }
 
 }  // namespace test

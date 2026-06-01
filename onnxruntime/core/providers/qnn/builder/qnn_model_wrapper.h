@@ -49,6 +49,8 @@ class QnnModelWrapper {
                   const Ort::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& validator_backend_handle,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
                   QnnBackendType qnn_backend_type,
@@ -58,12 +60,18 @@ class QnnModelWrapper {
         logger_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
+        qnn_validator_interface_(qnn_validator_interface),
+        validator_backend_handle_(validator_backend_handle),
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides) {
+    // Invariant: validator interface and handle must both be set or both be null.
+    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
+    assert((validator_backend_handle == nullptr) ==
+           (qnn_validator_interface.backendValidateOpConfig == nullptr));
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -424,6 +432,9 @@ class QnnModelWrapper {
   }
 
  private:
+  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
+                              std::string& error_msg) const;
+
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
                                    const std::vector<std::string>& names,
                                    std::vector<Qnn_Tensor_t>& tensor_wrappers,
@@ -479,6 +490,8 @@ class QnnModelWrapper {
   const Ort::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
+  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
+  const Qnn_BackendHandle_t& validator_backend_handle_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`
