@@ -171,7 +171,7 @@ class QnnModel {
   GraphInputOutputInfo graph_outputs_;
   std::vector<QnnTensorInfo> qnn_input_infos_;
   std::vector<QnnTensorInfo> qnn_output_infos_;
-  QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+  QnnBackendType qnn_backend_type_ = QnnBackendType::INVALID;
 
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
