@@ -44,7 +44,15 @@ static QuantParams<QType> ComputeQuantParams(float rmin, float rmax) {
 }
 
 /**
- * Builds a QLinearMatMul graph directly (no DQ/Q wrappers).
+ * Builds a QLinearMatMul graph and dequantizes its output to float.
+ *
+ * The graph is:  a, b (quantized) -> QLinearMatMul -> y_q (quantized) -> DequantizeLinear -> y (float)
+ *
+ * We dequantize the output so accuracy is compared in float space with a tolerance. QNN HTP and
+ * ORT CPU use slightly different rounding/accumulation, so the raw quantized integer output can
+ * differ by 1 LSB. Comparing the dequantized float output with an fp32 tolerance absorbs that
+ * expected 1-unit quantization difference (same rationale as the QDQ MatMul tests).
+ *
  * AType/BType/YType: int8 or uint8.
  * b_is_initializer: if true, B and its quant params are graph initializers.
  * dynamic_a_scale: if true, a_scale is a graph input (not initializer) — for rejection tests.
@@ -106,25 +114,20 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
     std::vector<std::string> node_inputs = {
         "a", a_scale_name, "a_zp", "b", "b_scale", "b_zp", "y_scale", "y_zp"};
 
-    builder.MakeOutput("y");
-    builder.AddNode("QLinearMatMul", "QLinearMatMul", node_inputs, {"y"}, kOnnxDomain);
-  };
-}
+    if (dynamic_a_scale) {
+      // Rejection test: emit the quantized output directly (no DequantizeLinear). The DQ op is
+      // itself supported by QNN EP, so wrapping it would let QNN grab the lone DQ node and break
+      // an ExpectedEPNodeAssignment::None check. Accuracy isn't verified for rejection tests.
+      builder.MakeOutput("y_q");
+      builder.AddNode("QLinearMatMul", "QLinearMatMul", node_inputs, {"y_q"}, kOnnxDomain);
+    } else {
+      builder.AddNode("QLinearMatMul", "QLinearMatMul", node_inputs, {"y_q"}, kOnnxDomain);
 
-// Float reference model for accuracy comparison (plain MatMul on dequantized inputs).
-[[maybe_unused]] static GetTestModelFn BuildFloatMatMulRef(const std::vector<int64_t>& shape_a,
-                                                           const std::vector<int64_t>& shape_b) {
-  return [shape_a, shape_b](ModelTestBuilder& builder) {
-    const size_t num_a = static_cast<size_t>(
-        std::accumulate(shape_a.begin(), shape_a.end(), int64_t{1}, std::multiplies<int64_t>()));
-    const size_t num_b = static_cast<size_t>(
-        std::accumulate(shape_b.begin(), shape_b.end(), int64_t{1}, std::multiplies<int64_t>()));
-    auto float_a = GetFloatDataInRange(-1.0f, 1.0f, num_a);
-    auto float_b = GetFloatDataInRange(-0.5f, 0.5f, num_b);
-    builder.MakeInput<float>("input_a", shape_a, float_a);
-    builder.MakeInput<float>("input_b", shape_b, float_b);
-    builder.MakeOutput("output");
-    builder.AddNode("MatMul", "MatMul", {"input_a", "input_b"}, {"output"}, kOnnxDomain);
+      // Dequantize the quantized output to float (reuse y_scale / y_zp), so accuracy is
+      // compared in float space with tolerance rather than via exact integer equality.
+      builder.MakeOutput("y");
+      builder.AddNode("DequantizeLinear", "DequantizeLinear", {"y_q", "y_scale", "y_zp"}, {"y"}, kOnnxDomain);
+    }
   };
 }
 
