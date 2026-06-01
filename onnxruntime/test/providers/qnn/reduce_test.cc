@@ -213,7 +213,6 @@ static void RunReduceTest(const std::string& op_type,
 // ReduceL2
 //
 
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Test creates a graph with a ReduceSum node, and checks that all nodes are supported by the QNN EP

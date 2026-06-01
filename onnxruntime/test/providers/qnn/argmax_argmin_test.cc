@@ -41,9 +41,9 @@ static GetTestQDQModelFn<QType> BuildQDQArgMxxTestCase(const std::string& op_typ
 // Runs an ArgMax/ArgMin model on the specified QNN backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 [[maybe_unused]] static void RunArgMxxOpTest(const std::string& op_type, TestInputDef<float> input_def,
-                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                            ExpectedEPNodeAssignment expected_ep_assignment,
-                            const std::string& backend_name = "htp", int opset = 13) {
+                                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                             ExpectedEPNodeAssignment expected_ep_assignment,
+                                             const std::string& backend_name = "htp", int opset = 13) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;

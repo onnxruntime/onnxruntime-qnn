@@ -81,7 +81,6 @@ static void RunOpTestOnCPU(const std::string& op_type,
 // Disabled because QNN SDK 2.17 Relu treats inf as FLT_MAX.
 // Log: the value pair (inf, 3.40282347e+38) at index #12 don't match
 
-
 // Rank > 4D is supported on CPU (no HTP rank constraint).
 
 // Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.

@@ -105,14 +105,6 @@ static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
                                     /*tolerance=*/tolerance);
 }
 
-
-
-
-
-
-
-
-
 //
 // QNN HTP F16
 //

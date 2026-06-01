@@ -859,17 +859,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_c_only) {
 
 // CPU FP32
 
-
-
-
-
-
-
-
-
-
-
-
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

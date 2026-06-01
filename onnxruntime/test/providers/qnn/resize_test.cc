@@ -221,12 +221,6 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
 // Cpu tests that use the "linear" mode.
 //
 
-
-
-
-
-
-
 // Test Resize downsample with mode: "linear", coordinate_transformation_mode: "align_corners"
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

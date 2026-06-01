@@ -40,9 +40,6 @@ static void RunIsInfTest(const std::vector<TestInputDef<DataType>>& input_defs,
                   fp32_abs_err);
 }
 
-
-
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // IsInf is intentionally declined on the HTP backend: the only registered HTP IsInf kernel

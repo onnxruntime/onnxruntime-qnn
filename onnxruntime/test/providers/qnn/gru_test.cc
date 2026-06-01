@@ -196,7 +196,6 @@ static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<floa
 // CPU FP32 Tests
 // ============================================================
 
-
 // Y-only (has_Y=true, has_Y_h=false)
 
 // Y_h-only (has_Y=false, has_Y_h=true)

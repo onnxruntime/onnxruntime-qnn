@@ -307,17 +307,17 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
 // Runs a Conv model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 [[maybe_unused]] static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<float>& input_def,
-                          const TestInputDef<float>& weights_def,
-                          const TestInputDef<float>& bias_def,
-                          const std::vector<int64_t>& strides,
-                          const std::vector<int64_t>& pads,
-                          const std::vector<int64_t>& dilations,
-                          std::optional<int64_t> group,
-                          const std::string& auto_pad,
-                          ExpectedEPNodeAssignment expected_ep_assignment,
-                          const std::string& backend_name = "htp",
-                          int opset = 13,
-                          float fp32_abs_err = 1e-5f) {
+                                           const TestInputDef<float>& weights_def,
+                                           const TestInputDef<float>& bias_def,
+                                           const std::vector<int64_t>& strides,
+                                           const std::vector<int64_t>& pads,
+                                           const std::vector<int64_t>& dilations,
+                                           std::optional<int64_t> group,
+                                           const std::string& auto_pad,
+                                           ExpectedEPNodeAssignment expected_ep_assignment,
+                                           const std::string& backend_name = "htp",
+                                           int opset = 13,
+                                           float fp32_abs_err = 1e-5f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -659,7 +659,6 @@ static void RunHTPConvOpPerChannelTest(const std::string& conv_op_type, const Te
 
 // large input,output, pads
 
-
 // Test 1D Conv with static weights (implemented in QNN EP as 2D convolution with height of 1).
 
 // Test 1D Conv with dynamic weights (implemented in QNN EP as 2D convolution with height of 1).
@@ -714,7 +713,6 @@ static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
     builder.AddNode("Conv", "Conv", {"input", "weight_dq1"}, {"output"}, kOnnxDomain, conv_attrs);
   };
 }
-
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
