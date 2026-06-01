@@ -440,10 +440,13 @@ jobs:
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tests
 
-      - name: Download x86_64 Linux Tests from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64-py3.10-tests
+      
+      # This will be enables once we start shipping x86_64 Linux wheels
+
+      # - name: Download x86_64 Linux Tests from Artifactory
+      #   uses: ./.github/actions/download-ci-artifact
+      #   with:
+      #     name: linux-x86_64-py3.10-tests
 
       - name: Download ARM64 Windows Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
