@@ -46,7 +46,6 @@ static std::string MakeSharedLibraryPath(std::string_view name) {
 #endif
 }
 
-const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
 const std::string kDefaultGenieBackendPath = MakeSharedLibraryPath("Genie");
 const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
 const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
@@ -60,14 +59,12 @@ constexpr std::string_view kGenieBackendTypeName{"genie"};
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
-  constexpr std::string_view kCpuBackendTypeName{"cpu"};
   constexpr std::string_view kGpuBackendTypeName{"gpu"};
   constexpr std::string_view kHtpBackendTypeName{"htp"};
   constexpr std::string_view kSaverBackendTypeName{"saver"};
   constexpr std::string_view kIrBackendTypeName{"ir"};
 
   constexpr std::array kAllowedBackendTypeNames{
-      kCpuBackendTypeName,
       kGenieBackendTypeName,
       kGpuBackendTypeName,
       kHtpBackendTypeName,
@@ -76,9 +73,7 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
   };
 
   std::optional<std::string> associated_backend_path{};
-  if (backend_type_name == kCpuBackendTypeName) {
-    associated_backend_path = kDefaultCpuBackendPath;
-  } else if (backend_type_name == kGenieBackendTypeName) {
+  if (backend_type_name == kGenieBackendTypeName) {
     associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
@@ -1578,11 +1573,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
     ep->CreateHtpPowerConfigId();
-  }
-
-  // Report error if QNN CPU backend is loaded while CPU fallback is disabled
-  if (ep->disable_cpu_ep_fallback_ && ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::CPU) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn CPU backend is loaded while CPU fallback is disabled.");
   }
 
   if ((ep->context_cache_enabled_ || is_qnn_ctx_model) && !qnn::IsQpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
