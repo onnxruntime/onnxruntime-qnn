@@ -32,7 +32,6 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBack
 };
 
 static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBackendTypes = {
-    {OrtHardwareDeviceType_CPU, "cpu"},
     {OrtHardwareDeviceType_NPU, "htp"},
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
@@ -146,8 +145,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     auto device_type = factory->ort_api.HardwareDevice_Type(device);
     auto vendor_id = factory->ort_api.HardwareDevice_VendorId(device);
 
-    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) ||
-        device_type == OrtHardwareDeviceType_CPU) {
+    if (kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) {
       RETURN_IF_NOT_NULL(create_ep_device(device));
 
       if (device_type == OrtHardwareDeviceType_NPU) {
@@ -419,15 +417,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   auto device_type = factory->ort_api.HardwareDevice_Type(hw);
   auto vendor_id = factory->ort_api.HardwareDevice_VendorId(hw);
 
-  // QNN EP supports general CPU devices and NPU/GPU devices with Qualcomm vendor ID
   auto supported_backend_types_it = kSupportedBackendTypes.find(device_type);
-  if (supported_backend_types_it == kSupportedBackendTypes.end() || (vendor_id != factory->vendor_id_ && device_type != OrtHardwareDeviceType_CPU)) {
+  if (supported_backend_types_it == kSupportedBackendTypes.end() || vendor_id != factory->vendor_id_) {
     OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
         reasons,
         QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
-        "QNN EP only supports general CPU devices and Qualcomm NPU and GPU devices");
+        "QNN EP only supports Qualcomm NPU and GPU devices");
   }
 
   // Create a temporary QNN EP and to check device compatibility
