@@ -21,7 +21,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
 #include "QnnLog.h"
 #include "QnnTypes.h"

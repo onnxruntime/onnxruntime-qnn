@@ -11,7 +11,6 @@
 #include <memory>
 #include <string>
 
-#include "CPU/QnnCpuCommon.h"
 #include "DSP/QnnDspCommon.h"
 #include "GPU/QnnGpuCommon.h"
 #include "HTP/QnnHtpCommon.h"
@@ -273,11 +272,8 @@ Ort::Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
   return Ort::Status();
 }
 
-void QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
+Ort::Status QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
   switch (backend_id) {
-    case QNN_BACKEND_ID_CPU:
-      qnn_backend_type_ = QnnBackendType::CPU;
-      break;
     case QNN_BACKEND_ID_GPU:
       qnn_backend_type_ = QnnBackendType::GPU;
       break;
@@ -292,9 +288,10 @@ void QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
       qnn_backend_type_ = QnnBackendType::SERIALIZER;
       break;
     default:
-      qnn_backend_type_ = QnnBackendType::CPU;
-      break;
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL,
+                             "Unrecognized QNN backend id: ", backend_id);
   }
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::LoadBackend() {
@@ -336,7 +333,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
   backend_id_ = backend_interface_provider->backendId;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
-  SetQnnBackendType(backend_id_);
+  RETURN_IF_ERROR(SetQnnBackendType(backend_id_));
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   std::ostringstream oss;
@@ -353,7 +350,7 @@ QnnSerializerConfig* QnnBackendManager::GetQnnSerializerConfig() {
   return qnn_serializer_config_.get();
 }
 
-// Loads the intended backend (e.g., HTP, CPU, etc) to get its type, and then
+// Loads the intended backend (e.g., HTP) to get its type, and then
 // sets QnnSaver or QnnIr as the active backend. QNN op builders will still see the intended backend
 // (e.g., HTP) as the backend type to ensure they emit the expected QNN API calls.
 // The intended backend's interface is also retained so that calls to QnnBackend_validateOpConfig
@@ -363,7 +360,7 @@ QnnSerializerConfig* QnnBackendManager::GetQnnSerializerConfig() {
 // local files: Saver dumps to C++ sources and Ir to .dlc archives.
 // This information can be used to debug issues by replaying QNN API calls with another backend.
 Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
-  // Load the intended backend (e.g., HTP, CPU) to get its type and validator interface.
+  // Load the intended backend (e.g., HTP) to get its type and validator interface.
   // The library handle is stored in validator_backend_lib_handle_ and kept alive for the
   // lifetime of this object so that backendValidateOpConfig remains callable.
   QnnInterface_t* backend_interface_provider{nullptr};
@@ -378,7 +375,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
   // Set the "intended" backend type so that QNN builders still make the expected QNN API calls.
   backend_id_ = backend_interface_provider->backendId;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
-  SetQnnBackendType(backend_id_);
+  RETURN_IF_ERROR(SetQnnBackendType(backend_id_));
 
   // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls.
   qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
