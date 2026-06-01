@@ -149,7 +149,9 @@ static void RunQLinearMatMulTest(
       BuildQLinearMatMulTestCase<AType, BType, YType>(
           shape_a, shape_b, b_is_initializer, dynamic_a_scale),
       provider_options, opset, expected_ep_assignment,
-      /*fp32_abs_err=*/1e-2f);
+      // Output is dequantized with y_scale = (2 - -2)/255 ≈ 0.0157 per LSB. HTP and CPU EP can
+      // differ by a couple of quantization units on deeper reductions, so allow ~2.5 LSB.
+      /*fp32_abs_err=*/0.04f);
 }
 
 // ---------------------------------------------------------------------------
