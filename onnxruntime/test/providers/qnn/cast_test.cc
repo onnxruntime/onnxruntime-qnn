@@ -89,7 +89,7 @@ ProviderOptions GetProviderOption(const std::string& backend_name, bool enable_f
 }
 
 /**
- * Runs a Cast model on the QNN CPU or HTP backend. Checks the graph node assignment, and that inference
+ * Runs a Cast model on the QNN HTP backend. Checks the graph node assignment, and that inference
  * outputs for QNN and CPU match.
  *
  * \param shape The shape of the input and output. Input data is randomly generated with this shape.
@@ -100,7 +100,7 @@ ProviderOptions GetProviderOption(const std::string& backend_name, bool enable_f
 template <typename InputType>
 static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::TensorProto_DataType dst_type,
                           ExpectedEPNodeAssignment expected_ep_assignment,
-                          const std::string& backend_name = "cpu",
+                          const std::string& backend_name = "htp",
                           bool enable_fp16_precision = true) {
   if (backend_name == "htp" && enable_fp16_precision) {
 #if defined(_WIN32)
@@ -116,7 +116,7 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
 
 static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
                               ExpectedEPNodeAssignment expected_ep_assignment,
-                              const std::string& backend_name = "cpu") {
+                              const std::string& backend_name = "htp") {
 #if defined(_WIN32)
   if (backend_name == "htp") {
     SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -164,30 +164,6 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
   RunQnnModelTest(testcase, provider_options, /* opset */ 13, expected_ep_assignment);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-//
-// CPU tests:
-//
-
-// Cast int32_t to float on CPU
-TEST_F(QnnCPUBackendTests, TestCastInt32ToFloat) {
-  RunCastOpTest<int32_t>({2, 3}, ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT, ExpectedEPNodeAssignment::All);
-}
-
-// Cast uint8_t to float on CPU
-TEST_F(QnnCPUBackendTests, TestCastUInt8ToFloat) {
-  RunCastOpTest<uint8_t>({2, 3}, ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT, ExpectedEPNodeAssignment::All);
-}
-
-// Cast float to int32_t on CPU
-TEST_F(QnnCPUBackendTests, TestCastFloatToInt32) {
-  RunCastOpTest<float>({2, 3}, ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT32, ExpectedEPNodeAssignment::All);
-}
-
-// Cast float to double on CPU
-TEST_F(QnnCPUBackendTests, TestCastFloatToDouble) {
-  RunCastFP64OpTest({2, 3}, ExpectedEPNodeAssignment::All);
-}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //

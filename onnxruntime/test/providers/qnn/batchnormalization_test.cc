@@ -191,37 +191,6 @@ static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
                        tolerance);
 }
 
-TEST_F(QnnCPUBackendTests, BatchNorm2D_fp32) {
-  constexpr int64_t num_channels = 2;
-  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-
-  RunQnnModelTest(
-      BuildBatchNormTestCase(
-          TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
-          TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
-          TestInputDef<float>({num_channels}, true, {1.1f, 2.1f})           // Bias initializer
-          ),
-      provider_options,
-      13,
-      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, BatchNorm2D_int8) {
-  constexpr int64_t num_channels = 2;
-  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
-
-  RunBatchNormQDQTestOnCPU<uint8_t, uint8_t>(
-      TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
-      TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
-      TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
-      ExpectedEPNodeAssignment::All,
-      QDQTolerance());
-}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

@@ -13,13 +13,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Gemm operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a Gemm operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunGemmTest(const std::vector<TestInputDef<DataType>>& input_defs,
                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                         ExpectedEPNodeAssignment expected_ep_assignment,
-                        const std::string& backend_name = "cpu",
+                        const std::string& backend_name = "htp",
                         int opset = 13) {
   ProviderOptions provider_options;
 
@@ -30,155 +30,6 @@ static void RunGemmTest(const std::vector<TestInputDef<DataType>>& input_defs,
                   provider_options,
                   opset,
                   expected_ep_assignment);
-}
-
-//
-// CPU tests:
-//
-
-// Test that Gemm with non-default 'alpha' or 'beta' attributes is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Gemm_NonDefaultAlphaBeta_Unsupported) {
-  // Check that alpha != 1.0f is not supported.
-  RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
-                      TestInputDef<float>({2, 4}, false, -10.0f, 10.0f)},
-                     {test::MakeAttribute("alpha", 1.5f)},
-                     ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-
-  // Check that non-zero, non-default beta is not supported.
-  RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
-                      TestInputDef<float>({2, 4}, false, -10.0f, 10.0f),
-                      TestInputDef<float>({1, 4}, false, -1.0f, 1.0f)},
-                     {test::MakeAttribute("beta", 1.2f)},
-                     ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-}
-
-// Test Gemm with 2D bias is supported.
-TEST_F(QnnCPUBackendTests, Gemm_2D_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 12);
-
-  // 2D matrix mul with bias is supported.
-  RunGemmTest<float>({TestInputDef<float>({2, 3}, false, input_a_data),
-                      TestInputDef<float>({3, 4}, false, input_b_data),
-                      TestInputDef<float>({2, 4}, false, -1.0f, 1.0f)},
-                     {},
-                     ExpectedEPNodeAssignment::All);  // Assigned to QNN EP.
-
-  // However, 2D matrix mul without a bias is supported. Input A's 0th dimension is interpreted as `batch_size`.
-  RunGemmTest<float>({TestInputDef<float>({2, 3}, false, input_a_data),
-                      TestInputDef<float>({3, 4}, false, input_b_data)},
-                     {},
-                     ExpectedEPNodeAssignment::All);  // Assigned to QNN EP.
-}
-
-// Test Gemm with dynamic (i.e., not initializer) inputs (A, B, Bias).
-TEST_F(QnnCPUBackendTests, Gemm_Dynamic_A_B_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
-  RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
-                      TestInputDef<float>({6, 4}, false, input_b_data),
-                      TestInputDef<float>({1, 4}, false, input_c_data)},
-                     {},
-                     ExpectedEPNodeAssignment::All);
-}
-
-// Test Gemm with static B and Bias inputs.
-TEST_F(QnnCPUBackendTests, Gemm_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
-  RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
-                      TestInputDef<float>({6, 4}, true, input_b_data),
-                      TestInputDef<float>({1, 4}, true, input_c_data)},
-                     {},
-                     ExpectedEPNodeAssignment::All);
-}
-
-// Test Gemm with beta=0.0: bias is present but must be ignored.
-TEST_F(QnnCPUBackendTests, Gemm_ZeroBeta_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
-  RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
-                      TestInputDef<float>({6, 4}, true, input_b_data),
-                      TestInputDef<float>({1, 4}, true, input_c_data)},
-                     {test::MakeAttribute("beta", 0.0f)},
-                     ExpectedEPNodeAssignment::All);
-}
-
-// Test Gemm with transposed A/B and static B and Bias inputs.
-TEST_F(QnnCPUBackendTests, Gemm_TransAB_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
-  RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
-                      TestInputDef<float>({4, 6}, true, input_b_data),
-                      TestInputDef<float>({1, 4}, true, input_c_data)},
-                     {test::MakeAttribute("transA", static_cast<int64_t>(1)),
-                      test::MakeAttribute("transB", static_cast<int64_t>(1))},
-                     ExpectedEPNodeAssignment::All);
-}
-
-// Test Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
-TEST_F(QnnCPUBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
-  RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
-                      TestInputDef<float>({4, 6}, false, input_b_data),
-                      TestInputDef<float>({1, 4}, false, input_c_data)},
-                     {test::MakeAttribute("transA", static_cast<int64_t>(1)),
-                      test::MakeAttribute("transB", static_cast<int64_t>(1))},
-                     ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, Gemm_Broadcast_Bias_DynamicInputs) {
-  std::vector<float> input_a_data = {1.0f, 2.0f, 3.0f, 4.0f, -1.0f, -2.0f, -3.0f, -4.0f};
-  std::vector<float> input_b_data(12, 1.0f);
-  std::vector<float> input_c_data = {1.0f, 2.0f, 3.0f};
-  // Expected output (2,3):
-  // 11.0f, 12.0f, 13.0f,
-  // -9.0f, -8.0f, -7.0f
-
-  // All dynamic inputs
-  RunGemmTest<float>({TestInputDef<float>({2, 4}, false, input_a_data),
-                      TestInputDef<float>({4, 3}, false, input_b_data),
-                      TestInputDef<float>({3}, false, input_c_data)},
-                     {},
-                     ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, Gemm_Broadcast_Bias_DynamicA_StaticB_DynamicC) {
-  std::vector<float> input_a_data = {1.0f, 2.0f, 3.0f, 4.0f, -1.0f, -2.0f, -3.0f, -4.0f};
-  std::vector<float> input_b_data(12, 1.0f);
-  std::vector<float> input_c_data = {1.0f, 2.0f, 3.0f};
-  // Expected output (2,3):
-  // 11.0f, 12.0f, 13.0f,
-  // -9.0f, -8.0f, -7.0f
-
-  // Dynamic A, static B, dynamic C
-  RunGemmTest<float>({TestInputDef<float>({2, 4}, false, input_a_data),
-                      TestInputDef<float>({4, 3}, true, input_b_data),
-                      TestInputDef<float>({3}, false, input_c_data)},
-                     {},
-                     ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, Gemm_Broadcast_Bias_DynamicA_StaticB_StaticC) {
-  std::vector<float> input_a_data = {1.0f, 2.0f, 3.0f, 4.0f, -1.0f, -2.0f, -3.0f, -4.0f};
-  std::vector<float> input_b_data(12, 1.0f);
-  std::vector<float> input_c_data = {1.0f, 2.0f, 3.0f};
-  // Expected output (2,3):
-  // 11.0f, 12.0f, 13.0f,
-  // -9.0f, -8.0f, -7.0f
-
-  // Dynamic A, static B, static C
-  RunGemmTest<float>({TestInputDef<float>({2, 4}, false, input_a_data),
-                      TestInputDef<float>({4, 3}, true, input_b_data),
-                      TestInputDef<float>({3}, true, input_c_data)},
-                     {},
-                     ExpectedEPNodeAssignment::All);
 }
 
 namespace {
@@ -206,7 +57,7 @@ GetTestModelFn BuildReshapeGemmTestCase(const TestInputDef<float>& input, const 
 void RunReshapeGemmTest(const TestInputDef<float>& input, const TestInputDef<int64_t>& shape,
                         const TestInputDef<float>& weight, const TestInputDef<float>& bias,
                         ExpectedEPNodeAssignment expected_ep_assignment,
-                        const std::string& backend_name = "cpu", float fp32_abs_err = 1e-5f) {
+                        const std::string& backend_name = "htp", float fp32_abs_err = 1e-5f) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
@@ -215,28 +66,6 @@ void RunReshapeGemmTest(const TestInputDef<float>& input, const TestInputDef<int
 }
 
 }  // namespace
-
-TEST_F(QnnCPUBackendTests, ReshapeGemmFusion) {
-  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, -1.0f, -2.0f, -3.0f, -4.0f};
-  std::vector<int64_t> shape_data = {4, 2};
-  std::vector<float> weight_data(6, 1.0f);
-  std::vector<float> bias_data = {1.0f, 2.0f, 3.0f};
-// GCC 13 with -O2 inlines this call chain deeply enough that its data flow analyzer loses track of
-// std::variant's initialization state inside the copy constructor (variant:224), triggering a false
-// positive -Wmaybe-uninitialized. The warning is suppressed here because TestInputDef members are
-// properly initialized in all constructors; this is a known GCC 13 analysis limitation with
-// std::variant + lambda capture + deep inlining.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#endif
-  RunReshapeGemmTest(TestInputDef<float>({2, 2, 2}, false, input_data), TestInputDef<int64_t>({2}, true, shape_data),
-                     TestInputDef<float>({2, 3}, true, weight_data), TestInputDef<float>({3}, true, bias_data),
-                     ExpectedEPNodeAssignment::All);
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
-}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
@@ -579,17 +408,6 @@ TEST_F(QnnHTPBackendTests, GemmFromMatMulAddNonStaticBias) {
                   /*opset=*/18,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
-}
-
-TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
-                  provider_options,
-                  /*opset=*/18,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

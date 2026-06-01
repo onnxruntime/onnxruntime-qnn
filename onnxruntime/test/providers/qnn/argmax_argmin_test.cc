@@ -43,7 +43,7 @@ static GetTestQDQModelFn<QType> BuildQDQArgMxxTestCase(const std::string& op_typ
 static void RunArgMxxOpTest(const std::string& op_type, TestInputDef<float> input_def,
                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                             ExpectedEPNodeAssignment expected_ep_assignment,
-                            const std::string& backend_name = "cpu", int opset = 13) {
+                            const std::string& backend_name = "htp", int opset = 13) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
@@ -71,22 +71,6 @@ static void RunQDQArgMxxOpTest(const std::string& op_type, TestInputDef<float> i
                        provider_options,
                        opset,
                        expected_ep_assignment);
-}
-
-//
-// CPU tests:
-//
-
-// Test that ArgMax/ArgMin with default attributes works on QNN CPU backend. Compares output with CPU EP.
-TEST_F(QnnCPUBackendTests, ArgMaxMin_DefaultAttrs) {
-  RunArgMxxOpTest("ArgMax",
-                  TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                  {},                                                       // All default ONNX attributes.
-                  ExpectedEPNodeAssignment::All, "cpu", 13);
-  RunArgMxxOpTest("ArgMin",
-                  TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                  {},                                                       // All default ONNX attributes.
-                  ExpectedEPNodeAssignment::All, "cpu", 13);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

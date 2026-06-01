@@ -42,7 +42,7 @@ GetTestQDQModelFn<QuantType> BuildPoolQDQTestCase(const std::string& op_type,
   };
 }
 
-// Runs an MaxPool model on the QNN CPU backend. Checks the graph node assignment, and that inference
+// Runs an MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
 static void RunPoolOpTest(const std::string& op_type,
                           const TestInputDef<float>& input_def,
@@ -79,116 +79,6 @@ static void RunQDQPoolOpTest(const std::string& op_type,
                        opset,
                        expected_ep_assignment,
                        tolerance);
-}
-
-//
-// CPU tests:
-//
-
-// MaxPool with kernel size equal to the spatial dimension of input tensor.
-TEST_F(QnnCPUBackendTests, MaxPool_Global) {
-  RunPoolOpTest("MaxPool",
-                TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                 test::MakeAttribute("strides", std::vector<int64_t>{3, 3}),
-                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
-                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
-                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-                 test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
-  QNN_SKIP_TEST_ON_AARCH64("Test not supported on Linux ARM64");
-  // TODO: QNN CPU backend produces incorrect rank-3 MaxPool results on Linux
-  // aarch64 (qcs6490) — verified by running the same DLC with qnn-net-run + CPU backend.
-  // Re-enable once the QNN CPU team fixes the backend bug; ORT QNN EP itself is not at fault.
-  RunPoolOpTest("MaxPool",
-                TestInputDef<float>({1, 16, 120}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
-                 test::MakeAttribute("strides", std::vector<int64_t>{1}),
-                 test::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
-                 test::MakeAttribute("dilations", std::vector<int64_t>{1}),
-                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-                 test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, MaxPool_Large_Input) {
-  RunPoolOpTest("MaxPool",
-                TestInputDef<float>({1, 125, 8, 56}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                 test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
-                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
-                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
-                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-                 test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
-}
-
-// QNN CPU doesn't support ceil rounding mode. Enable this UT when QNN CPU support this case.
-TEST_F(QnnCPUBackendTests, DISABLED_MaxPool_Ceil) {
-  RunPoolOpTest("MaxPool",
-                TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                 test::MakeAttribute("strides", std::vector<int64_t>{3, 3}),
-                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
-                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
-                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
-                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-                 test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
-}
-
-// QNN CPU doesn't support ceil rounding mode. Enable this UT when QNN CPU support this case.
-TEST_F(QnnCPUBackendTests, DISABLED_MaxPool_Large_Input2_Ceil) {
-  RunPoolOpTest("MaxPool",
-                TestInputDef<float>({1, 128, 16, 113}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                 test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
-                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
-                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
-                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
-                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-                 test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, MaxPool_3D) {
-  RunPoolOpTest("MaxPool",
-                TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
-                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3, 3}),
-                 test::MakeAttribute("strides", std::vector<int64_t>{3, 3, 3}),
-                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0, 0, 0}),
-                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1, 1}),
-                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-                 test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
-}
-
-// GlobalMaxPool test
-TEST_F(QnnCPUBackendTests, GlobalMaxPoolTest) {
-  RunPoolOpTest("GlobalMaxPool",
-                TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {},
-                ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, GlobalMaxPool_3D) {
-  RunPoolOpTest("GlobalMaxPool",
-                TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
-                {},
-                ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, GlobalMaxPoolRank3) {
-  RunPoolOpTest("GlobalMaxPool",
-                TestInputDef<float>({1, 8, 5}, false, -10.0f, 10.0f),
-                {},
-                ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

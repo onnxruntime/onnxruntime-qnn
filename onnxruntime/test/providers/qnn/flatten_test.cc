@@ -12,13 +12,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Flatten operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a Flatten operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunFlattenTest(const TestInputDef<DataType>& input_def,
                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                            ExpectedEPNodeAssignment expected_ep_assignment,
-                           const std::string& backend_name = "cpu",
+                           const std::string& backend_name = "htp",
                            int opset = 13) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
@@ -27,31 +27,6 @@ static void RunFlattenTest(const TestInputDef<DataType>& input_def,
                   provider_options,
                   opset,
                   expected_ep_assignment);
-}
-
-//
-// CPU tests:
-//
-
-// Test that Flatten input (rank4) with axis == 0.
-TEST_F(QnnCPUBackendTests, Flatten_Rank4_Axis0) {
-  RunFlattenTest(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                 {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                 ExpectedEPNodeAssignment::All);
-}
-
-// Test that Flatten input (rank4) with axis == -1.
-TEST_F(QnnCPUBackendTests, Flatten_Rank4_AxisNeg1) {
-  RunFlattenTest(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                 {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                 ExpectedEPNodeAssignment::All);
-}
-
-// Test that Flatten input (rank5) with axis == 2.
-TEST_F(QnnCPUBackendTests, Flatten_Rank5_Axis2) {
-  RunFlattenTest(TestInputDef<float>({1, 2, 3, 4, 4}, false, -10.0f, 10.0f),
-                 {test::MakeAttribute("axis", static_cast<int64_t>(2))},
-                 ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -320,28 +320,8 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
 // Test Graph : Input -> Conv -> Reshape -> Transpose(perm={0,3,5,1,2,4}) -> Reshape -> Conv -> Output
 // Layout Transformer modifies Transpose perm to {0,1,3,5,2,4} to {0,5,2,4,1,3} to save one Transpose op.
 // LT Graph: T(NCHW->NHWC) -> Conv -> Reshape -> Transpose(perm={0,5,2,4,1,3}) -> Reshape -> T(NCHW->NHWC) Conv -> Output
-TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_CRD) {
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_CPU",
-                            /*input_shape=*/{1, 2, 4, 4},
-                            /*block_height=*/2,
-                            /*block_width=*/2,
-                            /*perm=*/{0, 1, 3, 5, 2, 4},
-                            /*use_qdq=*/false,
-                            /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"cpu");
-}
 
 // Disabling this test as Layout Transformer for CPU BE breaks the pattern by modifying Transpose perm, as explained above.
-TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCR_CPU",
-                            /*input_shape=*/{1, 2, 4, 4},
-                            /*block_height=*/2,
-                            /*block_width=*/2,
-                            /*perm=*/{0, 3, 5, 1, 2, 4},
-                            /*use_qdq=*/false,
-                            /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"cpu");
-}
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_Float_CRD) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -374,32 +354,6 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_QDQ_CRD) {
                                           BuildTailWrappedSpaceToDepthTestCase<>(/*use_qdq=*/true,
                                                                                  /*use_contrib_qdq=*/false),
                                           /*backend_type=*/"htp");
-}
-
-// Fails with QNN CPU graph execution failure.
-// * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_UnequalBlockSize) {
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlock_CPU",
-                            /*input_shape=*/{1, 2, 4, 6},
-                            /*block_height=*/2,
-                            /*block_width=*/3,
-                            /*perm=*/{0, 3, 5, 1, 2, 4},
-                            /*use_qdq=*/false,
-                            /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"cpu");
-}
-
-// Fails with QNN CPU graph execution failure.
-// * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_UnequalBlockSize_CRD) {
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockCRD_CPU",
-                            /*input_shape=*/{1, 2, 4, 6},
-                            /*block_height=*/2,
-                            /*block_width=*/3,
-                            /*perm=*/{0, 1, 3, 5, 2, 4},
-                            /*use_qdq=*/false,
-                            /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"cpu");
 }
 
 // Fails with Accuracy mismatch

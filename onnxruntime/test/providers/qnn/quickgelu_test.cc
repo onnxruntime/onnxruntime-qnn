@@ -11,13 +11,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a QuickGelu operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a QuickGelu operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunQuickGeluTest(const TestInputDef<DataType>& input_def,
                              float alpha,
                              ExpectedEPNodeAssignment expected_ep_assignment,
-                             const std::string& backend_name = "cpu",
+                             const std::string& backend_name = "htp",
                              float fp32_abs_err = 5e-3f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
@@ -93,31 +93,6 @@ static void RunQDQQuickGeluTest(const TestInputDef<float>& input_def,
                        13,  // opset version for contrib ops
                        expected_ep_assignment,
                        QDQTolerance(5e-3f));
-}
-
-//
-// CPU tests:
-//
-
-// Test QuickGelu with default alpha value (1.0)
-TEST_F(QnnCPUBackendTests, QuickGelu_Default_Alpha) {
-  RunQuickGeluTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
-                          1.0f,  // alpha
-                          ExpectedEPNodeAssignment::All);
-}
-
-// Test QuickGelu with custom alpha value
-TEST_F(QnnCPUBackendTests, QuickGelu_Custom_Alpha) {
-  RunQuickGeluTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
-                          1.702f,  // alpha
-                          ExpectedEPNodeAssignment::All);
-}
-
-// Test QuickGelu with negative alpha value
-TEST_F(QnnCPUBackendTests, QuickGelu_Negative_Alpha) {
-  RunQuickGeluTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
-                          -1.702f,  // alpha
-                          ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

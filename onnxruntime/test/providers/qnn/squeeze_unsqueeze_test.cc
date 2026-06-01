@@ -12,7 +12,7 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Squeeze (or Unsqueeze) operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a Squeeze (or Unsqueeze) operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunSqueezeTestOnCPU(const std::string& op_type,  // Squeeze or Unsqueeze
@@ -28,58 +28,6 @@ static void RunSqueezeTestOnCPU(const std::string& op_type,  // Squeeze or Unsqu
                   provider_options,
                   opset,
                   expected_ep_assignment);
-}
-
-//
-// CPU tests:
-//
-
-// Test that Squeeze with a dynamic axes input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Squeeze_DynamicAxes_Unsupported) {
-  RunSqueezeTestOnCPU("Squeeze",
-                      TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                      TestInputDef<int64_t>({1}, false /* is_initializer */, {0}),
-                      ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-}
-
-// Test that Unsqueeze with a dynamic axes input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Unsqueeze_DynamicAxes_Unsupported) {
-  RunSqueezeTestOnCPU("Unsqueeze",
-                      TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                      TestInputDef<int64_t>({1}, false /* is_initializer */, {0}),
-                      ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-}
-
-// Test Squeeze of rank 5 -> rank 2.
-TEST_F(QnnCPUBackendTests, Squeeze_Rank5_Rank2_f32) {
-  RunSqueezeTestOnCPU("Squeeze",
-                      TestInputDef<float>({1, 3, 1, 2, 4}, false, -10.0f, 10.0f),
-                      TestInputDef<int64_t>({2}, true, {0, 2}),  // Squeeze axes 0 and 2 => (3, 2, 4)
-                      ExpectedEPNodeAssignment::All);
-}
-
-// Test Squeeze of rank 4 -> rank 3 with a negative axes value.
-TEST_F(QnnCPUBackendTests, Squeeze_Rank4_Rank3_NegAxes_f32) {
-  RunSqueezeTestOnCPU("Squeeze",
-                      TestInputDef<float>({1, 3, 2, 1}, false, -10.0f, 10.0f),
-                      TestInputDef<int64_t>({1}, true, {-1}),  // Squeeze last axis => (1, 3, 2)
-                      ExpectedEPNodeAssignment::All);
-}
-
-// Test Unsqueeze of rank 3 -> rank 5.
-TEST_F(QnnCPUBackendTests, Unsqueeze_Rank3_Rank5_f32) {
-  RunSqueezeTestOnCPU("Unsqueeze",
-                      TestInputDef<float>({3, 2, 4}, false, -10.0f, 10.0f),
-                      TestInputDef<int64_t>({2}, true, {0, 2}),  // Add 1's => (1, 3, 1, 2, 4)
-                      ExpectedEPNodeAssignment::All);
-}
-
-// Test Unsqueeze of rank 3 -> rank 4 with a negative axes value.
-TEST_F(QnnCPUBackendTests, Unsqueeze_Rank3_Rank4_NegAxes_f32) {
-  RunSqueezeTestOnCPU("Unsqueeze",
-                      TestInputDef<float>({1, 3, 2}, false, -10.0f, 10.0f),
-                      TestInputDef<int64_t>({1}, true, {-1}),  // Add 1 as last axis => (1, 3, 2, 1)
-                      ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

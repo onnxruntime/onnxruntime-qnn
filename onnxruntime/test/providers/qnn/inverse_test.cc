@@ -13,14 +13,14 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Inverse operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a Inverse operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs,
                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                            ExpectedEPNodeAssignment expected_ep_assignment,
                            float fp32_abs_err = 1e-5,
-                           const std::string& backend_name = "cpu",
+                           const std::string& backend_name = "htp",
                            int opset = 13) {
   ProviderOptions provider_options;
 
@@ -33,40 +33,6 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
                   opset,
                   expected_ep_assignment,
                   fp32_abs_err);
-}
-
-//
-// CPU tests:
-//
-
-TEST_F(QnnCPUBackendTests, Inverse_2d_test) {
-  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
-  const std::vector<int64_t> input_shape{2, 2};
-  auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
-
-  RunInverseTest<float>({TestInputDef<float>({2, 2}, false, input_vector)},
-                        {},
-                        ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, Inverse_3d_test) {
-  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
-  const std::vector<int64_t> input_shape{5, 2, 2};
-  auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
-
-  RunInverseTest<float>({TestInputDef<float>({5, 2, 2}, false, input_vector)},
-                        {},
-                        ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, Inverse_4d_test) {
-  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
-  const std::vector<int64_t> input_shape{1, 5, 2, 2};
-  auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
-
-  RunInverseTest<float>({TestInputDef<float>({1, 5, 2, 2}, false, input_vector)},
-                        {},
-                        ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

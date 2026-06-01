@@ -146,7 +146,7 @@ static GetTestQDQModelFn<QuantType> GetQDQResizeModelBuilder(const TestInputDef<
 }
 
 /**
- * Runs a Resize model on the QNN CPU backend. Checks the graph node assignment, and that inference
+ * Runs a Resize model on the QNN HTP backend. Checks the graph node assignment, and that inference
  * outputs for QNN and CPU match.
  *
  * \param input_def The input definition (shape, data, etc).
@@ -226,161 +226,42 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
 
 // Upsample that uses "round_prefer_floor" as the "nearest_mode".
 // coordinate_transformation_mode: "half_pixel"
-TEST_F(QnnCPUBackendTests, ResizeUpsampleNearestHalfPixel_rpf) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 70);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 2, 7, 5}, false, input_data),
-                     {1, 2, 21, 10},  // Sizes
-                     "nearest",
-                     "half_pixel",
-                     "round_prefer_floor",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Upsample that uses "round_prefer_ceil" as the "nearest_mode".
 // coordinate_transformation_mode: "half_pixel"
-TEST_F(QnnCPUBackendTests, ResizeUpsampleNearestHalfPixel_rpc) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                     {1, 1, 7, 5}, "nearest", "half_pixel", "round_prefer_ceil",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Downsample that uses "round_prefer_ceil" as the "nearest_mode".
 // coordinate_transformation_mode: "half_pixel"
-TEST_F(QnnCPUBackendTests, ResizeDownsampleNearestHalfPixel_rpc) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                     {1, 1, 1, 3}, "nearest", "half_pixel", "round_prefer_ceil",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Downsample that uses "round_prefer_floor" as the "nearest_mode".
 // coordinate_transformation_mode: "half_pixel"
-TEST_F(QnnCPUBackendTests, ResizeDownsampleNearestHalfPixel_rpf) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                     {1, 1, 1, 2}, "nearest", "half_pixel", "round_prefer_ceil",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Upsample that uses "round_prefer_floor" as the "nearest_mode".
 // coordinate_transformation_mode: "align_corners"
-TEST_F(QnnCPUBackendTests, ResizeUpsampleNearestAlignCorners_rpf) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 70);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 2, 7, 5}, false, input_data),
-                     {1, 2, 21, 10}, "nearest", "align_corners", "round_prefer_floor",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Upsample that uses "round_prefer_floor" as the "nearest_mode".
 // coordinate_transformation_mode: "asymmetric"
-TEST_F(QnnCPUBackendTests, ResizeUpsampleNearestAsymmetric_rpf) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 70);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 2, 7, 5}, false, input_data),
-                     {1, 2, 21, 10}, "nearest", "asymmetric", "round_prefer_floor",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Upsample that uses "round_prefer_ceil" as the "nearest_mode".
 // coordinate_transformation_mode: "align_corners"
-TEST_F(QnnCPUBackendTests, ResizeUpsampleNearestAlignCorners_rpc) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                     {1, 1, 7, 5}, "nearest", "align_corners", "round_prefer_ceil",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Downsample that uses "round_prefer_ceil" as the "nearest_mode".
 // coordinate_transformation_mode: "align_corners"
-TEST_F(QnnCPUBackendTests, ResizeDownsampleNearestAlignCorners_rpc) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                     {1, 1, 1, 3}, "nearest", "align_corners", "round_prefer_ceil",
-                     ExpectedEPNodeAssignment::All);
-}
 
 // Downsample that uses "round_prefer_floor" as the "nearest_mode".
 // coordinate_transformation_mode: "align_corners"
-TEST_F(QnnCPUBackendTests, ResizeDownsampleNearestAlignCorners_rpf) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                     {1, 1, 1, 2}, "nearest", "align_corners", "round_prefer_floor",
-                     ExpectedEPNodeAssignment::All);
-}
 
 //
 // Cpu tests that use the "linear" mode.
 //
 
-TEST_F(QnnCPUBackendTests, Resize2xLinearHalfPixel) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 60);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                     {1, 3, 8, 10}, "linear", "half_pixel", "",
-                     ExpectedEPNodeAssignment::All);
-}
 
-TEST_F(QnnCPUBackendTests, Resize2xLinearHalfPixel_scales) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 60);
-  RunCPUResizeOpTestWithScales(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                               {1.0f, 1.0f, 2.0f, 2.0f}, "linear", "half_pixel", "",
-                               ExpectedEPNodeAssignment::All);
-}
 
-TEST_F(QnnCPUBackendTests, Resize2xLinearAlignCorners) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 60);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                     {1, 3, 8, 10}, "linear", "align_corners", "",
-                     ExpectedEPNodeAssignment::All);
-}
 
-TEST_F(QnnCPUBackendTests, Resize2xLinearAlignCorners_scales) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 60);
-  RunCPUResizeOpTestWithScales(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                               {1.0f, 1.0f, 2.0f, 2.0f}, "linear", "align_corners", "",
-                               ExpectedEPNodeAssignment::All);
-}
 
-TEST_F(QnnCPUBackendTests, Resize2xCubicHalfPixel) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 60);
-  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                     {1, 3, 8, 10}, "cubic", "half_pixel", "",
-                     ExpectedEPNodeAssignment::All);
-}
 
-TEST_F(QnnCPUBackendTests, Resize2xCubicHalfPixel_CustomCoeff) {
-  std::vector<float> input_data = GetFloatDataInRange(-2.0f, 4.0f, 60);
-  const float cubic_coeff_a = -0.5f;
-  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                     {1, 3, 8, 10}, "cubic", "half_pixel", "",
-                     ExpectedEPNodeAssignment::All,
-                     19,
-                     cubic_coeff_a);
-}
-
-TEST_F(QnnCPUBackendTests, Resize2xCubicHalfPixel_scales_inverse) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 60);
-  RunCPUResizeOpTestWithScales(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
-                               {1.0f, 1.0f, 0.5f, 0.5f}, "cubic", "half_pixel", "",
-                               ExpectedEPNodeAssignment::None);
-}
 
 // Test Resize downsample with mode: "linear", coordinate_transformation_mode: "align_corners"
-TEST_F(QnnCPUBackendTests, Resize_DownSample_Linear_AlignCorners_scales) {
-  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
-  RunCPUResizeOpTestWithScales(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                               {1.0f, 1.0f, 0.6f, 0.6f}, "linear", "align_corners", "",
-                               ExpectedEPNodeAssignment::All);
-}
-
-// Note: The QNN CPU backend does not define explicit scale attributes. It derives scale values
-// implicitly from the input and output tensor shapes. Therefore, the selected parameters must
-// ensure that the product of the input dimensions and the inferred scales evaluates to an integer.
-TEST_F(QnnCPUBackendTests, Resize_DownSample_Linear_HalfPixel_scales) {
-  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
-  RunCPUResizeOpTestWithScales(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                               {1.0f, 1.0f, 0.5f, 0.5f}, "linear", "half_pixel", "",
-                               ExpectedEPNodeAssignment::All);
-}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //

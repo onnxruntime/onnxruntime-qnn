@@ -61,7 +61,7 @@ static GetTestModelFn BuildQDQLogicalOpTestCase(const std::string& op_type, cons
   };
 }
 
-// Runs a model with a logical operator on the QNN CPU backend. Checks the graph node assignment, and that inference
+// Runs a model with a logical operator on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 static void RunCPULogicalOpTest(const std::string& op_type, const std::vector<int64_t>& shape,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
@@ -91,30 +91,6 @@ static void RunQDQLogicalOpTest(const std::string& op_type, const std::vector<in
                   provider_options,
                   opset,
                   expected_ep_assignment);
-}
-
-//
-// CPU tests:
-//
-
-TEST_F(QnnCPUBackendTests, LogicalOpEqual4D) {
-  RunCPULogicalOpTest("Equal", {1, 3, 16, 16}, ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, LogicalOpGreater4D) {
-  RunCPULogicalOpTest("Greater", {1, 3, 16, 16}, ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, LogicalOpGreaterOrEqual4D) {
-  RunCPULogicalOpTest("GreaterOrEqual", {1, 3, 16, 16}, ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, LogicalOpLess4D) {
-  RunCPULogicalOpTest("Less", {1, 3, 16, 16}, ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, LogicalOpLessOrEqual4D) {
-  RunCPULogicalOpTest("LessOrEqual", {1, 3, 16, 16}, ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

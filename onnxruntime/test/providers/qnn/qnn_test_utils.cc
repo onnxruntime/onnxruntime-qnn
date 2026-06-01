@@ -575,39 +575,6 @@ BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   return cached_ir_support_;
 }
 
-BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
-  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport();
-  }
-
-  return cached_ir_support_;
-}
-
-// TODO: Consider using public DeviceCompatibility API for this function
-static BackendSupport GetCPUSupport() {
-  return BackendSupport::SUPPORTED;
-}
-
-void QnnCPUBackendTests::SetUp() {
-  if (cached_cpu_support_ == BackendSupport::SUPPORTED) {
-    return;
-  }
-
-  Ort::Logger logger = Ort::Logger();
-
-  // Determine if CPU backend is supported only if we done so haven't before.
-  if (cached_cpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_cpu_support_ = GetCPUSupport();
-  }
-
-  if (cached_cpu_support_ == BackendSupport::UNSUPPORTED) {
-    GTEST_SKIP();
-  } else if (cached_cpu_support_ == BackendSupport::SUPPORT_ERROR) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN CPU backend is available.");
-    FAIL();
-  }
-}
-
 void GenieBackendTests::SetUp() {
   // Base fixture — derived fixtures (e.g. GenieSessionTest) are responsible
   // for platform and availability checks.
@@ -615,8 +582,7 @@ void GenieBackendTests::SetUp() {
 
 static BackendSupport GetIRSupport() {
   // QnnIr should be able to serialize any model supported by the QNN reference spec.
-  // Use a model that works on QnnCpu to verify QnnIr availability.
-  return GetCPUSupport();
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnIRBackendTests::SetUp() {
@@ -643,16 +609,11 @@ void QnnIRBackendTests::SetUp() {
 #if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 // TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
-
-// TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
-BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
-BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 

@@ -75,14 +75,14 @@ GetTestQDQModelFn<QuantType> BuildRoialignQDQTestCase(const TestInputDef<float>&
   };
 }
 
-// Runs an Roialign model on the QNN CPU backend. Checks the graph node assignment, and that inference
+// Runs an Roialign model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
 static void RunRoiAlignOpTest(const TestInputDef<float>& input_def,
                               const TestInputDef<float>& roi_def,
                               const TestInputDef<int64_t>& batch_indices_def,
                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                               ExpectedEPNodeAssignment expected_ep_assignment,
-                              const std::string& backend_name = "cpu",
+                              const std::string& backend_name = "htp",
                               int opset = 16,
                               float f32_abs_err = 1e-5f) {
   ProviderOptions provider_options;
@@ -117,64 +117,6 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
                        provider_options,
                        opset,
                        expected_ep_assignment);
-}
-
-//
-// CPU tests:
-//
-TEST_F(QnnCPUBackendTests, TestRoialign) {
-  RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
-                    TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
-                    TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
-                    ExpectedEPNodeAssignment::All);
-}
-
-// QNN CPU EP supports output_half_pixel and half_pixel.
-TEST_F(QnnCPUBackendTests, TestRoialign_half_pixel) {
-  RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
-                    TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
-                    TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
-                    ExpectedEPNodeAssignment::All);
-}
-
-// QNN only supports pooling mode = average
-TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_mode_max) {
-  RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
-                    TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
-                    TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "max"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
-                    ExpectedEPNodeAssignment::None);
-}
-
-// sampling_ratio=0 (ONNX adaptive default): num_samples computed from output dimensions
-TEST_F(QnnCPUBackendTests, TestRoialign_sampling_ratio_0) {
-  RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
-                    TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
-                    TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(0)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
-                    ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

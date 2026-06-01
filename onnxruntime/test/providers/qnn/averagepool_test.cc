@@ -15,13 +15,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs an AveragePool model on the QNN CPU backend. Checks the graph node assignment, and that inference
+// Runs an AveragePool model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
 static void RunAveragePoolOpTest(const std::string& op_type,
                                  const std::vector<TestInputDef<float>>& input_defs,
                                  const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
-                                 const std::string& backend_name = "cpu", int opset = 18) {
+                                 const std::string& backend_name = "htp", int opset = 18) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -51,107 +51,6 @@ static void RunQDQAveragePoolOpTest(const std::string& op_type,
                        opset,
                        expected_ep_assignment,
                        tolerance);
-}
-
-//
-// CPU tests:
-//
-
-// AveragePool with kernel size equal to the spatial dimension of input tensor.
-TEST_F(QnnCPUBackendTests, AveragePool_AsGlobal) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                        test::MakeAttribute("strides", std::vector<int64_t>{3, 3})},
-                       ExpectedEPNodeAssignment::All);
-}
-
-// Test GlobalAveragePool on QNN CPU backend.
-TEST_F(QnnCPUBackendTests, GlobalAveragePool) {
-  RunAveragePoolOpTest("GlobalAveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
-                       {},
-                       ExpectedEPNodeAssignment::All);
-}
-
-// AveragePool that counts padding.
-TEST_F(QnnCPUBackendTests, AveragePool_CountIncludePad) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{1, 1}),
-                        test::MakeAttribute("count_include_pad", static_cast<int64_t>(1))},
-                       ExpectedEPNodeAssignment::All);
-}
-
-// AveragePool that use auto_pad 'SAME_UPPER'.
-TEST_F(QnnCPUBackendTests, AveragePool_AutopadSameUpper) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{1, 1}),
-                        test::MakeAttribute("count_include_pad", static_cast<int64_t>(1)),
-                        test::MakeAttribute("auto_pad", "SAME_UPPER")},
-                       ExpectedEPNodeAssignment::All);
-}
-
-// AveragePool that use auto_pad 'SAME_LOWER'.
-TEST_F(QnnCPUBackendTests, AveragePool_AutopadSameLower) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{1, 1}),
-                        test::MakeAttribute("count_include_pad", static_cast<int64_t>(1)),
-                        test::MakeAttribute("auto_pad", "SAME_LOWER")},
-                       ExpectedEPNodeAssignment::All);
-}
-
-// AveragePool 3D as GlobalAveragePool.
-TEST_F(QnnCPUBackendTests, AveragePool_3D_AsGlobal) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f)},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3, 3}),
-                        test::MakeAttribute("strides", std::vector<int64_t>{3, 3, 3})},
-                       ExpectedEPNodeAssignment::All);
-}
-
-// GlobalAveragePool 3D.
-TEST_F(QnnCPUBackendTests, GlobalAveragePool_3D) {
-  RunAveragePoolOpTest("GlobalAveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f)},
-                       {},
-                       ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, GlobalAveragePoolRank3) {
-  RunAveragePoolOpTest("GlobalAveragePool",
-                       {TestInputDef<float>({1, 8, 5}, false, -10.0f, 10.0f)},
-                       {},
-                       ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, AveragePoolRank3) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 3, 5}, false, -10.0f, 10.0f)},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
-                        test::MakeAttribute("strides", std::vector<int64_t>{1}),
-                        test::MakeAttribute("pads", std::vector<int64_t>{1, 1})},
-                       ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, AveragePoolRank3AutopadSameUpper) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f)},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
-                        test::MakeAttribute("strides", std::vector<int64_t>{2}),
-                        test::MakeAttribute("auto_pad", "SAME_UPPER")},
-                       ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, AveragePoolRank3AutopadSameLower) {
-  RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f)},
-                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
-                        test::MakeAttribute("strides", std::vector<int64_t>{2}),
-                        test::MakeAttribute("auto_pad", "SAME_LOWER")},
-                       ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

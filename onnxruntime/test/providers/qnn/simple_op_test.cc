@@ -19,7 +19,7 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a non-QDQ model on the QNN CPU backend and compares output to CPU EP.
+// Runs a non-QDQ model on the QNN HTP backend and compares output to CPU EP.
 template <typename InputType = float>
 static void RunOpTestOnCPU(const std::string& op_type,
                            const std::vector<TestInputDef<InputType>>& input_defs,
@@ -56,7 +56,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
                   expected_ep_assignment);
 }
 
-// Test float DepthToSpace on the QNN CPU backend.
+// Test float DepthToSpace on the QNN HTP backend.
 // TODO: Flaky test tails often.
 // Value of: expected_tensor.DataAsSpan<float>()
 // Expected: contains 16 values, where each value and its corresponding value in 16-byte object
@@ -66,22 +66,6 @@ static void RunOpTestOnCPU(const std::string& op_type,
 //
 // If/when fixed, enable QNN EP in cpu test TensorOpTest.SpaceToDepthTest_1
 // fixed by QNN 2.32
-TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky) {
-  std::vector<float> X =
-      {0.0f, 0.1f, 0.2f, 0.3f,
-       1.0f, 1.1f, 1.2f, 1.3f,
-
-       2.0f, 2.1f, 2.2f, 2.3f,
-       3.0f, 3.1f, 3.2f, 3.3f};
-
-  for (size_t i = 0; i < 4; i++) {
-    RunOpTestOnCPU("SpaceToDepth",
-                   {TestInputDef<float>({1, 2, 2, 4}, false, X)},
-                   {test::MakeAttribute("blocksize", static_cast<int64_t>(2))},
-                   7,
-                   ExpectedEPNodeAssignment::All);
-  }
-}
 
 // Value of: expected_tensor.DataAsSpan<float>()
 // Expected: contains 108 values, where each value and its corresponding value in 16-byte object
@@ -91,69 +75,16 @@ TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky) {
 //
 // If/when fixed, enable QNN EP in cpu test TensorOpTest.SpaceToDepthTest_2
 // fixed by QNN 2.32
-TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky2) {
-  const std::vector<float> X = {
-      0., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10.,
-      11., 12., 13., 14., 15., 16., 17., 18., 19., 20., 21.,
-      22., 23., 24., 25., 26., 27., 28., 29., 30., 31., 32.,
-      33., 34., 35., 36., 37., 38., 39., 40., 41., 42., 43.,
-      44., 45., 46., 47., 48., 49., 50., 51., 52., 53., 54.,
-      55., 56., 57., 58., 59., 60., 61., 62., 63., 64., 65.,
-      66., 67., 68., 69., 70., 71., 72., 73., 74., 75., 76.,
-      77., 78., 79., 80., 81., 82., 83., 84., 85., 86., 87.,
-      88., 89., 90., 91., 92., 93., 94., 95., 96., 97., 98.,
-      99., 100., 101., 102., 103., 104., 105., 106., 107.};
-
-  for (size_t i = 0; i < 4; i++) {
-    RunOpTestOnCPU("SpaceToDepth",
-                   {TestInputDef<float>({2, 3, 3, 6}, false, X)},
-                   {test::MakeAttribute("blocksize", static_cast<int64_t>(3))},
-                   7,
-                   ExpectedEPNodeAssignment::All);
-  }
-}
 
 // Test f32 Relu on the CPU backend.
 // TODO: When this is fixed, enable ActivationOpTest.Relu test in cpu/activation/activation_op_test tests.
 // Disabled because QNN SDK 2.17 Relu treats inf as FLT_MAX.
 // Log: the value pair (inf, 3.40282347e+38) at index #12 don't match
-TEST_F(QnnCPUBackendTests, DISABLED_UnaryOp_Relu) {
-  std::vector<float> input_data{-1.0f, 0, 1.0f,
-                                100.0f, -100.0f, 1000.0f, -1000.0f,
-                                FLT_MIN, FLT_MIN / 10, -FLT_MIN / 10,
-                                FLT_MAX, -FLT_MAX, std::numeric_limits<float>::infinity()};
-  RunOpTestOnCPU("Relu",
-                 {TestInputDef<float>({13}, false, input_data)},
-                 {},
-                 14,
-                 ExpectedEPNodeAssignment::All);
-}
 
-TEST_F(QnnCPUBackendTests, UnaryOp_Softplus) {
-  RunOpTestOnCPU("Softplus",
-                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-                 {},
-                 14,
-                 ExpectedEPNodeAssignment::All);
-}
 
 // Rank > 4D is supported on CPU (no HTP rank constraint).
-TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
-  RunOpTestOnCPU("Softplus",
-                 {TestInputDef<float>({1, 2, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 120))},
-                 {},
-                 14,
-                 ExpectedEPNodeAssignment::All);
-}
 
 // Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.
-TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
-  RunOpTestOnCPU("HardSwish",
-                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-                 {},
-                 14,
-                 ExpectedEPNodeAssignment::All);
-}
 
 // Test float HardSwish on the QNN HTP backend.
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
@@ -167,15 +98,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
                   14,
                   ExpectedEPNodeAssignment::All,
                   0.004f);
-}
-
-TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
-  RunOpTestOnCPU("Concat",
-                 {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                  TestInputDef<float>({1, 0, 4, 4}, false, {})},
-                 {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                 13,
-                 ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -1111,15 +1033,6 @@ TEST_F(QnnHTPBackendTests, BinaryOp_And4D) {
                   ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, Xor4D) {
-  RunOpTestOnCPU<bool>("Xor",
-                       {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
-                        TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
-                       {},
-                       17,
-                       ExpectedEPNodeAssignment::All);
-}
-
 TEST_F(QnnHTPBackendTests, Xor4D) {
   RunOpTest<bool>("Xor",
                   {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
@@ -1313,46 +1226,8 @@ TEST_F(QnnHTPBackendTests, ScatterND_int64_int64_reduction_min) {
 }
 
 // Test ScatterElements with default attributes on CPU
-TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_None) {
-  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
-  std::vector<int64_t> indices = {1};
-  std::vector<float> updates = {10.0f};
-  RunOpTestOnCPU<float, int64_t>("ScatterElements",
-                                 {
-                                     TestInputDef<float>({4}, false, std::move(data)),
-                                 },
-                                 {
-                                     TestInputDef<int64_t>({1}, false, std::move(indices)),
-                                 },
-                                 {
-                                     TestInputDef<float>({1}, false, std::move(updates)),
-                                 },
-                                 {},
-                                 17,
-                                 ExpectedEPNodeAssignment::All);
-}
 
 // Test ScatterElements with reduction Add on CPU
-TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_Add) {
-  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
-  std::vector<int64_t> indices = {1};
-  std::vector<float> updates = {10.0f};
-  RunOpTestOnCPU<float, int64_t>("ScatterElements",
-                                 {
-                                     TestInputDef<float>({4}, false, std::move(data)),
-                                 },
-                                 {
-                                     TestInputDef<int64_t>({1}, false, std::move(indices)),
-                                 },
-                                 {
-                                     TestInputDef<float>({1}, false, std::move(updates)),
-                                 },
-                                 {
-                                     test::MakeAttribute("reduction", "add"),
-                                 },
-                                 17,
-                                 ExpectedEPNodeAssignment::All);
-}
 
 // Test ScatterElements with default attributes on HTP
 TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {

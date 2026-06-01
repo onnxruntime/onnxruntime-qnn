@@ -34,7 +34,7 @@ static GetTestModelFn BuildMatMulOpTestCase(const TestInputDef<float>& input1_de
 static void RunMatMulOpTest(const std::vector<int64_t>& shape_0,
                             const std::vector<int64_t>& shape_1, bool is_initializer_0, bool is_initializer_1,
                             ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
-                            const std::string& backend_name = "cpu",
+                            const std::string& backend_name = "htp",
                             int opset = 18, float f32_abs_err = 1e-4f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
@@ -220,41 +220,6 @@ static void RunQDQPerChannelMatMulOpTest(
                        BuildQDQPerChannelMatMulTestCase<InputQType, WeightQType, OutputQType>(
                            input_def, weight_def, weight_quant_axis, use_contrib_qdq),
                        provider_options, opset, expected_ep_assignment, tolerance);
-}
-
-//
-// CPU tests:
-//
-TEST_F(QnnCPUBackendTests, MatMulOp) {
-  // RunMatMulOpTest(shape_0, shape_1, is_initializer_0, is_initializer_1)
-  RunMatMulOpTest({2, 3}, {3, 2}, false, false);
-  RunMatMulOpTest({2, 3}, {3, 2}, false, true);
-  RunMatMulOpTest({2, 3}, {3, 2}, true, false);
-  RunMatMulOpTest({2, 3}, {3, 2}, true, true);  // constant folding
-  RunMatMulOpTest({2, 3}, {2, 3, 2}, false, false);
-  RunMatMulOpTest({3, 3, 3}, {3, 2}, true, false);
-  RunMatMulOpTest({2, 3, 3, 3}, {3, 2}, false, true);
-  RunMatMulOpTest({2, 3, 3, 3}, {2, 3, 3, 2}, false, true);
-
-  RunMatMulOpTest({2, 1, 2, 3}, {3, 3, 2}, false, false);
-  RunMatMulOpTest({3}, {3}, false, false);
-  RunMatMulOpTest({3}, {3}, false, true);
-  RunMatMulOpTest({3}, {3}, true, false);
-  RunMatMulOpTest({3}, {3, 2}, false, false);
-  RunMatMulOpTest({3}, {3, 2}, false, true);
-  RunMatMulOpTest({3}, {3, 3, 2}, true, false);
-  RunMatMulOpTest({2, 3}, {3}, false, false);
-  RunMatMulOpTest({2, 3}, {3}, true, false);
-  RunMatMulOpTest({2, 3, 4}, {4, 2}, false, true);
-  RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false);
-  RunMatMulOpTest({1, 1, 2, 2, 4}, {4, 2}, false, true);
-
-  // Failed randomly on Linux
-  // Expected: contains 36 values, where each value and its corresponding value in 16-byte object
-  // <24-00 00-00 00-00 00-00 40-4A 47-42 4D-56 00-00> are an almost-equal pair
-  // Actual: 16-byte object <24-00 00-00 00-00 00-00 80-39 2B-42 4D-56 00-00>, where the value pair (0.104199991, 0)
-  // at index #18 don't match, which is -0.1042 from 0.1042
-  // RunMatMulOpTest({2, 3, 3, 3}, {3, 2}, true, false);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
