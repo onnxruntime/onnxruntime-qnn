@@ -22,7 +22,7 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  int opset = 9) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   if (opset <= 7) {

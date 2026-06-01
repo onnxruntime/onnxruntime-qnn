@@ -70,7 +70,7 @@ class QnnDeviceCompatibilityTests : public ::testing::Test {
 // Test that CPU devices are compatible
 TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
   ProviderOptions options;
-  options["backend_type"] = "cpu";
+  options["backend_type"] = "htp";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -232,7 +232,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible
 // Note: This should be tested by manually removing the CPU dependency
 TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDependency) {
   ProviderOptions options;
-  options["backend_type"] = "cpu";
+  options["backend_type"] = "htp";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;

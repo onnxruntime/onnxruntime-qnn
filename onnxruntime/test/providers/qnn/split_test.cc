@@ -78,7 +78,7 @@ static void RunSplitOpTestOnCPU(const TestInputDef<DataType>& input_def,
                                 ExpectedEPNodeAssignment expected_ep_assignment) {
   ProviderOptions provider_options;
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
 
   const bool split_is_input = opset >= 13;
   RunQnnModelTest(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),

@@ -20,7 +20,7 @@ static void RunCPUMinOrMaxOpTest(const std::string& op_type,
                                  int opset = 13) {
   ProviderOptions provider_options;
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),

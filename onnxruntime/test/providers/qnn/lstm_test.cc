@@ -306,7 +306,7 @@ static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
                                  int opset = 22,
                                  float tolerance = 0.004f) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
 
   RunQnnModelTest(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                   provider_options,

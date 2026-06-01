@@ -45,7 +45,7 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
                              bool verify_outputs = true) {
   ProviderOptions provider_options;
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
 
   RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
                   provider_options,

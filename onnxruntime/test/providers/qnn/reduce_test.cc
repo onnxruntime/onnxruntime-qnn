@@ -99,7 +99,7 @@ static void RunReduceTest(const std::string& op_type,
 #endif
     provider_options["enable_htp_fp16_precision"] = "1";
   } else {
-    provider_options["backend_type"] = "cpu";
+    provider_options["backend_type"] = "htp";
   }
 
   RunQnnModelTest(BuildReduceOpTestCase<DataType>(op_type,

@@ -207,7 +207,7 @@ static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
                                 float tolerance = 0.004f,
                                 int opset = 22) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
 
   RunQnnModelTest(BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
                                           direction, hidden_size, layout, linear_before_reset),

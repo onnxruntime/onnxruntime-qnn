@@ -22,7 +22,7 @@ static void RunSqueezeTestOnCPU(const std::string& op_type,  // Squeeze or Unsqu
                                 int opset = 13) {
   ProviderOptions provider_options;
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type + "_node", op_type, {input_def}, {axes_def}, {}),
                   provider_options,

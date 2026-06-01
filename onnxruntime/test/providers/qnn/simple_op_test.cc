@@ -28,7 +28,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
                            ExpectedEPNodeAssignment expected_ep_assignment,
                            const std::string& op_domain = kOnnxDomain) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<InputType>(op_type + "_node", op_type, input_defs, {}, attrs, op_domain),
@@ -47,7 +47,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
                            ExpectedEPNodeAssignment expected_ep_assignment,
                            const std::string& op_domain = kOnnxDomain) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),

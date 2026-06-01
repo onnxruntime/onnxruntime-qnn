@@ -21,7 +21,7 @@ static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
                              int opset = 13) {
   ProviderOptions provider_options;
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile_node", "Tile", {input_def}, {repeats_def}, {}),
                   provider_options,

@@ -164,7 +164,7 @@ static void RunCPUResizeOpTest(const TestInputDef<float>& input_def, const std::
                                int opset = 19,
                                std::optional<float> cubic_coeff_a = std::nullopt) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode,
@@ -181,7 +181,7 @@ static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, c
                                          int opset = 19,
                                          std::optional<float> cubic_coeff_a = std::nullopt) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(GetResizeModelBuilderWithScales(input_def, scales_data, mode, coordinate_transformation_mode,

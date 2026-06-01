@@ -50,7 +50,7 @@ static void RunPoolOpTest(const std::string& op_type,
                           ExpectedEPNodeAssignment expected_ep_assignment,
                           int opset = 18) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),

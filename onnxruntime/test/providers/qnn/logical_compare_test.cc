@@ -68,7 +68,7 @@ static void RunCPULogicalOpTest(const std::string& op_type, const std::vector<in
                                 int opset = 17) {
   ProviderOptions provider_options;
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildLogicalOpTestCase(op_type, shape),

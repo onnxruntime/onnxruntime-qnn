@@ -77,7 +77,7 @@ static void RunCPULRNOpTest(const TestInputDef<float>& input_def, int64_t size,
   fp32_abs_err = 1.5e-5f;  // On linux we need slightly larger tolerance.
 #endif
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildLRNTestCase(input_def, size, alpha, beta, bias),

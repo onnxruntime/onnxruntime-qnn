@@ -31,7 +31,7 @@ assert len(selected_ep_devices) > 0
 sess_options = ort.SessionOptions()
 
 # EP-specific options
-ep_options = {"backend_path": qnn_ep.get_qnn_cpu_path()}
+ep_options = {"backend_path": qnn_ep.get_qnn_htp_path()}
 
 # Equivalent to the C API's SessionOptionsAppendExecutionProvider_V2 that appends the plugin EP to the session options
 sess_options.add_provider_for_devices(selected_ep_devices, ep_options)

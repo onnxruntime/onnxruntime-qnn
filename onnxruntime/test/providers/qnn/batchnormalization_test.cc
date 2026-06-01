@@ -179,7 +179,7 @@ static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
                                      ExpectedEPNodeAssignment expected_ep_assignment,
                                      QDQTolerance tolerance = QDQTolerance()) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.

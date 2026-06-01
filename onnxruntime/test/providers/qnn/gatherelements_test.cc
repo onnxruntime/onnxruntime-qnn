@@ -66,7 +66,7 @@ static void RunCPUGatherElemsOpTest(const TestInputDef<float>& input_def,
   ProviderOptions provider_options;
   float fp32_abs_err = 1e-5f;  // default tolerance
 
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
