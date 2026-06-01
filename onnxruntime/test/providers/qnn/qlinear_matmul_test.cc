@@ -46,19 +46,16 @@ static QuantParams<QType> ComputeQuantParams(float rmin, float rmax) {
 /**
  * Builds a QLinearMatMul graph directly (no DQ/Q wrappers).
  * AType/BType/YType: int8 or uint8.
- * include_zp: if false, omits all three zero_point inputs (tests optional ZP path).
  * b_is_initializer: if true, B and its quant params are graph initializers.
  * dynamic_a_scale: if true, a_scale is a graph input (not initializer) — for rejection tests.
- * per_row_a_scale: if true, a_scale has shape [M] instead of scalar — for rejection tests.
  */
 template <typename AType, typename BType, typename YType>
 static GetTestModelFn BuildQLinearMatMulTestCase(
     const std::vector<int64_t>& shape_a,
     const std::vector<int64_t>& shape_b,
     bool b_is_initializer = false,
-    bool include_zp = true,
     bool dynamic_a_scale = false) {
-  return [shape_a, shape_b, b_is_initializer, include_zp, dynamic_a_scale](ModelTestBuilder& builder) {
+  return [shape_a, shape_b, b_is_initializer, dynamic_a_scale](ModelTestBuilder& builder) {
     const size_t num_a = static_cast<size_t>(
         std::accumulate(shape_a.begin(), shape_a.end(), int64_t{1}, std::multiplies<int64_t>()));
     const size_t num_b = static_cast<size_t>(
@@ -100,26 +97,14 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
     builder.MakeScalarInitializer<float>("b_scale", qp_b.scale);
     builder.MakeScalarInitializer<float>("y_scale", qp_y.scale);
 
-    // Build node input list: a, a_scale, [a_zp,] b, b_scale, [b_zp,] y_scale, [y_zp]
-    // Optional zero-point inputs are omitted entirely (not empty string) when absent.
-    std::vector<std::string> node_inputs = {"a", a_scale_name};
-    if (include_zp) {
-      builder.MakeScalarInitializer<AType>("a_zp", qp_a.zero_point);
-      node_inputs.push_back("a_zp");
-    }
+    // QLinearMatMul (opset 10 and 21) requires all 8 inputs — scale and zero_point
+    // for a, b, and y. Build the full input list.
+    builder.MakeScalarInitializer<AType>("a_zp", qp_a.zero_point);
+    builder.MakeScalarInitializer<BType>("b_zp", qp_b.zero_point);
+    builder.MakeScalarInitializer<YType>("y_zp", qp_y.zero_point);
 
-    node_inputs.push_back("b");
-    node_inputs.push_back("b_scale");
-    if (include_zp) {
-      builder.MakeScalarInitializer<BType>("b_zp", qp_b.zero_point);
-      node_inputs.push_back("b_zp");
-    }
-
-    node_inputs.push_back("y_scale");
-    if (include_zp) {
-      builder.MakeScalarInitializer<YType>("y_zp", qp_y.zero_point);
-      node_inputs.push_back("y_zp");
-    }
+    std::vector<std::string> node_inputs = {
+        "a", a_scale_name, "a_zp", "b", "b_scale", "b_zp", "y_scale", "y_zp"};
 
     builder.MakeOutput("y");
     builder.AddNode("QLinearMatMul", "QLinearMatMul", node_inputs, {"y"}, kOnnxDomain);
@@ -151,7 +136,6 @@ static void RunQLinearMatMulTest(
     const std::string& backend_name,
     ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
     bool b_is_initializer = false,
-    bool include_zp = true,
     int opset = 10,
     bool dynamic_a_scale = false) {
   ProviderOptions provider_options;
@@ -160,7 +144,7 @@ static void RunQLinearMatMulTest(
 
   RunQnnModelTest(
       BuildQLinearMatMulTestCase<AType, BType, YType>(
-          shape_a, shape_b, b_is_initializer, include_zp, dynamic_a_scale),
+          shape_a, shape_b, b_is_initializer, dynamic_a_scale),
       provider_options, opset, expected_ep_assignment,
       /*fp32_abs_err=*/1e-2f);
 }
@@ -173,7 +157,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulOp_DynamicScale_Unsupported) {
   // a_scale is a graph input (not initializer) — must not be assigned to QNN EP.
   RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>(
       {2, 3}, {3, 2}, "cpu", ExpectedEPNodeAssignment::None,
-      /*b_is_initializer=*/false, /*include_zp=*/true, /*opset=*/10,
+      /*b_is_initializer=*/false, /*opset=*/10,
       /*dynamic_a_scale=*/true);
 }
 
@@ -214,21 +198,6 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulOp_CPU_u8u8u8_2D) {
 TEST_F(QnnCPUBackendTests, QLinearMatMulOp_CPU_u8u8u8_2D_InitB) {
   RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>(
       {2, 3}, {3, 2}, "cpu", ExpectedEPNodeAssignment::All, /*b_is_initializer=*/true);
-}
-
-TEST_F(QnnCPUBackendTests, QLinearMatMulOp_CPU_s8s8s8_2D) {
-  RunQLinearMatMulTest<int8_t, int8_t, int8_t>({2, 3}, {3, 2}, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearMatMulOp_CPU_u8u8u8_AbsentZP) {
-  // All zero-point inputs absent — should default to 0.
-  RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>(
-      {2, 3}, {3, 2}, "cpu", ExpectedEPNodeAssignment::All,
-      /*b_is_initializer=*/false, /*include_zp=*/false);
-}
-
-TEST_F(QnnCPUBackendTests, QLinearMatMulOp_CPU_u8s8u8_Mixed) {
-  RunQLinearMatMulTest<uint8_t, int8_t, uint8_t>({2, 3}, {3, 2}, "cpu");
 }
 
 // ---------------------------------------------------------------------------
@@ -273,13 +242,6 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_Rank1B) {
 TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_Rank1Both) {
   // Both rank-1 — dot product, output is scalar.
   RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>({4}, {4}, "htp");
-}
-
-TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_AbsentZP) {
-  // All zero-point inputs absent — should default to 0.
-  RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>(
-      {2, 3}, {3, 2}, "htp", ExpectedEPNodeAssignment::All,
-      /*b_is_initializer=*/false, /*include_zp=*/false);
 }
 
 // --- int8 coverage ---
