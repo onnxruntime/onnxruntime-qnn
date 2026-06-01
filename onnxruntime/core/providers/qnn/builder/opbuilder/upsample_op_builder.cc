@@ -97,7 +97,6 @@ Ort::Status UpsampleOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(input_shape[0] == output_shape[0] && input_shape[1] == output_shape[1],
                 "QNN EP: Resize may only change the spatial dimensions.");
 
-  // If IsCpuBackend is used for checking, please use DataTypeCheckForCpuBackend.
   if (!is_npu_backend) {
     ONNXTensorElementDataType input_data_type = input_0.type;
     RETURN_IF(input_data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,

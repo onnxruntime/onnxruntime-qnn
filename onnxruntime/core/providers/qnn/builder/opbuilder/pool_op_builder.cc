@@ -133,7 +133,6 @@ Ort::Status PoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");

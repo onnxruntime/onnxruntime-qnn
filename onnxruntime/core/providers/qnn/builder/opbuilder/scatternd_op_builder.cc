@@ -114,12 +114,6 @@ Ort::Status ScatterNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     return Ort::Status();
   }
 
-  if (do_op_validation) {
-    // TODO: Remove once QNN CPU supports ScatterND.
-    RETURN_IF(qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU,
-              "QNN EP does not support ScatterND op on CPU backend. Falling back to ORT CPU.");
-  }
-
   OrtNodeAttrHelper node_helper(node_unit);
   const std::string reduction = node_helper.Get("reduction", "none");
   RETURN_IF_NOT(utils::ArrayHasString(kSupportedReductions, reduction),

@@ -211,13 +211,9 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                          static_cast<uint32_t>(linear_before_reset),
                                          QNN_OP_GRU_PARAM_LINEAR_BEFORE_RESET, param_names));
-  // TODO: Once the QNN CPU backend accuracy issue with time_major=true is resolved, remove the CPU
-  // workaround below and the associated Transpose nodes (X pre-transpose, per-step Y-to-h transpose,
-  // and post-concat transpose), then let CPU use time_major=true uniformly with layout=0.
-  // time_major: on CPU, always use false to work around its batch dimension bug with time_major=true.
-  // On other backends (HTP), follow the ONNX layout attribute: layout=0 -> true, layout=1 -> false.
-  const bool is_cpu_backend = qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU;
-  const bool time_major = is_cpu_backend ? false : (layout == 0);
+  // time_major: layout=0 -> true (X is [seq, batch, input]),
+  //             layout=1 -> false (X is [batch, seq, input]).
+  const bool time_major = (layout == 0);
   RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), time_major,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));
 
@@ -335,20 +331,8 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   // time_major=true:  input [1, batch, input], output Y [1, batch, hidden]
   // time_major=false: input [batch, 1, input], output Y [batch, 1, hidden]
 
-  // For CPU (time_major=false), transpose X upfront from [seq, batch, input] to [batch, seq, input]
-  // so that per-step slicing produces [batch, 1, input] directly without per-step Reshapes.
-  std::string x_source = input_names[0];                               // [seq, batch, input] for HTP, [batch, seq, input] for CPU
-  std::vector<uint32_t> x_source_shape = input_tensor_infos[0].shape;  // [seq, batch, input]
-  if (is_cpu_backend) {
-    std::string x_transposed = utils::UniqueNameGenerator().New(input_names[0], "_transposed_" + direction);
-    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
-        node_unit.Index(), input_names[0], x_transposed,
-        input_tensor_infos[0].shape, {1, 0, 2}, {batch_size, seq_length, input_size},
-        input_tensor_infos[0].qnn_data_type, input_tensor_infos[0].quant_param,
-        do_op_validation, false, false));
-    x_source = x_transposed;
-    x_source_shape = {batch_size, seq_length, input_size};
-  }
+  std::string x_source = input_names[0];
+  std::vector<uint32_t> x_source_shape = input_tensor_infos[0].shape;
 
   std::vector<std::string> qnn_all_step_hidden_names(seq_length);  // Y tensors, indexed by t
   std::string prev_h_name = initial_h_name;                        // [1, batch, hidden]
@@ -395,8 +379,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                                      : std::vector<uint32_t>{batch_size, 1, hidden_size};
     std::string y_name = utils::UniqueNameGenerator().New(node_unit, "_Y" + sfx);
 
-    // For the last step on HTP: name Y_h after the ONNX output directly.
-    // CPU derives h from Y via Transpose instead (Y_h is unreliable on CPU).
+    // For the last step (time_major=true): name Y_h after the ONNX output directly.
     const bool write_yh_directly = is_last_step && needs_y_h_output && time_major;
     std::string yh_name = write_yh_directly ? y_h_out_name
                                             : utils::UniqueNameGenerator().New(node_unit, "_Yh" + sfx);
@@ -416,34 +399,16 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                       std::vector<std::string>(param_names), do_op_validation),
                   "Failed to create GRU node.");
 
-    // Derive next step's initial_h.
-    // QNN CPU's Y_h (out[1]) is unreliable, so on CPU we derive h from Y (out[0]) via Transpose.
-    // On HTP (time_major=true), Y_h (out[1]) is already [1, batch, hidden] and can be used directly.
-    if (!is_cpu_backend) {
-      // HTP: use Y_h directly as next step's initial_h
-      prev_h_name = yh_name;
-    } else {
-      // CPU: Y is [batch, 1, hidden] - Transpose to [1, batch, hidden].
-      // On the last step for unidirectional, write directly to the ONNX output (is_for_output=true).
-      const bool write_as_output = is_last_step && needs_y_h_output;
-      const std::string y_as_h = write_as_output ? y_h_out_name
-                                                 : utils::UniqueNameGenerator().New(node_unit, "_Y_as_h" + sfx);
-      RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
-          node_unit.Index(), y_name, y_as_h,
-          y_shape, {1, 0, 2}, {1, batch_size, hidden_size},
-          output_tensor_infos[0].qnn_data_type, output_tensor_infos[0].quant_param,
-          do_op_validation, false, write_as_output && y_h_is_graph_output));
-      prev_h_name = y_as_h;
-    }
+    // Y_h (out[1]) is [1, batch, hidden] and can be used directly as next step's initial_h.
+    prev_h_name = yh_name;
 
     // Collect Y for Concat (no per-step Reshape needed).
     qnn_all_step_hidden_names[t] = y_name;
   }
 
-  // Concat all per-step Y tensors into [seq, batch, hidden].
-  // HTP (time_major=true):  Y [1,batch,hidden] * seq, Concat axis=0 -> [seq, batch, hidden]
-  // CPU (time_major=false): Y [batch,1,hidden] * seq, Concat axis=1 -> [batch, seq, hidden]
-  //                         then Transpose -> [seq, batch, hidden]
+  // Concat all per-step Y tensors:
+  //   time_major=true:  Y [1,batch,hidden] * seq, Concat axis=0 -> [seq, batch, hidden]
+  //   time_major=false: Y [batch,1,hidden] * seq, Concat axis=1 -> [batch, seq, hidden]
   const uint32_t concat_axis = time_major ? 0 : 1;
   const std::string y_concat = utils::UniqueNameGenerator().New(node_unit, "_Y_concat_" + direction);
   {
@@ -461,18 +426,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                   "Failed to create Y Concat node.");
   }
 
-  // For CPU (time_major=false), Transpose [batch, seq, hidden] -> [seq, batch, hidden].
-  std::string y_all;
-  if (is_cpu_backend) {
-    y_all = utils::UniqueNameGenerator().New(node_unit, "_Y_all_" + direction);
-    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
-        node_unit.Index(), y_concat, y_all,
-        {batch_size, seq_length, hidden_size}, {1, 0, 2}, {seq_length, batch_size, hidden_size},
-        output_tensor_infos[0].qnn_data_type, output_tensor_infos[0].quant_param,
-        do_op_validation, false, false));
-  } else {
-    y_all = y_concat;
-  }
+  std::string y_all = y_concat;
 
   // Map to ONNX output shapes:
   //   Y:   [seq, batch, hidden] -> ONNX [seq, 1, batch, hidden]  (Reshape to insert num_directions dim)

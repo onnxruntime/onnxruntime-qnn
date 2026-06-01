@@ -59,8 +59,6 @@ Ort::Status LRNOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& input = inputs[0];
   const auto& output = outputs[0];
-  // Check input type is float for CPU. Can't use Qnn Op validation API since it's before layout transformation
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   // Check that the input and output have the same shape.
   std::vector<uint32_t> input_shape;

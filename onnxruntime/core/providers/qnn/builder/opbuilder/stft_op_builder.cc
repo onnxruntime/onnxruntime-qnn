@@ -41,10 +41,7 @@ Ort::Status STFTOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  // TODO: STFT seg faults on QNN CPU
-  bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  RETURN_IF(is_cpu_backend, "QNN EP: STFT Op disabled in CPU backend.");
-  // General Datatype checks on various QNN backend (HTP, CPU, GPU)
+  // General Datatype checks on various QNN backend (HTP, GPU)
   RETURN_IF_ERROR(ProcessDataTypes(qnn_model_wrapper, node_unit));
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
