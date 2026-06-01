@@ -47,33 +47,47 @@ static bool SessionHasEp(Ort::Session& session, const char* ep_name) {
   return false;
 }
 
-// Tests the `session.disable_cpu_ep_fallback` configuration option when the backend cannot be loaded.
-// When the option is enabled, session creation throws an exception because the backend cannot be found.
-TEST(QnnEP, TestDisableCPUFallback_BackendNotFound) {
-  Ort::SessionOptions so;
-  so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
-
-  ProviderOptions options;
+namespace {
+constexpr const ORTCHAR_T* kQnnEpLibraryFilename =
 #if defined(_WIN32)
-  options["backend_path"] = "DoesNotExist.dll";  // Invalid backend path!
+    ORT_TSTR("onnxruntime_providers_qnn.dll");
 #else
-  options["backend_path"] = "libDoesNotExist.so";  // Invalid backend path!
+    ORT_TSTR("libonnxruntime_providers_qnn.so");
 #endif
+}  // namespace
 
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+// QNN EP must not advertise itself as a candidate for any CPU OrtHardwareDevice.
+// QNN CPU was removed in cpu_removal.md; SetEpPolicy(PREFER_CPU) must not route to QNN.
+TEST(QnnEP, GetEpDevicesDoesNotAdvertiseCpu) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
+                                                                     kQnnEpLibraryFilename));
+
+  auto devices = ort_env->GetEpDevices();
+  for (auto& d : devices) {
+    if (std::string_view(d.EpName()) == kQnnExecutionProvider) {
+      EXPECT_NE(d.Device().Type(), OrtHardwareDeviceType_CPU)
+          << "QNN EP advertised a CPU device after CPU backend removal.";
+    }
+  }
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
+}
+
+// SetEpSelectionPolicy(PREFER_CPU) must not pick QNN EP — it should fall through to ORT's CPU EP.
+TEST(QnnEP, SetEpPolicyPreferCpuDoesNotPickQnn) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
+                                                                     kQnnEpLibraryFilename));
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_CPU);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_FALSE(SessionHasEp(session, kQnnExecutionProvider))
+      << "QNN EP was selected for PREFER_CPU policy; QNN CPU backend has been removed.";
 
-  try {
-    Ort::Session session(*ort_env, ort_model_path, so);
-    FAIL();  // Should not get here!
-  } catch (const Ort::Exception& excpt) {
-    ASSERT_EQ(excpt.GetOrtErrorCode(), ORT_FAIL);
-    ASSERT_THAT(excpt.what(), testing::HasSubstr("This session contains graph nodes that are assigned to the default "
-                                                 "CPU EP, but fallback to CPU EP has been explicitly disabled by "
-                                                 "the user."));
-  }
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -423,23 +437,6 @@ static void RunSessionAndVerify(Ort::Session& session, const Ort::RunOptions& ru
 }
 
 // Returns a function that builds a float32 model that adds 3 tensors.
-static GetTestModelFn F32BuildAdd3Tensors(const TestInputDef<float>& input0_def,
-                                          const TestInputDef<float>& input1_def,
-                                          const TestInputDef<float>& input2_def) {
-  return [input0_def, input1_def, input2_def](ModelTestBuilder& builder) {
-    builder.graph_->set_name("add3_f32_graph");
-
-    MakeTestInput<float>(builder, "input0", input0_def);
-    MakeTestInput<float>(builder, "input1", input1_def);
-    MakeTestInput<float>(builder, "input2", input2_def);
-
-    builder.AddNode("Add0", "Add", {"input0", "input1"}, {"add0_out"}, kOnnxDomain);
-    builder.AddNode("Add1", "Add", {"add0_out", "input2"}, {"output"}, kOnnxDomain);
-
-    builder.MakeOutput("output");
-  };
-}
-
 // Tests running a single session in multiple threads on the CPU backend.
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -1804,159 +1801,6 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
-
-// Returns a function that builds a model with RandomNormalLike (CPU-only) + Add
-// to test partition-added inputs.
-static GetTestModelFn BuildPartitionAddedInputModel() {
-  return [](ModelTestBuilder& builder) {
-    builder.graph_->set_name("partition_added_input_graph");
-
-    // Create input
-    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
-
-    // Create constant initializer for RandomNormalLike
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
-
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
-
-    // Add: combines graph input with partition-added input
-    builder.AddNode("add", "Add", {"input", "rnl_output"}, {"add_output"}, kOnnxDomain);
-
-    builder.MakeOutput("add_output");
-  };
-}
-
-// Verifies that a partition-added input (produced by a CPU-only op) is registered as
-// QNN_TENSOR_TYPE_APP_WRITE, not dropped from the fused subgraph's input list.
-
-// Returns a function that builds a QDQ model with RandomNormalLike (CPU-only) + Add
-// to test partition-added inputs with offload_graph_io_quantization.
-static GetTestModelFn BuildPartitionAddedInputQDQModel() {
-  return [](ModelTestBuilder& builder) {
-    builder.graph_->set_name("partition_added_input_qdq_graph");
-
-    // Create input
-    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
-
-    // Create initializers
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
-    builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
-    builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
-
-    // QuantizeLinear: input -> q_input (stays on CPU with offload_graph_io_quantization=1)
-    builder.AddNode("quantize", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_input"}, kOnnxDomain);
-
-    // DequantizeLinear: q_input -> dq_input (goes to QNN)
-    builder.AddNode("dequantize", "DequantizeLinear", {"q_input", "scale", "zero_point"}, {"dq_input"}, kOnnxDomain);
-
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
-
-    // Add: combines dequantized input with partition-added input
-    builder.AddNode("add", "Add", {"dq_input", "rnl_output"}, {"add_output"}, kOnnxDomain);
-
-    builder.MakeOutput("add_output");
-  };
-}
-
-// Verifies the same as PartitionAddedInputRegisteredAsGraphInput but via the
-// tensor_name_overrides code path: with offload_graph_io_quantization=1,
-// QuantizeLinear stays on CPU and causes a tensor name remap (q_input <-> input).
-
-// Returns a model where a single graph input fans out to two separate Q->DQ chains,
-// both feeding into an Add node. This triggers the duplicate-name scenario in
-// RegisterGraphInputOutputInOrder when offload_graph_io_quantization=1.
-static GetTestModelFn BuildGraphInputFanoutQDQModel() {
-  return [](ModelTestBuilder& builder) {
-    builder.graph_->set_name("graph_input_fanout_qdq_graph");
-
-    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {0.1f, 0.2f, 0.3f}));
-    builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
-    builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
-
-    // Two Q->DQ pairs on the same graph input. With offload_graph_io_quantization=1,
-    // both Q nodes stay on CPU and both DQ outputs are registered as QNN graph inputs
-    // with the override name "input" — triggering the duplicate-name id-assignment bug.
-    builder.AddNode("q_a", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_a_out"}, kOnnxDomain);
-    builder.AddNode("dq_a", "DequantizeLinear", {"q_a_out", "scale", "zero_point"}, {"dq_a_out"}, kOnnxDomain);
-
-    builder.AddNode("q_b", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_b_out"}, kOnnxDomain);
-    builder.AddNode("dq_b", "DequantizeLinear", {"q_b_out", "scale", "zero_point"}, {"dq_b_out"}, kOnnxDomain);
-
-    builder.AddNode("add", "Add", {"dq_a_out", "dq_b_out"}, {"add_out"}, kOnnxDomain);
-
-    // Q->DQ pair on the graph output. With offload_graph_io_quantization=1,
-    // this DQ node stays on CPU and add_out is registered as a QNN graph output.
-    builder.AddNode("q_out", "QuantizeLinear", {"add_out", "scale", "zero_point"}, {"q_out_out"}, kOnnxDomain);
-    builder.AddNode("dq_out", "DequantizeLinear", {"q_out_out", "scale", "zero_point"}, {"output"}, kOnnxDomain);
-    builder.MakeOutput("output");
-  };
-}
-
-// Tests that a graph input fanning out to multiple QDQ pairs with offload_graph_io_quantization=1
-// composes without error. Two bugs were fixed:
-//   1. CreateTensorInQnnGraph returned early on a duplicate override name, leaving the second
-//      DQ tensor with QNN tensor id=0 (never set).
-//   2. GetGraphInputOutputTensorWrapper must deduplicate wrappers sharing the same override name
-//      to avoid passing more inputs to graphExecute than the QNN graph has APP_WRITE tensors.
-
-// Returns a function that builds a model with 3 Relu ops to test I/O ordering.
-static GetTestModelFn BuildMultiReluModelForIOOrderTest() {
-  return [](ModelTestBuilder& builder) {
-    builder.graph_->set_name("multi_relu_io_order_graph");
-
-    // Create inputs in specific order: {i2, i1, i3}
-    MakeTestInput<float>(builder, "i2", TestInputDef<float>({1, 5}, false, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f}));
-    MakeTestInput<float>(builder, "i1", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
-    MakeTestInput<float>(builder, "i3", TestInputDef<float>({1, 7}, false, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}));
-
-    // Add Relu nodes
-    builder.AddNode("Relu1", "Relu", {"i1"}, {"o1"}, kOnnxDomain);
-    builder.AddNode("Relu2", "Relu", {"i3"}, {"o3"}, kOnnxDomain);
-    builder.AddNode("Relu3", "Relu", {"i2"}, {"o2"}, kOnnxDomain);
-
-    // Create outputs in specific order: {o2, o1, o3}
-    builder.MakeOutput("o2");
-    builder.MakeOutput("o1");
-    builder.MakeOutput("o3");
-  };
-}
-
-// Verifies QNN graph I/O order matches ONNX declaration order.
-
-// Returns a function that builds a QDQ model with 3 Sigmoid ops to test I/O ordering with offload_graph_io_quantization.
-template <typename QuantType>
-static GetTestModelFn BuildMultiSigmoidQDQModelForIOOrderTest() {
-  return [](ModelTestBuilder& builder) {
-    builder.graph_->set_name("multi_sigmoid_qdq_io_order_graph");
-
-    float scale = 1.0f / 255.0f;
-    QuantType zero_point = 128;
-
-    // Create inputs in specific order: {i2, i1, i3}
-    MakeTestInput<float>(builder, "i2", TestInputDef<float>({1, 5}, false, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f}));
-    MakeTestInput<float>(builder, "i1", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
-    MakeTestInput<float>(builder, "i3", TestInputDef<float>({1, 7}, false, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}));
-
-    // Build QDQ Sigmoid chains for each input
-    auto qdq2_out = AddQDQNodePair<QuantType>(builder, "qdq2", "i2", scale, zero_point);
-    builder.AddNode("Sigmoid3", "Sigmoid", {qdq2_out}, {"sigmoid2_out"}, kOnnxDomain);
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq2_out", "sigmoid2_out", scale, zero_point);
-
-    auto qdq1_out = AddQDQNodePair<QuantType>(builder, "qdq1", "i1", scale, zero_point);
-    builder.AddNode("Sigmoid1", "Sigmoid", {qdq1_out}, {"sigmoid1_out"}, kOnnxDomain);
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq1_out", "sigmoid1_out", scale, zero_point);
-
-    auto qdq3_out = AddQDQNodePair<QuantType>(builder, "qdq3", "i3", scale, zero_point);
-    builder.AddNode("Sigmoid2", "Sigmoid", {qdq3_out}, {"sigmoid3_out"}, kOnnxDomain);
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq3_out", "sigmoid3_out", scale, zero_point);
-  };
-}
-
-// Verifies QNN graph I/O order matches ONNX declaration order with offload_graph_io_quantization=1.
-
-// Verify GetUniqueName counter resets between compilations in the same process.
 
 // Test extended UDMA mode on supported hardware (should run successfully)
 #if defined(_WIN32)

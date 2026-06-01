@@ -157,40 +157,6 @@ static GetTestQDQModelFn<QuantType> GetQDQResizeModelBuilder(const TestInputDef<
  * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
  * \param opset The opset version to use.
  */
-static void RunCPUResizeOpTest(const TestInputDef<float>& input_def, const std::vector<int64_t>& sizes_data,
-                               const std::string& mode, const std::string& coordinate_transformation_mode,
-                               const std::string& nearest_mode,
-                               ExpectedEPNodeAssignment expected_ep_assignment,
-                               int opset = 19,
-                               std::optional<float> cubic_coeff_a = std::nullopt) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode,
-                                        nearest_mode, cubic_coeff_a),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
-static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, const std::vector<float>& scales_data,
-                                         const std::string& mode, const std::string& coordinate_transformation_mode,
-                                         const std::string& nearest_mode,
-                                         ExpectedEPNodeAssignment expected_ep_assignment,
-                                         int opset = 19,
-                                         std::optional<float> cubic_coeff_a = std::nullopt) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(GetResizeModelBuilderWithScales(input_def, scales_data, mode, coordinate_transformation_mode,
-                                                  nearest_mode, cubic_coeff_a),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 template <typename QuantType>
 static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                                const std::vector<int64_t>& sizes_data,

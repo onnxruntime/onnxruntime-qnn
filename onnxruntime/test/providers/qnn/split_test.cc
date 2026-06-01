@@ -69,24 +69,6 @@ GetTestModelFn BuildSplitTestCase(const TestInputDef<DataType>& input_def,
   };
 }
 
-template <typename DataType>
-static void RunSplitOpTestOnCPU(const TestInputDef<DataType>& input_def,
-                                const std::vector<int64_t>& split,
-                                int64_t axis,
-                                int64_t num_outputs,
-                                int opset,
-                                ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-
-  const bool split_is_input = opset >= 13;
-  RunQnnModelTest(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:

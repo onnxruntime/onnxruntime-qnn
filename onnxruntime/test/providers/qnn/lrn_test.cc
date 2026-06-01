@@ -67,26 +67,6 @@ static GetTestQDQModelFn<InputQType> BuildQDQLRNTestCase(const TestInputDef<floa
 
 // Runs an LRN model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
-static void RunCPULRNOpTest(const TestInputDef<float>& input_def, int64_t size,
-                            ExpectedEPNodeAssignment expected_ep_assignment,
-                            float alpha = 0.0001f, float beta = 0.75f, float bias = 1.0f, int opset = 13) {
-  ProviderOptions provider_options;
-  float fp32_abs_err = 1e-5f;  // default tolerance
-
-#if !defined(_WIN32)
-  fp32_abs_err = 1.5e-5f;  // On linux we need slightly larger tolerance.
-#endif
-
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildLRNTestCase(input_def, size, alpha, beta, bias),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
-}
-
 // Runs an LRN model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 template <typename QuantType>

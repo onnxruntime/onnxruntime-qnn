@@ -34,28 +34,6 @@ inline GetTestModelFn BuildTopKTestCase(const TestInputDef<DataType>& input_def,
   };
 }
 
-// Runs a model with a TopK operator on the QNN HTP backend. Checks the graph node assignment
-// and that inference outputs for QNN EP and CPU EP match.
-template <typename DataType>
-static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
-                             const TestInputDef<int64_t>& k_def,
-                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                             ExpectedEPNodeAssignment expected_ep_assignment,
-                             int opset = 19,
-                             bool verify_outputs = true) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-
-  RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  /*fp32_abs_err*/ 1e-5f,
-                  /*log_severity*/ OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_outputs*/ verify_outputs);
-}
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:

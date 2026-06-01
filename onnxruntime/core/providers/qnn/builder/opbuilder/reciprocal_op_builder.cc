@@ -29,6 +29,7 @@ class ReciprocalOpBuilder : public BaseOpBuilder {
 Ort::Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                const OrtNodeUnit& node_unit,
                                                const Ort::Logger& logger) const {
+  ORT_UNUSED_PARAMETER(qnn_model_wrapper);
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();

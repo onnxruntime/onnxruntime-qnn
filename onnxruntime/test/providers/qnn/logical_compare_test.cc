@@ -15,24 +15,6 @@ namespace onnxruntime {
 namespace test {
 
 // Creates a graph with a single logical operator (e.g., Equal). Used for testing CPU backend.
-static GetTestModelFn BuildLogicalOpTestCase(const std::string& op_type, const std::vector<int64_t>& shape) {
-  return [op_type, shape](ModelTestBuilder& builder) {
-    builder.graph_->set_name("logical_comp_graph");
-
-    builder.MakeInput<float>("input0", shape, 0.0f, 20.0f);
-    builder.MakeInput<float>("input1", shape, 0.0f, 20.0f);
-
-    // Explicitly set output type/shape for logical comparison ops implemented as functions.
-    if (op_type == "GreaterOrEqual" || op_type == "LessOrEqual") {
-      builder.MakeOutput<bool>("output", shape);
-    } else {
-      builder.MakeOutput("output");
-    }
-
-    builder.AddNode("logical_op", op_type, {"input0", "input1"}, {"output"});
-  };
-}
-
 // Creates a graph with a single Q/DQ logical operator. Used for testing HTP backend.
 template <typename InputQType = uint8_t>
 static GetTestModelFn BuildQDQLogicalOpTestCase(const std::string& op_type, const std::vector<int64_t>& shape) {
@@ -63,20 +45,6 @@ static GetTestModelFn BuildQDQLogicalOpTestCase(const std::string& op_type, cons
 
 // Runs a model with a logical operator on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
-static void RunCPULogicalOpTest(const std::string& op_type, const std::vector<int64_t>& shape,
-                                ExpectedEPNodeAssignment expected_ep_assignment,
-                                int opset = 17) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildLogicalOpTestCase(op_type, shape),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 // Runs a model with a logical operator on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 template <typename QuantType>

@@ -306,7 +306,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
 
 // Runs a Conv model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
-static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<float>& input_def,
+[[maybe_unused]] static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<float>& input_def,
                           const TestInputDef<float>& weights_def,
                           const TestInputDef<float>& bias_def,
                           const std::vector<int64_t>& strides,

@@ -192,31 +192,6 @@ static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<floa
 }
 
 // Runs a GRU model on the QNN HTP backend with FP32.
-static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
-                                const TestInputDef<float>& W_def,
-                                const TestInputDef<float>& R_def,
-                                const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
-                                const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
-                                const bool has_Y,
-                                const bool has_Y_h,
-                                const std::string direction,
-                                const int64_t hidden_size,
-                                const int64_t layout,
-                                ExpectedEPNodeAssignment expected_ep_assignment,
-                                const int64_t linear_before_reset = 0,
-                                float tolerance = 0.004f,
-                                int opset = 22) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  RunQnnModelTest(BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
-                                          direction, hidden_size, layout, linear_before_reset),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  tolerance);
-}
-
 // ============================================================
 // CPU FP32 Tests
 // ============================================================

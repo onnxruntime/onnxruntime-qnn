@@ -14,21 +14,6 @@ namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-static void RunRMSNormCpuTest(const TestInputDef<float>& input_def,
-                              const TestInputDef<float>& scale_def,
-                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                              ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>("rms_norm", "RMSNormalization", {input_def, scale_def}, {}, attrs),
-                  provider_options,
-                  23,
-                  expected_ep_assignment);
-}
-
-
 
 
 template <typename InputQType, typename ScaleQType>

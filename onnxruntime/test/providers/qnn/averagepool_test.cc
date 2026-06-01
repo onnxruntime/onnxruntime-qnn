@@ -17,7 +17,7 @@ namespace test {
 
 // Runs an AveragePool model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
-static void RunAveragePoolOpTest(const std::string& op_type,
+[[maybe_unused]] static void RunAveragePoolOpTest(const std::string& op_type,
                                  const std::vector<TestInputDef<float>>& input_defs,
                                  const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                  ExpectedEPNodeAssignment expected_ep_assignment,

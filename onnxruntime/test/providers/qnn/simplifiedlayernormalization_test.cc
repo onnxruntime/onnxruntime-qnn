@@ -15,21 +15,6 @@ namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Runs a float32 SimplifiedLayerNormalization model on the QNN HTP backend.
-static void RunSimplifiedLayerNormCpuTest(const TestInputDef<float>& input_def,
-                                          const TestInputDef<float>& scale_def,
-                                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                          ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(
-      BuildOpTestCase<float>("simplified_layernorm", "SimplifiedLayerNormalization", {input_def, scale_def}, {}, attrs),
-      provider_options,
-      17,  // opset version
-      expected_ep_assignment);
-}
-
 // Builds a QDQ SimplifiedLayerNormalization test case (single Y output).
 template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQSimplifiedLayerNormTestCase(

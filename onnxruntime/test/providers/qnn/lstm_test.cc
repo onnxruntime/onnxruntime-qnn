@@ -288,33 +288,6 @@ static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
                         expected_ep_assignment,
                         tolerance);
 }
-
-static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
-                                 const TestInputDef<float>& W_def,
-                                 const TestInputDef<float>& R_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> C_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> P_def,
-                                 const bool has_Y,
-                                 const bool has_Y_h,
-                                 const bool has_Y_c,
-                                 const std::string direction,
-                                 const int64_t hidden_size,
-                                 const int64_t layout,
-                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                 int opset = 22,
-                                 float tolerance = 0.004f) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  RunQnnModelTest(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  tolerance);
-}
-
 // QNN failed to finalize when P is provided
 // TODO: Add P to unit test below once finalize issue is resolved
 

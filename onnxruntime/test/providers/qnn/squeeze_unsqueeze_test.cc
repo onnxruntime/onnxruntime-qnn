@@ -12,24 +12,6 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Squeeze (or Unsqueeze) operator on the QNN HTP backend. Checks the graph node assignment
-// and that inference outputs for QNN EP and CPU EP match.
-template <typename DataType>
-static void RunSqueezeTestOnCPU(const std::string& op_type,  // Squeeze or Unsqueeze
-                                const TestInputDef<DataType>& input_def,
-                                const TestInputDef<int64_t>& axes_def,
-                                ExpectedEPNodeAssignment expected_ep_assignment,
-                                int opset = 13) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type + "_node", op_type, {input_def}, {axes_def}, {}),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:

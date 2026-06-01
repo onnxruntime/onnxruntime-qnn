@@ -165,33 +165,6 @@ GetTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float
   };
 }
 
-/**
- * Runs an BatchNormalization model on the QNN HTP backend. Checks the graph node assignment, and that inference
- * outputs for QNN and CPU match.
- *
- * \param input_shape The input's shape.
- * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
- */
-template <typename InputQType, typename ScaleQType>
-static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
-                                     const TestInputDef<float>& scale_def,
-                                     const TestInputDef<float>& bias_def,
-                                     ExpectedEPNodeAssignment expected_ep_assignment,
-                                     QDQTolerance tolerance = QDQTolerance()) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-                       BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
-                       provider_options,
-                       21,
-                       expected_ep_assignment,
-                       tolerance);
-}
-
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 /**

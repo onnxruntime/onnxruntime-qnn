@@ -528,7 +528,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       if (std::string parsed_backend_path; ParseBackendTypeName(backend_type, parsed_backend_path, logger_)) {
         backend_path_from_options = parsed_backend_path;
       } else {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to parse 'backend_type' value.");
+        throw std::runtime_error("Invalid 'backend_type' value: " + backend_type);
       }
     } else if (!backend_path_option.empty()) {
       backend_path_from_options = backend_path_option;

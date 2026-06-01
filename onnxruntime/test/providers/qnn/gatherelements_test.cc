@@ -55,27 +55,6 @@ static GetTestQDQModelFn<QuantType> BuildQDQGatherElemsTestCase(const TestInputD
   };
 }
 
-// Runs an GatherElements model on the QNN HTP backend. Checks the graph node assignment, and that inference
-// outputs for QNN EP and CPU EP match.
-template <typename DataType, typename IndexType>
-static void RunCPUGatherElemsOpTest(const TestInputDef<float>& input_def,
-                                    const TestInputDef<IndexType>& indices_def,
-                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                    ExpectedEPNodeAssignment expected_ep_assignment,
-                                    int opset = 13) {
-  ProviderOptions provider_options;
-  float fp32_abs_err = 1e-5f;  // default tolerance
-
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
-}
-
 // Runs a QDQ GatherElements model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match with expected accuracy.
 template <typename QuantType, typename IndexType>

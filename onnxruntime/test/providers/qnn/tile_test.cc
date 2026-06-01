@@ -12,23 +12,6 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Tile operator on the QNN HTP backend. Checks the graph node assignment
-// and that inference outputs for QNN EP and CPU EP match.
-template <typename DataType>
-static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
-                             const TestInputDef<int64_t>& repeats_def,
-                             ExpectedEPNodeAssignment expected_ep_assignment,
-                             int opset = 13) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile_node", "Tile", {input_def}, {repeats_def}, {}),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 // Test that Tile with a dynamic repeats input is not supported by QNN EP.
 
 // Test that Tile with rank 4 float input.

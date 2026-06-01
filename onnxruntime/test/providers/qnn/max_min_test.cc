@@ -14,21 +14,6 @@ namespace test {
 
 // Runs an Max/Min model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
-static void RunCPUMinOrMaxOpTest(const std::string& op_type,
-                                 const std::vector<TestInputDef<float>>& input_defs,
-                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                 int opset = 13) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 // Runs a QDQ Max/Min model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment, and that inference
 // running the QDQ model on QNN EP is at least as accurate as on ORT CPU EP (when compared to the baseline float32 model).
 template <typename QType = uint8_t>

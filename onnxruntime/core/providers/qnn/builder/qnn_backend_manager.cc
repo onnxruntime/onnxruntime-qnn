@@ -288,8 +288,7 @@ Ort::Status QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
       qnn_backend_type_ = QnnBackendType::SERIALIZER;
       break;
     default:
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL,
-                             "Unrecognized QNN backend id: ", backend_id);
+      return MAKE_EP_FAIL(("Unrecognized QNN backend id: " + std::to_string(backend_id)).c_str());
   }
   return Ort::Status();
 }

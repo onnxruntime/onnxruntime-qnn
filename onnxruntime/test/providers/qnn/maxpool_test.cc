@@ -44,21 +44,6 @@ GetTestQDQModelFn<QuantType> BuildPoolQDQTestCase(const std::string& op_type,
 
 // Runs an MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
-static void RunPoolOpTest(const std::string& op_type,
-                          const TestInputDef<float>& input_def,
-                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                          ExpectedEPNodeAssignment expected_ep_assignment,
-                          int opset = 18) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 // Runs a QDQ MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
 template <typename QuantType>

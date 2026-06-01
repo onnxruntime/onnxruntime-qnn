@@ -16,20 +16,6 @@ namespace test {
 
 // Runs an LayerNorm model on the QNN HTP backend. Checks the graph node assignment and that inference
 // outputs for QNN and CPU match.
-static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
-                                const TestInputDef<float>& scale_def,
-                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", {input_def, scale_def}, {}, attrs),
-                  provider_options,
-                  17,
-                  expected_ep_assignment);
-}
-
 template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float>& input_def,
                                                         const TestInputDef<float>& scale_def,

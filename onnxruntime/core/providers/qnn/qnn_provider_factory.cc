@@ -155,6 +155,16 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
+#if defined(__linux__) && !defined(__aarch64__)
+    // On Linux x86, no real NPU is present but the QNN HTP backend runs in software emulation.
+    // Create a virtual NPU device so the emulated HTP backend can be selected by the session.
+    OrtHardwareDevice* undetected_npu_hw_device = nullptr;
+    RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
+    factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
+        undetected_npu_hw_device,
+        FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
+    RETURN_IF_NOT_NULL(create_ep_device(factory->undetected_npu_hw_device_.get()));
+#else
     if (qnn::soc::GetSocId() != 0) {
       // If ORT Core does not detect NPU hardware but we recognize the device as WoS (through qnn::soc::GetSocId),
       // exploit virtual hardware device to create an NPU hardware device for user to select from.
@@ -170,6 +180,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     } else {
       // Enable originally expected usage of virtual hardware device for cross-platform compilation if necessary.
     }
+#endif
   }
 
   return nullptr;

@@ -246,7 +246,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   uint32_t GetBackendId() { return backend_id_; }
 
-  void SetQnnBackendType(uint32_t backend_id);
+  Ort::Status SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
   Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }

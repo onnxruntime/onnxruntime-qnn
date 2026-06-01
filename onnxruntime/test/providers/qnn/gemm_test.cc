@@ -54,7 +54,7 @@ GetTestModelFn BuildReshapeGemmTestCase(const TestInputDef<float>& input, const 
   };
 }
 
-void RunReshapeGemmTest(const TestInputDef<float>& input, const TestInputDef<int64_t>& shape,
+[[maybe_unused]] void RunReshapeGemmTest(const TestInputDef<float>& input, const TestInputDef<int64_t>& shape,
                         const TestInputDef<float>& weight, const TestInputDef<float>& bias,
                         ExpectedEPNodeAssignment expected_ep_assignment,
                         const std::string& backend_name = "htp", float fp32_abs_err = 1e-5f) {
