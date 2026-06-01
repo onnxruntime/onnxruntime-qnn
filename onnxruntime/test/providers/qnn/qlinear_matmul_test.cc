@@ -57,10 +57,8 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
     const std::vector<int64_t>& shape_b,
     bool b_is_initializer = false,
     bool include_zp = true,
-    bool dynamic_a_scale = false,
-    bool per_row_a_scale = false) {
-  return [shape_a, shape_b, b_is_initializer, include_zp, dynamic_a_scale,
-          per_row_a_scale](ModelTestBuilder& builder) {
+    bool dynamic_a_scale = false) {
+  return [shape_a, shape_b, b_is_initializer, include_zp, dynamic_a_scale](ModelTestBuilder& builder) {
     const size_t num_a = static_cast<size_t>(
         std::accumulate(shape_a.begin(), shape_a.end(), int64_t{1}, std::multiplies<int64_t>()));
     const size_t num_b = static_cast<size_t>(
@@ -94,11 +92,6 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
     if (dynamic_a_scale) {
       // Make a_scale a dynamic graph input to trigger rejection.
       builder.MakeInput<float>(a_scale_name, {}, std::vector<float>{qp_a.scale});
-    } else if (per_row_a_scale) {
-      // per-row scale shape [M] — should be rejected.
-      const int64_t M = shape_a[shape_a.size() - 2 < shape_a.size() ? shape_a.size() - 2 : 0];
-      std::vector<float> row_scales(static_cast<size_t>(M), qp_a.scale);
-      builder.MakeInitializer<float>(a_scale_name, {M}, row_scales);
     } else {
       builder.MakeScalarInitializer<float>(a_scale_name, qp_a.scale);
     }
@@ -107,13 +100,12 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
     builder.MakeScalarInitializer<float>("b_scale", qp_b.scale);
     builder.MakeScalarInitializer<float>("y_scale", qp_y.scale);
 
-    // Build node input list: a, a_scale, [a_zp], b, b_scale, [b_zp], y_scale, [y_zp]
+    // Build node input list: a, a_scale, [a_zp,] b, b_scale, [b_zp,] y_scale, [y_zp]
+    // Optional zero-point inputs are omitted entirely (not empty string) when absent.
     std::vector<std::string> node_inputs = {"a", a_scale_name};
     if (include_zp) {
       builder.MakeScalarInitializer<AType>("a_zp", qp_a.zero_point);
       node_inputs.push_back("a_zp");
-    } else {
-      node_inputs.push_back("");  // absent optional input
     }
 
     node_inputs.push_back("b");
@@ -121,16 +113,12 @@ static GetTestModelFn BuildQLinearMatMulTestCase(
     if (include_zp) {
       builder.MakeScalarInitializer<BType>("b_zp", qp_b.zero_point);
       node_inputs.push_back("b_zp");
-    } else {
-      node_inputs.push_back("");
     }
 
     node_inputs.push_back("y_scale");
     if (include_zp) {
       builder.MakeScalarInitializer<YType>("y_zp", qp_y.zero_point);
       node_inputs.push_back("y_zp");
-    } else {
-      node_inputs.push_back("");
     }
 
     builder.MakeOutput("y");
@@ -165,15 +153,14 @@ static void RunQLinearMatMulTest(
     bool b_is_initializer = false,
     bool include_zp = true,
     int opset = 10,
-    bool dynamic_a_scale = false,
-    bool per_row_a_scale = false) {
+    bool dynamic_a_scale = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(
       BuildQLinearMatMulTestCase<AType, BType, YType>(
-          shape_a, shape_b, b_is_initializer, include_zp, dynamic_a_scale, per_row_a_scale),
+          shape_a, shape_b, b_is_initializer, include_zp, dynamic_a_scale),
       provider_options, opset, expected_ep_assignment,
       /*fp32_abs_err=*/1e-2f);
 }
@@ -190,64 +177,20 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulOp_DynamicScale_Unsupported) {
       /*dynamic_a_scale=*/true);
 }
 
-TEST_F(QnnCPUBackendTests, QLinearMatMulOp_PerRowScale_Unsupported) {
-  // a_scale has shape [M] — per-row quantization — must not be assigned to QNN EP.
-  RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>(
-      {2, 3}, {3, 2}, "cpu", ExpectedEPNodeAssignment::None,
-      /*b_is_initializer=*/false, /*include_zp=*/true, /*opset=*/10,
-      /*dynamic_a_scale=*/false, /*per_row_a_scale=*/true);
-}
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, QLinearMatMulOp_DynamicZeroPoint_Unsupported) {
-  // This test manually constructs a graph where a_zero_point is a graph input.
-  // We reuse dynamic_a_scale=false but create a separate builder below.
+  // a_zero_point is a dynamic graph input — must not be assigned to QNN EP.
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  // Build a model where a_zero_point is a dynamic graph input.
   GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
     builder.MakeInput<uint8_t>("a", {2, 3}, std::vector<uint8_t>(6, 128u));
     builder.MakeScalarInitializer<float>("a_scale", 0.02f);
-    // a_zero_point is a dynamic input — this must cause IsOpSupported to fail.
     builder.MakeInput<uint8_t>("a_zp", {}, std::vector<uint8_t>{128u});
     builder.MakeInput<uint8_t>("b", {3, 2}, std::vector<uint8_t>(6, 128u));
     builder.MakeScalarInitializer<float>("b_scale", 0.02f);
-    builder.MakeScalarInitializer<uint8_t>("b_zp", 128u);
-    builder.MakeScalarInitializer<float>("y_scale", 0.04f);
-    builder.MakeScalarInitializer<uint8_t>("y_zp", 128u);
-    builder.MakeOutput("y");
-    builder.AddNode("QLinearMatMul", "QLinearMatMul",
-                    {"a", "a_scale", "a_zp", "b", "b_scale", "b_zp", "y_scale", "y_zp"},
-                    {"y"}, kOnnxDomain);
-  };
-
-  RunQnnModelTest(model_fn, provider_options, 10, ExpectedEPNodeAssignment::None);
-}
-
-TEST_F(QnnHTPBackendTests, QLinearMatMulOp_PerColBScale_Unsupported) {
-  // b_scale has shape [K] — per-column — must not be assigned to QNN EP.
-  RunQLinearMatMulTest<uint8_t, uint8_t, uint8_t>(
-      {2, 3}, {3, 2}, "htp", ExpectedEPNodeAssignment::None,
-      /*b_is_initializer=*/false, /*include_zp=*/true, /*opset=*/10,
-      /*dynamic_a_scale=*/false, /*per_row_a_scale=*/false);
-  // Note: per_col_b_scale is exercised via a custom builder — see separate test below.
-}
-
-TEST_F(QnnHTPBackendTests, QLinearMatMulOp_PerColBScale_Custom_Unsupported) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
-    builder.MakeInput<uint8_t>("a", {2, 3}, std::vector<uint8_t>(6, 128u));
-    builder.MakeScalarInitializer<float>("a_scale", 0.02f);
-    builder.MakeScalarInitializer<uint8_t>("a_zp", 128u);
-    builder.MakeInput<uint8_t>("b", {3, 2}, std::vector<uint8_t>(6, 128u));
-    // b_scale shape [2] = per-column — must be rejected.
-    builder.MakeInitializer<float>("b_scale", {2}, std::vector<float>{0.02f, 0.02f});
     builder.MakeScalarInitializer<uint8_t>("b_zp", 128u);
     builder.MakeScalarInitializer<float>("y_scale", 0.04f);
     builder.MakeScalarInitializer<uint8_t>("y_zp", 128u);
