@@ -220,11 +220,27 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                              registration_name.c_str(),
                                                              library_path.c_str()));
 
+  bool ownership_transferred = false;
+  auto unregister_guard = gsl::finally([&registration_name, &ownership_transferred]() {
+    if (!ownership_transferred) {
+      OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*GetOrtEnv(), registration_name.c_str());
+      if (status != nullptr) {
+        Ort::GetApi().ReleaseStatus(status);
+      }
+    }
+  });
+
   const OrtEpDevice* const* ep_devices = nullptr;
   size_t num_devices;
   ASSERT_ORTSTATUS_OK(c_api.GetEpDevices(*ort_env, &ep_devices, &num_devices));
 
+#if defined(__linux__)
+  // On Linux, QNN EP advertises an NPU OrtEpDevice (a real NPU, or the virtual HTP-emulation
+  // NPU created on x86). The QNN CPU backend was removed, so there is no CPU device to anchor to.
+  auto target_hw_device_type = OrtHardwareDeviceType_NPU;
+#else
   auto target_hw_device_type = OrtHardwareDeviceType_CPU;
+#endif
   if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "htp") ||
       (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
@@ -243,7 +259,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 #endif
               )) {
 #if defined(__linux__)
-    target_hw_device_type = OrtHardwareDeviceType_CPU;
+    target_hw_device_type = OrtHardwareDeviceType_NPU;
 #else
     target_hw_device_type = OrtHardwareDeviceType_GPU;
 #endif
@@ -263,6 +279,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
       Ort::GetApi().ReleaseStatus(status);
     }
   });
+  ownership_transferred = true;
 
   session_options.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, ep_options);
 }

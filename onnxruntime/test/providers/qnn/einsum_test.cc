@@ -17,7 +17,6 @@ namespace test {
 constexpr char kEinsumOp[] = "Einsum";
 constexpr char kEinsumEquation[] = "equation";
 constexpr char kQnnBackendType[] = "backend_type";
-constexpr char kQnnBackendTypeCpu[] = "cpu";
 #if defined(_M_ARM64)
 constexpr char kQnnBackendTypeGpu[] = "gpu";
 #endif
