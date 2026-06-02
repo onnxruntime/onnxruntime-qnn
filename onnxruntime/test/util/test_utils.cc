@@ -237,7 +237,8 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                std::string_view log_id,
                                const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
-                               bool verify_outputs) {
+                               bool verify_outputs,
+                               Ort::CustomOpDomain* custom_op_domain) {
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
@@ -245,6 +246,9 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   // get expected output from CPU EP using public API
   //
   Ort::SessionOptions cpu_so;
+  if (custom_op_domain != nullptr) {
+    cpu_so.Add(*custom_op_domain);
+  }
   Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
 
   // fetch all outputs using public API

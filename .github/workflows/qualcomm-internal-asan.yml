@@ -1,0 +1,59 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal ASan
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  asan-linux-x86_64:
+    name: "asan-linux-x86_64"
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # submodules omitted here; initialized below only when ASan is needed.
+
+      - name: Check if ASan is needed
+        id: gate
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          base_ref="${{ github.base_ref }}"
+          if [ -z "${base_ref}" ]; then
+            echo "::error::github.base_ref is empty (event_name=${{ github.event_name }})"
+            exit 1
+          fi
+
+          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
+            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+            exit 1
+          fi
+
+          if echo "${changed}" | grep -qE 'onnxruntime/(core|test)/providers/qnn/'; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Initialize submodules
+        if: steps.gate.outputs.run == 'true'
+        run: git submodule update --init --recursive
+
+      - name: Run ASan build and unit tests (Linux x86_64, Debug)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          python3 qcom/build_and_test.py \
+            --target-py-version None \
+            asan_linux_x86_64

@@ -40,6 +40,29 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model
   const auto& input_tensor = inputs[0];
   const std::string& input_tensor_name = input_tensor.name;
 
+  // Reject dynamic shapes; static shape tensor is baked at compile time.
+  if (!input_tensor.shape.has_value()) {
+    return MAKE_EP_FAIL(
+        "QNN EP RandomUniformLike requires static input dimensions. "
+        "Input shape is unknown.");
+  }
+  for (const auto& dim : *input_tensor.shape) {
+    if (dim < 0) {
+      return MAKE_EP_FAIL(
+          "QNN EP RandomUniformLike requires static input dimensions. "
+          "Found symbolic/unknown dimension in input shape.");
+    }
+  }
+
+  // Register `x` as a QnnTensorWrapper even though the QNN op only consumes the static
+  // shape tensor — without it, ORT's SetupTensors fails with "Zero tensor size!".
+  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_tensor_name)) {
+    QnnTensorWrapper input_tensorwrapper;
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_tensor, input_tensorwrapper));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)),
+                  "Failed to add input tensor wrapper.");
+  }
+
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_tensor.shape, input_shape),
                 ("Failed to get shape for input tensor: " + input_tensor_name).c_str());

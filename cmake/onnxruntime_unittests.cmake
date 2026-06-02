@@ -198,6 +198,7 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+  include(onnxruntime_unittests_udo.cmake)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
@@ -310,6 +311,9 @@ block()
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
       # Stub for OrtGetRuntimePath (defined in ort_api.cc, which is EP DLL only).
       ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie_test_stubs.cc
+      # ParseOpPackages is consumed by qnn_basic_test.cc; recompile here for the same reason
+      # as the genie sources (the EP shared library is loaded via dlopen, not linked).
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_package/op_package_parser.cc
     )
   endif()
 
@@ -340,6 +344,9 @@ block()
     # uniform across all TUs in a binary. Suppress the define so the genie TUs match
     # the rest of the test binary.
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+    if(onnxruntime_BUILD_QNN_UDO_TEST)
+      target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
+    endif()
   endif()
 
   # Dependency on ORT Core public header files
