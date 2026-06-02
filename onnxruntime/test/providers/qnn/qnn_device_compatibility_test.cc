@@ -67,8 +67,8 @@ class QnnDeviceCompatibilityTests : public ::testing::Test {
   OrtEnv* env_ = nullptr;
 };
 
-// Test that CPU devices are compatible
-TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
+// CPU devices are incompatible: the QNN CPU backend was removed.
+TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsIncompatible) {
   ProviderOptions options;
   options["backend_type"] = "htp";
 
@@ -87,14 +87,19 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
       env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
-  // Verify compatible (no incompatibility reasons)
-  uint32_t reasons_bitmask = 0xFFFFFFFF;
+  uint32_t reasons_bitmask = 0;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
-  EXPECT_EQ(reasons_bitmask, 0u) << "CPU device should be compatible with QNN EP";
+  EXPECT_TRUE((reasons_bitmask & OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE) != 0)
+      << "CPU device should be incompatible with QNN EP";
 
   int32_t error_code = -1;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetErrorCode(details, &error_code));
-  EXPECT_EQ(error_code, 0);
+  EXPECT_EQ(error_code, QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED);
+
+  const char* notes = nullptr;
+  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetNotes(details, &notes));
+  ASSERT_NE(notes, nullptr);
+  EXPECT_FALSE(std::string(notes).empty());
 
   api_->ReleaseDeviceEpIncompatibilityDetails(details);
 }
@@ -224,50 +229,6 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible
   uint32_t reasons_bitmask = 0;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
   EXPECT_NE(reasons_bitmask, 0u) << "GPU device with non-Qualcomm vendor should be incompatible with QNN EP";
-
-  api_->ReleaseDeviceEpIncompatibilityDetails(details);
-}
-
-// Test that CPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
-// Note: This should be tested by manually removing the CPU dependency
-TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDependency) {
-  ProviderOptions options;
-  options["backend_type"] = "htp";
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
-
-  ASSERT_NE(registered_ep_device, nullptr);
-
-  // Create a mock CPU device
-  ASSERT_ORTSTATUS_OK(CreateMockHardwareDevice(OrtHardwareDeviceType_CPU, 0));
-
-  // Check compatibility using the ORT C API
-  OrtDeviceEpIncompatibilityDetails* details = nullptr;
-  ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, kQnnExecutionProvider, mock_hw_device, &details));
-  ASSERT_NE(details, nullptr);
-
-  // Check if device is compatible - if so, skip this test
-  uint32_t reasons_bitmask = 0;
-  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
-
-  if (reasons_bitmask == 0u) {
-    // Device is compatible, skip this test
-    api_->ReleaseDeviceEpIncompatibilityDetails(details);
-    GTEST_SKIP() << "CPU device is compatible with QNN EP, skipping incompatibility test";
-  }
-
-  // Verify incompatibility reason includes MISSING_DEPENDENCY
-  EXPECT_TRUE((reasons_bitmask & OrtDeviceEpIncompatibility_MISSING_DEPENDENCY) != 0)
-      << "Expected MISSING_DEPENDENCY flag in incompatibility reasons";
-
-  // Verify error code is QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED (2006)
-  int32_t error_code = -1;
-  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetErrorCode(details, &error_code));
-  EXPECT_EQ(error_code, QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED)
-      << "Expected QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED error code";
 
   api_->ReleaseDeviceEpIncompatibilityDetails(details);
 }
