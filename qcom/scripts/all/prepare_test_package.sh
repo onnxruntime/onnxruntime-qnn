@@ -246,7 +246,19 @@ ZIP_NAME="onnxruntime-qnn-${VERSION}-test_package.zip"
 ZIP_PATH="$TEST_PACKAGE_DIR/$ZIP_NAME"
 echo ""
 echo "Compressing test_package contents"
-if (cd "$TEST_PACKAGE_DIR" && python3 -m zipfile -c "$ZIP_PATH" .); then
+if (cd "$TEST_PACKAGE_DIR" && python3 - "$ZIP_PATH" <<'PYEOF'
+import os
+import sys
+import zipfile
+zip_path = os.path.abspath(sys.argv[1])
+with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_STORED) as zf:
+    for root, dirs, files in os.walk('.'):
+        for fname in sorted(files):
+            fp = os.path.join(root, fname)
+            if os.path.abspath(fp) != zip_path:
+                zf.write(fp)
+PYEOF
+); then
     echo "Created $ZIP_NAME"
 else
     echo "ERROR: Failed to create zip"
