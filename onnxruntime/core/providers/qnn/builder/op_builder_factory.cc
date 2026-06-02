@@ -32,6 +32,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateIdentityOpBuilder("Identity", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
+  CreateIsInfOpBuilder("IsInf", *this);
   CreateIsNaNOpBuilder("IsNaN", *this);
   CreateLayerNormalizationOpBuilder("LayerNormalization", *this);
   CreateLRNOpBuilder("LRN", *this);
