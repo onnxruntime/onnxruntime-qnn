@@ -455,7 +455,7 @@ static bool OverrideQuantParams(const std::string& op_type, Qnn_DataType_t qnn_d
   const int32_t orig_offset = quant_params.offset;
   const float orig_scale = quant_params.scale;
 
-  if (op_type == "Sigmoid") {
+  if (op_type == "Sigmoid" || op_type == "HardSigmoid") {
     switch (qnn_data_type) {
       case QNN_DATATYPE_UFIXED_POINT_16:
         quant_params.offset = 0;
@@ -501,7 +501,7 @@ Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model
   // Override output quantization parameters for uint16 QDQ Sigmoid or Tanh.
   // QNN requires 16-bit QDQ Sigmoid and Tanh to use specific output scale and zero-point values
   // regardless of floating-point range.
-  if (op_type == "Sigmoid" || op_type == "Tanh") {
+  if (op_type == "Sigmoid" || op_type == "Tanh" || op_type == "HardSigmoid") {
     const auto& outputs = node_unit.Outputs();
     RETURN_IF_NOT(output_index < outputs.size(),
                   ("Invalid output index in OverrideOutputQuantParam for op " + op_type).c_str());
