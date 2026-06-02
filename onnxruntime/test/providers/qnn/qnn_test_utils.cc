@@ -271,7 +271,9 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                    c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_device)) == target_hw_device_type);
                          });
 
-  ASSERT_NE(it, ep_devices + num_devices);
+  if (it == ep_devices + num_devices) {
+    GTEST_SKIP() << "QNN EP advertises no selectable device on this host; skipping test.";
+  }
 
   registered_ep_device = RegisteredEpDeviceUniquePtr(*it, [registration_name](const OrtEpDevice* /*ep*/) {
     OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*GetOrtEnv(), registration_name.c_str());
