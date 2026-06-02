@@ -30,6 +30,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
@@ -106,13 +107,6 @@ class QnnSerializerConfig {
  private:
   std::string backend_path_;
   std::string graph_name_{"graph"};
-};
-
-struct OpPackage {
-  std::string op_type;
-  std::string path;
-  std::string interface;
-  std::string target;
 };
 
 // configuration values for QnnBackendManager creation

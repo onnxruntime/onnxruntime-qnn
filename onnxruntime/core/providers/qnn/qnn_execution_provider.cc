@@ -33,6 +33,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -223,53 +224,6 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string,
     qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V81;
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid HTP architecture: " + htp_arch_string).c_str());
-  }
-}
-
-static void ParseOpPackages(const std::string& op_packages_string,
-                            std::vector<onnxruntime::qnn::OpPackage>& op_packages,
-                            const Ort::Logger& logger) {
-  for (const auto& op_package : qnn::utils::SplitString(op_packages_string, ",", true)) {
-    auto splitStrings = qnn::utils::SplitString(op_package, ":", true);
-    if (splitStrings.size() < 3 || splitStrings.size() > 4) {
-      std::string msg =
-          "Invalid op_package passed, "
-          "expected <OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>], "
-          "got ";
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, (msg + std::string(op_package)).c_str());
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Skip registration.");
-      continue;
-    }
-
-    std::string op_type = std::string(splitStrings[0]);
-    std::string op_package_path = std::string(splitStrings[1]);
-    std::string op_package_interface = std::string(splitStrings[2]);
-    std::string op_package_target;
-
-    if (op_type.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op type is empty. Skip registration.");
-      continue;
-    }
-
-    if (op_package_path.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op package path is empty. Skip registration");
-      continue;
-    }
-
-    if (op_package_interface.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op package interface is empty. Skip registration");
-      continue;
-    }
-
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Loading op package from path: " + op_package_path + " for op " + op_type).c_str());
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op package interface " + op_package_interface).c_str());
-    if (splitStrings.size() > 3 && splitStrings[3].size()) {
-      op_package_target = std::string(splitStrings[3]);
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op package target: " + op_package_target).c_str());
-    }
-    op_packages.push_back({op_type, op_package_path, op_package_interface, op_package_target});
   }
 }
 

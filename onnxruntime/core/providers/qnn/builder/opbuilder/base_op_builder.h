@@ -185,6 +185,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Mul", QNN_OP_ELEMENT_WISE_MULTIPLY},
         {"Neg", QNN_OP_ELEMENT_WISE_NEG},
         {"Not", QNN_OP_ELEMENT_WISE_NOT},
+        {"OneHot", QNN_OP_ONE_HOT},
         {"Or", QNN_OP_ELEMENT_WISE_OR},
         {"PRelu", QNN_OP_PRELU},
         {"Pad", QNN_OP_PAD},

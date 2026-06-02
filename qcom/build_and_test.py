@@ -40,6 +40,7 @@ from ep_build.tasks.build import (
     GenerateCoverageTask,
     GenerateDiffCoverageTask,
     QdcTestsTask,
+    RunAsanTask,
 )
 from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
 from ep_build.tasks.python import (
@@ -439,6 +440,38 @@ class TaskLibrary:
                 ],
             )
         )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with AddressSanitizer and run unit tests under ASan (Linux x86_64, Debug)")
+        @depends(["create_venv"])
+        def asan_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                CompositeTask(
+                    "ASan build and test",
+                    [
+                        BuildEpLinuxTask(
+                            "Building ONNX Runtime for Linux (Debug + ASan)",
+                            self.__venv_path,
+                            "linux",
+                            "x86_64",
+                            "Debug",
+                            None,  # target_py_version: ASan task does not exercise the Python wheel
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            extra_args=["--enable-asan"],
+                        ),
+                        RunAsanTask(
+                            "Running tests under ASan",
+                            self.__venv_path,
+                            build_dir,
+                            config="Debug",
+                        ),
+                    ],
+                )
+            )
 
     @public_task("Build ONNX Runtime for this host's native architecture")
     @depends(

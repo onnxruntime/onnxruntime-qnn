@@ -646,7 +646,8 @@ void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
+                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
+                       Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 void InferenceModel(const std::string& model_data,
                     const char* log_id,
@@ -657,7 +658,8 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                    std::function<void(const Ort::Session&)>* graph_checker = nullptr);
+                    std::function<void(const Ort::Session&)>* graph_checker = nullptr,
+                    Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
@@ -932,7 +934,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                                 std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr) {
+                                 std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr,
+                                 Ort::CustomOpDomain* custom_op_domain = nullptr) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -964,7 +967,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level, custom_op_domain);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -1013,7 +1016,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
-  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
+  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level, custom_op_domain);
 
   qnn_options["dump_json_qnn_graph"] = "1";
 
@@ -1055,7 +1058,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    qnn_qdq_outputs,
                    log_severity,
                    session_option_pairs,
-                   graph_optimization_level);
+                   graph_optimization_level,
+                   nullptr,
+                   custom_op_domain);
   } else {
     InferenceModel(qdq_model_data,
                    "qdq_model_logger",
@@ -1066,7 +1071,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    log_severity,
                    session_option_pairs,
                    graph_optimization_level,
-                   qnn_ep_graph_checker);
+                   qnn_ep_graph_checker,
+                   custom_op_domain);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -1628,7 +1634,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      float fp32_abs_err = 1e-5f,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
-                     std::function<void(const Ort::Session&)>* ep_graph_checker = nullptr);
+                     std::function<void(const Ort::Session&)>* ep_graph_checker = nullptr,
+                     Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,
