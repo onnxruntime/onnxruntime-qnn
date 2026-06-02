@@ -287,7 +287,11 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
       const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
       if (act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
-        const std::string fp16_act_name = utils::UniqueNameGenerator().New(act_name, "_fp16");
+        // Reuse the original DequantizeLinear node's output name (the target Conv's input[0]) for the
+        // FP16 tensor. That tensor is conceptually the dequantized activation — exactly what this
+        // INT16→FP16 Dequantize produces — and QNN EP otherwise skips it, so the name is free and
+        // keeps the QNN graph aligned with the ONNX graph naming.
+        const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
         std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
         QnnTensorWrapper fp16_act_wrapper(fp16_act_name, QNN_TENSOR_TYPE_NATIVE,
                                           QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
@@ -1343,7 +1347,11 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     if (is_bq_conv && is_quantized_tensor) {
       // BQ Conv outputs FP16; downstream QDQ expects INT16.
       // Emit: Conv (FP16 output) → Quantize (FP16 → INT16 quantized output).
-      const std::string conv_fp16_out = utils::UniqueNameGenerator().New(output_name, "_fp16");
+      // Reuse the original QuantizeLinear node's input name (the target Conv's output[0]) for the
+      // FP16 tensor. That tensor is conceptually the un-quantized Conv output — exactly what this
+      // BQ Conv produces — and QNN EP otherwise skips it, so the name is free and keeps the QNN
+      // graph aligned with the ONNX graph naming.
+      const std::string conv_fp16_out = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName();
       QnnTensorWrapper fp16_out_wrapper(conv_fp16_out, QNN_TENSOR_TYPE_NATIVE,
                                         QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
                                         std::vector<uint32_t>(output_shape));
