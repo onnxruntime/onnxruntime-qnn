@@ -84,17 +84,6 @@ get_arch() {
     echo ""
 }
 
-# Whether a filename is a known excluded variant
-is_excluded_variant() {
-    local name="$1"
-    local lower
-    lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
-    echo "$lower" | grep -qE "android" && return 0
-    echo "$lower" | grep -qE "linux.*(arm64|aarch64)" && ! echo "$lower" | grep -qE "manylinux" && return 0
-    echo "$lower" | grep -qE "linux.*(x86_64|x64|amd64)" && echo "$lower" | grep -qE "ubuntu" && return 0
-    return 1
-}
-
 WINDOWS_FILES=(
     "onnxruntime_perf_test.exe"
     "onnxruntime_plugin_ep_onnx_test.exe"
@@ -111,8 +100,6 @@ LINUX_FILES=(
     "onnxruntime_provider_test"
     "ep_weight_sharing_ctx_gen"
     "libonnxruntime.so"
-    "libonnxruntime.so.1"
-    "libonnxruntime.so.1.*.*"
     "libonnxruntime_providers_shared.so"
     "libonnxruntime_providers_qnn.so"
 )
@@ -191,7 +178,7 @@ for ARCHIVE in "${ARCHIVES[@]}"; do
     MISSING=()
 
     for PATTERN in "${EXPECTED[@]}"; do
-        mapfile -t MATCHES < <(find "$EXTRACT_TMP" -type f -name "$PATTERN" 2>/dev/null | head -1)
+        mapfile -t MATCHES < <(find "$EXTRACT_TMP" \( -type f -o -type l \) -name "$PATTERN" 2>/dev/null | head -1)
 
         if [[ ${#MATCHES[@]} -eq 0 || -z "${MATCHES[0]}" ]]; then
             echo "  MISSING: $PATTERN"
@@ -200,7 +187,7 @@ for ARCHIVE in "${ARCHIVES[@]}"; do
         else
             SRC="${MATCHES[0]}"
             DEST="$ARCH_DIR/$(basename "$SRC")"
-            cp "$SRC" "$DEST"
+            cp -P "$SRC" "$DEST"
             echo "  OK: $(basename "$SRC")"
         fi
     done
@@ -251,7 +238,7 @@ import os
 import sys
 import zipfile
 zip_path = os.path.abspath(sys.argv[1])
-with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_STORED) as zf:
+with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
     for root, dirs, files in os.walk('.'):
         for fname in sorted(files):
             fp = os.path.join(root, fname)

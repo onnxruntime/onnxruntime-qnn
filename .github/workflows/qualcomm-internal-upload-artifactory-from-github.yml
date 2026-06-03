@@ -441,7 +441,7 @@ jobs:
           name: linux-aarch64_manylinux_2_34-py3.11-tests
 
       
-      # This will be enables once we start shipping x86_64 Linux wheels
+      # This will be enabled once we start shipping x86_64 Linux wheels
 
       # - name: Download x86_64 Linux Tests from Artifactory
       #   uses: ./.github/actions/download-ci-artifact
@@ -464,6 +464,9 @@ jobs:
           name: windows-x86_64-py3.11-tests
 
       - name: Collect Test Archives
+        # mv (not cp): archives are only needed as inputs to prepare_test_package.sh below.
+        # Unlike qualcomm-internal-release.yml, this workflow has no step that uploads
+        # the test artifacts individually, so keeping them in build/ serves no purpose.
         run: |
           TEST_ARCHIVES_DIR="${{ github.workspace }}/test_archives"
           if [ -d "$TEST_ARCHIVES_DIR" ]; then
@@ -483,32 +486,8 @@ jobs:
           fi
           ./qcom/scripts/all/prepare_test_package.sh \
             "${{ github.workspace }}/test_archives" \
-            "${{ github.workspace }}" \
+            "${{ github.workspace }}/build" \
             "$VERSION"
-
-      - name: Publish Test Package Archive to Artifactory
-        if: ${{ !inputs.skip_publish }}
-        run: |
-          if [ -z "${{ inputs.version_suffix }}" ]; then
-            VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
-          else
-            VERSION="${{ inputs.version_suffix }}"
-          fi
-          NETRC_FILE=$(mktemp -p /tmp)
-          chmod 600 "$NETRC_FILE"
-          cat > "$NETRC_FILE" <<EOF
-          machine re-artifactory.qualcomm.com
-          login ${{ secrets.ARTIFACTORY_USERNAME }}
-          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
-          EOF
-          ZIP_NAME="onnxruntime-qnn-${VERSION}-test_package.zip"
-          REPO_ROOT=$(git rev-parse --show-toplevel)
-          curl --fail -s -T "${{ github.workspace }}/test_package/${ZIP_NAME}" \
-            --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
-            --netrc-file "$NETRC_FILE" \
-            "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/${VERSION}/test_package/${ZIP_NAME}"  > /dev/null
-          echo "Successfully uploaded ${ZIP_NAME}"
-          rm -f "$NETRC_FILE"
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -548,6 +527,11 @@ jobs:
           # Upload Windows x86_64 PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Test Package Archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/test_package/" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file
