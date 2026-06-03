@@ -20,6 +20,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
+- [QNN EP Framework Op Tracing](#qnn-ep-framework-op-tracing)
 - [QNN EP Profiling](#qnn-ep-profiling)
 - [QNN EP weight sharing](#qnn-ep-weight-sharing)
 - [Usage](#usage)
@@ -917,6 +918,22 @@ If `num_graph_prepare_threads` is never set or set to a value outside of the all
 
 If `std::thread::hardware_concurrency` returns a value less than 8, then the default number of threads will be the lower value rather than 8. This applies when `num_graph_prepare_threads` is set to an invalid value.
 
+## QNN EP Framework Op Tracing
+
+Framework op tracing records the mapping between ONNX operators and the QNN operators they compile to. It is useful for debugging accuracy issues, understanding node-group fusions, and diagnosing why certain operators fall back to CPU EP.
+
+Enable tracing by setting `enable_framework_op_trace` to `'1'` and optionally `framework_op_trace_dir` to choose the output directory.
+
+### Output File Naming
+
+The trace is written as `{framework_op_trace_dir}/qnn_op_trace.json`.
+
+### Sidecar for Pre-compiled Context Models
+
+When loading a pre-compiled context model with `profiling_level=detailed` or `optrace`, the EP looks for a sidecar trace file to annotate profiling output with ONNX source op names. The sidecar path is `qnn_op_trace.json` in the same directory as the context model.
+
+Because AOT context-binary generation (`ep.context_enable=1`) also writes `qnn_op_trace.json`, no manual rename is needed. The only prerequisite is that the Phase 1 (context-generation) run must set `framework_op_trace_dir` to the directory where the context model is saved (i.e. the parent directory of `ep.context_file_path`), so the sidecar lands next to the context model. If the two directories differ, copy `qnn_op_trace.json` next to the context model before the Phase 2 run.
+
 ## QNN EP Profiling
 Profiling data is available with the HTP backend. Enabling QNN profiling will generate a user-readable .csv file that will contain information from initialization, execution, and de-initialization.
 
@@ -975,6 +992,10 @@ With the example above, a file "output.csv" will be generated containing the pro
 The above will output basic information, such as the profiling data for the fastest and slowest execution as well as the average case. A .csv file can also be generated this way, too, though the information will likely not differ from the "output.csv".
 
 Additionally, if the profiling_level is set to "detailed" or "optrace", additional data will be shown per-network-layer.
+
+> **Combining profiling with framework op tracing:** When `profiling_level` is `detailed` or `optrace` **and** `enable_framework_op_trace` is `'1'`, the profiling CSV gains an extra `ONNX Source Ops` column. For each per-layer `NODE` event row, this column lists the originating ONNX operator name(s) (semicolon-separated for fused groups). This makes it easy to correlate QNN-level hardware profiling data back to the original ONNX model operators without manual lookup.
+>
+> At `profiling_level=basic` the `ONNX Source Ops` column is **not** added because basic profiling does not emit per-layer `NODE` events.
 
 ### Optrace-Level Profiling
 [Optrace-level profiling](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-profiling) generates a profiling .log file that contains [Qualcomm Hexagon Tensor Processor Analaysis Summary (QHAS)](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-analysis-summary-qhas-) data. This data can be used to generate chrometraces and provide a web browser-friendly UI to visualize data.
