@@ -383,22 +383,22 @@ class TaskLibrary:
                 )
             )
 
-    @task
-    @depends(["build_ort_linux_x86_64_ubuntu_22_04", "create_venv"])
-    def archive_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
-        return plan.add_step(
-            BuildEpLinuxTask(
-                "Archiving ONNX Runtime for Linux x86_64 Ubuntu 22.04",
-                self.__venv_path,
-                "linux",
-                "x86_64_ubuntu_22_04",
-                self.__config,
-                self.__target_py_version,
-                self.__ort_prebuilt_root,
-                self.__qairt_sdk_root,
-                "archive",
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04", "create_venv"])
+        def archive_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                )
             )
-        )
 
     if is_host_windows():
 
