@@ -3046,7 +3046,7 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
     builder.MakeOutput("output");
     builder.AddNode("out_dql", "DequantizeLinear",
-                    {"out_ql_out", "out_dql_scale", "out_ql_zp"}, {"output"});
+                    {"out_ql_out", "out_dql_scale", "out_dql_zp"}, {"output"});
   };
 }
 

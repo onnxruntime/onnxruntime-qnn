@@ -592,6 +592,162 @@ TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 }
 
+namespace {
+
+// Builds an ONNX QDQ graph for a Gemm with a block-quantized (BW_FLOAT_BLOCK) weight.
+//   - activation A: float → Q(uint16) → DQ, shape [M, K]
+//   - weight B: INT4/INT8 (or UINT4/UINT8) initializer + DQ with block_size attribute and a
+//               rank-2 scale (blocked on K axis); axis/scale shape depend on transB.
+//     transB=0: B=[K,N], scale=[K/block_size,N], axis=0.
+//     transB=1: B=[N,K], scale=[N,K/block_size], axis=1.
+//   - optional bias C: INT32 quantized (per-tensor) or plain float initializer, shape [N].
+//   - output: Gemm → Q(uint16) → DQ → graph output, shape [M, N].
+GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
+                                     int64_t trans_b = 0, bool include_bias = false,
+                                     int weight_bits = 4, bool weight_is_unsigned = false) {
+  return [M, K, N, block_size, trans_b, include_bias, weight_bits,
+          weight_is_unsigned](ModelTestBuilder& builder) -> void {
+    const int64_t num_blocks = K / block_size;  // caller ensures K % block_size == 0
+
+    // ── Activation A: float → Q(uint16) → DQ ─────────────────────────────────
+    auto input_def = TestInputDef<float>({M, K}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+    const float act_scale = 2.0f / 65534.0f;
+    const uint16_t act_zp = 32767;
+    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
+    builder.AddNode("act_ql", "QuantizeLinear", {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
+    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
+    builder.AddNode("act_dql", "DequantizeLinear", {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
+
+    // ── Weight B initializer + DQ(block_size) ─────────────────────────────────
+    // transB=0: B=[K,N], scale=[K/bs, N], axis=0.
+    // transB=1: B=[N,K], scale=[N, K/bs], axis=1.
+    const std::vector<int64_t> weight_shape = trans_b == 0 ? std::vector<int64_t>{K, N}
+                                                           : std::vector<int64_t>{N, K};
+    const std::vector<int64_t> scale_shape = trans_b == 0 ? std::vector<int64_t>{num_blocks, N}
+                                                          : std::vector<int64_t>{N, num_blocks};
+    const int64_t block_axis = trans_b == 0 ? 0 : 1;
+    builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
+
+    const size_t num_elems = static_cast<size_t>(K * N);
+    if (weight_bits == 4 && !weight_is_unsigned) {
+      std::vector<Int4x2> wd(Int4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) wd[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
+      builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, wd);
+    } else if (weight_bits == 4 && weight_is_unsigned) {
+      std::vector<UInt4x2> wd(UInt4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) wd[i >> 1].SetElem(i & 1, static_cast<uint8_t>(i % 15));
+      builder.MakeInitializer<UInt4x2>("weight_quant", weight_shape, wd);
+    } else if (weight_is_unsigned) {
+      std::vector<uint8_t> wd(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) wd[i] = static_cast<uint8_t>(i % 127);
+      builder.MakeInitializer<uint8_t>("weight_quant", weight_shape, wd);
+    } else {
+      std::vector<int8_t> wd(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) wd[i] = static_cast<int8_t>((i % 127) - 63);
+      builder.MakeInitializer<int8_t>("weight_quant", weight_shape, wd);
+    }
+    builder.AddNode("weight_dql", "DequantizeLinear",
+                    {"weight_quant", "weight_scale"}, {"weight_dql_out"}, "",
+                    {builder.MakeScalarAttribute("axis", block_axis),
+                     builder.MakeScalarAttribute("block_size", block_size)});
+
+    // ── Gemm ─────────────────────────────────────────────────────────────────
+    std::vector<std::string> gemm_inputs = {"act_dql_out", "weight_dql_out"};
+    std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
+    gemm_attrs.push_back(builder.MakeScalarAttribute("transB", trans_b));
+    if (include_bias) {
+      // INT32-quantized bias (per-tensor scale). Matches Conv BQ bias pattern.
+      const float bias_scale = act_scale * 0.03f;
+      builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
+      builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
+      builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(N), 0));
+      builder.AddNode("bias_dql", "DequantizeLinear",
+                      {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+      gemm_inputs.push_back("bias_dql_out");
+    }
+    builder.AddNode("gemm", "Gemm", gemm_inputs, {"gemm_out"}, kOnnxDomain, gemm_attrs);
+
+    // ── Output: Gemm → Q(uint16) → DQ → graph output ─────────────────────────
+    const float out_scale = 4.0f / 65534.0f;
+    const uint16_t out_zp = 32767;
+    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
+    builder.AddNode("out_ql", "QuantizeLinear", {"gemm_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
+    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
+    builder.MakeOutput("output");
+    builder.AddNode("out_dql", "DequantizeLinear", {"out_ql_out", "out_dql_scale", "out_dql_zp"}, {"output"});
+  };
+}
+
+ProviderOptions GetBQGemmProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// INT4 weight transB=0, [K,N]=[16,4], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// INT4 weight transB=1, [N,K]=[4,16], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// INT4 transB=0, larger K with multiple blocks. Guards scale reordering.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_MultiBlock) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8, /*transB=*/0),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// INT4 transB=0 with INT32-quantized bias.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// INT8, block_size=4, transB=0.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int8_TransB0_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/8),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// UINT4 transB=0: exercises unsigned→signed conversion.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16UInt4_TransB0_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/4, /*weight_is_unsigned=*/true),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 2e-2f);
+}
+
+// INT2 DISABLED — CPU lacks 2-bit Q/DQ; HTP 2-bit BQ requires QAIRT >= 2.47 (float MatMul/FC kernel).
+TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/2),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 2e-2f);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
@@ -767,162 +923,6 @@ TEST_F(QnnGPUBackendTests, ReshapeGemmFusion) {
 }
 
 #endif  // defined(_M_ARM64) GPU tests
-
-namespace {
-
-// Builds an ONNX QDQ graph for a Gemm with a block-quantized (BW_FLOAT_BLOCK) weight.
-//   - activation A: float → Q(uint16) → DQ, shape [M, K]
-//   - weight B: INT4/INT8 (or UINT4/UINT8) initializer + DQ with block_size attribute and a
-//               rank-2 scale (blocked on K axis); axis/scale shape depend on transB.
-//     transB=0: B=[K,N], scale=[K/block_size,N], axis=0.
-//     transB=1: B=[N,K], scale=[N,K/block_size], axis=1.
-//   - optional bias C: INT32 quantized (per-tensor) or plain float initializer, shape [N].
-//   - output: Gemm → Q(uint16) → DQ → graph output, shape [M, N].
-GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
-                                     int64_t trans_b = 0, bool include_bias = false,
-                                     int weight_bits = 4, bool weight_is_unsigned = false) {
-  return [M, K, N, block_size, trans_b, include_bias, weight_bits,
-          weight_is_unsigned](ModelTestBuilder& builder) -> void {
-    const int64_t num_blocks = K / block_size;  // caller ensures K % block_size == 0
-
-    // ── Activation A: float → Q(uint16) → DQ ─────────────────────────────────
-    auto input_def = TestInputDef<float>({M, K}, false, -1.0f, 1.0f);
-    MakeTestInput<float>(builder, "input", input_def);
-    const float act_scale = 2.0f / 65534.0f;
-    const uint16_t act_zp = 32767;
-    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
-    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
-    builder.AddNode("act_ql", "QuantizeLinear", {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
-    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
-    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
-    builder.AddNode("act_dql", "DequantizeLinear", {"act_ql_out", "act_dql_scale", "act_ql_zp"}, {"act_dql_out"});
-
-    // ── Weight B initializer + DQ(block_size) ─────────────────────────────────
-    // transB=0: B=[K,N], scale=[K/bs, N], axis=0.
-    // transB=1: B=[N,K], scale=[N, K/bs], axis=1.
-    const std::vector<int64_t> weight_shape = trans_b == 0 ? std::vector<int64_t>{K, N}
-                                                           : std::vector<int64_t>{N, K};
-    const std::vector<int64_t> scale_shape = trans_b == 0 ? std::vector<int64_t>{num_blocks, N}
-                                                          : std::vector<int64_t>{N, num_blocks};
-    const int64_t block_axis = trans_b == 0 ? 0 : 1;
-    builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
-
-    const size_t num_elems = static_cast<size_t>(K * N);
-    if (weight_bits == 4 && !weight_is_unsigned) {
-      std::vector<Int4x2> wd(Int4x2::CalcNumInt4Pairs(num_elems));
-      for (size_t i = 0; i < num_elems; ++i) wd[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
-      builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, wd);
-    } else if (weight_bits == 4 && weight_is_unsigned) {
-      std::vector<UInt4x2> wd(UInt4x2::CalcNumInt4Pairs(num_elems));
-      for (size_t i = 0; i < num_elems; ++i) wd[i >> 1].SetElem(i & 1, static_cast<uint8_t>(i % 15));
-      builder.MakeInitializer<UInt4x2>("weight_quant", weight_shape, wd);
-    } else if (weight_is_unsigned) {
-      std::vector<uint8_t> wd(num_elems);
-      for (size_t i = 0; i < num_elems; ++i) wd[i] = static_cast<uint8_t>(i % 127);
-      builder.MakeInitializer<uint8_t>("weight_quant", weight_shape, wd);
-    } else {
-      std::vector<int8_t> wd(num_elems);
-      for (size_t i = 0; i < num_elems; ++i) wd[i] = static_cast<int8_t>((i % 127) - 63);
-      builder.MakeInitializer<int8_t>("weight_quant", weight_shape, wd);
-    }
-    builder.AddNode("weight_dql", "DequantizeLinear",
-                    {"weight_quant", "weight_scale"}, {"weight_dql_out"}, "",
-                    {builder.MakeScalarAttribute("axis", block_axis),
-                     builder.MakeScalarAttribute("block_size", block_size)});
-
-    // ── Gemm ─────────────────────────────────────────────────────────────────
-    std::vector<std::string> gemm_inputs = {"act_dql_out", "weight_dql_out"};
-    std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
-    gemm_attrs.push_back(builder.MakeScalarAttribute("transB", trans_b));
-    if (include_bias) {
-      // INT32-quantized bias (per-tensor scale). Matches Conv BQ bias pattern.
-      const float bias_scale = act_scale * 0.03f;
-      builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
-      builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
-      builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(N), 0));
-      builder.AddNode("bias_dql", "DequantizeLinear",
-                      {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
-      gemm_inputs.push_back("bias_dql_out");
-    }
-    builder.AddNode("gemm", "Gemm", gemm_inputs, {"gemm_out"}, kOnnxDomain, gemm_attrs);
-
-    // ── Output: Gemm → Q(uint16) → DQ → graph output ─────────────────────────
-    const float out_scale = 4.0f / 65534.0f;
-    const uint16_t out_zp = 32767;
-    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
-    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
-    builder.AddNode("out_ql", "QuantizeLinear", {"gemm_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
-    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
-    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
-    builder.MakeOutput("output");
-    builder.AddNode("out_dql", "DequantizeLinear", {"out_ql_out", "out_dql_scale", "out_dql_zp"}, {"output"});
-  };
-}
-
-ProviderOptions GetBQGemmProviderOptions() {
-  ProviderOptions opts;
-  opts["backend_type"] = "htp";
-  opts["offload_graph_io_quantization"] = "0";
-#if defined(__linux__) && !defined(__aarch64__)
-  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
-#endif
-  return opts;
-}
-
-}  // namespace
-
-// INT4 weight transB=0, [K,N]=[16,4], block_size=8, no bias.
-TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_NoBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
-}
-
-// INT4 weight transB=1, [N,K]=[4,16], block_size=8, no bias.
-TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB1_NoBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
-}
-
-// INT4 transB=0, larger K with multiple blocks. Guards scale reordering.
-TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_MultiBlock) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8, /*transB=*/0),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
-}
-
-// INT4 transB=0 with INT32-quantized bias.
-TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_WithBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
-                                      /*include_bias=*/true),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
-}
-
-// INT8, block_size=4, transB=0.
-TEST_F(QnnHTPBackendTests, GemmBQ_U16Int8_TransB0_BlockSize4) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4, /*transB=*/0,
-                                      /*include_bias=*/false, /*weight_bits=*/8),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
-}
-
-// UINT4 transB=0: exercises unsigned→signed conversion.
-TEST_F(QnnHTPBackendTests, GemmBQ_U16UInt4_TransB0_NoBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
-                                      /*include_bias=*/false, /*weight_bits=*/4, /*weight_is_unsigned=*/true),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 2e-2f);
-}
-
-// INT2 DISABLED — CPU lacks 2-bit Q/DQ; HTP 2-bit BQ requires QAIRT >= 2.47 (float MatMul/FC kernel).
-TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16, /*transB=*/0,
-                                      /*include_bias=*/false, /*weight_bits=*/2),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 2e-2f);
-}
 
 }  // namespace test
 }  // namespace onnxruntime
