@@ -201,11 +201,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     Qnn_ContextHandle_t old_context,
                                     QnnModel& model);
 
-  // SSR recovery: register a model so it can be proactively recovered when any model detects SSR.
-  void RegisterModelForSSR(QnnModel* model) { ssr_recoverable_models_.push_back(model); }
+  // Remove a single context handle from all tracking structures and free it via contextFree.
+  void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
 
-  // SSR recovery: reload contexts for ALL registered models (called when any model detects SSR).
-  Ort::Status RecoverAllModelsFromSSR(const Ort::Logger& logger);
+  // Adds a new QNN context handle and takes ownership (responsible for freeing via contextFree).
+  Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
 
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
@@ -562,10 +562,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::string QnnErrorHandleToString(Qnn_ErrorHandle_t error);
   QnnLog_Level_t MapOrtSeverityToQNNLogLevel(OrtLoggingLevel ort_log_level);
 
-  // Adds a new QNN context.
-  // Transfers ownership of `context_handle` (i.e., responsibility of freeing it) to this instance
-  Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
-
   bool GetPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
                                          PerThreadHtpPowerConfigs_t& htp_power_configs);
 
@@ -597,10 +593,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Populate a ContextConfigHolder with priority and spill/fill buffer configuration.
   Ort::Status BuildContextConfigs(int64_t max_spill_fill_size, ContextConfigHolder& holder);
-
-  // Remove a single context handle from all tracking structures (context_map_, contexts_,
-  // ep_context_handle_map_) and free it via contextFree.
-  void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
 
   Ort::Status LoadOpPackage() {
     // assume op_packages passed in represented in
@@ -736,9 +728,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
-
-  // Models registered for proactive SSR recovery.
-  std::vector<QnnModel*> ssr_recoverable_models_;
 
   ProfilingLevel profiling_level_etw_;
   ProfilingLevel profiling_level_;

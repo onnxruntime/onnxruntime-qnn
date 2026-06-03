@@ -152,7 +152,6 @@ class QnnModel {
     context_bin_filepath_ = std::move(filepath);
     node_name_ = std::move(node_name);
     max_spill_fill_size_ = max_spill_fill_size;
-    qnn_backend_manager_->RegisterModelForSSR(this);
   }
 
   // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context

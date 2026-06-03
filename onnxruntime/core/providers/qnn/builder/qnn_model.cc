@@ -475,19 +475,54 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
   Qnn_ContextHandle_t old_context = graph_info_->GraphContext();
+  std::string graph_name = graph_info_->Name();
 
-  // Reset stale state before the reload.  graph_info_ holds the old (invalid) context handle;
-  // clearing it now ensures no dangling use before ReloadContextForModel repopulates it.
-  graph_info_.reset();
+  // Clear tensor I/O metadata (will be rebuilt after recovery).
   qnn_input_infos_.clear();
   qnn_output_infos_.clear();
 
-  // Ask the backend manager to release the old context, create a new one from the .bin file,
-  // and re-deserialize the graph info into *this.
-  RETURN_IF_ERROR(qnn_backend_manager_->ReloadContextForModel(
-      context_bin_filepath_, node_name_, max_spill_fill_size_, old_context, *this));
+  // 1. Release the stale context.
+  qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
 
-  // Re-build the tensor I/O metadata against the new graph handles.
+  // 2. Read the context binary from disk (skip file mapping — DMA infrastructure is invalid).
+  std::ifstream cache_file(context_bin_filepath_.c_str(), std::ifstream::binary);
+  RETURN_IF(!cache_file || !cache_file.good(),
+            ("SSR recovery: failed to open context file: " + context_bin_filepath_).c_str());
+  cache_file.seekg(0, cache_file.end);
+  const size_t buffer_size = static_cast<size_t>(cache_file.tellg());
+  RETURN_IF(buffer_size == 0, ("SSR recovery: context binary file is empty: " + context_bin_filepath_).c_str());
+  cache_file.seekg(0, cache_file.beg);
+  auto buffer = std::make_unique<char[]>(buffer_size);
+  cache_file.read(buffer.get(), static_cast<std::streamsize>(buffer_size));
+  RETURN_IF(!cache_file, ("SSR recovery: failed to read context binary: " + context_bin_filepath_).c_str());
+  cache_file.close();
+
+  // 3. Create a new QNN context from the binary.
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+
+  Qnn_ContextHandle_t new_context = nullptr;
+  auto rt = qnn_interface.contextCreateFromBinary(
+      qnn_backend_manager_->GetQnnBackendHandle(),
+      qnn_backend_manager_->GetQnnDeviceHandle(),
+      nullptr,  // context configs
+      static_cast<void*>(buffer.get()),
+      static_cast<Qnn_ContextBinarySize_t>(buffer_size),
+      &new_context,
+      qnn_backend_manager_->GetQnnProfileHandle());
+  RETURN_IF(QNN_SUCCESS != rt,
+            ("SSR recovery: contextCreateFromBinary failed. Error code: " + std::to_string(rt)).c_str());
+  RETURN_IF_ERROR(qnn_backend_manager_->AddQnnContextHandle(new_context));
+
+  // 4. Retrieve the graph handle from the new context.
+  Qnn_GraphHandle_t new_graph = nullptr;
+  rt = qnn_interface.graphRetrieve(new_context, graph_name.c_str(), &new_graph);
+  RETURN_IF(QNN_SUCCESS != rt,
+            ("SSR recovery: graphRetrieve failed for graph: " + graph_name).c_str());
+
+  // 5. Update graph_info_ with the new handles (tensor metadata is preserved).
+  graph_info_->ResetHandles(new_graph, new_context);
+
+  // 6. Re-build the tensor I/O metadata against the new graph handles.
   return SetupQnnInputOutput(logger);
 }
 
@@ -663,7 +698,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                   "NPU crashed. SSR detected during QNN graph execute.");
       if (attempt == 0 && !context_bin_filepath_.empty()) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
-        RETURN_IF_ERROR(qnn_backend_manager_->RecoverAllModelsFromSSR(logger));
+        RETURN_IF_ERROR(RecoverFromSSR(logger));
         continue;  // retry with fresh context and re-bound tensors
       }
       std::ostringstream oss;
