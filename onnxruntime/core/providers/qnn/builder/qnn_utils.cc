@@ -1219,7 +1219,7 @@ Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
                 "BQ offsets size must be empty or equal to bq_scales size");
   RETURN_IF_NOT(bitwidth == 4, "BQ to LPBQ conversion is only supported for 4-bit");
 
-  const uint32_t max_int_scale = (1u << bitwidth); // 2^bitwidth
+  const uint32_t max_int_scale = (1u << bitwidth);  // 2^bitwidth
 
   // Require symmetric quantization (all offsets must be zero).
   if (!bq_offsets.empty()) {
