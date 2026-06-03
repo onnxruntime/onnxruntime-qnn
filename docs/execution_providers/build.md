@@ -23,7 +23,7 @@ See more information on the QNN execution provider [here](./QNN-ExecutionProvide
   * **Note**: The build will fetch the appropriate QAIRT version automatically. If you have a local copy, specify its location using `--qairt-sdk` argument or `QAIRT_SDK_PATH` environment variable. The SDK must be version 2.17.0 or higher. For older versions, see [Build Instructions for QNN EP v1.x](https://onnxruntime.ai/docs/build/eps.html#qnn) for details.
 
 * **Pre-built ONNX Runtime Release** (Optional): Download from [Microsoft ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases)
-  * **Note**: The build will fetch the appropriate ORT version automaticall. If you have a local copy, extract the release package and set the path via `--ort-prebuilt` argument or `ORT_PREBUILT_ROOT` environment variable to specify the root directory of the prebuilt ORT package.
+  * **Note**: The build will fetch the appropriate ORT version automatically. If you want to use prebuilt ORT binaries, pass `--use-ort-prebuilt` to download and use them automatically.
 
 ### Get the Source Code
 
@@ -42,7 +42,7 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 
 * `--config [Release/RelWithDebInfo/Debug]`: Build configuration (default: Release)
 * `--qairt-sdk PATH`: Path to QAIRT SDK (overrides environment variables)
-* `--ort-prebuilt PATH`: Path to pre-built ONNX Runtime SDK (optional)
+* `--use-ort-prebuilt`: Download and use prebuilt ORT binaries instead of building from source (optional)
 * `--target-py-version [3.10/3.11/3.12/3.13/3.14]`: Python version for wheel building (default: 3.12 on Windows, 3.10 on Linux)
 * `--build-nuget`: Enable building NuGet packages for .NET bindings
 * `--build-archive`: Enable building archives
@@ -84,7 +84,7 @@ python qcom/build_and_test.py list_all
 Automatically detects whether you're on x86-64 or ARM64 and builds accordingly:
 
 ```batch
-python qcom/build_and_test.py [--config <BUILD_CONFIG>] [--qairt-sdk <QNN_SDK_PATH>] [--ort-prebuilt <ORT_SDK_PATH>] [--target-py-version <PY_VERSION>] build
+python qcom/build_and_test.py [--config <BUILD_CONFIG>] [--qairt-sdk <QNN_SDK_PATH>] [--use-ort-prebuilt] [--target-py-version <PY_VERSION>] build
 ```
 
 #### Build for ARM64 Windows
@@ -322,7 +322,7 @@ python qcom/build_and_test.py lint_and_fix
 * **Solution**: Verify `--qairt-sdk` path or set `QAIRT_SDK_ROOT` / `QNN_SDK_ROOT` environment variable
 
 **Issue**: ORT prebuilt not found
-* **Solution**: Either provide `--ort-prebuilt` path or let the build fetch it automatically (omit the argument)
+* **Solution**: Pass `--use-ort-prebuilt` to download prebuilt binaries, or let the build fetch ORT from source (omit the argument)
 
 **Issue**: Python version mismatch
 * **Solution**: Ensure you're using Python 3.10 or higher. Use `--target-py-version` to specify the target Python version for wheel builds

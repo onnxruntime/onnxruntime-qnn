@@ -20,6 +20,10 @@ param (
     [bool]$BuildArchive = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "If true, download and use ORT prebuilt.")]
+    [bool]$UseOrtPrebuilt = $false,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
     [string]$OrtPrebuiltRoot = "",
 
@@ -87,6 +91,18 @@ else {
 }
 
 $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
+
+if ($UseOrtPrebuilt -and $OrtPrebuiltRoot -eq "") {
+    switch ($Arch) {
+        { $_ -in @("aarch64", "arm64", "arm64ec") } {
+            $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
+        }
+        "x86_64" {
+            $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
+        }
+        Default { throw "Unknown arch $Arch for ORT prebuilt" }
+    }
+}
 
 if ($Mode -eq "generate_sln") {
     $CMakeGenerator = (Get-InstalledVsGenerator).Generator
