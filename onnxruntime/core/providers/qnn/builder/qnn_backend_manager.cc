@@ -505,7 +505,7 @@ void QnnLogging(const char* format,
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, stream.str().c_str());
 }
 
-Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                       Qnn_LogHandle_t& log_handle,
                                                       const std::string& backend_label) {
   auto ort_log_level = logger_ptr_->GetLoggingSeverityLevel();
@@ -516,7 +516,7 @@ Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TY
   // NOTE: Even if logCreate() fails and QNN does not return a valid log_handle, QNN may still
   // call the QnnLogging() callback. So, we have to make sure that QnnLogging() can handle calls
   // in which ORT logging is not available.
-  Qnn_ErrorHandle_t result = interface.logCreate(QnnLogging, qnn_log_level, &log_handle);
+  Qnn_ErrorHandle_t result = qnn_interface.logCreate(QnnLogging, qnn_log_level, &log_handle);
 
   if (result != QNN_SUCCESS) {
     switch (result) {
@@ -578,11 +578,11 @@ QnnLog_Level_t QnnBackendManager::MapOrtSeverityToQNNLogLevel(OrtLoggingLevel or
   }
 }
 
-Ort::Status QnnBackendManager::SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                     Qnn_LogHandle_t log_handle,
                                                     QnnLog_Level_t qnn_log_level,
                                                     const std::string& label) {
-  Qnn_ErrorHandle_t result = interface.logSetLogLevel(log_handle, qnn_log_level);
+  Qnn_ErrorHandle_t result = qnn_interface.logSetLogLevel(log_handle, qnn_log_level);
   if (QNN_SUCCESS != result) {
     if (result == QNN_LOG_ERROR_INVALID_ARGUMENT) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
@@ -620,12 +620,12 @@ Ort::Status QnnBackendManager::ResetQnnLogLevel(std::optional<OrtLoggingLevel> o
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                        Qnn_LogHandle_t log_handle,
                                                        Qnn_BackendHandle_t& backend_handle,
                                                        bool& initialized_flag,
                                                        const std::string& backend_label) {
-  Qnn_ErrorHandle_t result = interface.backendCreate(log_handle,
+  Qnn_ErrorHandle_t result = qnn_interface.backendCreate(log_handle,
                                                      (const QnnBackend_Config_t**)backend_config_,
                                                      &backend_handle);
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
@@ -656,12 +656,12 @@ Ort::Status QnnBackendManager::InitializeValidatorBackend() {
                                  validator_backend_handle_, validator_backend_initialized_, "validator");
 }
 
-Ort::Status QnnBackendManager::ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                      Qnn_BackendHandle_t& backend_handle,
                                                      bool& initialized_flag,
                                                      const std::string& backend_label) {
-  if (interface.backendFree != nullptr) {
-    RETURN_IF(QNN_BACKEND_NO_ERROR != interface.backendFree(backend_handle),
+  if (qnn_interface.backendFree != nullptr) {
+    RETURN_IF(QNN_BACKEND_NO_ERROR != qnn_interface.backendFree(backend_handle),
               ("Failed to shutdown " + backend_label + "!").c_str());
   }
 
@@ -687,9 +687,9 @@ Ort::Status QnnBackendManager::ShutdownValidatorBackend() {
                                validator_backend_initialized_, "validator");
 }
 
-bool QnnBackendManager::IsDevicePropertySupported(const QNN_INTERFACE_VER_TYPE& interface) {
-  if (nullptr != interface.propertyHasCapability) {
-    auto rt = interface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
+bool QnnBackendManager::IsDevicePropertySupported(const QNN_INTERFACE_VER_TYPE& qnn_interface) {
+  if (nullptr != qnn_interface.propertyHasCapability) {
+    auto rt = qnn_interface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
     if (QNN_PROPERTY_NOT_SUPPORTED == rt || QNN_PROPERTY_ERROR_UNKNOWN_KEY == rt) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Device property not supported or unknown to backend.");
       return false;
@@ -731,13 +731,13 @@ std::pair<DevicePlatformInfoPtr, Qnn_ErrorHandle_t> GetDevicePlatformInfo(
 
 }  // namespace
 
-Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                   Qnn_LogHandle_t log_handle,
                                                   Qnn_DeviceHandle_t& device_handle,
                                                   bool& device_created_flag,
                                                   bool allow_hw_device_enumeration) {
   // Create device if its property supported
-  if (!IsDevicePropertySupported(interface)) {
+  if (!IsDevicePropertySupported(qnn_interface)) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Skip to create device.");
     return Ort::Status();
   }
@@ -746,7 +746,7 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
                                                                                                  {});
 
   // These will hold device selection data when device_id_ != 0
-  DevicePlatformInfoPtr device_platform_info(nullptr, PlatformInfoDeleter(interface, log_handle));
+  DevicePlatformInfoPtr device_platform_info(nullptr, PlatformInfoDeleter(qnn_interface, log_handle));
   std::unique_ptr<QnnDevice_PlatformInfo_t> device_platform_info_config;
   std::unique_ptr<QnnDevice_Config_t> device_platform_info_std_config;
 
@@ -779,7 +779,7 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
 
     if (allow_hw_device_enumeration && device_id_ != 0) {
       Qnn_ErrorHandle_t result;
-      std::tie(device_platform_info, result) = GetDevicePlatformInfo(interface, log_handle);
+      std::tie(device_platform_info, result) = GetDevicePlatformInfo(qnn_interface, log_handle);
       if (QNN_SUCCESS != result) {
         return MAKE_EP_FAIL(("Failed to get platform info. Error: " + QnnErrorHandleToString(result)).c_str());
       }
@@ -836,8 +836,8 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
   all_device_configs.push_back(nullptr);
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Create device.");
-  if (nullptr != interface.deviceCreate) {
-    Qnn_ErrorHandle_t result = interface.deviceCreate(log_handle, all_device_configs.data(), &device_handle);
+  if (nullptr != qnn_interface.deviceCreate) {
+    Qnn_ErrorHandle_t result = qnn_interface.deviceCreate(log_handle, all_device_configs.data(), &device_handle);
     if (QNN_SUCCESS != result) {
       return MAKE_EP_FAIL(("Failed to create device. Error: " + QnnErrorHandleToString(result)).c_str());
     }
@@ -871,11 +871,11 @@ Ort::Status QnnBackendManager::CreateValidatorDevice() {
                             /*allow_hw_device_enumeration=*/false);
 }
 
-Ort::Status QnnBackendManager::ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                    Qnn_DeviceHandle_t& device_handle,
                                                    bool& device_created_flag) {
-  if (nullptr != interface.deviceFree) {
-    Qnn_ErrorHandle_t result = interface.deviceFree(device_handle);
+  if (nullptr != qnn_interface.deviceFree) {
+    Qnn_ErrorHandle_t result = qnn_interface.deviceFree(device_handle);
     if (QNN_SUCCESS != result) {
       return MAKE_EP_FAIL(("Failed to release device. Error: " + QnnErrorHandleToString(result)).c_str());
     }
@@ -2128,14 +2128,14 @@ Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+Ort::Status QnnBackendManager::TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                      Qnn_LogHandle_t& log_handle,
                                                      const std::string& backend_label) {
-  if (interface.logFree == nullptr || log_handle == nullptr) {
+  if (qnn_interface.logFree == nullptr || log_handle == nullptr) {
     return Ort::Status();
   }
 
-  auto ret_val = interface.logFree(log_handle);
+  auto ret_val = qnn_interface.logFree(log_handle);
 
   // Reset to nullptr BEFORE checking the result so that other threads waiting on
   // logger_recursive_mutex_ can observe the handle is gone, even if logFree failed.
