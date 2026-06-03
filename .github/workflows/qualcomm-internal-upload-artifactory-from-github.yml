@@ -20,7 +20,7 @@ on:
         type: string
         default: ""
       linux_target_py_vsns:
-        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 manylinux_2_34)"
+        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
         type: string
         default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
