@@ -309,9 +309,6 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                 "QNN EP: Resize may only change the spatial dimensions.");
 
   ONNXTensorElementDataType input_data_type = input_0.type;
-  std::string error_msg = "QNN EP: Data type " + std::to_string(static_cast<int>(input_data_type)) +
-                          " is not supported for Resize operator in CPU backend.";
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, input_data_type, error_msg));
 
   if (is_npu_backend && interp_mode != "linear" &&
       input_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {

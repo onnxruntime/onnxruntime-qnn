@@ -65,28 +65,8 @@ static GetTestQDQModelFn<InputQType> BuildQDQLRNTestCase(const TestInputDef<floa
   };
 }
 
-// Runs an LRN model on the QNN CPU backend. Checks the graph node assignment, and that inference
+// Runs an LRN model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
-static void RunCPULRNOpTest(const TestInputDef<float>& input_def, int64_t size,
-                            ExpectedEPNodeAssignment expected_ep_assignment,
-                            float alpha = 0.0001f, float beta = 0.75f, float bias = 1.0f, int opset = 13) {
-  ProviderOptions provider_options;
-  float fp32_abs_err = 1e-5f;  // default tolerance
-
-#if !defined(_WIN32)
-  fp32_abs_err = 1.5e-5f;  // On linux we need slightly larger tolerance.
-#endif
-
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildLRNTestCase(input_def, size, alpha, beta, bias),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
-}
-
 // Runs an LRN model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 template <typename QuantType>
@@ -104,28 +84,6 @@ static void RunQDQLRNOpTest(const TestInputDef<float>& input_def, int64_t size,
                        opset,
                        expected_ep_assignment,
                        tolerance);
-}
-
-//
-// CPU tests:
-//
-
-TEST_F(QnnCPUBackendTests, LRNSize3) {
-  RunCPULRNOpTest(TestInputDef<float>({1, 128, 4, 5}, false, -10.0f, 10.0f),
-                  3,  // Size
-                  ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, LRNSize5) {
-  RunCPULRNOpTest(TestInputDef<float>({1, 128, 4, 5}, false, -10.0f, 10.0f),
-                  5,  // Size
-                  ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, LRN_size_larger_than_channel) {
-  RunCPULRNOpTest(TestInputDef<float>({1, 128, 4, 5}, false, -10.0f, 10.0f),
-                  255,  // Size
-                  ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

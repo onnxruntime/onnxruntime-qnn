@@ -437,9 +437,6 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
   }
 
  protected:
-  Ort::Status CheckCpuDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
-                                const std::vector<Qnn_DataType_t> out_dtypes) const override ORT_MUST_USE_RESULT;
-
   Ort::Status CheckHtpDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
                                 const std::vector<Qnn_DataType_t> out_dtypes) const override ORT_MUST_USE_RESULT;
 };
@@ -785,28 +782,6 @@ Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
 
 void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<BatchNormalizationOpBuilder>());
-}
-
-Ort::Status BatchNormalizationOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
-                                                           const std::vector<Qnn_DataType_t> out_dtypes) const {
-  bool is_supported_dtype = false;
-  // in_dtypes: [X, scale, B, input_mean, input_var]
-  std::vector<Qnn_DataType_t> all_dtypes(in_dtypes.begin(), in_dtypes.begin() + 3);
-  // out_dtypes: [Y, running_mean, running_var]
-  all_dtypes.insert(all_dtypes.end(), out_dtypes.begin(), out_dtypes.begin() + 1);
-  // FP32
-  if (
-      (all_dtypes == std::vector<Qnn_DataType_t>{QNN_DATATYPE_FLOAT_32, QNN_DATATYPE_FLOAT_32, QNN_DATATYPE_FLOAT_32, QNN_DATATYPE_FLOAT_32})) {
-    is_supported_dtype = true;
-  }
-  // INT8
-  else if (
-      (all_dtypes == std::vector<Qnn_DataType_t>{QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8}) ||
-      (all_dtypes == std::vector<Qnn_DataType_t>{QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_32, QNN_DATATYPE_UFIXED_POINT_8})) {
-    is_supported_dtype = true;
-  }
-  RETURN_IF_NOT(is_supported_dtype, "QNN Batchnorm unsupported datatype on CPU.");
-  return Ort::Status();
 }
 
 Ort::Status BatchNormalizationOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,

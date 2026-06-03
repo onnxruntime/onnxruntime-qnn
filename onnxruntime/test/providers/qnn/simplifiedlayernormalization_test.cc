@@ -14,22 +14,7 @@ namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// Runs a float32 SimplifiedLayerNormalization model on the QNN CPU backend.
-static void RunSimplifiedLayerNormCpuTest(const TestInputDef<float>& input_def,
-                                          const TestInputDef<float>& scale_def,
-                                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                          ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(
-      BuildOpTestCase<float>("simplified_layernorm", "SimplifiedLayerNormalization", {input_def, scale_def}, {}, attrs),
-      provider_options,
-      17,  // opset version
-      expected_ep_assignment);
-}
-
+// Runs a float32 SimplifiedLayerNormalization model on the QNN HTP backend.
 // Builds a QDQ SimplifiedLayerNormalization test case (single Y output).
 template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQSimplifiedLayerNormTestCase(
@@ -107,70 +92,6 @@ static void RunSimplifiedLayerNormQDQTest(const TestInputDef<float>& input_def,
 }
 
 // Basic 2D input, axis=0.
-TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_2D_Axis0) {
-  RunSimplifiedLayerNormCpuTest(
-      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-      ExpectedEPNodeAssignment::All);
-}
-
-// 3D input, axis=0.
-TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_3D_Axis0) {
-  RunSimplifiedLayerNormCpuTest(
-      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-      ExpectedEPNodeAssignment::All);
-}
-
-// 4D input, axis=0.
-TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_4D_Axis0) {
-  RunSimplifiedLayerNormCpuTest(
-      TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-      TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-      ExpectedEPNodeAssignment::All);
-}
-
-// Custom epsilon value on CPU backend.
-// QNN CPU backend requires scale to have the same shape as the input, so axis=0 is used.
-TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_CustomEpsilon) {
-  RunSimplifiedLayerNormCpuTest(
-      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      {test::MakeAttribute("axis", static_cast<int64_t>(0)),
-       test::MakeAttribute("epsilon", 1e-3f)},
-      ExpectedEPNodeAssignment::All);
-}
-
-// QNN EP must reject SimplifiedLayerNormalization when the optional inv_std_var output is requested.
-// The QNN RMSNorm op only supports a single output (Y).
-TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_InvStdVar_Unsupported) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  // Build a model with 2 outputs: Y and inv_std_var.
-  auto build_model_with_inv_std_var = [](ModelTestBuilder& builder) {
-    builder.MakeInput<float>("input", {1, 2, 3}, 0.0f, 10.0f);
-    builder.MakeInitializer<float>("scale", {3}, 0.0f, 1.0f);
-    builder.MakeOutput("output_y");
-    builder.MakeOutput("output_inv_std_var");
-    builder.AddNode("sln_node", "SimplifiedLayerNormalization",
-                    {"input", "scale"},
-                    {"output_y", "output_inv_std_var"},
-                    "",
-                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(-1))});
-  };
-
-  // QNN EP should reject this node because inv_std_var is not supported.
-  // The node falls back to CPU EP.
-  RunQnnModelTest(build_model_with_inv_std_var, provider_options, 17,
-                  ExpectedEPNodeAssignment::None,
-                  1e-5f, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  false /* verify_outputs */);
-}
 
 // QNN HTP only supports axis = last dimension. axis=0 must be rejected.
 // Uses a non-QDQ float model so that Q/DQ nodes don't inflate the assigned-node count.

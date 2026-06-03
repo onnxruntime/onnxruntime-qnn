@@ -32,7 +32,6 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBack
 };
 
 static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBackendTypes = {
-    {OrtHardwareDeviceType_CPU, "cpu"},
     {OrtHardwareDeviceType_NPU, "htp"},
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
@@ -146,8 +145,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     auto device_type = factory->ort_api.HardwareDevice_Type(device);
     auto vendor_id = factory->ort_api.HardwareDevice_VendorId(device);
 
-    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) ||
-        device_type == OrtHardwareDeviceType_CPU) {
+    if (kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) {
       RETURN_IF_NOT_NULL(create_ep_device(device));
 
       if (device_type == OrtHardwareDeviceType_NPU) {
@@ -157,6 +155,16 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
+#if defined(__linux__) && !defined(__aarch64__)
+    // On Linux x86, no real NPU is present but the QNN HTP backend runs in software emulation.
+    // Create a virtual NPU device so the emulated HTP backend can be selected by the session.
+    OrtHardwareDevice* undetected_npu_hw_device = nullptr;
+    RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
+    factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
+        undetected_npu_hw_device,
+        FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
+    RETURN_IF_NOT_NULL(create_ep_device(factory->undetected_npu_hw_device_.get()));
+#else
     if (qnn::soc::GetSocId() != 0) {
       // If ORT Core does not detect NPU hardware but we recognize the device as WoS (through qnn::soc::GetSocId),
       // exploit virtual hardware device to create an NPU hardware device for user to select from.
@@ -172,6 +180,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     } else {
       // Enable originally expected usage of virtual hardware device for cross-platform compilation if necessary.
     }
+#endif
   }
 
   return nullptr;
@@ -419,15 +428,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   auto device_type = factory->ort_api.HardwareDevice_Type(hw);
   auto vendor_id = factory->ort_api.HardwareDevice_VendorId(hw);
 
-  // QNN EP supports general CPU devices and NPU/GPU devices with Qualcomm vendor ID
   auto supported_backend_types_it = kSupportedBackendTypes.find(device_type);
-  if (supported_backend_types_it == kSupportedBackendTypes.end() || (vendor_id != factory->vendor_id_ && device_type != OrtHardwareDeviceType_CPU)) {
+  if (supported_backend_types_it == kSupportedBackendTypes.end() || vendor_id != factory->vendor_id_) {
     OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
         reasons,
         QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
-        "QNN EP only supports general CPU devices and Qualcomm NPU and GPU devices");
+        "QNN EP only supports Qualcomm NPU and GPU devices");
   }
 
   // Create a temporary QNN EP and to check device compatibility

@@ -23,7 +23,7 @@ static void RunFusedMatMulTest(const TestInputDef<DataType>& input_a_def,
                                bool transBatchB = false,
                                float alpha = 1.0f,
                                ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
-                               const std::string& backend_name = "cpu") {
+                               const std::string& backend_name = "htp") {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
 
@@ -120,101 +120,6 @@ static void RunQDQFusedMatMulTest(const TestInputDef<float>& input_a_def,
                        13,  // opset version for contrib ops
                        expected_ep_assignment,
                        QDQTolerance(5e-3f));
-}
-
-//
-// CPU tests:
-//
-
-// Test FusedMatMul with default attributes (no transpose, alpha=1.0, no activation)
-TEST_F(QnnCPUBackendTests, FusedMatMul_Default) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input A
-      TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input B
-      false,                                                                    // transA
-      false,                                                                    // transB
-      false,                                                                    // transBatchA
-      false,                                                                    // transBatchB
-      1.0f,                                                                     // alpha
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test FusedMatMul with transpose A
-TEST_F(QnnCPUBackendTests, FusedMatMul_TransposeA) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),   // input A
-      TestInputDef<float>({3, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 12)),  // input B
-      true,                                                                      // transA
-      false,                                                                     // transB
-      false,                                                                     // transBatchA
-      false,                                                                     // transBatchB
-      1.0f,                                                                      // alpha
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test FusedMatMul with transpose B
-TEST_F(QnnCPUBackendTests, FusedMatMul_TransposeB) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input A
-      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input B
-      false,                                                                    // transA
-      true,                                                                     // transB
-      false,                                                                    // transBatchA
-      false,                                                                    // transBatchB
-      1.0f,                                                                     // alpha
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test FusedMatMul with custom alpha
-TEST_F(QnnCPUBackendTests, FusedMatMul_CustomAlpha) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input A
-      TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input B
-      false,                                                                    // transA
-      false,                                                                    // transB
-      false,                                                                    // transBatchA
-      false,                                                                    // transBatchB
-      0.5f,                                                                     // alpha
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test FusedMatMul with all features combined
-TEST_F(QnnCPUBackendTests, DISABLED_FusedMatMul_Combined) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({2, 4, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 24)),  // input A
-      TestInputDef<float>({3, 4, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 12)),  // input B - adjusted shape for compatibility
-      true,                                                                         // transA
-      true,                                                                         // transB
-      true,                                                                         // transBatchA
-      true,                                                                         // transBatchB
-      0.5f,                                                                         // alpha
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test FusedMatMul with higher rank tensors
-TEST_F(QnnCPUBackendTests, FusedMatMul_HigherRank) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 24)),  // input A
-      TestInputDef<float>({2, 4, 5}, false, GetFloatDataInRange(-1.0f, 1.0f, 40)),  // input B
-      false,                                                                        // transA
-      false,                                                                        // transB
-      false,                                                                        // transBatchA
-      false,                                                                        // transBatchB
-      1.0f,                                                                         // alpha
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test FusedMatMul with batch dimension transposition
-TEST_F(QnnCPUBackendTests, FusedMatMul_BatchTranspose) {
-  RunFusedMatMulTest<float>(
-      TestInputDef<float>({2, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 16)),  // input A
-      TestInputDef<float>({2, 4, 5}, false, GetFloatDataInRange(-1.0f, 1.0f, 40)),  // input B
-      false,                                                                        // transA
-      false,                                                                        // transB
-      true,                                                                         // transBatchA
-      false,                                                                        // transBatchB
-      1.0f,                                                                         // alpha
-      ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

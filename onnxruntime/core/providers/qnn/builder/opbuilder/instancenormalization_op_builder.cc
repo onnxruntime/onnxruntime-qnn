@@ -49,8 +49,6 @@ Ort::Status InstanceNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_m
 
   // Check input type is float for CPU.
   const auto& inputs = node_unit.Inputs();
-  // Check input type is float for CPU. Can't use Qnn Op validation API since it's before layout transformation
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0");

@@ -29,6 +29,7 @@ class ReciprocalOpBuilder : public BaseOpBuilder {
 Ort::Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                const OrtNodeUnit& node_unit,
                                                const Ort::Logger& logger) const {
+  ORT_UNUSED_PARAMETER(qnn_model_wrapper);
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
@@ -36,9 +37,6 @@ Ort::Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrappe
 
   const auto& outputs = node_unit.Outputs();
   RETURN_IF_NOT(outputs.size() == 1, "Reciprocal operator must have exactly 1 output.");
-
-  // Check input type is float for CPU.
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   return Ort::Status();
 }

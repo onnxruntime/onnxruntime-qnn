@@ -13,13 +13,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a ThresholdedRelu operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a ThresholdedRelu operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& input_defs,
                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                    ExpectedEPNodeAssignment expected_ep_assignment,
-                                   const std::string& backend_name = "cpu",
+                                   const std::string& backend_name = "htp",
                                    float fp32_abs_err = 1e-5f,
                                    int opset = 13) {
   ProviderOptions provider_options;
@@ -32,47 +32,6 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
                   opset,
                   expected_ep_assignment,
                   fp32_abs_err);
-}
-
-//
-// CPU tests:
-//
-TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
-  // Test that ThresholdedRelu with fp32 input.
-  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
-  const std::vector<int64_t> dividend_shape{1, 4, 5};
-  auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
-
-  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {test::MakeAttribute("alpha", 4.5f)},
-                                ExpectedEPNodeAssignment::All);
-}
-
-// Case 1: alpha=0, equivalent to ReLU (output = input > 0 ? input : 0).
-TEST_F(QnnCPUBackendTests, ThresholdedRelu_Alpha0) {
-  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
-                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
-  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {test::MakeAttribute("alpha", 0.0f)},
-                                ExpectedEPNodeAssignment::All);
-}
-
-// Case 2: alpha=-1, values <= -1 are zeroed out (output = input > -1 ? input : 0).
-TEST_F(QnnCPUBackendTests, ThresholdedRelu_AlphaNeg1) {
-  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
-                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
-  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {test::MakeAttribute("alpha", -1.0f)},
-                                ExpectedEPNodeAssignment::All);
-}
-
-// Case 3: alpha=x (arbitrary positive threshold, output = input > x ? input : 0).
-TEST_F(QnnCPUBackendTests, ThresholdedRelu_AlphaX) {
-  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
-                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
-  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {test::MakeAttribute("alpha", 2.0f)},
-                                ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

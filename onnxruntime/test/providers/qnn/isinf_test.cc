@@ -19,7 +19,7 @@ static void RunIsInfTest(const std::vector<TestInputDef<DataType>>& input_defs,
                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                          ExpectedEPNodeAssignment expected_ep_assignment,
                          float fp32_abs_err = 1e-5,
-                         const std::string& backend_name = "cpu",
+                         const std::string& backend_name = "htp",
                          int opset = 20,
                          bool enable_htp_fp16_precision = false) {
   ProviderOptions provider_options;
@@ -38,58 +38,6 @@ static void RunIsInfTest(const std::vector<TestInputDef<DataType>>& input_defs,
                   opset,
                   expected_ep_assignment,
                   fp32_abs_err);
-}
-
-TEST_F(QnnCPUBackendTests, IsInfScalarPosInf) {
-  const std::vector<int64_t> input_shape{};
-  const std::vector<float> input_data{std::numeric_limits<float>::infinity()};
-
-  RunIsInfTest<float>({TestInputDef<float>(input_shape, false, input_data)},
-                      {},
-                      ExpectedEPNodeAssignment::All,
-                      0.0f);
-}
-
-TEST_F(QnnCPUBackendTests, IsInfMix2D) {
-  const std::vector<int64_t> input_shape{2, 4};
-  const std::vector<float> input_data{
-      std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 1.0f, 2.0f,
-      3.0f, 4.0f, std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
-
-  RunIsInfTest<float>({TestInputDef<float>(input_shape, false, input_data)},
-                      {},
-                      ExpectedEPNodeAssignment::All,
-                      0.0f);
-}
-
-TEST_F(QnnCPUBackendTests, IsInfDetectPositiveOnly) {
-  const std::vector<int64_t> input_shape{2, 2};
-  const std::vector<float> input_data{
-      std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 0.0f, 1.0f};
-
-  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-  attrs.push_back(test::MakeAttribute("detect_positive", static_cast<int64_t>(1)));
-  attrs.push_back(test::MakeAttribute("detect_negative", static_cast<int64_t>(0)));
-
-  RunIsInfTest<float>({TestInputDef<float>(input_shape, false, input_data)},
-                      attrs,
-                      ExpectedEPNodeAssignment::All,
-                      0.0f);
-}
-
-TEST_F(QnnCPUBackendTests, IsInfDetectNegativeOnly) {
-  const std::vector<int64_t> input_shape{2, 2};
-  const std::vector<float> input_data{
-      std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 0.0f, 1.0f};
-
-  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-  attrs.push_back(test::MakeAttribute("detect_positive", static_cast<int64_t>(0)));
-  attrs.push_back(test::MakeAttribute("detect_negative", static_cast<int64_t>(1)));
-
-  RunIsInfTest<float>({TestInputDef<float>(input_shape, false, input_data)},
-                      attrs,
-                      ExpectedEPNodeAssignment::All,
-                      0.0f);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

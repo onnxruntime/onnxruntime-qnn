@@ -43,10 +43,6 @@ def get_library_path():
     return os.path.join(LIB_DIR_FULL_PATH, _lib_name("onnxruntime_providers_qnn"))
 
 
-def get_qnn_cpu_path():
-    return os.path.join(LIB_DIR_FULL_PATH, _lib_name("QnnCpu"))
-
-
 def get_qnn_gpu_path():
     return os.path.join(LIB_DIR_FULL_PATH, _lib_name("QnnGpu"))
 

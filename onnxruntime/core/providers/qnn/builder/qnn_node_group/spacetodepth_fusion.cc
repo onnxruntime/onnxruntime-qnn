@@ -391,21 +391,6 @@ bool ValidateAndComputeParams(
     return false;
   }
 
-  /*
-   * TODO(AISW-175353): Remove these backend-specific fusion guards once the
-   * SpaceToDepth kernel limitations are fixed.
-   * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-   */
-  // 4. Backend-specific constraints for known kernel limitations.
-  const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
-
-  if (IsCpuBackend(backend_type) && b0 != b1) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                "SpaceToDepthFusion: skip fusion on CPU for unequal block sizes.");
-    return false;
-  }
-  // ============ Backend-specific constraints end =============.
-
   block_height = static_cast<uint32_t>(b0);
   block_width = static_cast<uint32_t>(b1);
   return true;

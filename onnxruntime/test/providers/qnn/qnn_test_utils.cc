@@ -220,11 +220,27 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                              registration_name.c_str(),
                                                              library_path.c_str()));
 
+  bool ownership_transferred = false;
+  auto unregister_guard = gsl::finally([&registration_name, &ownership_transferred]() {
+    if (!ownership_transferred) {
+      OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*GetOrtEnv(), registration_name.c_str());
+      if (status != nullptr) {
+        Ort::GetApi().ReleaseStatus(status);
+      }
+    }
+  });
+
   const OrtEpDevice* const* ep_devices = nullptr;
   size_t num_devices;
   ASSERT_ORTSTATUS_OK(c_api.GetEpDevices(*ort_env, &ep_devices, &num_devices));
 
+#if defined(__linux__)
+  // On Linux, QNN EP advertises an NPU OrtEpDevice (a real NPU, or the virtual HTP-emulation
+  // NPU created on x86). The QNN CPU backend was removed, so there is no CPU device to anchor to.
+  auto target_hw_device_type = OrtHardwareDeviceType_NPU;
+#else
   auto target_hw_device_type = OrtHardwareDeviceType_CPU;
+#endif
   if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "htp") ||
       (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
@@ -233,11 +249,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                                   "libQnnHtp.so"
 #endif
        )) {
-#if defined(__linux__) || (defined(_WIN32) && defined(_M_X64))
-    target_hw_device_type = OrtHardwareDeviceType_CPU;
-#else
     target_hw_device_type = OrtHardwareDeviceType_NPU;
-#endif
   } else if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "gpu") ||
              (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
@@ -247,7 +259,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 #endif
               )) {
 #if defined(__linux__)
-    target_hw_device_type = OrtHardwareDeviceType_CPU;
+    target_hw_device_type = OrtHardwareDeviceType_NPU;
 #else
     target_hw_device_type = OrtHardwareDeviceType_GPU;
 #endif
@@ -259,7 +271,9 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                    c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_device)) == target_hw_device_type);
                          });
 
-  ASSERT_NE(it, ep_devices + num_devices);
+  if (it == ep_devices + num_devices) {
+    GTEST_SKIP() << "QNN EP advertises no selectable device on this host; skipping test.";
+  }
 
   registered_ep_device = RegisteredEpDeviceUniquePtr(*it, [registration_name](const OrtEpDevice* /*ep*/) {
     OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*GetOrtEnv(), registration_name.c_str());
@@ -267,6 +281,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
       Ort::GetApi().ReleaseStatus(status);
     }
   });
+  ownership_transferred = true;
 
   session_options.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, ep_options);
 }
@@ -588,39 +603,6 @@ BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   return cached_ir_support_;
 }
 
-BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
-  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport();
-  }
-
-  return cached_ir_support_;
-}
-
-// TODO: Consider using public DeviceCompatibility API for this function
-static BackendSupport GetCPUSupport() {
-  return BackendSupport::SUPPORTED;
-}
-
-void QnnCPUBackendTests::SetUp() {
-  if (cached_cpu_support_ == BackendSupport::SUPPORTED) {
-    return;
-  }
-
-  Ort::Logger logger = Ort::Logger();
-
-  // Determine if CPU backend is supported only if we done so haven't before.
-  if (cached_cpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_cpu_support_ = GetCPUSupport();
-  }
-
-  if (cached_cpu_support_ == BackendSupport::UNSUPPORTED) {
-    GTEST_SKIP();
-  } else if (cached_cpu_support_ == BackendSupport::SUPPORT_ERROR) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN CPU backend is available.");
-    FAIL();
-  }
-}
-
 void GenieBackendTests::SetUp() {
   // Base fixture — derived fixtures (e.g. GenieSessionTest) are responsible
   // for platform and availability checks.
@@ -628,8 +610,7 @@ void GenieBackendTests::SetUp() {
 
 static BackendSupport GetIRSupport() {
   // QnnIr should be able to serialize any model supported by the QNN reference spec.
-  // Use a model that works on QnnCpu to verify QnnIr availability.
-  return GetCPUSupport();
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnIRBackendTests::SetUp() {
@@ -656,16 +637,11 @@ void QnnIRBackendTests::SetUp() {
 #if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 // TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
-
-// TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
-BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
-BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 

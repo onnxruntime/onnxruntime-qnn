@@ -15,54 +15,6 @@ namespace test {
 
 // Test for "index-out-of-bounds" bug that occurred when a Slice operator
 // shared one of its initializer inputs with another op that was processed by QNN EP first.
-TEST_F(QnnCPUBackendTests, Slice_SharedInitializersBugFix) {
-  // Model with an Add that processes a shared initializer before Slice is processed.
-  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
-    builder.MakeInput<int32_t>("input0", {2, 2}, {1, 2, 3, 4});
-
-    // Initializers
-    builder.Make1DInitializer<int32_t>("starts_input", {1, 0});  // Shared by Add
-    builder.Make1DInitializer<int32_t>("ends_input", {2, 2});
-    builder.Make1DInitializer<int32_t>("axes_input", {0, 1});
-    builder.Make1DInitializer<int32_t>("steps_input", {1, 1});
-
-    // Add input0 with a shared initializer.
-    builder.AddNode("Add",
-                    "Add",
-                    {"input0", "starts_input"},
-                    {"add_output"});
-
-    // Cast Add's output to float.
-    std::vector<ONNX_NAMESPACE::AttributeProto> cast_attrs;
-    cast_attrs.reserve(1);
-    cast_attrs.push_back(MakeAttribute(
-        "to",
-        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT)));
-
-    builder.AddNode("Cast",
-                    "Cast",
-                    {"add_output"},
-                    {"cast_output"},
-                    kOnnxDomain,
-                    cast_attrs);
-
-    // Slice Cast's output
-    builder.MakeOutput("Y");
-    builder.AddNode("Slice",
-                    "Slice",
-                    {"cast_output", "starts_input", "ends_input", "axes_input", "steps_input"},
-                    {"Y"});
-  };
-
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "cpu";
-
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  13,  // opset
-                  ExpectedEPNodeAssignment::All);
-}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

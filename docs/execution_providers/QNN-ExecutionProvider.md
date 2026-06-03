@@ -78,7 +78,6 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 |`"backend_type"`|Description|
 |---|-----|
-|'cpu'|Enable CPU backend. Useful for integration testing. The CPU backend is a reference implementation of QNN operators.|
 |'gpu'|Enable GPU backend.|
 |'htp'|Enable HTP backend. Offloads compute to NPU. Default.|
 |'saver'|Enable Saver backend.|
@@ -88,14 +87,13 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 |`"backend_path"`|Description|
 |---|-----|
-|'libQnnCpu.so' or 'QnnCpu.dll'|Enable CPU backend. See `backend_type` 'cpu'.|
 |'libQnnHtp.so' or 'QnnHtp.dll'|Enable HTP backend. See `backend_type` 'htp'.|
 |'libQnnGpu.so' or 'QnnGpu.dll'|Enable GPU backend. See `backend_type` 'gpu'.|
 |'libQnnSaver.so' or 'QnnSaver.dll'|Enable Saver backend. See `backend_type` 'saver'.|
 |'libQnnIr.so' or 'QnnIr.dll'|Enable IR backend. See `backend_type` 'ir'.|
 
 **Note:** `backend_path` is an alternative to `backend_type`. At most one of the two should be specified.
-`backend_path` requires a platform-specific path (e.g., `libQnnCpu.so` vs. `QnnCpu.dll`) but also allows one to specify an arbitrary path.
+`backend_path` requires a platform-specific path (e.g., `libQnnHtp.so` vs. `QnnHtp.dll`) but also allows one to specify an arbitrary path.
 
 |`"genie_log_level"`|Description|
 |---|---|
@@ -1076,7 +1074,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 
 ### Inference example
 
-[Image classification with Mobilenetv2 in CPP using QNN Execution Provider with QNN CPU & HTP Backend](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)
+[Image classification with Mobilenetv2 in CPP using QNN Execution Provider with QNN HTP Backend](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)
 
 
 ## Error handling

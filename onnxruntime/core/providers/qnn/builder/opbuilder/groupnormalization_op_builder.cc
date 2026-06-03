@@ -41,11 +41,6 @@ Ort::Status GroupNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
 
-  // Check input type is float for CPU. Can't use Qnn Op validation API since it's before layout transformation
-  ONNXTensorElementDataType input_type = inputs[0].type;
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, input_type,
-                                             "QNN GroupNorm only supports float input for CPU backend."));
-
   RETURN_IF(outputs.size() > 1, "QNN GroupNorm only support 1 output.");
 
   TensorInfo input_info{};

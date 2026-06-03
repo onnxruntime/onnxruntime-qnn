@@ -73,9 +73,6 @@ class BaseOpBuilder : public IOpBuilder {
   Ort::Status ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
                                const OrtNodeUnit& node_unit) const ORT_MUST_USE_RESULT;
 
-  virtual Ort::Status CheckCpuDataTypes(const std::vector<Qnn_DataType_t>,
-                                        const std::vector<Qnn_DataType_t>) const ORT_MUST_USE_RESULT;
-
   virtual Ort::Status CheckHtpDataTypes(const std::vector<Qnn_DataType_t>,
                                         const std::vector<Qnn_DataType_t>) const ORT_MUST_USE_RESULT;
 
@@ -426,9 +423,6 @@ inline void DistributePadding(AutoPadType pad_type,
 
 // Layout sensitive op can't use Qnn Op validation API to verify Op support before layout transformation
 // Need to check this explicitly
-Ort::Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
-                                       ONNXTensorElementDataType onnx_tensor_data_type,
-                                       std::string error_msg);
 
 }  // namespace qnn
 }  // namespace onnxruntime

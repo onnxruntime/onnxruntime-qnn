@@ -21,7 +21,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
 #include "QnnLog.h"
 #include "QnnTypes.h"
@@ -241,7 +240,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   uint32_t GetBackendId() { return backend_id_; }
 
-  void SetQnnBackendType(uint32_t backend_id);
+  Ort::Status SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
   Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }
@@ -650,7 +649,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool backend_setup_completed_ = false;
   int htp_share_resource_optimization_ = -1;
 
-  uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
+  uint32_t backend_id_ = 0;
   Qnn_Version_t backend_api_version_ = QNN_VERSION_INIT;
   bool file_mapped_weights_enabled_ = false;
 
@@ -662,7 +661,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
 
   // NPU backend requires quantized model
-  QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+  QnnBackendType qnn_backend_type_ = QnnBackendType::INVALID;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;
   ContextPriority context_priority_;
   std::string sdk_build_version_ = "";

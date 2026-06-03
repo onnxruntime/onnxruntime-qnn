@@ -110,7 +110,7 @@ enum class HtpGraphFinalizationOptimizationMode : uint8_t {
 };
 
 enum class QnnBackendType : uint8_t {
-  CPU = 0,
+  INVALID = 0,
   GPU,
   DSP,
   HTP,
@@ -119,8 +119,6 @@ enum class QnnBackendType : uint8_t {
 };
 
 bool IsIrBackend(QnnBackendType backend_type);
-
-bool IsCpuBackend(QnnBackendType backend_type);
 
 bool IsNpuBackend(QnnBackendType backend_type);
 

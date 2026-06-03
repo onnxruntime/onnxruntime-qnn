@@ -112,11 +112,6 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     return MAKE_EP_FAIL("QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
   }
 
-  ONNXTensorElementDataType input_data_type = input_0.type;
-  std::string error_msg = "QNN EP: Data type " + std::to_string(static_cast<int>(input_data_type)) +
-                          " is not supported for Conv operator in CPU backend.";
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, input_data_type, error_msg));
-
   OrtNodeAttrHelper node_helper(node_unit);
   auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
   RETURN_IF(auto_pad != "NOTSET" && auto_pad != "SAME_LOWER" && auto_pad != "SAME_UPPER" && auto_pad != "VALID",

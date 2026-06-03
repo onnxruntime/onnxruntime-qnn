@@ -13,13 +13,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a IsNaN operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a IsNaN operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunIsNanTest(const std::vector<TestInputDef<DataType>>& input_defs,
                          ExpectedEPNodeAssignment expected_ep_assignment,
                          float fp32_abs_err = 1e-5,
-                         const std::string& backend_name = "cpu",
+                         const std::string& backend_name = "htp",
                          int opset = 13) {
   ProviderOptions provider_options;
 
@@ -31,29 +31,6 @@ static void RunIsNanTest(const std::vector<TestInputDef<DataType>>& input_defs,
                   opset,
                   expected_ep_assignment,
                   fp32_abs_err);
-}
-
-//
-// CPU tests:
-//
-
-TEST_F(QnnCPUBackendTests, IsNaN_Scalar) {
-  const std::vector<int64_t> input_shape{};  // scalar
-  const std::vector<float> input_data{std::numeric_limits<float>::quiet_NaN()};
-
-  RunIsNanTest<float>({TestInputDef<float>(input_shape, false, input_data)},
-                      ExpectedEPNodeAssignment::All,
-                      0.0f);
-}
-
-TEST_F(QnnCPUBackendTests, IsNaN_Mix_2d) {
-  const std::vector<int64_t> input_shape{2, 4};
-  const std::vector<float> input_data{std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), 1.0f, 2.0f,
-                                      3.0f, 4.0f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN()};
-
-  RunIsNanTest<float>({TestInputDef<float>(input_shape, false, input_data)},
-                      ExpectedEPNodeAssignment::All,
-                      0.0f);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

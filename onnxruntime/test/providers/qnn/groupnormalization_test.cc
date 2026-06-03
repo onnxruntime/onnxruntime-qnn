@@ -50,38 +50,6 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
 }
 
 // Test GroupNormalization operator on CPU backend
-TEST_F(QnnCPUBackendTests, GroupNorm_Float_CPU) {
-  std::vector<float> input_data = {
-      0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
-      0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
-      0.12f, 0.32f, 0.52f, 0.72f, 0.22f, 0.42f, 0.62f, 0.82f};
-  std::vector<float> scale_data = {1.0f, 2.0f};
-  std::vector<float> bias_data = {0.1f, 0.2f};
-
-  auto build_test_case = [&](ModelTestBuilder& builder) {
-    MakeTestInput<float>(builder, "X", TestInputDef<float>({1, 2, 3, 4}, false, input_data));
-    MakeTestInput<float>(builder, "scale", TestInputDef<float>({2}, true, scale_data));
-    MakeTestInput<float>(builder, "bias", TestInputDef<float>({2}, true, bias_data));
-
-    // Create attributes
-    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
-    attributes.push_back(builder.MakeScalarAttribute("num_groups", static_cast<int64_t>(1)));
-    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-05f));
-
-    builder.AddNode("group_norm", "GroupNormalization", {"X", "scale", "bias"}, {"Y"}, "", attributes);
-    builder.MakeOutput<float>("Y", std::vector<int64_t>{1, 2, 3, 4});
-  };
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
-}
 
 // Test GroupNormalization operator with multiple groups
 TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {

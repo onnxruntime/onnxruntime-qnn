@@ -19,7 +19,7 @@ namespace test {
 static void RunSeluTest(const std::vector<TestInputDef<float>>& input_defs,
                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                         ExpectedEPNodeAssignment expected_ep_assignment,
-                        const std::string& backend_name = "cpu",
+                        const std::string& backend_name = "htp",
                         int opset = 22,
                         float fp32_abs_err = 1e-5f,
                         bool enable_htp_fp16_precision = false) {
@@ -71,19 +71,8 @@ static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
 //
 
 // Default alpha and gamma.
-TEST_F(QnnCPUBackendTests, Selu_DefaultAttrs) {
-  RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-              {},
-              ExpectedEPNodeAssignment::All);
-}
 
 // Custom alpha and gamma.
-TEST_F(QnnCPUBackendTests, Selu_CustomAlphaGamma) {
-  RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-              {test::MakeAttribute("alpha", 1.0f),
-               test::MakeAttribute("gamma", 2.0f)},
-              ExpectedEPNodeAssignment::All);
-}
 
 //
 // HTP tests across x86_64 and ARM64 Windows, x86_64 and ARM64 Linux

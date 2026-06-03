@@ -15,7 +15,6 @@
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
-#include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpCommon.h"
 #include "QnnSdkBuildId.h"
 
@@ -3634,7 +3633,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
 
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
   CompatibilityTestInfo test_info;
-  test_info.backend_id = QNN_BACKEND_ID_CPU;
+  test_info.backend_id = QNN_BACKEND_ID_GPU;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }

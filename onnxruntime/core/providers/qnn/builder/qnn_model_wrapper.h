@@ -516,7 +516,7 @@ class QnnModelWrapper {
   std::unordered_map<std::string, uint32_t> qnn_tensor_id_map_;
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
-  QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+  QnnBackendType qnn_backend_type_ = QnnBackendType::INVALID;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
   const ApiPtrs api_ptrs_;

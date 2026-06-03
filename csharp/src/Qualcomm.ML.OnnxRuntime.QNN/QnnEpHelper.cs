@@ -45,14 +45,6 @@ namespace Qualcomm.ML.OnnxRuntime.QNN
         public static string GetLibraryPath() => GetLibraryPathInternal(GetEpLibraryName(), "QNN EP");
 
         /// <summary>
-        /// Get the full path to the QNN CPU library (QnnCpu.dll or libQnnCpu.so)
-        /// </summary>
-        /// <returns>Full path to the QNN CPU library</returns>
-        /// <exception cref="FileNotFoundException">Thrown when QNN CPU library file is not found</exception>
-        /// <exception cref="PlatformNotSupportedException">Thrown when platform is not supported</exception>
-        public static string GetQnnCpuLibraryPath() => GetLibraryPathInternal(GetQnnCpuLibraryName(), "QNN CPU");
-
-        /// <summary>
         /// Get the full path to the QNN GPU library (QnnGpu.dll or libQnnGpu.so)
         /// </summary>
         /// <returns>Full path to the QNN GPU library</returns>
@@ -85,8 +77,6 @@ namespace Qualcomm.ML.OnnxRuntime.QNN
         }
 
         private static string GetEpLibraryName() => GetPlatformLibraryName("onnxruntime_providers_qnn");
-
-        private static string GetQnnCpuLibraryName() => GetPlatformLibraryName("QnnCpu");
 
         private static string GetQnnGpuLibraryName() => GetPlatformLibraryName("QnnGpu");
 

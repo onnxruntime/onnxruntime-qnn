@@ -77,9 +77,7 @@ Ort::Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
     Qnn_DataType_t qnn_data_type = tensor_info.qnn_data_type;
     output_qnn_dtypes.push_back(qnn_data_type);
   }
-  if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    return CheckCpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
-  } else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckHtpDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckGpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
@@ -87,13 +85,9 @@ Ort::Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
     // TODO: CheckIrDataTypes
     return Ort::Status();
   }
-  return MAKE_EP_FAIL("Only support backend: CPU, HTP and GPU");
+  return MAKE_EP_FAIL("Only support backend: HTP and GPU");
 }
 
-Ort::Status BaseOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t>,
-                                             const std::vector<Qnn_DataType_t>) const {
-  return Ort::Status();
-}
 Ort::Status BaseOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t>,
                                              const std::vector<Qnn_DataType_t>) const {
   return Ort::Status();
@@ -426,21 +420,6 @@ Ort::Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model
     axis_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
     axis_qnn_scalar.uint32Value = static_cast<uint32_t>(onnx_axis);
   }
-
-  return Ort::Status();
-}
-
-Ort::Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
-                                       ONNXTensorElementDataType onnx_tensor_data_type,
-                                       std::string error_msg = "") {
-  // TODO: Retire the DataTypeCheckForCpuBackend once all Ops transition to using BaseOpBuilder::ProcessDataTypes
-  // Due to varying datatype support for each op in Qnn CPU backend, we need to implement CheckCpuDataTypes for each op.
-  if (error_msg.empty()) {
-    error_msg = "QNN CPU backend only support float data type.";
-  }
-  const auto float_elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
-  bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  RETURN_IF(is_cpu_backend && onnx_tensor_data_type != float_elem_type, error_msg.c_str());
 
   return Ort::Status();
 }

@@ -12,37 +12,9 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Tile operator on the QNN CPU backend. Checks the graph node assignment
-// and that inference outputs for QNN EP and CPU EP match.
-template <typename DataType>
-static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
-                             const TestInputDef<int64_t>& repeats_def,
-                             ExpectedEPNodeAssignment expected_ep_assignment,
-                             int opset = 13) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "cpu";
-
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile_node", "Tile", {input_def}, {repeats_def}, {}),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
-}
-
 // Test that Tile with a dynamic repeats input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Tile_DynamicRepeats_Unsupported) {
-  RunTileTestOnCPU(TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
-                   TestInputDef<int64_t>({2}, false /* is_initializer */, {1, 2}),
-                   ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-}
 
 // Test that Tile with rank 4 float input.
-TEST_F(QnnCPUBackendTests, Tile_F32_Rank4) {
-  std::vector<float> input_data = {-4.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
-  RunTileTestOnCPU(TestInputDef<float>({1, 2, 2, 2}, false, input_data),
-                   TestInputDef<int64_t>({4}, true /* is_initializer */, {1, 2, 1, 1}),
-                   ExpectedEPNodeAssignment::All);
-}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //

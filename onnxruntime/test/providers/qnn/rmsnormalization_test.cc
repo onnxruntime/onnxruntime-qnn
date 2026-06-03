@@ -14,48 +14,6 @@ namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-static void RunRMSNormCpuTest(const TestInputDef<float>& input_def,
-                              const TestInputDef<float>& scale_def,
-                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                              ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>("rms_norm", "RMSNormalization", {input_def, scale_def}, {}, attrs),
-                  provider_options,
-                  23,
-                  expected_ep_assignment);
-}
-
-TEST_F(QnnCPUBackendTests, RMSNorm) {
-  RunRMSNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                    TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                    {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                    ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, RMSNorm1D_Axis0) {
-  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                    TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                    {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                    ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, RMSNorm2D) {
-  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                    TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                    {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                    ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, RMSNorm3D) {
-  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                    TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                    {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                    ExpectedEPNodeAssignment::All);
-}
-
 template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQRMSNormTestCase(const TestInputDef<float>& input_def,
                                                       const TestInputDef<float>& scale_def,

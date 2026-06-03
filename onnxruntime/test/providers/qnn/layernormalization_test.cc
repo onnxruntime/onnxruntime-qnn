@@ -14,59 +14,8 @@ namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// Runs an LayerNorm model on the QNN CPU backend. Checks the graph node assignment and that inference
+// Runs an LayerNorm model on the QNN HTP backend. Checks the graph node assignment and that inference
 // outputs for QNN and CPU match.
-static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
-                                const TestInputDef<float>& scale_def,
-                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                ExpectedEPNodeAssignment expected_ep_assignment) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", {input_def, scale_def}, {}, attrs),
-                  provider_options,
-                  17,
-                  expected_ep_assignment);
-}
-
-// Disabled all QNN CPU LayerNorm tests due to bug in 2.42 SDK
-
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm) {
-  RunLayerNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm1D_Axis0) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm1D_AxisLast) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 10.0f, 3)),
-                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm2D) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                      TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm3D) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
-                      TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
-                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
-                      ExpectedEPNodeAssignment::All);
-}
-
 template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float>& input_def,
                                                         const TestInputDef<float>& scale_def,

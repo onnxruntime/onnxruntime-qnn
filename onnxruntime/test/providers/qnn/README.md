@@ -10,7 +10,6 @@ The tests are built as part of the regular ONNX Runtime build. After a successfu
 
 ## Running the Tests
 1. QNN supports several backends. You can use the standard Google‑Test syntax for filtering:
-    - `onnxruntime_provider_test.exe --gtest_filter=QnnCPUBackendTests.*`
     - `onnxruntime_provider_test.exe --gtest_filter=QnnHTPBackendTests.*`
     - `onnxruntime_provider_test.exe --gtest_filter=QnnGPUBackendTests.*`
     - `onnxruntime_provider_test.exe --gtest_filter=QnnIRBackendTests.*`
@@ -23,10 +22,6 @@ The tests are built as part of the regular ONNX Runtime build. After a successfu
     - The artifacts will be saved to a directory named with `<TestSuite>_<TestName>`
         ```
         .
-        ├── QnnCPUBackendTests_BatchNorm2D_fp32         # RunQnnModelTest
-        │   ├── dumped_f32_model.onnx                   # float32 ONNX model
-        │   ├── QNNExecutionProvider_QNN_XXXX_X_X.dlc
-        │   └── QNNExecutionProvider_QNN_XXXX_X_X.json
         ├── QnnHTPBackendTests_BatchNorm_FP16           # TestFp16ModelAccuracy
         │   ├── dumped_f16_model.onnx                   # float16 ONNX model
         │   ├── dumped_f32_model.onnx                   # float32 ONNX model

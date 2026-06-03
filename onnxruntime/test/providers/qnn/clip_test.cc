@@ -12,13 +12,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a model with a Clip operator on the QNN CPU backend. Checks the graph node assignment
+// Runs a model with a Clip operator on the QNN HTP backend. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunClipTest(const TestInputDef<DataType>& input_def,
                         const std::vector<TestInputDef<DataType>>& min_max_defs,
                         ExpectedEPNodeAssignment expected_ep_assignment,
-                        const std::string& backend_name = "cpu",
+                        const std::string& backend_name = "htp",
                         int opset = 13,
                         float fp32_abs_err = 1e-5f) {
   ProviderOptions provider_options;
@@ -29,38 +29,6 @@ static void RunClipTest(const TestInputDef<DataType>& input_def,
                   opset,
                   expected_ep_assignment,
                   fp32_abs_err);
-}
-
-//
-// CPU tests:
-//
-
-// Test that Clip with a dynamic min or max input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Clip_Dynamic_MinMax_Unsupported) {
-  // Dynamic min input is not supported.
-  RunClipTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                     {TestInputDef<float>({}, false /* is_initializer */, {-5.0f})},
-                     ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-  // Dynamic max input is not supported.
-  RunClipTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
-                     {TestInputDef<float>({}, true, {-5.0f}),
-                      TestInputDef<float>({}, false, {5.0f})},
-                     ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
-}
-
-// Test Clip with default min/max.
-TEST_F(QnnCPUBackendTests, Clip_4D_f32_DefaultMinMax) {
-  RunClipTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
-                     {},  // Don't specify min/max inputs.
-                     ExpectedEPNodeAssignment::All);
-}
-
-// Test Clip with 5D input.
-TEST_F(QnnCPUBackendTests, Clip_5D_f32) {
-  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
-                     {TestInputDef<float>({}, true, {-5.0f}),
-                      TestInputDef<float>({}, true, {5.0f})},
-                     ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

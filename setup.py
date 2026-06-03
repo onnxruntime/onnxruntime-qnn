@@ -150,7 +150,6 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     qnn_deps = [
         "libGenie.so",
         "libHtpPrepare.so",
-        "libQnnCpu.so",
         "libQnnGpu.so",
         "libQnnHtp.so",
         "libQnnHtpNetRunExtensions.so",
@@ -179,7 +178,6 @@ else:
     qnn_deps = [
         "Genie.dll",
         "HtpPrepare.dll",
-        "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",
         "QnnHtpNetRunExtensions.dll",

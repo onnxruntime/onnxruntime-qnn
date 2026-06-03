@@ -55,27 +55,6 @@ static GetTestQDQModelFn<QuantType> BuildQDQGatherElemsTestCase(const TestInputD
   };
 }
 
-// Runs an GatherElements model on the QNN CPU backend. Checks the graph node assignment, and that inference
-// outputs for QNN EP and CPU EP match.
-template <typename DataType, typename IndexType>
-static void RunCPUGatherElemsOpTest(const TestInputDef<float>& input_def,
-                                    const TestInputDef<IndexType>& indices_def,
-                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                    ExpectedEPNodeAssignment expected_ep_assignment,
-                                    int opset = 13) {
-  ProviderOptions provider_options;
-  float fp32_abs_err = 1e-5f;  // default tolerance
-
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
-}
-
 // Runs a QDQ GatherElements model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match with expected accuracy.
 template <typename QuantType, typename IndexType>
@@ -120,50 +99,6 @@ static void RunHTPGatherElemsOpTest(const TestInputDef<DataType>& input_def,
                   opset,
                   expected_ep_assignment,
                   fp32_abs_err);
-}
-
-//
-// CPU tests:
-//
-
-// Test GatherElements op on CPU backend:
-// positive, dynamic, int64 indices.
-TEST_F(QnnCPUBackendTests, GatherElems_DataF32_IndicesInt64) {
-  RunCPUGatherElemsOpTest<float, int64_t>(
-      TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
-      TestInputDef<int64_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test GatherElements op on CPU backend:
-// positive, dynamic, int32 indices.
-TEST_F(QnnCPUBackendTests, GatherElems_DataF32_IndicesInt32) {
-  RunCPUGatherElemsOpTest<float, int32_t>(
-      TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
-      TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test GatherElements op on CPU backend:
-// positive, static, int64 indices.
-TEST_F(QnnCPUBackendTests, GatherElems_DataF32_StaticIndicesInt64) {
-  RunCPUGatherElemsOpTest<float, int64_t>(
-      TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
-      TestInputDef<int64_t>({2, 3}, true, {1, 2, 0, 2, 0, 0}),
-      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-      ExpectedEPNodeAssignment::All);
-}
-
-// Test GatherElements op on CPU backend:
-// positive, static, int32 indices.
-TEST_F(QnnCPUBackendTests, GatherElems_DataF32_StaticIndicesInt32) {
-  RunCPUGatherElemsOpTest<float, int32_t>(
-      TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
-      TestInputDef<int32_t>({2, 3}, true, {1, 2, 0, 2, 0, 0}),
-      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-      ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
