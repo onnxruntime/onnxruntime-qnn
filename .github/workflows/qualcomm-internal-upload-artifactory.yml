@@ -117,7 +117,7 @@ jobs:
       - name: Publish
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
           PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
           TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
@@ -145,7 +145,7 @@ jobs:
         shell: powershell
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
           NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
           TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
@@ -188,7 +188,7 @@ jobs:
       - name: Publish
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -203,7 +203,7 @@ jobs:
           cat > "$NETRC_FILE" << EOF
           machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
-          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          password ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
           EOF
 
           # Run the upleveling script with netrc file
@@ -240,7 +240,7 @@ jobs:
       - name: Publish
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
           GH_TOKEN: ${{ github.token }}
         run: |
           source uplevel_venv/bin/activate
@@ -254,7 +254,7 @@ jobs:
           cat > "$NETRC_FILE" << EOF
           machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
-          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          password ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
           EOF
 
           # Run the upleveling script with netrc file
