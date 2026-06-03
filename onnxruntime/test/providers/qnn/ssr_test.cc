@@ -351,6 +351,144 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeMultiPartitio
   std::remove(combined_model_file.c_str());
 }
 
+// Test SSR recovery with a naturally-partitioned model: a CPU-only op (FusedGemm) forces
+// the model into 2 QNN partitions, producing 2 EPContext nodes sharing one context binary.
+// Each partition recovers independently via contextCreateFromBinary + graphRetrieve.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPartition) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string context_model_file = "./ssr_cpu_fallback_partition_ctx.onnx";
+  std::remove(context_model_file.c_str());
+
+  // Build a model: FusedGemm(CPU) → Add(QNN) → FusedGemm(CPU) → Add(QNN)
+  // FusedGemm is a contrib op (kMSDomain) not supported by QNN, forcing 2 QNN partitions.
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  auto build_multi_partition_graph = [](ModelTestBuilder& builder) {
+    std::vector<float> data(200 * 200, 1.0f);
+    MakeTestInput(builder, "input1", TestInputDef<float>({200, 200}, false, data));
+    MakeTestInput(builder, "gemm1_weight", TestInputDef<float>({200, 200}, true, data));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
+    gemm_attrs.push_back(builder.MakeStringAttribute("activation", "Relu"));
+    builder.AddNode("FusedGemm_0", "FusedGemm",
+                    {"input1", "gemm1_weight"}, {"gemm1_out"},
+                    kMSDomain, gemm_attrs);
+
+    std::vector<float> add_data(12, 1.0f);
+    gsl::span<float> data_range = gsl::make_span(add_data);
+    QuantParams<uint8_t> qp = GetDataQuantParams<uint8_t>(data_range);
+
+    std::string add1_in1 = AddQDQNodePair<uint8_t>(builder, "add1_qdq_in1", "gemm1_out", qp.scale, qp.zero_point);
+    MakeTestInput(builder, "add1_weight", TestInputDef<float>({200, 200}, true, data));
+    std::string add1_in2 = AddQDQNodePair<uint8_t>(builder, "add1_qdq_in2", "add1_weight", qp.scale, qp.zero_point);
+    builder.AddNode("Add_0", "Add", {add1_in1, add1_in2}, {"add1_out"});
+
+    std::string gemm2_in = AddQDQNodePair<uint8_t>(builder, "gemm2_qdq_in", "add1_out", qp.scale, qp.zero_point);
+    MakeTestInput(builder, "gemm2_weight", TestInputDef<float>({200, 200}, true, data));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs2;
+    gemm_attrs2.push_back(builder.MakeStringAttribute("activation", "Relu"));
+    builder.AddNode("FusedGemm_1", "FusedGemm",
+                    {gemm2_in, "gemm2_weight"}, {"gemm2_out"},
+                    kMSDomain, gemm_attrs2);
+
+    std::string add2_in1 = AddQDQNodePair<uint8_t>(builder, "add2_qdq_in1", "gemm2_out", qp.scale, qp.zero_point);
+    MakeTestInput(builder, "add2_weight", TestInputDef<float>({200, 200}, true, data));
+    std::string add2_in2 = AddQDQNodePair<uint8_t>(builder, "add2_qdq_in2", "add2_weight", qp.scale, qp.zero_point);
+    builder.AddNode("Add_1", "Add", {add2_in1, add2_in2}, {"add2_out"});
+
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "final_qdq", "add2_out", qp.scale, qp.zero_point);
+  };
+
+  ModelTestBuilder helper;
+  build_multi_partition_graph(helper);
+
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate embed_mode=0 context with real HTP backend.
+  // -----------------------------------------------------------------------
+  ProviderOptions htp_options;
+  htp_options["backend_type"] = "htp";
+  htp_options["offload_graph_io_quantization"] = "0";
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, htp_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+    ASSERT_TRUE(std::filesystem::exists(context_model_file))
+        << "Context model file was not generated: " << context_model_file;
+  }
+
+  // Verify 2 EPContext nodes were generated.
+  onnx::ModelProto ctx_model_proto;
+  {
+    std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good());
+    ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs));
+
+    int ep_context_count = 0;
+    for (const auto& node : ctx_model_proto.graph().node()) {
+      if (node.op_type() == "EPContext") ++ep_context_count;
+    }
+    ASSERT_EQ(ep_context_count, 2) << "Expected 2 EPContext nodes for multi-partition model.";
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load context model via QnnMockSSR.dll and run inference.
+  // -----------------------------------------------------------------------
+  {
+    std::string ctx_model_data;
+    ctx_model_proto.SerializeToString(&ctx_model_data);
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so));
+
+    // Run inference to trigger graphExecute (and SSR recovery).
+    auto in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+
+    Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<int64_t> input_shape{200, 200};
+    std::vector<float> input_data(200 * 200, 1.0f);
+    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                 input_shape.data(), input_shape.size());
+
+    const char* input_names[] = {in_name.get()};
+    const char* output_names[] = {out_name.get()};
+    auto outputs = scoped.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1,
+                                        output_names, 1);
+    ASSERT_EQ(outputs.size(), 1u);
+    ASSERT_TRUE(outputs[0].IsTensor());
+  }
+
+  CleanUpCtxFile(context_model_file);
+}
+
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 }  // namespace test
 }  // namespace onnxruntime
