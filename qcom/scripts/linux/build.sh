@@ -41,6 +41,7 @@ function save_qnn_build_mode() {
 config="Release"
 qairt_sdk_root=
 ort_prebuilt_root=
+use_ort_prebuilt=
 qnn_arch_abi=
 target_py_version=
 use_cache=1
@@ -95,6 +96,10 @@ for i in "$@"; do
       ;;
     --ort-home=*)
       ort_prebuilt_root="${i#*=}"
+      shift
+      ;;
+    --use-ort-prebuilt)
+      use_ort_prebuilt=1
       shift
       ;;
     --qairt-sdk-root=*)
@@ -155,6 +160,20 @@ qnn_build_mode_file_path="${build_dir}/qnn-build-mode-${config}.txt"
 
 if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
+fi
+
+if [ -n "${use_ort_prebuilt}" ] && [ -z "${ort_prebuilt_root}" ]; then
+    case "${target_arch}" in
+      x86_64|x64)
+        ort_prebuilt_root="$(get_ort_x64_prebuilt_root)"
+        ;;
+      aarch64|arm64)
+        ort_prebuilt_root="$(get_ort_aarch64_prebuilt_root)"
+        ;;
+      *)
+        die "Unknown arch '${target_arch}' for ORT prebuilt"
+        ;;
+    esac
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
