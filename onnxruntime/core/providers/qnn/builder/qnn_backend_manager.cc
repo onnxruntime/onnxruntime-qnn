@@ -3210,6 +3210,16 @@ Ort::Status QnnBackendManager::ReloadContextForModel(const std::string& context_
   return Ort::Status();
 }
 
+Ort::Status QnnBackendManager::RecoverAllModelsFromSSR(const Ort::Logger& logger) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery: reloading all registered model contexts.");
+
+  for (auto* model : ssr_recoverable_models_) {
+    RETURN_IF_ERROR(model->RecoverFromSSR(logger));
+  }
+
+  return Ort::Status();
+}
+
 bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
 #if !defined(_WIN32)
   return false;

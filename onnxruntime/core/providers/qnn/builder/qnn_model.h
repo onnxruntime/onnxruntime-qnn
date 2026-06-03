@@ -152,7 +152,12 @@ class QnnModel {
     context_bin_filepath_ = std::move(filepath);
     node_name_ = std::move(node_name);
     max_spill_fill_size_ = max_spill_fill_size;
+    qnn_backend_manager_->RegisterModelForSSR(this);
   }
+
+  // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
+  // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
+  Ort::Status RecoverFromSSR(const Ort::Logger& logger);
 
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,
@@ -166,10 +171,6 @@ class QnnModel {
                         const std::string& graph_name,
                         const std::string& json_qnn_graph_path,
                         const Ort::Logger& logger) const;
-
-  // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
-  // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
-  Ort::Status RecoverFromSSR(const Ort::Logger& logger);
 
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 

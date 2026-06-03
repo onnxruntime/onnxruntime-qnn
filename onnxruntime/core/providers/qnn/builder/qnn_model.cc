@@ -663,7 +663,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                   "NPU crashed. SSR detected during QNN graph execute.");
       if (attempt == 0 && !context_bin_filepath_.empty()) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
-        RETURN_IF_ERROR(RecoverFromSSR(logger));
+        RETURN_IF_ERROR(qnn_backend_manager_->RecoverAllModelsFromSSR(logger));
         continue;  // retry with fresh context and re-bound tensors
       }
       std::ostringstream oss;

@@ -201,6 +201,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     Qnn_ContextHandle_t old_context,
                                     QnnModel& model);
 
+  // SSR recovery: register a model so it can be proactively recovered when any model detects SSR.
+  void RegisterModelForSSR(QnnModel* model) { ssr_recoverable_models_.push_back(model); }
+
+  // SSR recovery: reload contexts for ALL registered models (called when any model detects SSR).
+  Ort::Status RecoverAllModelsFromSSR(const Ort::Logger& logger);
+
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status SetupBackend(
@@ -730,6 +736,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
+
+  // Models registered for proactive SSR recovery.
+  std::vector<QnnModel*> ssr_recoverable_models_;
 
   ProfilingLevel profiling_level_etw_;
   ProfilingLevel profiling_level_;
