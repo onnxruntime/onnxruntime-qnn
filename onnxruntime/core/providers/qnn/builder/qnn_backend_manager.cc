@@ -626,8 +626,8 @@ Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_T
                                                        bool& initialized_flag,
                                                        const std::string& backend_label) {
   Qnn_ErrorHandle_t result = qnn_interface.backendCreate(log_handle,
-                                                     (const QnnBackend_Config_t**)backend_config_,
-                                                     &backend_handle);
+                                                         (const QnnBackend_Config_t**)backend_config_,
+                                                         &backend_handle);
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
             ("Failed to initialize backend (" + backend_label + "). Error: " +
              QnnErrorHandleToString(result))
