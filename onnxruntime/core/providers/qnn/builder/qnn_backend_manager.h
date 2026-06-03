@@ -250,6 +250,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   QnnHtpDevice_Arch_t GetHtpArch() { return htp_arch_internal_; }
 
+  uint32_t GetSocModel() const { return soc_model_; }
+
   // Get backend library directory by adopting identical logic as in LoadLib.
   std::string GetBackendLibDir() {
     auto backend_path = std::filesystem::path(backend_path_);
