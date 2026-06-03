@@ -140,6 +140,8 @@ bool IsDx12SharedMemoryAllocator(QnnAllocatorType allocator_type);
 
 std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type);
 
+std::string QnnBackendTypeToString(QnnBackendType backend_type);
+
 // constexpr config values
 constexpr const int kSleepMinLatency = 40;
 constexpr const int kSleepLowLatency = 100;

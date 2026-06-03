@@ -428,8 +428,8 @@ Ort::Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                         qnn_output_shape));
   }
 
-  qnn_pool_params.count_pad_for_edges = is_avg_pool &&
-                                        (is_global_pool || node_helper.Get("count_include_pad", static_cast<int64_t>(0)) != 0);
+  qnn_pool_params.count_pad_for_edges =
+      is_avg_pool && node_helper.Get("count_include_pad", static_cast<int64_t>(0)) != 0;
 
   std::vector<std::string> param_tensor_names;
   RETURN_IF_ERROR(AddQnnPoolParamWrappers(node_unit,

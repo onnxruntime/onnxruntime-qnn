@@ -179,6 +179,29 @@ class GenerateCoverageTask(BashScriptsWithVenvTask):
         super().__init__(group_name, venv, [cmd])
 
 
+class RunAsanTask(BashScriptsWithVenvTask):
+    """Run onnxruntime_provider_test under AddressSanitizer via run_asan.sh.
+
+    The script wraps the binary with asan_filter_leaks.sh so that only Direct
+    leaks (ORT/test-side) and ASan heap errors fail the run; Indirect leaks
+    rooted in stripped QAIRT backend libraries are treated as known noise.
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        config: str = "Debug",
+    ) -> None:
+        cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "run_asan.sh"),
+            f"--build-dir={build_dir}",
+            f"--config={config}",
+        ]
+        super().__init__(group_name, venv, [cmd])
+
+
 class GenerateDiffCoverageTask(CompositeTask):
     """Generate patch/diff coverage report using diff-cover.
 

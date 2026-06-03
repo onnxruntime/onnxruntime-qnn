@@ -18,6 +18,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
@@ -94,7 +95,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
-                               std::vector<const OrtNode*>& supported_nodes) const;
+                               std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
@@ -123,6 +125,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
 #if defined(_WIN32)
   bool IsDx12SharedAllocatorSupported() const;
 #endif
+
+  // Framework op trace helpers. trace_ is populated incrementally during
+  // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
+  // function finalizes summary fields and writes the JSON file.
+  void CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph);
+
+  bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
@@ -208,6 +217,15 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
+
+  // === Framework op trace ===
+  bool enable_framework_op_trace_ = false;
+  std::string framework_op_trace_dir_;
+  // Accumulates the trace state for this session: unsupported nodes are pushed
+  // by GetSupportedNodes, per-subgraph mappings are pushed by CompileImpl, and
+  // CollectAndWriteFrameworkOpTrace finalizes/serializes.
+  qnn::FrameworkOpTrace trace_;
+
   bool enable_htp_extended_udma_mode_ = false;
 
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.
