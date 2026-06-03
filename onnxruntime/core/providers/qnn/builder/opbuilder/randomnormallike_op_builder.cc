@@ -56,6 +56,15 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
     }
   }
 
+  // Register `x` as a QnnTensorWrapper even though the QNN op only consumes the static
+  // shape tensor — without it, ORT's SetupTensors fails with "Zero tensor size!".
+  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_tensor_name)) {
+    QnnTensorWrapper input_tensorwrapper;
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_tensor, input_tensorwrapper));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)),
+                  "Failed to add input tensor wrapper.");
+  }
+
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_tensor.shape, input_shape),
                 ("Failed to get shape for input tensor: " + input_tensor_name).c_str());

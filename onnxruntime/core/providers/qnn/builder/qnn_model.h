@@ -9,6 +9,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 
@@ -37,6 +38,9 @@ struct QnnModelContext {
   // Used by offload_graph_io_quantization to map internal QNN names to ONNX names.
   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr;
   std::string json_qnn_graph_path;
+
+  // Non-null when tracing is enabled; ComposeGraph writes one OpTraceInfo here.
+  OpTraceInfo* op_trace_output = nullptr;
 };
 
 class QnnModel {
