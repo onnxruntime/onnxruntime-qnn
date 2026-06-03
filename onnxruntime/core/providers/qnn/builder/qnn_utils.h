@@ -268,14 +268,14 @@ Ort::Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> 
                          std::optional<int64_t> axis = std::nullopt);
 
 // Converts ONNX block quantization (BQ) scales to QNN LPBQ (BLOCKWISE_EXPANSION) format.
-// Supports both int8 (bitwidth=8) and int4 (bitwidth=4) weight block quantization.
+// Supports int4 (bitwidth=4) weight block quantization.
 //
 // The ONNX BQ scale tensor has shape [num_blocks_per_channel, num_channels] in block-major order
 // (i.e., the block axis is axis 0 and the channel axis is axis 1). If the ONNX block axis is 1
 // instead of 0, the caller must transpose the scale data before calling this function.
 //
 // Algorithm :
-//   max_int_scale   = 2^bitwidth - 1  (255 for int8, 15 for int4)
+//   max_int_scale             = 2^bitwidth  (16 for int4)
 //   per_channel_scale[c]      = max(bq_scales[:, c]) / max_int_scale
 //   per_block_int_scale[c, b] = clamp(round(bq_scales[b, c] / per_channel_scale[c]), 1, max_int_scale)
 //

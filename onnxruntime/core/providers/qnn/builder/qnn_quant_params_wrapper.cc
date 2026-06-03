@@ -490,7 +490,7 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
   // QNN uses different structs to represent quantization parameters depending on:
   // - per-tensor (scales.size()==1, no block_size): SCALE_OFFSET or BW_SCALE_OFFSET
   // - per-channel (scales.size()>1, no block_size): AXIS_SCALE_OFFSET or BW_AXIS_SCALE_OFFSET
-  // - block quantization (block_size>0): BLOCKWISE_EXPANSION (LPBQ)
+  // - block quantization (block_size>0): BLOCKWISE_EXPANSION (LPBQ) or ENCODING_BLOCK (BQ)
   // - fallback: error
   if (is_per_tensor && !is_int4_type) {
     params_.encodingDefinition = QNN_DEFINITION_DEFINED;
@@ -594,8 +594,8 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     params_.axisScaleOffsetEncoding.axis = static_cast<int32_t>(axis);
     params_.axisScaleOffsetEncoding.numScaleOffsets = static_cast<uint32_t>(num_elems);
     params_.axisScaleOffsetEncoding.scaleOffset = data_span.data();
-  } else if (is_block_quant) {
-    // ONNX block quantization -> QNN LPBQ (BLOCKWISE_EXPANSION) conversion.
+  } else if (is_block_quant && is_int4_type) {
+    // ONNX block quantization -> QNN LPBQ (BLOCKWISE_EXPANSION) conversion only supported for 4-bit.
 
     std::vector<uint32_t> io_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");

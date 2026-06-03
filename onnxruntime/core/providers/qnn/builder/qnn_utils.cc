@@ -1217,9 +1217,9 @@ Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
                 "BQ scales size does not match num_blocks_per_channel * num_channels");
   RETURN_IF_NOT(bq_offsets.empty() || bq_offsets.size() == bq_scales.size(),
                 "BQ offsets size must be empty or equal to bq_scales size");
-  RETURN_IF_NOT(bitwidth > 0 && bitwidth <= 16, "bitwidth must be in range [1, 16]");
+  RETURN_IF_NOT(bitwidth == 4, "BQ to LPBQ conversion is only supported for 4-bit");
 
-  const uint32_t max_int_scale = (1u << bitwidth) - 1u;
+  const uint32_t max_int_scale = (1u << bitwidth); // 2^bitwidth
 
   // Require symmetric quantization (all offsets must be zero).
   if (!bq_offsets.empty()) {
@@ -1236,7 +1236,7 @@ Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
   }
 
   // Algorithm:
-  //   max_int_scale             = 2^bitwidth - 1
+  //   max_int_scale             = 2^bitwidth
   //   per_channel_scale[c]      = max(bq_scales[:, c]) / max_int_scale
   //   per_block_int_scale[c, b] = clamp(round(bq_scales[b, c] / per_channel_scale[c]), 1, max_int_scale)
   //
