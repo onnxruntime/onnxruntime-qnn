@@ -797,12 +797,7 @@ TEST_F(QnnHTPBackendTests, ReduceMeanS8Opset18) {
 // ReduceLogSumExp on HTP
 //
 
-// Disabled: ReduceLogSumExp is not in the QDQ unary selector (qnn_ep_utils.cc), so the QDQ
-// pattern is not collapsed into a single NodeUnit. The Reduce's input never carries quant_param,
-// the IsOpSupported quant-param guard cannot fire, and the standalone Q/DQ nodes are claimed
-// individually -> num_ep_nodes = 5, not 0. Re-enable if/when ReduceLogSumExp is added to the
-// QDQ unary selector list.
-TEST_F(QnnHTPBackendTests, DISABLED_ReduceLogSumExpU8Opset18_Rejected) {
+TEST_F(QnnHTPBackendTests, ReduceLogSumExpU8Opset18_Rejected) {
   RunReduceOpQDQTest<uint8_t>("ReduceLogSumExp",
                               TestInputDef<float>({2, 2}, false, GetFloatDataInRange(-5.0f, 5.0f, 4)),
                               {0, 1},  // axes
