@@ -666,6 +666,7 @@ std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type) {
     default:
       return "(Unknown)";
   }
+}
 
 std::string QnnBackendTypeToString(QnnBackendType backend_type) {
   switch (backend_type) {
