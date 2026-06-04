@@ -3,11 +3,19 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
+#include "nlohmann/json.hpp"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
+
+// Defined in test_main.cc (global scope, matching other QNN provider tests).
+extern std::unique_ptr<Ort::Env> ort_env;
 
 namespace onnxruntime {
 namespace test {
@@ -467,6 +475,77 @@ TEST_F(QnnHTPBackendTests, Split_QDQ_Noop_Opset13) {
                                   -1,   // num_outputs (not in opset 13)
                                   13,   // opset
                                   ExpectedEPNodeAssignment::All);
+}
+
+// QNN's native Split op mis-executes when fused with surrounding ops in-graph on HTP (e.g. Swin
+// window-partition Splits), silently corrupting model outputs (issue #18939). This affects splits
+// on any axis (including the channel axis). The QNN EP works around it by lowering Split to
+// StridedSlice when targeting HTP. The corruption only manifests at model scale (an isolated Split
+// runs correctly on-device), so it cannot be reproduced by a numerical unit test. Instead, this
+// test verifies the lowering structurally: it dumps the QNN graph the EP builds for an HTP Split
+// and asserts the EP emitted StridedSlice nodes and no Split node. It fails without the lowering
+// (the graph would contain a Split) and passes with it.
+//
+// Collects the QNN op "type" of every node in the dumped JSON graph(s) under `json_dir`.
+static std::vector<std::string> CollectQnnNodeOpTypes(const std::filesystem::path& json_dir) {
+  std::vector<std::string> op_types;
+  for (const auto& entry : std::filesystem::directory_iterator{json_dir}) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".json" ||
+        entry.path().filename().string().find("_tensor_log") != std::string::npos) {
+      continue;
+    }
+    std::ifstream json_file(entry.path());
+    if (!json_file.is_open()) {
+      continue;
+    }
+    nlohmann::json root;
+    json_file >> root;
+    if (!root.contains("graph") || !root["graph"].contains("nodes")) {
+      continue;
+    }
+    for (const auto& item : root["graph"]["nodes"].items()) {
+      op_types.push_back(item.value().value("type", std::string{}));
+    }
+  }
+  return op_types;
+}
+
+TEST_F(QnnHTPBackendTests, Split_LoweredToStridedSliceOnHtp) {
+  // A 3-output Split on a non-channel axis (mirrors the Swin trigger shape/axis).
+  auto model_fn = BuildSplitTestCase<float>(TestInputDef<float>({1, 8, 8, 12}, false, -10.0f, 10.0f),
+                                            {} /*split*/, false /*split_is_input*/, 2 /*axis*/, 3 /*num_outputs*/);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, model_fn, 18);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  const std::filesystem::path tmp_dir = "qnn_split_lowering_test";
+  std::filesystem::remove_all(tmp_dir);
+  std::filesystem::create_directory(tmp_dir);
+  auto cleanup = gsl::finally([&tmp_dir]() { std::filesystem::remove_all(tmp_dir); });
+
+  ProviderOptions options;
+  options["backend_type"] = "htp";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_json_qnn_graph"] = "1";
+  options["json_qnn_graph_dir"] = tmp_dir.string();
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), so));
+
+  const std::vector<std::string> op_types = CollectQnnNodeOpTypes(tmp_dir);
+  ASSERT_FALSE(op_types.empty()) << "No QNN graph nodes found in dumped JSON.";
+
+  const size_t num_strided_slice = std::count(op_types.begin(), op_types.end(), "StridedSlice");
+  const size_t num_split = std::count(op_types.begin(), op_types.end(), "Split");
+
+  // The EP must lower the Split into one StridedSlice per output and emit no native Split.
+  EXPECT_EQ(num_split, 0u) << "QNN EP emitted a native Split on HTP; expected StridedSlice lowering.";
+  EXPECT_EQ(num_strided_slice, 3u) << "Expected one StridedSlice per Split output.";
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

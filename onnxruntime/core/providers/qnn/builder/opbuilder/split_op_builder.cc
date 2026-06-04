@@ -1,6 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <algorithm>
+#include <string>
+#include <vector>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -33,6 +37,18 @@ class SplitOpBuilder : public BaseOpBuilder {
                                        size_t output_index,
                                        Qnn_DataType_t qnn_data_type,
                                        QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
+
+ private:
+  // Lowers an ONNX Split into one QNN StridedSlice node per output. Used on backends where QNN's
+  // native Split mis-executes in-graph on HTP (any axis) and corrupts model outputs. See issue
+  // #18939. Used for HTP and the serializer (whose DLC is consumed by HTP).
+  Ort::Status ProcessSplitAsStridedSlices(QnnModelWrapper& qnn_model_wrapper,
+                                          const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names,
+                                          int32_t axis_value,
+                                          const std::vector<uint32_t>& split_index,
+                                          const Ort::Logger& logger,
+                                          bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
 Ort::Status SplitOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -68,13 +84,9 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                                                         std::vector<std::string>&& input_names,
                                                         const Ort::Logger& logger,
                                                         bool do_op_validation) const {
-  std::vector<std::string> param_tensor_names;
   int32_t axis_value = 0;
   Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
   RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPLIT_PARAM_AXIS, axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
   std::vector<uint32_t> split_index;
   if (node_unit.Inputs().size() > 1) {
@@ -131,6 +143,29 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
     }
   }
 
+  // QNN's native Split mis-executes when fused with surrounding ops on the HTP backend, silently
+  // corrupting model outputs (e.g. Swin accuracy regressions, issue #18939). This affects splits
+  // on any axis (including the channel axis) and only manifests at model scale -- an isolated Split
+  // runs correctly on-device -- so it cannot be reproduced by a single-op numerical test. Lower the
+  // Split to an equivalent set of StridedSlice ops, which HTP executes correctly. The serializer
+  // backend is included because the DLC it emits is consumed by HTP.
+  //
+  // DSP is intentionally NOT included even though IsNpuBackend(DSP) is true: the defect is confirmed
+  // only on HTP (V73/V79), which uses a tiled crouton/D32 activation layout that DSP does not share.
+  // Revisit if a DSP regression is ever confirmed. Other backends keep native Split.
+  const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
+  const bool lower_to_strided_slice =
+      (backend_type == QnnBackendType::HTP || backend_type == QnnBackendType::SERIALIZER);
+  if (lower_to_strided_slice) {
+    return ProcessSplitAsStridedSlices(qnn_model_wrapper, node_unit, std::move(input_names),
+                                       axis_value, split_index, logger, do_op_validation);
+  }
+
+  std::vector<std::string> param_tensor_names;
+  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPLIT_PARAM_AXIS, axis_qnn_scalar);
+  param_tensor_names.push_back(axis_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+
   uint32_t split_size = static_cast<uint32_t>(split_index.size());
   std::vector<uint32_t> split_dim{split_size};
   QnnParamWrapper split_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPLIT_PARAM_SPLIT_INDEX, std::move(split_dim),
@@ -142,6 +177,160 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                                  std::move(input_names),
                                  std::move(param_tensor_names),
                                  logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
+
+  return Ort::Status();
+}
+
+Ort::Status SplitOpBuilder::ProcessSplitAsStridedSlices(QnnModelWrapper& qnn_model_wrapper,
+                                                        const OrtNodeUnit& node_unit,
+                                                        std::vector<std::string>&& input_names,
+                                                        int32_t axis_value,
+                                                        const std::vector<uint32_t>& split_index,
+                                                        const Ort::Logger& logger,
+                                                        bool do_op_validation) const {
+  ORT_UNUSED_PARAMETER(logger);
+
+  std::vector<uint32_t> input_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
+  const size_t input_rank = input_shape.size();
+  RETURN_IF_NOT(axis_value >= 0 && static_cast<size_t>(axis_value) < input_rank, "axis not valid!");
+  RETURN_IF_NOT(input_shape.at(axis_value) > 0, "Shape value not valid!");
+  const uint32_t axis_dim = input_shape[axis_value];
+
+  // `split_index` holds the cumulative split boundaries with the implicit leading 0 omitted, so the
+  // full boundary list is {0, split_index..., axis_dim} and there is one output per interval.
+  // The equality below is guaranteed by how split_index was built (one boundary per output, minus
+  // the implicit 0); it is kept as a cheap guard for the bounds[] index math in the loop.
+  const size_t output_count = split_index.size() + 1;
+  RETURN_IF_NOT(output_count == GetOutputCountQnnRequired(node_unit),
+                "Split boundary count does not match output count.");
+
+  std::vector<uint32_t> bounds;
+  bounds.reserve(output_count + 1);
+  bounds.push_back(0);
+  for (uint32_t boundary : split_index) {
+    bounds.push_back(boundary);
+  }
+  bounds.push_back(axis_dim);
+
+  auto mem_type = QNN_TENSORMEMTYPE_RAW;
+  if (qnn_model_wrapper.GetModelSettings().htp_shared_memory) {
+    mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
+  }
+
+  for (size_t i = 0; i < output_count; ++i) {
+    // Clamp boundaries to the axis size. The equal-split fallback uses ceil(), which can push an
+    // interior boundary past the axis size; clamping makes the final slice the (smaller) remainder,
+    // matching the ONNX spec / core/providers/cpu/tensor/split.cc.
+    const uint32_t start = std::min(bounds[i], axis_dim);
+    const uint32_t end = std::min(bounds[i + 1], axis_dim);
+
+    // Build the StridedSlice "ranges" param: one [start, end, step] row per input dim. Only the
+    // split axis is sliced; every other dim spans its full extent. Mirrors slice_op_builder.cc.
+    std::vector<uint32_t> ranges_dims{static_cast<uint32_t>(input_rank), 3};
+    std::vector<uint32_t> ranges_data;
+    ranges_data.reserve(input_rank * 3);
+    for (size_t dim = 0; dim < input_rank; ++dim) {
+      if (static_cast<int32_t>(dim) == axis_value) {
+        ranges_data.push_back(start);
+        ranges_data.push_back(end);
+      } else {
+        ranges_data.push_back(0);
+        ranges_data.push_back(input_shape[dim]);
+      }
+      ranges_data.push_back(1);  // step
+    }
+
+    const std::string slice_node_name =
+        utils::UniqueNameGenerator().New(node_unit, "_slice_" + std::to_string(i));
+
+    QnnParamWrapper ranges_param(node_unit.Index(), slice_node_name, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
+                                 std::move(ranges_dims), std::move(ranges_data), true);
+    std::string ranges_param_name = ranges_param.GetParamTensorName();
+    qnn_model_wrapper.AddParamWrapper(std::move(ranges_param));
+
+    // Reproduce the per-output handling of BaseOpBuilder::ProcessOutputs for this single slice
+    // output: quant-param override (keeps each output's qparams equal to the Split input, which is
+    // required on HTP), supported-data-type selection, graph-output typing, and int64 graph-output
+    // casts. Each slice is a self-contained node, so any cast is emitted right after it.
+    //
+    // This block mirrors BaseOpBuilder::ProcessOutputs (the int64/dtype-cast + output-tensor logic).
+    // It cannot share that code directly: ProcessOutputs defers all cast nodes to after a single
+    // multi-output node, whereas here each StridedSlice is its own node. Keep the int64 cast logic
+    // below in sync with base_op_builder.cc if that handling changes.
+    const std::string& output_name = node_unit.Outputs()[i].name;
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[i], output_info));
+
+    if (output_info.quant_param.IsQuantized()) {
+      RETURN_IF_ERROR(OverrideOutputQuantParam(qnn_model_wrapper, node_unit, logger, input_names,
+                                               i, output_info.qnn_data_type, output_info.quant_param));
+    }
+
+    Qnn_DataType_t supported_qnn_data_type = GetSupportedOutputDataType(i, output_info.qnn_data_type);
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+
+    bool needs_int64_cast = false;
+    if (is_graph_output && supported_qnn_data_type == output_info.qnn_data_type &&
+        (output_info.qnn_data_type == QNN_DATATYPE_INT_64 || output_info.qnn_data_type == QNN_DATATYPE_UINT_64)) {
+      supported_qnn_data_type =
+          supported_qnn_data_type == QNN_DATATYPE_INT_64 ? QNN_DATATYPE_INT_32 : QNN_DATATYPE_UINT_32;
+      needs_int64_cast = true;
+    }
+
+    // The name the StridedSlice writes to. When a cast is inserted, the slice writes to an
+    // intermediate tensor and a Cast node maps it to the real graph output.
+    std::string slice_output_name = output_name;
+    bool insert_cast = false;
+    std::string cast_node_name;
+    std::string cast_input_name;
+    if (needs_int64_cast) {
+      cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast_int64");
+      cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast_int64");
+      QnnTensorWrapper cast_input_tensorwrapper(cast_input_name, QNN_TENSOR_TYPE_NATIVE, supported_qnn_data_type,
+                                                output_info.quant_param.Copy(),
+                                                std::vector<uint32_t>(output_info.shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_input_tensorwrapper)), "Failed to add tensor.");
+      slice_output_name = cast_input_name;
+      insert_cast = true;
+    } else if (supported_qnn_data_type != output_info.qnn_data_type && is_graph_output && !do_op_validation) {
+      cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast");
+      cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast");
+      QnnTensorWrapper cast_input_tensorwrapper(cast_input_name, QNN_TENSOR_TYPE_NATIVE, supported_qnn_data_type,
+                                                output_info.quant_param.Copy(),
+                                                std::vector<uint32_t>(output_info.shape), {}, mem_type);
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_input_tensorwrapper)), "Failed to add tensor.");
+      slice_output_name = cast_input_name;
+      insert_cast = true;
+    } else {
+      output_info.qnn_data_type = supported_qnn_data_type;
+    }
+
+    const Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, output_info.qnn_data_type,
+                                          output_info.quant_param.Copy(), std::vector<uint32_t>(output_info.shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+
+    // All slices read the same Split input, so copy input_names into each node rather than move.
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(slice_node_name,
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_STRIDED_SLICE,
+                                                  std::vector<std::string>(input_names),
+                                                  {slice_output_name},
+                                                  {ranges_param_name},
+                                                  do_op_validation),
+                  "Failed to add StridedSlice node for Split lowering.");
+
+    if (insert_cast) {
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_CAST,
+                                                    {cast_input_name},
+                                                    {output_name},
+                                                    {}),
+                    "Failed to add Cast node for Split lowering.");
+    }
+  }
 
   return Ort::Status();
 }
