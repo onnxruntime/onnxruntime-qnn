@@ -226,8 +226,8 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPa
   }
 
   // Verify 2 EPContext nodes were generated.
-  onnx::ModelProto ctx_model_proto;
   {
+    onnx::ModelProto ctx_model_proto;
     std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
     ASSERT_TRUE(ifs.good());
     ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs));
@@ -240,38 +240,27 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPa
   }
 
   // -----------------------------------------------------------------------
-  // Step 2: Load context model via QnnMockSSR.dll and run inference.
+  // Step 2: Load context model via QnnMockSSR.dll, trigger SSR recovery,
+  //         and verify output accuracy against CPU reference.
   // -----------------------------------------------------------------------
-  {
-    std::string ctx_model_data;
-    ctx_model_proto.SerializeToString(&ctx_model_data);
+  std::unordered_map<std::string, std::string> run_session_opts;
+  run_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
 
-    Ort::SessionOptions so;
-    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+  // Wrap the model builder to match GetTestQDQModelFn signature (output_qparams unused when loading from context).
+  auto qdq_model_fn = [&build_multi_partition_graph](ModelTestBuilder& builder,
+                                                     std::vector<QuantParams<uint8_t>>& /*output_qparams*/) {
+    build_multi_partition_graph(builder);
+  };
 
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
-
-    ScopedOrtSession scoped(std::move(registered_ep_device),
-                            Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so));
-
-    // Run inference to trigger graphExecute (and SSR recovery).
-    auto in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
-    auto out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
-
-    Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-    std::vector<int64_t> input_shape{200, 200};
-    std::vector<float> input_data(200 * 200, 1.0f);
-    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
-                                                 input_shape.data(), input_shape.size());
-
-    const char* input_names[] = {in_name.get()};
-    const char* output_names[] = {out_name.get()};
-    auto outputs = scoped.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1,
-                                        output_names, 1);
-    ASSERT_EQ(outputs.size(), 1u);
-    ASSERT_TRUE(outputs[0].IsTensor());
-  }
+  TestQDQModelAccuracy<uint8_t>(build_multi_partition_graph,
+                       qdq_model_fn,
+                       provider_options,  // QnnMockSSR.dll
+                       13,
+                       ExpectedEPNodeAssignment::Some,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       context_model_file,
+                       run_session_opts);
 
   CleanUpCtxFile(context_model_file);
 }
@@ -559,8 +548,47 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
   ASSERT_TRUE(std::filesystem::exists(bin_name1));
 
   // -----------------------------------------------------------------------
-  // Step 2: Load context model via QnnMockSSR.dll with weight sharing and run.
+  // Step 2: Load context model with weight sharing and verify SSR recovery accuracy.
   // -----------------------------------------------------------------------
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<int64_t> input_shape{2, 3};
+  std::vector<float> input_data(6, 1.0f);
+
+  // Reference run with real HTP backend (without share_ep_contexts to avoid state conflict).
+  std::vector<float> reference_output;
+  {
+    ProviderOptions real_htp_options;
+    real_htp_options["backend_type"] = "htp";
+    real_htp_options["offload_graph_io_quantization"] = "0";
+
+    Ort::SessionOptions so1;
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, real_htp_options);
+
+#if defined(_WIN32)
+    std::wstring ctx_path1_w(ctx_path1.begin(), ctx_path1.end());
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, ctx_path1_w.c_str(), so1));
+#else
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, ctx_path1.c_str(), so1));
+#endif
+
+    auto in_name = scoped1.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto out_name = scoped1.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                 input_shape.data(), input_shape.size());
+    const char* input_names[] = {in_name.get()};
+    const char* output_names[] = {out_name.get()};
+    auto outputs = scoped1.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1,
+                                         output_names, 1);
+    auto* data = outputs[0].GetTensorData<float>();
+    auto count = outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    reference_output.assign(data, data + count);
+  }
+
+  // SSR run with QnnMockSSR.dll.
   {
     Ort::SessionOptions so1;
     so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -577,15 +605,10 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
                              Ort::Session(*ort_env, ctx_path1.c_str(), so1));
 #endif
 
-    // Run inference on session 1 to trigger SSR.
-    Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-    std::vector<int64_t> input_shape{2, 3};
-    std::vector<float> input_data(6, 1.0f);
-    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
-                                                 input_shape.data(), input_shape.size());
-
     auto in_name = scoped1.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
     auto out_name = scoped1.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                 input_shape.data(), input_shape.size());
     const char* input_names[] = {in_name.get()};
     const char* output_names[] = {out_name.get()};
 
@@ -593,6 +616,15 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
                                          output_names, 1);
     ASSERT_EQ(outputs.size(), 1u);
     ASSERT_TRUE(outputs[0].IsTensor());
+
+    // Verify accuracy: compare SSR-recovered output against reference.
+    auto* ssr_data = outputs[0].GetTensorData<float>();
+    auto count = outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    ASSERT_EQ(count, reference_output.size());
+    for (size_t i = 0; i < count; ++i) {
+      EXPECT_NEAR(ssr_data[i], reference_output[i], 1e-5f)
+          << "Output mismatch at index " << i;
+    }
   }
 
   // Cleanup.
