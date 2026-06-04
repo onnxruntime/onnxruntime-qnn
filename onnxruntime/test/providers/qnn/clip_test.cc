@@ -27,8 +27,7 @@ static void RunClipTest(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType, DataType>("Clip_node", "Clip", {input_def}, min_max_defs, {}),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //
@@ -199,7 +198,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_IndependentQDQ_MinMaxQDQ) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip of rank 5.
@@ -239,7 +238,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_Rank5) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip with quantized min input only (and missing max input)
@@ -280,7 +279,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMin) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   11,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip with quantized max input only (and missing min input)
@@ -320,7 +319,7 @@ TEST_F(QnnHTPBackendTests, Clip_U16_QuantizedMax) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   21,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip with both quantized min and max inputs
@@ -368,7 +367,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMinMax) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test FP16 Clip with min (FP16)

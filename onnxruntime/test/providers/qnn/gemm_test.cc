@@ -29,7 +29,7 @@ static void RunGemmTest(const std::vector<TestInputDef<DataType>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //
@@ -211,7 +211,10 @@ void RunReshapeGemmTest(const TestInputDef<float>& input, const TestInputDef<int
 
   provider_options["backend_type"] = backend_name;
   auto build_fn = BuildReshapeGemmTestCase(input, shape, weight, bias);
-  RunQnnModelTest(build_fn, provider_options, 18, expected_ep_assignment, fp32_abs_err);
+  RunQnnModelTest(build_fn,
+                  provider_options,
+                  18,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 }  // namespace
@@ -577,8 +580,7 @@ TEST_F(QnnHTPBackendTests, GemmFromMatMulAddNonStaticBias) {
   RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
                   provider_options,
                   /*opset=*/18,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
 TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
@@ -589,7 +591,7 @@ TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
   RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
                   provider_options,
                   /*opset=*/18,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

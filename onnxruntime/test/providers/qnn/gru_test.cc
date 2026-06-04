@@ -213,8 +213,7 @@ static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
                                           direction, hidden_size, layout, linear_before_reset),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 // ============================================================
