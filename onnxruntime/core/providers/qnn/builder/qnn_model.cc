@@ -704,7 +704,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       std::ostringstream oss;
       oss << "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: " << execute_status;
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-      return MAKE_EP_FAIL(oss.str().c_str());
+      return Ort::Status(oss.str().c_str(), ORT_ENGINE_ERROR);
     }
 
     if (QNN_GRAPH_NO_ERROR != execute_status) {

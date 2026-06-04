@@ -489,6 +489,103 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPa
   CleanUpCtxFile(context_model_file);
 }
 
+// Test that SSR in JIT flow (no EPContext, no .bin file) returns ORT_ENGINE_ERROR to the user.
+// In JIT mode, the graph is compiled at runtime with no external binary to reload from,
+// so SSR recovery is impossible. The error should be ORT_ENGINE_ERROR (not ORT_EP_FAIL)
+// to allow the application to distinguish NPU crashes from other EP failures.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsEngineError) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string op_type = "Atan";
+  const TestInputDef<float> input_def_qdq({1, 2, 3}, false, -10.0f, 10.0f);
+
+  // Use TestQDQModelAccuracy's approach: run f32 model on CPU first to get output ranges,
+  // then build the QDQ model with proper quantization params.
+  auto f32_model_fn = BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {});
+  auto qdq_model_fn = BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {});
+
+  const int opset_version = 14;
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
+
+  // Step 1: Run f32 model on CPU to get output ranges for quantization.
+  ModelTestBuilder f32_helper;
+  f32_model_fn(f32_helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string f32_model_data;
+  f32_helper.model_.SerializeToString(&f32_model_data);
+
+  // Run on CPU to get output ranges.
+  Ort::SessionOptions cpu_so;
+  Ort::Session cpu_session(*ort_env, f32_model_data.data(), f32_model_data.size(), cpu_so);
+
+  auto in_name_alloc = cpu_session.GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+  auto out_name_alloc = cpu_session.GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<int64_t> input_shape{1, 2, 3};
+  std::vector<float> input_data(6, 1.0f);
+  auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                               input_shape.data(), input_shape.size());
+
+  const char* cpu_input_names[] = {in_name_alloc.get()};
+  const char* cpu_output_names[] = {out_name_alloc.get()};
+  auto cpu_outputs = cpu_session.Run(Ort::RunOptions{}, cpu_input_names, &input_tensor, 1,
+                                     cpu_output_names, 1);
+
+  // Compute output quantization params from CPU output.
+  auto* output_data = cpu_outputs[0].GetTensorData<float>();
+  auto output_count = cpu_outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+  float out_min = *std::min_element(output_data, output_data + output_count);
+  float out_max = *std::max_element(output_data, output_data + output_count);
+  std::vector<QuantParams<uint8_t>> output_qparams = {QuantParams<uint8_t>::Compute(out_min, out_max)};
+
+  // Step 2: Build QDQ model with proper quantization params.
+  ModelTestBuilder qdq_helper;
+  qdq_model_fn(qdq_helper, output_qparams);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{qdq_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  qdq_helper.model_.SerializeToString(&model_data);
+
+  // Step 3: Create session in JIT mode using QnnMockSSR.dll (no EPContext caching).
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
+
+  // Step 4: Run inference — SSR fires, recovery is impossible, expect ORT_ENGINE_ERROR.
+  auto qnn_in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+  auto qnn_out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+
+  auto run_input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                   input_shape.data(), input_shape.size());
+
+  const char* run_input_names[] = {qnn_in_name.get()};
+  const char* run_output_names[] = {qnn_out_name.get()};
+
+  try {
+    scoped.session().Run(Ort::RunOptions{}, run_input_names, &run_input_tensor, 1, run_output_names, 1);
+    FAIL() << "Expected ORT_ENGINE_ERROR exception but Run() succeeded.";
+  } catch (const Ort::Exception& e) {
+    EXPECT_EQ(e.GetOrtErrorCode(), ORT_ENGINE_ERROR)
+        << "Expected ORT_ENGINE_ERROR for SSR in JIT flow, got error code: " << e.GetOrtErrorCode()
+        << ", message: " << e.what();
+  }
+}
+
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 }  // namespace test
 }  // namespace onnxruntime
