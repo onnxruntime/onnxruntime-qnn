@@ -33,6 +33,7 @@ namespace onnxruntime {
 namespace qnn {
 class QnnOpConfigWrapper;
 class QnnModelWrapper;
+class QnnQuantParamsWrapper;
 
 namespace utils {
 /**
@@ -652,6 +653,21 @@ uint64_t GetTimeStampInUs();
 // Returns true if they match within a tolerance, false otherwise
 bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
                          float tolerance = 1e-5f);
+
+// Extracts weight scales from a QnnQuantParamsWrapper.
+// Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,
+// BW_AXIS_SCALE_OFFSET), and LPBQ (BLOCKWISE_EXPANSION).
+Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
+                                 uint32_t num_output_channels,
+                                 std::vector<float>& weights_scales);
+
+// Extracts current scales, offsets, and axis from a bias's quant params.
+// Supports SCALE_OFFSET, BW_SCALE_OFFSET, AXIS_SCALE_OFFSET, BW_AXIS_SCALE_OFFSET.
+// Returns failure for unsupported encodings.
+Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
+                                         std::vector<float>& scales,
+                                         std::vector<int32_t>& offsets,
+                                         int32_t& axis);
 
 // Quantizes a float bias tensor to int32 using bias_scale = activation_scale * weight_scale.
 // Used when the bias is provided as float (no quantization info) but activation and weight are quantized.

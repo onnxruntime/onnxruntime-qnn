@@ -1741,6 +1741,90 @@ bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation
   return std::abs(bias_scale - expected_scale) <= tolerance;
 }
 
+Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
+                                 uint32_t num_output_channels,
+                                 std::vector<float>& weights_scales) {
+  const auto& qp = weight_quant_param.Get();
+
+  if (weight_quant_param.IsPerTensor()) {
+    if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+      weights_scales.push_back(qp.scaleOffsetEncoding.scale);
+    } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+      weights_scales.push_back(qp.bwScaleOffsetEncoding.scale);
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.axisScaleOffsetEncoding.scaleOffset != nullptr &&
+                      qp.axisScaleOffsetEncoding.numScaleOffsets > 0,
+                  "Invalid AXIS_SCALE_OFFSET weight quant params");
+    for (size_t i = 0; i < qp.axisScaleOffsetEncoding.numScaleOffsets; ++i) {
+      weights_scales.push_back(qp.axisScaleOffsetEncoding.scaleOffset[i].scale);
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.bwAxisScaleOffsetEncoding.scales != nullptr &&
+                      qp.bwAxisScaleOffsetEncoding.numElements > 0,
+                  "Invalid BW_AXIS_SCALE_OFFSET weight quant params");
+    for (size_t i = 0; i < qp.bwAxisScaleOffsetEncoding.numElements; ++i) {
+      weights_scales.push_back(qp.bwAxisScaleOffsetEncoding.scales[i]);
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION) {
+    RETURN_IF_NOT(qp.blockwiseExpansion != nullptr &&
+                      qp.blockwiseExpansion->scaleOffsets != nullptr,
+                  "Invalid BLOCKWISE_EXPANSION weight quant params");
+    for (size_t c = 0; c < num_output_channels; ++c) {
+      weights_scales.push_back(qp.blockwiseExpansion->scaleOffsets[c].scale);
+    }
+  } else {
+    return MAKE_EP_FAIL("Unsupported weight quantization encoding for bias quantization.");
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
+                                         std::vector<float>& scales,
+                                         std::vector<int32_t>& offsets,
+                                         int32_t& axis) {
+  const auto& qp = bias_quant_param.Get();
+  axis = 0;
+
+  if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+    scales = {qp.scaleOffsetEncoding.scale};
+    offsets = {qp.scaleOffsetEncoding.offset};
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+    scales = {qp.bwScaleOffsetEncoding.scale};
+    offsets = {qp.bwScaleOffsetEncoding.offset};
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.axisScaleOffsetEncoding.scaleOffset != nullptr &&
+                      qp.axisScaleOffsetEncoding.numScaleOffsets > 0,
+                  "Invalid AXIS_SCALE_OFFSET bias quant params");
+    axis = qp.axisScaleOffsetEncoding.axis;
+    const size_t n = qp.axisScaleOffsetEncoding.numScaleOffsets;
+    scales.resize(n);
+    offsets.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      scales[i] = qp.axisScaleOffsetEncoding.scaleOffset[i].scale;
+      offsets[i] = qp.axisScaleOffsetEncoding.scaleOffset[i].offset;
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.bwAxisScaleOffsetEncoding.scales != nullptr &&
+                      qp.bwAxisScaleOffsetEncoding.offsets != nullptr &&
+                      qp.bwAxisScaleOffsetEncoding.numElements > 0,
+                  "Invalid BW_AXIS_SCALE_OFFSET bias quant params");
+    axis = qp.bwAxisScaleOffsetEncoding.axis;
+    const size_t n = qp.bwAxisScaleOffsetEncoding.numElements;
+    scales.resize(n);
+    offsets.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      scales[i] = qp.bwAxisScaleOffsetEncoding.scales[i];
+      offsets[i] = qp.bwAxisScaleOffsetEncoding.offsets[i];
+    }
+  } else {
+    return MAKE_EP_FAIL("Unsupported bias quantization encoding for requantization.");
+  }
+
+  return Ort::Status();
+}
+
 Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
                                     gsl::span<const float> weights_scales,
                                     float activation_scale,
