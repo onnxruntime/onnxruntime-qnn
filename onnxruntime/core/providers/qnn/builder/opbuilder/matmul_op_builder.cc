@@ -542,12 +542,14 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   //
   // Input 0: activation. BW_FLOAT_BLOCK MatMul computes in FP16, so an INT16 activation must be
   // dequantized to FP16 first (mirrors the Conv BQ activation path). QNN HTP additionally requires the
-  // activation to be 4-D, so the [..., M, K] activation is reshaped to [batch, 1, M, K].
+  // activation to be 4-D, so the [..., M, K] activation is reshaped to [batch, 1, M, K], where batch is
+  // the product of all leading dims. Any rank >= 2 reshapes cleanly; the output is reshaped back the
+  // same way.
   //
   TensorInfo input_info_0{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info_0));
-  RETURN_IF_NOT(input_info_0.shape.size() >= 2 && input_info_0.shape.size() <= 3,
-                "QNN EP: BQ MatMul activation must be rank 2 or 3");
+  RETURN_IF_NOT(input_info_0.shape.size() >= 2,
+                "QNN EP: BQ MatMul activation must be rank >= 2 so it can be reshaped to 4-D [batch, 1, M, K]");
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, inputs[0].name, input_names, logger,
                                 do_op_validation, /*use_fully_connected=*/false));
   {
