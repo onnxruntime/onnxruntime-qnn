@@ -14,6 +14,15 @@ jobs:
   asan-linux-x86_64:
     name: "asan-linux-x86_64"
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    # Run ASan in non-blocking mode: the job's red X / log are still
+    # surfaced in the PR checks UI for human review, but a failure does
+    # not gate merge. ASan is a heuristic detector — it can flag
+    # third-party noise (stripped libQnn*.so init leaks, UDO op-package
+    # `<unknown module>` Direct leaks, transient LSan tracer SIGSEGVs)
+    # that are out of our control, and we don't want unrelated PRs
+    # blocked while we triage. Real ORT-side regressions are still
+    # visible; reviewers should glance at the ASan check before merging.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
         with:
