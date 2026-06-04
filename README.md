@@ -91,7 +91,7 @@ For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualco
 
 ### Linux Wheels and .tgz Files
 
-- **2.3.0+**: Linux x86_64 Wheels and .tgz files available (Preview)
+- **2.3.0+**: Linux x86_64 Wheels available (Preview)
 - **2.1.1+**: Linux ARM64 Wheels and .tgz files available
 - **2.1.0**: Linux ARM64 preview wheels available
 - **2.0.0**: No Linux ARM64 Wheels or .tgz files

@@ -57,8 +57,8 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- Linux ARM64 and x86_64 archives (`.tgz`)
-  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64 and Linux x86_64.
+- Linux ARM64 archives (`.tgz`)
+  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
 - Maven package (Android)
   - **Note**: The Maven package supports Android ARM64
   - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`

@@ -256,7 +256,7 @@ Located in `build/Release/Release/dist/` (Windows) or `build/Release/dist/` (Lin
 
 * Windows ARM64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_arm64.whl`
 * Windows x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_amd64.whl`
-* Linux x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_35_x86_64.whl`
+* Linux x86-64 (Preview): `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_35_x86_64.whl`
 * Linux AArch64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_34_aarch64.whl`
 
 #### NuGet Packages
