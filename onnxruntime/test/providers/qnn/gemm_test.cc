@@ -600,7 +600,7 @@ namespace {
 //               rank-2 scale (blocked on K axis); axis/scale shape depend on transB.
 //     transB=0: B=[K,N], scale=[K/block_size,N], axis=0.
 //     transB=1: B=[N,K], scale=[N,K/block_size], axis=1.
-//   - optional bias C: INT32 quantized (per-tensor) or plain float initializer, shape [N].
+//   - optional bias C: INT32 quantized (per-tensor), shape [N].
 //   - output: Gemm → Q(uint16) → DQ → graph output, shape [M, N].
 GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
                                      int64_t trans_b = 0, bool include_bias = false,

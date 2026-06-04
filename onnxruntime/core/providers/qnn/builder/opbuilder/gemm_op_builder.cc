@@ -80,10 +80,6 @@ class GemmOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GemmOpBuilder);
 
  protected:
-  Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                            const OrtNodeUnit& node_unit,
-                            const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
-
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
@@ -107,34 +103,6 @@ class GemmOpBuilder : public BaseOpBuilder {
                                      std::vector<std::string>& input_names,
                                      bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
-
-Ort::Status GemmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
-                                         const Ort::Logger& logger) const {
-  const auto& inputs = node_unit.Inputs();
-  if (inputs.size() >= 2) {
-    OrtNodeAttrHelper node_helper(node_unit);
-    const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
-    int64_t num_blocks = 0, block_size = 0;
-    if (IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b, num_blocks, block_size)) {
-      const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
-      auto bq_it = kHtpGemmBQBitsAndBlockSizeMultipliers.find(bitwidth);
-      RETURN_IF(bq_it == kHtpGemmBQBitsAndBlockSizeMultipliers.end(),
-                ("QNN HTP Gemm BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
-      RETURN_IF(block_size % bq_it->second != 0,
-                ("QNN HTP Gemm BQ: block_size=" + std::to_string(block_size) +
-                 " must be a multiple of " + std::to_string(bq_it->second) +
-                 " for " + std::to_string(bitwidth) + "-bit weight")
-                    .c_str());
-      TensorInfo weight_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info));
-      RETURN_IF_NOT(weight_info.is_initializer, "QNN EP: BQ Gemm weight must be a constant initializer");
-      TensorInfo act_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], act_info));
-      RETURN_IF(act_info.is_initializer, "QNN EP: BQ Gemm activation must be a dynamic tensor");
-    }
-  }
-  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
-}
 
 Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit) const {
   OrtNodeAttrHelper node_helper(node_unit);
@@ -430,10 +398,8 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
   input_names.push_back(weight_name);
 
   //
-  // Input C (bias): required to be FP16 for the BQ kernel. Two cases:
-  //   (a) INT32-quantized initializer → dequantize INT32→FP16.
-  //   (b) float initializer → cast to FP16.
-  // If beta=0.0, skip bias (existing convention).
+  // Input C (bias): must be an INT32-quantized initializer; dequantize to FP16 for the BQ kernel.
+  // If beta=0.0, skip bias (existing convention). Float bias is not yet supported.
   //
   if (inputs.size() == 3 && beta != 0.0f) {
     TensorInfo bias_info = {};
@@ -449,37 +415,24 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
     const std::string fp16_bias_name = utils::UniqueNameGenerator().New(inputs[2].name, "_fp16");
     std::vector<uint8_t> fp16_bias_bytes(static_cast<size_t>(N) * sizeof(uint16_t));
 
-    if (bias_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32) {
-      // (a) INT32-quantized bias: dequantize to FP16 using per-tensor or per-channel scale.
-      std::vector<uint8_t> raw_bias_bytes;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, raw_bias_bytes));
-      std::vector<float> bias_scales;
-      if (inputs[2].quant_param.has_value() && inputs[2].quant_param->scale != nullptr) {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scales));
-      }
-      RETURN_IF_NOT(raw_bias_bytes.size() == static_cast<size_t>(N) * sizeof(int32_t),
-                    "QNN EP: BQ Gemm INT32 bias size mismatch");
-      const bool is_per_channel_bias = bias_scales.size() == static_cast<size_t>(N);
-      const auto* i32_ptr = reinterpret_cast<const int32_t*>(raw_bias_bytes.data());
-      auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bias_bytes.data());
-      for (size_t i = 0; i < static_cast<size_t>(N); ++i) {
-        const float scale = bias_scales.empty() ? 1.0f : (is_per_channel_bias ? bias_scales[i] : bias_scales[0]);
-        const Ort::Float16_t fp16(static_cast<float>(i32_ptr[i]) * scale);
-        memcpy(&u16_ptr[i], &fp16.val, sizeof(uint16_t));
-      }
-    } else {
-      // (b) Float bias: cast each element to FP16.
-      std::vector<uint8_t> raw_bias_bytes;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, raw_bias_bytes,
-                                                              /*unpack_sub_byte_to_8_bit=*/false));
-      RETURN_IF_NOT(raw_bias_bytes.size() == static_cast<size_t>(N) * sizeof(float),
-                    "QNN EP: BQ Gemm float bias size mismatch");
-      const auto* f32_ptr = reinterpret_cast<const float*>(raw_bias_bytes.data());
-      auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bias_bytes.data());
-      for (size_t i = 0; i < static_cast<size_t>(N); ++i) {
-        const Ort::Float16_t fp16(f32_ptr[i]);
-        memcpy(&u16_ptr[i], &fp16.val, sizeof(uint16_t));
-      }
+    RETURN_IF_NOT(bias_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32,
+                  "QNN EP: BQ Gemm bias must be INT32-quantized; float bias is not yet supported");
+    // Dequantize INT32 bias to FP16 using per-tensor or per-channel scale.
+    std::vector<uint8_t> raw_bias_bytes;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, raw_bias_bytes));
+    std::vector<float> bias_scales;
+    if (inputs[2].quant_param.has_value() && inputs[2].quant_param->scale != nullptr) {
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scales));
+    }
+    RETURN_IF_NOT(raw_bias_bytes.size() == static_cast<size_t>(N) * sizeof(int32_t),
+                  "QNN EP: BQ Gemm INT32 bias size mismatch");
+    const bool is_per_channel_bias = bias_scales.size() == static_cast<size_t>(N);
+    const auto* i32_ptr = reinterpret_cast<const int32_t*>(raw_bias_bytes.data());
+    auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bias_bytes.data());
+    for (size_t i = 0; i < static_cast<size_t>(N); ++i) {
+      const float scale = bias_scales.empty() ? 1.0f : (is_per_channel_bias ? bias_scales[i] : bias_scales[0]);
+      const Ort::Float16_t fp16(static_cast<float>(i32_ptr[i]) * scale);
+      memcpy(&u16_ptr[i], &fp16.val, sizeof(uint16_t));
     }
 
     QnnTensorWrapper fp16_bias_wrapper(fp16_bias_name, QNN_TENSOR_TYPE_STATIC,
