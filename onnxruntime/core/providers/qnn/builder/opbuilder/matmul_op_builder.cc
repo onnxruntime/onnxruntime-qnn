@@ -95,9 +95,12 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   return true;
 }
 
-// Flattens the leading dims of `shape` (all but the last) into a single uint32_t batch value.
-Ort::Status FlattenLeadingDims(const std::vector<uint32_t>& shape, uint32_t& batch) {
-  const int64_t batch_i64 = std::accumulate(shape.begin(), shape.end() - 1,
+// Flattens the leading dims of `shape` (all but the last `n_trailing` dims) into a single
+// uint32_t batch value. Defaults to n_trailing=1 (i.e. all dims except the last one).
+Ort::Status FlattenLeadingDims(const std::vector<uint32_t>& shape, uint32_t& batch,
+                               size_t n_trailing = 1) {
+  RETURN_IF(shape.size() < n_trailing, "FlattenLeadingDims: n_trailing exceeds shape rank.");
+  const int64_t batch_i64 = std::accumulate(shape.begin(), shape.end() - static_cast<ptrdiff_t>(n_trailing),
                                             static_cast<int64_t>(1), std::multiplies<int64_t>());
   RETURN_IF(batch_i64 <= 0 ||
                 batch_i64 > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
@@ -542,31 +545,31 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
     std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
 
     std::string fp16_name = act_name;
-    if (act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
-      // Reuse the original DequantizeLinear node's output name (the target MatMul's input[0]) for the
-      // FP16 tensor. That tensor is conceptually the dequantized activation — exactly what this
-      // INT16→FP16 Dequantize produces — and QNN EP otherwise skips it, so the name is free and keeps
-      // the QNN graph aligned with the ONNX graph naming.
-      fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-      QnnTensorWrapper fp16_act_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
-                                        QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                        std::vector<uint32_t>(act_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_act_wrapper)),
-                    "Failed to add FP16 activation tensor for BQ MatMul.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                        {act_name}, {fp16_name}, {}, do_op_validation),
-                    "Failed to add INT16→FP16 Dequantize node for BQ MatMul activation.");
-    }
+    // BW_FLOAT_BLOCK MatMul requires FP16 activation. The only activation dtype reaching this
+    // path through the QDQ selector is INT16 (SFIXED or UFIXED), so anything else is unexpected.
+    RETURN_IF_NOT(act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16,
+                  "QNN EP: BQ MatMul activation must be INT16-quantized for the BW_FLOAT_BLOCK kernel");
+    // Reuse the original DequantizeLinear node's output name (the target MatMul's input[0]) for the
+    // FP16 tensor. That tensor is conceptually the dequantized activation — exactly what this
+    // INT16→FP16 Dequantize produces — and QNN EP otherwise skips it, so the name is free and keeps
+    // the QNN graph aligned with the ONNX graph naming.
+    fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+    QnnTensorWrapper fp16_act_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
+                                      QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                                      std::vector<uint32_t>(act_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_act_wrapper)),
+                  "Failed to add FP16 activation tensor for BQ MatMul.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
+                      {act_name}, {fp16_name}, {}, do_op_validation),
+                  "Failed to add INT16→FP16 Dequantize node for BQ MatMul activation.");
 
     // Reshape the FP16 activation [..., M, K] to 4-D [batch, 1, M, K] for the QNN HTP BQ MatMul.
     const uint32_t k_dim = act_shape.back();
     const uint32_t m_dim = act_shape[act_shape.size() - 2];
     uint32_t batch = 1u;
-    for (size_t i = 0; i + 2 < act_shape.size(); ++i) {
-      batch *= act_shape[i];
-    }
+    RETURN_IF_ERROR(FlattenLeadingDims(act_shape, batch, /*n_trailing=*/2));
     const std::vector<uint32_t> act_shape_4d = {batch, 1u, m_dim, k_dim};
     const std::string act_4d_name = utils::UniqueNameGenerator().New(fp16_name, "_reshape_4d");
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(fp16_name, act_4d_name, act_shape, act_shape_4d,
@@ -765,9 +768,7 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     const uint32_t n_dim = op_output_shape.back();
     const uint32_t m_dim = op_output_shape[op_output_shape.size() - 2];
     uint32_t batch = 1u;
-    for (size_t i = 0; i + 2 < op_output_shape.size(); ++i) {
-      batch *= op_output_shape[i];
-    }
+    RETURN_IF_ERROR(FlattenLeadingDims(op_output_shape, batch, /*n_trailing=*/2));
     const std::vector<uint32_t> matmul_out_shape_4d = {batch, 1u, m_dim, n_dim};
 
     const std::string matmul_4d_out = utils::UniqueNameGenerator().New(op_output_name, "_matmul_4d");
