@@ -614,12 +614,7 @@ GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t bl
     MakeTestInput<float>(builder, "input", input_def);
     const float act_scale = 2.0f / 65534.0f;
     const uint16_t act_zp = 32767;
-    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
-    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
-    builder.AddNode("act_ql", "QuantizeLinear", {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
-    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
-    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
-    builder.AddNode("act_dql", "DequantizeLinear", {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
+    const std::string act_dql_out = AddQDQNodePair<uint16_t>(builder, "act", "input", act_scale, act_zp);
 
     // ── Weight B initializer + DQ(block_size) ─────────────────────────────────
     // transB=0: B=[K,N], scale=[K/bs, N], axis=0.
@@ -655,7 +650,7 @@ GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t bl
                      builder.MakeScalarAttribute("block_size", block_size)});
 
     // ── Gemm ─────────────────────────────────────────────────────────────────
-    std::vector<std::string> gemm_inputs = {"act_dql_out", "weight_dql_out"};
+    std::vector<std::string> gemm_inputs = {act_dql_out, "weight_dql_out"};
     std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
     gemm_attrs.push_back(builder.MakeScalarAttribute("transB", trans_b));
     if (include_bias) {
@@ -673,13 +668,7 @@ GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t bl
     // ── Output: Gemm → Q(uint16) → DQ → graph output ─────────────────────────
     const float out_scale = 4.0f / 65534.0f;
     const uint16_t out_zp = 32767;
-    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
-    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
-    builder.AddNode("out_ql", "QuantizeLinear", {"gemm_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
-    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
-    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
-    builder.MakeOutput("output");
-    builder.AddNode("out_dql", "DequantizeLinear", {"out_ql_out", "out_dql_scale", "out_dql_zp"}, {"output"});
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "gemm_out", out_scale, out_zp);
   };
 }
 
