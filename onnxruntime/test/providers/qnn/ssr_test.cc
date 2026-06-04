@@ -586,6 +586,92 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsEngineError) {
   }
 }
 
+// Test that SSR in AOT flow with embed_mode=1 returns ORT_ENGINE_ERROR to the user.
+// In embed_mode=1, the context binary is stored inside the ONNX model (no external .bin file),
+// so SSR recovery is impossible. The error should be ORT_ENGINE_ERROR.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsEngineError) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string context_model_file = "./ssr_ep_ctx_embed_mode_test.onnx";
+  std::remove(context_model_file.c_str());
+
+  const std::string op_type = "Atan";
+  const TestInputDef<float> input_def_qdq({1, 2, 3}, false, -10.0f, 10.0f);
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate an embed_mode=1 context model with the real HTP backend.
+  // -----------------------------------------------------------------------
+  ProviderOptions htp_options;
+  htp_options["backend_type"] = "htp";
+  htp_options["offload_graph_io_quantization"] = "0";
+
+  std::unordered_map<std::string, std::string> gen_session_opts;
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEnable, "1");
+  gen_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEmbedMode, "1");
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       htp_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       gen_session_opts);
+
+  ASSERT_TRUE(std::filesystem::exists(context_model_file))
+      << "Context model file was not generated: " << context_model_file;
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load the embed_mode=1 context model via QnnMockSSR.dll.
+  //         SSR fires on graphExecute, recovery is impossible (no external .bin),
+  //         expect ORT_ENGINE_ERROR.
+  // -----------------------------------------------------------------------
+  {
+    onnx::ModelProto ctx_model_proto;
+    std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good());
+    ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs));
+
+    std::string ctx_model_data;
+    ctx_model_proto.SerializeToString(&ctx_model_data);
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so));
+
+    // Run inference — SSR fires, no .bin file to reload from, expect ORT_ENGINE_ERROR.
+    auto in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+
+    Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<int64_t> input_shape{1, 2, 3};
+    std::vector<float> input_data(6, 1.0f);
+    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                 input_shape.data(), input_shape.size());
+
+    const char* input_names[] = {in_name.get()};
+    const char* output_names[] = {out_name.get()};
+
+    try {
+      scoped.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1, output_names, 1);
+      FAIL() << "Expected ORT_ENGINE_ERROR exception but Run() succeeded.";
+    } catch (const Ort::Exception& e) {
+      EXPECT_EQ(e.GetOrtErrorCode(), ORT_ENGINE_ERROR)
+          << "Expected ORT_ENGINE_ERROR for SSR in embed_mode=1, got error code: " << e.GetOrtErrorCode()
+          << ", message: " << e.what();
+    }
+  }
+
+  std::remove(context_model_file.c_str());
+}
+
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 }  // namespace test
 }  // namespace onnxruntime
