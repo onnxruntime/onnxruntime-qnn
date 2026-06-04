@@ -26,6 +26,10 @@ namespace qnn {
 #define QNN_SYSTEM_PROFILE_API_ENABLED
 #endif
 
+#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
+#define QNN_SYSTEM_DLC_API_ENABLED
+#endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
+
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
 #if QNN_API_VERSION_MAJOR > 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR >= 32))
 #define QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -112,6 +116,14 @@ enum class HtpGraphFinalizationOptimizationMode : uint8_t {
   kMode2 = 2,  // Longer preparation time, more optimal graph
   kMode3 = 3,  // Longest preparation time, most likely even more optimal graph.
 };
+
+// Define graph configs used by HTP backend.
+typedef struct HtpGraphConfigs {
+  int32_t vtcm_size_in_mb = 0;
+  HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
+  bool enable_htp_fp16_precision = false;
+  bool disable_htp_monolithic_lstm = false;
+} HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {
   CPU = 0,
