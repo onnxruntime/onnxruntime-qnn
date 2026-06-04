@@ -100,7 +100,26 @@ export LSAN_OPTIONS="exitcode=1:suppressions=${REPO_ROOT}/tools/ci_build/lsan_su
 
 # ---------------------------------------------------------------------------
 # Run the test binary through asan_filter_leaks.sh
+#
+# QnnCPUBackendTests.UDO_Op_MyAdd is excluded under ASan. It dlopens a
+# generated libMyAddOpPackage_cpu.so whose REGISTER_OP macro registers
+# a global OpRegistrationReceiver. The receiver's ctor heap-allocates
+# 8 bytes (a CustomOpRegistrationFunction_t) via std::unique_ptr; pop()
+# transfers ownership to the caller via release(), and neither the
+# receiver's dtor nor the caller in CustomOpPackage.hpp's REGISTER_PACKAGE_OP
+# macro ever frees it. The leak fires from call_init (elf/dl-init.c) at
+# .so load time, with all in-package frames showing "<unknown module>"
+# (LSan cannot resolve them, so lsan_suppressions.txt patterns also miss).
+#
+# This is an upstream QAIRT SDK bug in
+# share/QNN/OpPackageGenerator/CustomOp/CustomOpRegister.hpp. The HTP
+# variant of UDO_Op_MyAdd does not exhibit this leak (host-side boilerplate
+# differs), so only the CPU test is filtered out.
+#
+# Re-enable once the QAIRT fix lands and asan_filter_leaks.sh gains
+# attribution-by-source-path so 3rd-party leaks no longer block CI.
 # ---------------------------------------------------------------------------
 log_info "--- Running onnxruntime_provider_test under ASan ---"
 "${REPO_ROOT}/qcom/scripts/linux/asan_filter_leaks.sh" \
-    "./onnxruntime_provider_test"
+    "./onnxruntime_provider_test" \
+    "--gtest_filter=-QnnCPUBackendTests.UDO_Op_MyAdd"

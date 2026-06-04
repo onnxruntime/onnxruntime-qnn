@@ -56,13 +56,6 @@ class PoolOpBuilder : public BaseOpBuilder {
                                        QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
 
  private:
-  Ort::Status SetCommonPoolParams(const OrtNodeAttrHelper& node_helper,
-                                  std::vector<uint32_t>& filter_size,
-                                  std::vector<uint32_t>& stride,
-                                  std::vector<uint32_t>& pad_amount,
-                                  int32_t& rounding_mode,
-                                  gsl::span<const uint32_t> input_shape,
-                                  gsl::span<const uint32_t> output_shape) const;
   Ort::Status AddQnnPoolParamWrappers(const OrtNodeUnit& node_unit,
                                       const QnnPoolConfig& qnn_pool_config,
                                       QnnPoolParams&& qnn_pool_params,
@@ -163,72 +156,6 @@ Ort::Status PoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
   }
-
-  return Ort::Status();
-}
-
-Ort::Status PoolOpBuilder::SetCommonPoolParams(const OrtNodeAttrHelper& node_helper,
-                                               std::vector<uint32_t>& filter_size,
-                                               std::vector<uint32_t>& stride,
-                                               std::vector<uint32_t>& pad_amount,
-                                               int32_t& rounding_mode,
-                                               gsl::span<const uint32_t> input_shape,
-                                               gsl::span<const uint32_t> output_shape) const {
-  const size_t rank = input_shape.size();
-
-  {
-    auto raw_filter_size = node_helper.Get("kernel_shape", std::vector<uint32_t>(rank - 2, 1));
-    if (raw_filter_size.size() == 1) {
-      filter_size = {1, raw_filter_size[0]};
-    } else {
-      filter_size = raw_filter_size;
-    }
-  }
-
-  {
-    auto raw_stride = node_helper.Get("strides", std::vector<uint32_t>(rank - 2, 1));
-    if (raw_stride.size() == 1) {
-      stride = {1, raw_stride[0]};
-    } else {
-      stride = raw_stride;
-    }
-  }
-
-  std::vector<uint32_t> dilations;
-  {
-    auto raw_dilations = node_helper.Get("dilations", std::vector<uint32_t>(rank - 2, 1));
-    if (raw_dilations.size() == 1) {
-      dilations = {1, raw_dilations[0]};
-    } else {
-      dilations = raw_dilations;
-    }
-  }
-
-  {
-    auto raw_pad_amount = node_helper.Get("pads", std::vector<uint32_t>((rank - 2) * 2, 0));
-    if (raw_pad_amount.size() == 2) {
-      pad_amount = {0, raw_pad_amount[0], 0, raw_pad_amount[1]};
-    } else {
-      pad_amount = raw_pad_amount;
-    }
-  }
-
-  auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
-  if (auto_pad.compare("NOTSET") != 0) {
-    for (size_t axis = 0; axis < rank - 2; ++axis) {
-      uint32_t total_pads = (output_shape[axis + 1] - 1) * stride[axis] +
-                            (filter_size[axis] - 1) * dilations[axis] + 1 - input_shape[axis + 1];
-      if (auto_pad.compare("SAME_LOWER") == 0) {
-        pad_amount[axis + rank - 2] = total_pads / 2;
-        pad_amount[axis] = total_pads - pad_amount[axis + rank - 2];
-      } else if (auto_pad.compare("SAME_UPPER") == 0) {
-        pad_amount[axis] = total_pads / 2;
-        pad_amount[axis + rank - 2] = total_pads - pad_amount[axis];
-      }
-    }
-  }
-
-  rounding_mode = node_helper.Get("ceil_mode", rounding_mode);
 
   return Ort::Status();
 }
@@ -419,13 +346,15 @@ Ort::Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   qnn_pool_params.pad_amount.assign((rank - 2) * 2, 0);
 
   if (!is_global_pool) {
-    RETURN_IF_ERROR(SetCommonPoolParams(node_helper,
-                                        qnn_pool_params.filter_size,
-                                        qnn_pool_params.stride,
-                                        qnn_pool_params.pad_amount,
-                                        qnn_pool_params.rounding_mode,
-                                        qnn_input_shape,
-                                        qnn_output_shape));
+    std::vector<uint32_t> dilations;  // unused after the call but required by the helper signature
+    RETURN_IF_ERROR(ResolvePoolAttributes(node_helper,
+                                          qnn_input_shape,
+                                          qnn_output_shape,
+                                          qnn_pool_params.filter_size,
+                                          qnn_pool_params.stride,
+                                          dilations,
+                                          qnn_pool_params.pad_amount,
+                                          qnn_pool_params.rounding_mode));
   }
 
   qnn_pool_params.count_pad_for_edges =

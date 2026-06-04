@@ -218,6 +218,15 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |Directory path (string)|Directory path for dumping QNN IR DLC files. Only effective when `dump_qnn_ir_dlc` is enabled.|
 
+|`"enable_framework_op_trace"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable framework op tracing. Writes a JSON file that maps each ONNX operator (or fused group) to its corresponding QNN operator(s), records unsupported operators, and includes summary statistics. See `framework_op_trace_dir` to control the output location. The trace is produced from the QNN graph composition path: it is emitted on a fresh JIT compile and on AOT context-binary generation (when `ep.context_enable=1` writes a new EPContext model). It is **not** emitted when loading an existing EPContext model (cached run), because no graph composition occurs in that path; in that case an INFO log records that no trace file is written.|
+
+|`"framework_op_trace_dir"`|Description|
+|---|---|
+|Directory path (string)|Directory path for framework op trace JSON files. Only effective when `enable_framework_op_trace` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to (e.g. read-only mount, missing permissions), framework op tracing is disabled with a WARNING log and no trace file is produced. Trace files use the pattern `qnn_op_trace.json`.|
+
 |`"qnn_ir_backend_path"`|Description|
 |---|---|
 |Backend path (string)|Path to the QNN IR backend library. Defaults to 'libQnnIr.so' or 'QnnIr.dll'. Only effective when `dump_qnn_ir_dlc` is enabled.|
