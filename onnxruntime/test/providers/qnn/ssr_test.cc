@@ -672,6 +672,150 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsEngineErr
   std::remove(context_model_file.c_str());
 }
 
+// Build a simple QDQ Add model and save to file (for weight sharing tests).
+static void CreateQdqAddModel(const std::string& model_file_name) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  std::vector<float> data = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
+  gsl::span<float> data_range = gsl::make_span(data);
+  QuantParams<uint8_t> q_parameter = GetDataQuantParams<uint8_t>(data_range);
+
+  MakeTestInput(helper, "add_in1", TestInputDef<float>({2, 3}, false, data));
+  std::string add_input1_qdq =
+      AddQDQNodePair<uint8_t>(helper, "add_in1_qdq", "add_in1", q_parameter.scale, q_parameter.zero_point);
+
+  MakeTestInput(helper, "add_in2", TestInputDef<float>({2, 3}, true, data));
+  std::string add_input2_qdq =
+      AddQDQNodePair<uint8_t>(helper, "add_in2_qdq", "add_in2", q_parameter.scale, q_parameter.zero_point);
+
+  helper.AddNode("Add_node", "Add", {add_input1_qdq, add_input2_qdq}, {"add_out"});
+  AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(helper, "qdq_out", "add_out",
+                                                 q_parameter.scale, q_parameter.zero_point);
+
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::ofstream model_ofs(model_file_name, std::ios::binary);
+  ASSERT_TRUE(model_ofs.good());
+  ASSERT_TRUE(helper.model_.SerializeToOstream(&model_ofs));
+}
+
+// Test SSR with weight sharing (htp_share_resource_optimization=1).
+// Two models share the same QNN context binary. When SSR occurs, each model
+// independently recovers by reloading the shared binary and retrieving its graph.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  // Create 2 identical QDQ models.
+  std::string model_path1 = "./ssr_ws_model1.onnx";
+  std::string model_path2 = "./ssr_ws_model2.onnx";
+  std::string ctx_path1 = "./ssr_ws_model1_ctx.onnx";
+  std::string ctx_path2 = "./ssr_ws_model2_ctx.onnx";
+  std::remove(model_path1.c_str());
+  std::remove(model_path2.c_str());
+  std::remove(ctx_path1.c_str());
+  std::remove(ctx_path2.c_str());
+
+  CreateQdqAddModel(model_path1);
+  CreateQdqAddModel(model_path2);
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate shared context binary with real HTP backend.
+  // -----------------------------------------------------------------------
+  {
+    ProviderOptions htp_options;
+    htp_options["backend_type"] = "htp";
+    htp_options["offload_graph_io_quantization"] = "0";
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+    so.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, htp_options);
+
+#if defined(_WIN32)
+    std::wstring model_path1_w(model_path1.begin(), model_path1.end());
+    std::wstring model_path2_w(model_path2.begin(), model_path2.end());
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, model_path1_w.c_str(), so));
+
+    so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+    Ort::Session session2(*ort_env, model_path2_w.c_str(), so);
+#else
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, model_path1.c_str(), so));
+
+    so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+    Ort::Session session2(*ort_env, model_path2.c_str(), so);
+#endif
+  }
+
+  ASSERT_TRUE(std::filesystem::exists(ctx_path1)) << "Context model 1 not generated.";
+  ASSERT_TRUE(std::filesystem::exists(ctx_path2)) << "Context model 2 not generated.";
+
+  // Verify both context models point to the same .bin file.
+  std::string bin_name1, bin_name2;
+  GetContextBinaryFileName(ctx_path1, bin_name1);
+  GetContextBinaryFileName(ctx_path2, bin_name2);
+  ASSERT_EQ(bin_name1, bin_name2) << "Weight-sharing models should share the same .bin file.";
+  ASSERT_TRUE(std::filesystem::exists(bin_name1));
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load context model via QnnMockSSR.dll with weight sharing and run.
+  // -----------------------------------------------------------------------
+  {
+    Ort::SessionOptions so1;
+    so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
+
+#if defined(_WIN32)
+    std::wstring ctx_path1_w(ctx_path1.begin(), ctx_path1.end());
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, ctx_path1_w.c_str(), so1));
+#else
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, ctx_path1.c_str(), so1));
+#endif
+
+    // Run inference on session 1 to trigger SSR.
+    Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<int64_t> input_shape{2, 3};
+    std::vector<float> input_data(6, 1.0f);
+    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                 input_shape.data(), input_shape.size());
+
+    auto in_name = scoped1.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto out_name = scoped1.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    const char* input_names[] = {in_name.get()};
+    const char* output_names[] = {out_name.get()};
+
+    auto outputs = scoped1.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1,
+                                         output_names, 1);
+    ASSERT_EQ(outputs.size(), 1u);
+    ASSERT_TRUE(outputs[0].IsTensor());
+  }
+
+  // Cleanup.
+  std::remove(model_path1.c_str());
+  std::remove(model_path2.c_str());
+  std::remove(ctx_path1.c_str());
+  std::remove(ctx_path2.c_str());
+  std::remove(bin_name1.c_str());
+}
+
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 }  // namespace test
 }  // namespace onnxruntime
