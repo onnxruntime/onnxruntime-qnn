@@ -12,7 +12,7 @@ pip install onnxruntime-qnn==2.3.0
 
 ### New in 2.3.0
 
-- **NuGet** — ARM64X package (ARM64 + ARM64EC) support added. Previously ARM64-only.
+- **NuGet** — ARM64 (ARM64X) package support added. Previously ARM64-only.
 - **Linux x86_64 Python wheels** — New **preview** wheels for Ubuntu 22.04 (`manylinux_2_35_x86_64`), Python 3.11–3.14. Requires GLIBC >= 2.35 due to QAIRT library dependencies.
 - **Maven (Android)** — New Android ARM64 package. Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`.
 
@@ -23,7 +23,7 @@ For instructions on building wheels across different architectures, see the [Bui
 | Package | Windows ARM64 | Windows x64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
 |---|---|---|---|---|---|
 | Python Wheel | Inference | AOT compilation + Inference | Inference | AOT compilation + Inference | — |
-| NuGet | Inference (ARM64X) | — | — | — | — |
+| NuGet | Inference ARM64 (ARM64X) | — | — | — | — |
 | ZIP | Inference | — | — | — | — |
 | tgz | — | — | Inference | — | — |
 | Maven | — | — | — | — | Inference |
