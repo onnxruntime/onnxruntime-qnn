@@ -281,22 +281,24 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
     const std::string act_name = input_names[0];
     const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
     const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
-    if (act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
-      // Reuse the original DequantizeLinear node's output name for the FP16 tensor.
-      const std::string fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-      const std::vector<uint32_t> act_shape_2d = act_wrapper.GetTensorDims();
-      QnnTensorWrapper fp16_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
-                                    QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                    std::vector<uint32_t>(act_shape_2d));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_wrapper)),
-                    "Failed to add FP16 activation tensor for BQ Gemm.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                        {act_name}, {fp16_name}, {}, do_op_validation),
-                    "Failed to add INT16→FP16 Dequantize node for BQ Gemm activation.");
-      input_names[0] = fp16_name;
-    }
+    // BW_FLOAT_BLOCK FC requires FP16 activation. The only activation dtype reaching this
+    // path through the QDQ selector is INT16 (SFIXED or UFIXED), so anything else is unexpected.
+    RETURN_IF_NOT(act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16,
+                  "QNN EP: BQ Gemm activation must be INT16-quantized for the BW_FLOAT_BLOCK kernel");
+    // Reuse the original DequantizeLinear node's output name for the FP16 tensor.
+    const std::string fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+    const std::vector<uint32_t> act_shape_2d = act_wrapper.GetTensorDims();
+    QnnTensorWrapper fp16_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
+                                  QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                                  std::vector<uint32_t>(act_shape_2d));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_wrapper)),
+                  "Failed to add FP16 activation tensor for BQ Gemm.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
+                      {act_name}, {fp16_name}, {}, do_op_validation),
+                  "Failed to add INT16→FP16 Dequantize node for BQ Gemm activation.");
+    input_names[0] = fp16_name;
   }
 
   //
