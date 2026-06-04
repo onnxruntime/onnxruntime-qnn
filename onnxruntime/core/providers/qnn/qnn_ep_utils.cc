@@ -850,7 +850,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
-  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, static_cast<int>(dq_nodes.size()))) {
     return false;
   }
 
@@ -877,7 +877,8 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  if (dq_nodes.size() == 3) {  // has bias
+  if (dq_nodes.size() == 3) {
+    // Bias has a DQ node: it must be INT32.
     auto dt_bias = GetNodeInputDataType(dq_nodes[2], ort_api, 0);
     if (!dt_bias.has_value() || dt_bias.value() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
       return false;
