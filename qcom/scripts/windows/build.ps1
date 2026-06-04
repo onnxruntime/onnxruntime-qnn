@@ -223,7 +223,7 @@ if ($BuildWheel) {
     $BuildWheelArgs += "--build_wheel"
     if ($env:ORT_NIGHTLY_BUILD -eq "1") {
         $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
-        $env:NIGHTLY_BUILD = "1"
+        $BuildWheelArgs += "--nightly_build"
     }
 }
 

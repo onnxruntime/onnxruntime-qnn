@@ -274,7 +274,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
-                     std::function<void(const Ort::Session&)>* ep_graph_checker) {
+                     std::function<void(const Ort::Session&)>* ep_graph_checker,
+                     Ort::CustomOpDomain* custom_op_domain) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -335,6 +336,9 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
 
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   session_options.SetLogSeverityLevel(log_severity);
@@ -350,15 +354,20 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                             "QNN_EP_TestLogID",
                             helper.feeds_,
                             verification_params,
-                            verify_outputs);
+                            verify_outputs,
+                            custom_op_domain);
 }
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level) {
+                       std::optional<GraphOptimizationLevel> graph_optimization_level,
+                       Ort::CustomOpDomain* custom_op_domain) {
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
   session_options.SetLogId(log_id);
 
   if (graph_optimization_level.has_value()) {
@@ -411,10 +420,14 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Ort::Session&)>* graph_checker) {
+                    std::function<void(const Ort::Session&)>* graph_checker,
+                    Ort::CustomOpDomain* custom_op_domain) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
   if (graph_optimization_level.has_value()) {
     session_options.SetGraphOptimizationLevel(*graph_optimization_level);
   }
@@ -437,14 +450,15 @@ void InferenceModel(const std::string& model_data,
 
   auto provider_type = "QNNExecutionProvider";
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), provider_type, expected_ep_assignment));
 
   if (graph_checker) {
-    (*graph_checker)(session);
+    (*graph_checker)(scoped.session());
   }
 
-  RunWithEP(session, ort_run_options, feeds, output_vals);
+  RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
@@ -574,6 +588,14 @@ BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   return cached_ir_support_;
 }
 
+BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
+  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_ir_support_ = test::GetIRSupport();
+  }
+
+  return cached_ir_support_;
+}
+
 // TODO: Consider using public DeviceCompatibility API for this function
 static BackendSupport GetCPUSupport() {
   return BackendSupport::SUPPORTED;
@@ -643,6 +665,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
@@ -814,6 +837,21 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version) {
   const auto it = opset_with_axes_as_input.find(op_type);
 
   return (it != opset_with_axes_as_input.cend()) && (it->second <= opset_version);
+}
+
+void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
+                         const GetTestModelFn& model_build_fn,
+                         int opset_version) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
+  result = std::make_unique<ModelAndBuilder>();
+  model_build_fn(result->builder);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  result->builder.model_.SerializeToString(&result->model_data);
 }
 
 }  // namespace test

@@ -144,7 +144,9 @@ code = 'PRIVATE-ORT-HEADERS'
 include_patterns = [
     'onnxruntime/core/providers/qnn/**/*.h',
     'onnxruntime/core/providers/qnn/**/*.cc',
+    'cmake/external/onnxruntime_prebuilt.cmake',
     'cmake/onnxruntime_providers_qnn.cmake',
+    'cmake/onnxruntime_unittests.cmake',
 ]
 command = [
     'python',

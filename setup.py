@@ -198,7 +198,7 @@ else:
     ]
     libs.extend(qnn_deps)
 
-if is_manylinux:
+if is_manylinux or platform.system() == "Linux":
     data = list(dl_libs)
 else:
     data = list(libs)
