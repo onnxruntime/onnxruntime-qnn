@@ -1,15 +1,20 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 //
-// QnnMockSSR.dll — wraps QnnHtp.dll and injects one QNN_COMMON_ERROR_SYSTEM_COMMUNICATION
-// error on the FIRST graphExecute call to simulate an NPU Subsystem Restart (SSR).
+// QnnMockSSR.dll — wraps QnnHtp.dll and injects QNN_COMMON_ERROR_SYSTEM_COMMUNICATION
+// on the FIRST graphExecute call to simulate an NPU Subsystem Restart (SSR).
 // Subsequent calls are forwarded to the real HTP backend unchanged.
+//
+// This mock does NOT perform a real PD reset — it simply returns the SSR error code.
+// This makes the test portable across devices regardless of CDSP driver configuration.
 
+#include <memory>
 #include <vector>
-#include <thread>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #include "QnnCommon.h"
 #include "QnnInterface.h"
-#include "rpcmem_utils.h"
 
 const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
@@ -34,9 +39,8 @@ auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_provide
 
 #if defined(_WIN32)
 
-// Intercepts graphExecute: triggers a real NPU PD reset on the first call, then
-// delegates to the real HTP backend (which returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION
-// while the NPU is resetting, and succeeds on subsequent calls after recovery).
+// Intercepts graphExecute: returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION on the first call
+// to simulate SSR, then forwards to the real HTP backend on subsequent calls.
 QNN_API
 Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
                                    const Qnn_Tensor_t* inputs,
@@ -48,8 +52,7 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    onnxruntime::test::TriggerPDReset();
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
   return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphExecute(
       graphHandle, inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
