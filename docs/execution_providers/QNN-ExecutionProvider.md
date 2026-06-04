@@ -333,7 +333,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
 |ai.onnx:GroupNormalization||
-|ai.onnx:GRU||
 |ai.onnx:HardSigmoid||
 |ai.onnx:HardSwish||
 |ai.onnx:Identity||
@@ -382,7 +381,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
-|ai.onnx:Selu||
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
@@ -404,7 +402,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Unsqueeze||
 |ai.onnx:Upsample||
 |ai.onnx:Where||
-|ai.onnx:Xor||
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
