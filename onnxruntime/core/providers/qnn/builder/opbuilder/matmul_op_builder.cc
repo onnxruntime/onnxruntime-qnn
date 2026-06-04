@@ -17,59 +17,6 @@
 namespace onnxruntime {
 namespace qnn {
 
-/**
- * An ONNX MatMul can be translated to either a QNN MatMul or a QNN FullyConnected.
- * ONNX's MatMul supports inputs of rank 1, but neither QNN's MatMul nor FullyConnected support two rank 1 inputs.
- * So, we need to add Reshape Ops if necessary.
- * In two cases, FullyConnected (input_1's shape is [n, k]) is used instead of MatMul without extra Transpose Op:
- * 1. input_1 is a rank 2 initializer.
- * 2. input_1 is a rank 1 tensor.
- */
-class MatMulOpBuilder : public BaseOpBuilder {
- public:
-  MatMulOpBuilder() : BaseOpBuilder("MatMulOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(MatMulOpBuilder);
-
- protected:
-  Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                            const OrtNodeUnit& node_unit,
-                            const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
-
-  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                            const OrtNodeUnit& node_unit,
-                            const Ort::Logger& logger,
-                            std::vector<std::string>& input_names,
-                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
-
-  Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
-                                          std::vector<std::string>&& input_names, const Ort::Logger& logger,
-                                          bool do_op_validation) const override ORT_MUST_USE_RESULT;
-
- private:
-  Ort::Status ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wrapper,
-                                        const OrtNodeUnit& node_unit,
-                                        const TensorInfo& input_info_0,
-                                        const TensorInfo& input_info_1,
-                                        const Ort::Logger& logger,
-                                        std::vector<std::string>& input_names,
-                                        bool do_op_validation) const ORT_MUST_USE_RESULT;
-  Ort::Status ProcessInputsForQnnFullyConnected(QnnModelWrapper& qnn_model_wrapper,
-                                                const OrtNodeUnit& node_unit,
-                                                const TensorInfo& input_info_0,
-                                                const TensorInfo& input_info_1,
-                                                const Ort::Logger& logger,
-                                                std::vector<std::string>& input_names,
-                                                bool do_op_validation) const ORT_MUST_USE_RESULT;
-  // Block-quantized (BW_FLOAT_BLOCK) weight path. Translates to a QNN MatMul whose weight carries a
-  // per-block float scale; activation is dequantized to FP16 and the FP16 output is re-quantized to INT16.
-  Ort::Status ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& node_unit,
-                                       const TensorInfo& input_info_1,
-                                       const Ort::Logger& logger,
-                                       std::vector<std::string>& input_names,
-                                       bool do_op_validation) const ORT_MUST_USE_RESULT;
-};
-
 namespace {
 inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
   return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
@@ -97,11 +44,12 @@ uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
   }
 }
 
-// Detects a block-quantized MatMul weight (ONNX MatMul input[1], shape [K, N]).
-// Per ONNX opset 21, the weight scale has the same rank as the weight with the blocked axis
-// dimension smaller. MatMul blocks the contraction axis K (axis 0), so the rank-2 scale is
-// [K/block_size, N] and scale_shape[0] < weight_shape[0]. Only meaningful on the NPU backend.
-// On success, sets num_blocks = scale_shape[0] and block_size = K / num_blocks.
+// Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
+// Accepts weight rank 2–4: shape [..., K, N] where any leading dims beyond K/N must equal 1
+// (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
+// weight with the contraction axis (K, at rank-2) dimension smaller: scale_shape[rank-2] <
+// weight_shape[rank-2]. Only meaningful on the NPU backend.
+// On success, sets num_blocks = scale_shape[rank-2] and block_size = K / num_blocks.
 bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& weight,
                 int64_t& num_blocks, int64_t& block_size) {
   if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
@@ -112,18 +60,38 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   }
   const auto scale_shape = utils::GetInitializerShape(weight.quant_param->scale, qnn_model_wrapper.GetOrtApi());
   std::vector<uint32_t> weight_shape;
-  if (!QnnModelWrapper::GetOnnxShape(weight.shape, weight_shape) || weight_shape.size() != 2) {
-    return false;  // BQ only supported for rank-2 MatMul weight [K, N].
-  }
-  if (scale_shape.size() != weight_shape.size() ||
-      scale_shape[0] >= static_cast<int64_t>(weight_shape[0])) {
+  if (!QnnModelWrapper::GetOnnxShape(weight.shape, weight_shape)) {
     return false;
   }
-  num_blocks = scale_shape[0];
-  if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[0]) % num_blocks != 0) {
+  const size_t rank = weight_shape.size();
+  if (rank < 2 || rank > 4) {
+    return false;  // BQ supports weight rank 2–4 (reshapeable to [1,1,K,N]).
+  }
+  // All leading dims (beyond the last two: K and N) must be 1.
+  for (size_t i = 0; i + 2 < rank; ++i) {
+    if (weight_shape[i] != 1) {
+      return false;
+    }
+  }
+  if (scale_shape.size() != rank) {
+    return false;  // Scale must have the same rank as the weight.
+  }
+  // All leading dims of the scale must also be 1.
+  for (size_t i = 0; i + 2 < rank; ++i) {
+    if (scale_shape[i] != 1) {
+      return false;
+    }
+  }
+  // Blocked axis is rank-2 (K dimension). scale_shape[rank-2] < weight_shape[rank-2].
+  const size_t k_axis = rank - 2;
+  if (scale_shape[k_axis] >= static_cast<int64_t>(weight_shape[k_axis])) {
     return false;
   }
-  block_size = static_cast<int64_t>(weight_shape[0]) / num_blocks;
+  num_blocks = scale_shape[k_axis];
+  if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[k_axis]) % num_blocks != 0) {
+    return false;
+  }
+  block_size = static_cast<int64_t>(weight_shape[k_axis]) / num_blocks;
   return true;
 }
 
@@ -223,39 +191,53 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
 }
 }  // namespace
 
-// Process operator inputs. Dispatches to other processing functions depending on whether we're
-// translating an ONNX MatMul to a QNN MatMul or a QNN FullyConnected.
-Ort::Status MatMulOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
-                                           const Ort::Logger& logger) const {
-  const auto& inputs = node_unit.Inputs();
+/**
+ * An ONNX MatMul can be translated to either a QNN MatMul or a QNN FullyConnected.
+ * ONNX's MatMul supports inputs of rank 1, but neither QNN's MatMul nor FullyConnected support two rank 1 inputs.
+ * So, we need to add Reshape Ops if necessary.
+ * In two cases, FullyConnected (input_1's shape is [n, k]) is used instead of MatMul without extra Transpose Op:
+ * 1. input_1 is a rank 2 initializer.
+ * 2. input_1 is a rank 1 tensor.
+ */
+class MatMulOpBuilder : public BaseOpBuilder {
+ public:
+  MatMulOpBuilder() : BaseOpBuilder("MatMulOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(MatMulOpBuilder);
 
-  // Block-quantized (BW_FLOAT_BLOCK) weight: validate HTP constraints, then defer to the base
-  // implementation, which runs full QNN validation through our BQ ProcessInputs/Outputs path.
-  if (inputs.size() >= 2) {
-    int64_t num_blocks = 0;
-    int64_t block_size = 0;
-    if (IsBQWeight(qnn_model_wrapper, inputs[1], num_blocks, block_size)) {
-      const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
-      auto bq_it = kHtpMatMulBQBitsAndBlockSizeMultipliers.find(bitwidth);
-      RETURN_IF(bq_it == kHtpMatMulBQBitsAndBlockSizeMultipliers.end(),
-                ("QNN HTP MatMul BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
-      RETURN_IF(block_size % bq_it->second != 0,
-                ("QNN HTP MatMul BQ: block_size=" + std::to_string(block_size) +
-                 " must be a multiple of " + std::to_string(bq_it->second) +
-                 " for " + std::to_string(bitwidth) + "-bit weight")
-                    .c_str());
-      // BQ requires a constant weight and a dynamic (quantized) activation that we dequantize to FP16.
-      TensorInfo weight_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info));
-      RETURN_IF_NOT(weight_info.is_initializer, "QNN EP: BQ MatMul weight must be a constant initializer");
-      TensorInfo act_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], act_info));
-      RETURN_IF(act_info.is_initializer, "QNN EP: BQ MatMul activation must be a dynamic (non-constant) tensor");
-    }
-  }
+ protected:
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
-  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
-}
+  Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names, const Ort::Logger& logger,
+                                          bool do_op_validation) const override ORT_MUST_USE_RESULT;
+
+ private:
+  Ort::Status ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wrapper,
+                                        const OrtNodeUnit& node_unit,
+                                        const TensorInfo& input_info_0,
+                                        const TensorInfo& input_info_1,
+                                        const Ort::Logger& logger,
+                                        std::vector<std::string>& input_names,
+                                        bool do_op_validation) const ORT_MUST_USE_RESULT;
+  Ort::Status ProcessInputsForQnnFullyConnected(QnnModelWrapper& qnn_model_wrapper,
+                                                const OrtNodeUnit& node_unit,
+                                                const TensorInfo& input_info_0,
+                                                const TensorInfo& input_info_1,
+                                                const Ort::Logger& logger,
+                                                std::vector<std::string>& input_names,
+                                                bool do_op_validation) const ORT_MUST_USE_RESULT;
+  // Block-quantized (BW_FLOAT_BLOCK) weight path. Translates to a QNN MatMul whose weight carries a
+  // per-block float scale; activation is dequantized to FP16 and the FP16 output is re-quantized to INT16.
+  Ort::Status ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       const Ort::Logger& logger,
+                                       std::vector<std::string>& input_names,
+                                       bool do_op_validation) const ORT_MUST_USE_RESULT;
+};
 
 // Process operator inputs. Dispatches to other processing functions depending on whether we're
 // translating an ONNX MatMul to a QNN MatMul or a QNN FullyConnected.
@@ -264,15 +246,12 @@ Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
                                            bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
 
-  // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight (weight stays 2-D).
+  // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight.
   {
     int64_t num_blocks = 0;
     int64_t block_size = 0;
     if (IsBQWeight(qnn_model_wrapper, inputs[1], num_blocks, block_size)) {
-      TensorInfo input_info_1{};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info_1));
-      return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, input_info_1, logger, input_names,
-                                      do_op_validation);
+      return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
     }
   }
 
@@ -527,17 +506,21 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
 
 Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model_wrapper,
                                                       const OrtNodeUnit& node_unit,
-                                                      const TensorInfo& input_info_1,
                                                       const Ort::Logger& logger,
                                                       std::vector<std::string>& input_names,
                                                       bool do_op_validation) const {
-  ORT_UNUSED_PARAMETER(logger);
   const auto& inputs = node_unit.Inputs();
 
+  // Weight may be rank 2–4 with shape [..., K, N] (leading dims are 1).
+  // K and N are always the last two dimensions; the weight is registered as [1, 1, K, N] in QNN.
+  TensorInfo input_info_1{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info_1));
   RETURN_IF_NOT(input_info_1.is_initializer, "QNN EP: BQ MatMul weight must be a constant initializer");
-  RETURN_IF_NOT(input_info_1.shape.size() == 2, "QNN EP: BQ MatMul weight must be rank-2 [K, N]");
-  const int64_t K = static_cast<int64_t>(input_info_1.shape[0]);
-  const int64_t N = static_cast<int64_t>(input_info_1.shape[1]);
+  const size_t w_rank = input_info_1.shape.size();
+  RETURN_IF_NOT(w_rank >= 2 && w_rank <= 4,
+                "QNN EP: BQ MatMul weight must be rank 2, 3, or 4 with shape [..., K, N]");
+  const int64_t K = static_cast<int64_t>(input_info_1.shape[w_rank - 2]);
+  const int64_t N = static_cast<int64_t>(input_info_1.shape[w_rank - 1]);
 
   //
   // Input 0: activation. BW_FLOAT_BLOCK MatMul computes in FP16, so an INT16 activation must be
@@ -594,18 +577,27 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   }
 
   //
-  // Input 1: weight. Build QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK quant params on the 2-D weight
-  // [K, N], blocked along the contraction axis K.
+  // Input 1: weight. Build QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK quant params.
+  // The weight is always registered as 4-D [1, 1, K, N] in QNN regardless of the ONNX rank.
   //
   const std::string& input1_name = inputs[1].name;
 
-  // Determine num_blocks/block_size from the ONNX scale shape [K/block_size, N].
+  // Scale shape mirrors weight rank: [..., num_blocks, N] — blocked axis is rank-2.
   const auto scale_shape = utils::GetInitializerShape(inputs[1].quant_param->scale, qnn_model_wrapper.GetOrtApi());
-  RETURN_IF_NOT(scale_shape.size() == 2, "QNN EP: BQ MatMul scale must be rank-2 [K/block_size, N]");
-  const int64_t num_blocks = scale_shape[0];
+  RETURN_IF_NOT(scale_shape.size() == w_rank,
+                "QNN EP: BQ MatMul scale rank must match weight rank");
+  const int64_t num_blocks = scale_shape[w_rank - 2];
   RETURN_IF(num_blocks <= 0 || K % num_blocks != 0, "QNN EP: BQ MatMul K must be divisible by num_blocks");
   const int64_t block_size = K / num_blocks;
   const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
+  auto bq_it = kHtpMatMulBQBitsAndBlockSizeMultipliers.find(bitwidth);
+  RETURN_IF(bq_it == kHtpMatMulBQBitsAndBlockSizeMultipliers.end(),
+            ("QNN HTP MatMul BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
+  RETURN_IF(block_size % bq_it->second != 0,
+            ("QNN HTP MatMul BQ: block_size=" + std::to_string(block_size) +
+             " must be a multiple of " + std::to_string(bq_it->second) +
+             " for " + std::to_string(bitwidth) + "-bit weight")
+                .c_str());
 
   // Unpack the weight to one byte per element (sub-byte INT2/INT4 expanded to INT8).
   std::vector<uint8_t> unpacked_tensor;
@@ -621,13 +613,14 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   }
 
   // QNN HTP requires a BQ MatMul to be expressed with 4-D activation, 4-D weight, and a 4-D blockSize.
-  // The weight [K, N] is reshaped to [1, 1, K, N]; with transpose_in1 = 0 the contraction axis K is
-  // axis 2, so blockSize is {1, 1, block_size, 1}.
+  // The weight [..., K, N] is always registered as [1, 1, K, N]; with transpose_in1 = 0 the
+  // contraction axis K is axis 2, so blockSize is {1, 1, block_size, 1}.
   const std::vector<uint32_t> block_size_arr = {1u, 1u, static_cast<uint32_t>(block_size), 1u};
 
-  // ONNX per-block float scales are laid out [num_blocks, N] (block-major). QNN expects the
-  // scale/offset array ordered output-channel-major with the output channel (N) as the last weight
-  // axis and the block index inner — i.e. [N, num_blocks]. Transpose from [num_blocks, N] → [N, nb].
+  // ONNX per-block float scales are laid out [..., num_blocks, N] (block-major along K-axis).
+  // QNN expects the scale/offset array output-channel-major: [N, num_blocks].
+  // Transpose from [num_blocks, N] → [N, num_blocks] (leading dims are always 1, so we just
+  // look at the last two dims of the flat scale array).
   std::vector<float> onnx_scales;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[1].quant_param->scale, onnx_scales));
   RETURN_IF_NOT(static_cast<int64_t>(onnx_scales.size()) == num_blocks * N,
