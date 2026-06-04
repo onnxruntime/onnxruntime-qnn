@@ -48,7 +48,7 @@ For build instructions, please see the [BUILD page](./build.md).
 ## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - **Note**: The NuGet package only supports Windows ARM64 platform (versions <= 2.2.0)
-  - **Note**: From version 2.3.0+, the NuGet package supports only Windows ARM64 (ARM64X)
+  - **Note**: From version 2.3.0+, the NuGet package supports Windows ARM64 (ARM64X)
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
@@ -170,7 +170,13 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_arch"`|Description|
 |---|---|
-|Hardware architecture (string)|HTP Architecture number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for valid values. Defaults to "0" (none).|
+|'0'|Default. No architecture specified.|
+|'68'|HTP v68.|
+|'69'|HTP v69.|
+|'73'|HTP v73.|
+|'75'|HTP v75.|
+
+Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
 
 |`"device_id"`|Description|
 |---|---|
@@ -188,13 +194,18 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"offload_graph_io_quantization"`|Description|
 |---|---|
-|'0'|Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
-|'1'|Default. Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
+|'0'|Default. Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
+|'1'|Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
 |'1'|Enable the QNN HTP shared memory allocator. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+
+|`"extended_udma"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable HTP extended UDMA mode for better performance on supported hardware.|
 
 |`"op_packages"`|Description|
 |---|---|
@@ -321,10 +332,14 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
+|ai.onnx:GroupNormalization||
+|ai.onnx:GRU||
 |ai.onnx:HardSigmoid||
 |ai.onnx:HardSwish||
+|ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
+|ai.onnx:IsNaN||
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
 |ai.onnx:LayerNormalization||
@@ -342,12 +357,14 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Mod||
 |ai.onnx:Mul||
 |ai.onnx:Neg||
+|ai.onnx:NonZero||
 |ai.onnx:Not||
 |ai.onnx:Or||
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
 |ai.onnx:QuantizeLinear||
+|ai.onnx:RandomNormalLike||
 |ai.onnx:RandomUniformLike||
 |ai.onnx:Reciprocal||
 |ai.onnx:ReduceL2||
@@ -357,22 +374,28 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:ReduceProd||
 |ai.onnx:ReduceSum||
 |ai.onnx:Relu||
+|ai.onnx:RMSNormalization||
+|ai.onnx:Reshape||
 |ai.onnx:Resize||
+|ai.onnx:RoiAlign||
 |ai.onnx:Round||
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
+|ai.onnx:Selu||
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
 |ai.onnx:Slice||
 |ai.onnx:Softmax||
+|ai.onnx:Softplus||
 |ai.onnx:SpaceToDepth||
 |ai.onnx:Split||
 |ai.onnx:Sqrt||
 |ai.onnx:Squeeze||
 |ai.onnx:Sub||
 |ai.onnx:Sum||
+|ai.onnx:Tan||
 |ai.onnx:Tanh||
 |ai.onnx:ThresholdedRelu||
 |ai.onnx:Tile||
@@ -381,12 +404,64 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Unsqueeze||
 |ai.onnx:Upsample||
 |ai.onnx:Where||
+|ai.onnx:Xor||
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
+|com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft.MatMulNBits|Supported bits == 4 on GPU backend|
+|com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
+|com.microsoft:QuickGelu||
+|com.microsoft:RotaryEmbedding|HTP backend only|
+|com.microsoft:SimplifiedLayerNormalization||
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+## Supported operator fusions
+
+QNN EP recognizes the following multi-op patterns and fuses them into a single QNN operation or a more efficient subgraph. Fusions are attempted before individual op builders run.
+
+### DQ/Q and quantization fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `DequantizeLinear → QuantizeLinear` | `QNN_OP_CONVERT` | Eliminates redundant re-quantization between compatible quantization schemes. Scalar scale/zero-point required. |
+| `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
+| `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
+| `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
+
+### Low-Power Block Quantization (LPBQ) fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `Scale_DQL → [W_QL →] W_DQL → Act_DQL → Gemm → QL` | `QNN_OP_FULLY_CONNECTED` | Per-block integer scales with per-channel float scales. HTP/NPU backend only. |
+| `Scale_DQL → [W_QL →] W_DQL → MatMul` | `QNN_OP_MAT_MUL` | Per-block integer scales with per-channel float scales. int4/int8 weights. HTP/NPU backend only. |
+
+### Operator decomposition fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `[Div/Mul(√2)] → Erf → [Mul(0.5) →] Add(1) → Mul → [Mul(0.5)]` | `QNN_OP_GELU` | Matches two common Gelu decomposition variants (ErfAdd and ErfMul). Surrounding DQ nodes are also handled. |
+| `HardSigmoid(α=1/6, β=0.5) → Mul` (shared input) | `QNN_OP_ELEMENT_WISE_NEURON` (HardSwish) | Both inputs to Mul must originate from the same source tensor. |
+| `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
+| `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
+
+### Layout and reshape fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `Transpose → Reshape → Transpose → Reshape → Transpose` | `QNN_OP_CHANNEL_SHUFFLE` | 5-node pattern. Head and tail transposes must cancel; middle transpose permutes only the channel dimension. |
+| `[Transpose →] Reshape(4D→6D) → Transpose(DCR/CRD) → Reshape(6D→4D) [→ Transpose]` | `QNN_OP_SPACE_TO_DEPTH` | Matches both NCHW and NHWC layout variants and both DCR and CRD modes. Static dimensions required. |
+| `Reshape(4D→6D) → Einsum(transpose-equivalent) → Reshape(6D→4D)` | `QNN_OP_DEPTH_TO_SPACE + QNN_OP_TRANSPOSE` | Matches Einsum used as a rank-6 permutation with perm `[0,5,1,3,2,4]` (DCR DepthToSpace). |
+| `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Collapsed into a single reshape when the original dims appear in natural order (no axis reordering). |
+| `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
+| `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
+| `Reshape → Gemm [→ Reshape [→ Reshape]]` | `QNN_OP_FULLY_CONNECTED` | 2-, 3-, and 4-node variants. Constant non-quantized weight `[K, N]`. transA=0, transB=0, α=1.0, β=1.0. |
+
+### Miscellaneous fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `[DQ inputs →] Custom UDO op [→ Q outputs]` | Custom QNN UDO | Strips surrounding DQ/Q nodes and passes quantization parameters directly into the user-defined operator. |
 
 ## Running a model with QNN EP's HTP backend (Python)
 <p align="center"><img width="100%" src="../images/qnn_ep_quant_workflow.png" alt="Offline workflow for quantizing an ONNX model for use on QNN EP"/></p>
