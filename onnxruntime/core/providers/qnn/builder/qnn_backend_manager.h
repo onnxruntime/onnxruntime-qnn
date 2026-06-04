@@ -196,6 +196,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Adds a new QNN context handle and takes ownership (responsible for freeing via contextFree).
   Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
 
+  // Returns true if the given context handle is still tracked (not yet freed).
+  bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
+    return context_map_.find(context_handle) != context_map_.end();
+  }
+
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status SetupBackend(
