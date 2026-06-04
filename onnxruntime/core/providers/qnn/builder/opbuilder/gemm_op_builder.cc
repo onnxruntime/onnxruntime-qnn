@@ -244,7 +244,6 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
                                                   const Ort::Logger& logger,
                                                   std::vector<std::string>& input_names,
                                                   bool do_op_validation) const {
-  ORT_UNUSED_PARAMETER(logger);
   const auto& inputs = node_unit.Inputs();
 
   // Determine weight shape and K, N dimensions.
@@ -314,6 +313,14 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
   RETURN_IF(num_blocks <= 0 || K % num_blocks != 0, "QNN EP: BQ Gemm K must be divisible by num_blocks");
   const int64_t block_size = K / num_blocks;
   const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
+  auto bq_it = kHtpGemmBQBitsAndBlockSizeMultipliers.find(bitwidth);
+  RETURN_IF(bq_it == kHtpGemmBQBitsAndBlockSizeMultipliers.end(),
+            ("QNN HTP Gemm BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
+  RETURN_IF(block_size % bq_it->second != 0,
+            ("QNN HTP Gemm BQ: block_size=" + std::to_string(block_size) +
+             " must be a multiple of " + std::to_string(bq_it->second) +
+             " for " + std::to_string(bitwidth) + "-bit weight")
+                .c_str());
 
   // Unpack weight to one byte per element (sub-byte INT2/INT4 expanded to INT8).
   std::vector<uint8_t> unpacked_weight;
