@@ -244,6 +244,26 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 For more information, see the [Parallel Graph Preparation](#parallel-graph-preparation) section below.
 
+|`"htp_share_resource_optimization"`|Description|
+|---|---|
+|'1'|Enable HTP VTCM backup buffer sharing across sessions. Only `'1'` is a valid value. Supersedes `enable_vtcm_backup_buffer_sharing`. Requires QNN API version >= 2.26.|
+
+**Note:** `htp_share_resource_optimization` and `enable_vtcm_backup_buffer_sharing` both enable the same underlying feature. Prefer `htp_share_resource_optimization`.
+
+|`"disable_file_mapped_weights"`|Description|
+|---|---|
+|'0'|Default. File-mapped weights enabled (when supported).|
+|'1'|Disable file-mapped weight loading. File-mapped weights are only available on Windows ARM64 with QNN API >= 2.32; this option is ignored on other platforms.|
+
+|`"htp_bf16_enable"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable BFloat16 precision on the HTP backend. Requires `soc_model` to be set to a value >= 88 (e.g., SM8750). An error is raised at session creation if `soc_model` is unset or below 88.|
+
+|`"enable_htp_prepare_only"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
 
 ### Run Options
 
