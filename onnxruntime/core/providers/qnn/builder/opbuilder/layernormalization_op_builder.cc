@@ -516,11 +516,13 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
   std::string current = ln_out_name;
 
   if (externalize_scale) {
-    // Owned copy: the externalize_bias=false path moves final_output_info.quant_param into the
-    // Mul output tensor below, so an alias-then-move on .quant_param would leave mul_out_qp
-    // dangling for the requant predicates / GetPerTensorScaleOffset reads.
-    const QnnQuantParamsWrapper mul_out_qp =
-        externalize_bias ? ln_intermediate_qp.Copy() : final_output_info.quant_param.Copy();
+    // Mul produces z*gamma, whose magnitude is bounded by gamma * sqrt(N-1) — well past
+    // ln_intermediate_qp's sqrt(N-1) range whenever |gamma| > 1. final_output_info.quant_param
+    // is sized for z*gamma+beta and trivially covers z*gamma. Owned copy: the
+    // externalize_bias=false branch moves .quant_param into the Mul output tensor below; the
+    // externalize_bias=true branch hands it to the Add output later. Either way, mul_out_qp must
+    // not alias storage that gets moved out before the requant predicates / scale reads run.
+    const QnnQuantParamsWrapper mul_out_qp = final_output_info.quant_param.Copy();
 
     // QNN ELEMENT_WISE_MULTIPLY requires both operands to share a dtype. In QDQ pipelines (e.g.
     // A16W8) the LN output adopts X's dtype while the user scale is still in its own (often
@@ -577,17 +579,17 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
       mul_scale_name = requant_scale_name;
     }  // End of requantize scale
 
-    // Mul output: either an internal handoff to the Add (NATIVE, x_dtype, ln_intermediate_qp,
-    // x_shape) or the graph output (final_tensor_type, final dtype/qp/shape). Splitting the two
-    // cases makes the move-from-final_output_info contract obvious — the final-output branch is
-    // the sole writer, so reads of final_output_info.{quant_param,shape} below it are forbidden.
+    // Mul output: either an internal handoff to the Add (NATIVE, x_dtype, mul_out_qp, x_shape)
+    // or the graph output (final_tensor_type, final dtype/qp/shape). Splitting the two cases
+    // makes the move-from-final_output_info contract obvious — the final-output branch is the
+    // sole writer, so reads of final_output_info.{quant_param,shape} below it are forbidden.
     std::string mul_out_name;
     if (externalize_bias) {
       mul_out_name = utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_mul_out");
       QnnTensorWrapper mul_out_tensor(mul_out_name,
                                       QNN_TENSOR_TYPE_NATIVE,
                                       x_qnn_data_type,
-                                      ln_intermediate_qp.Copy(),
+                                      mul_out_qp.Copy(),
                                       std::vector<uint32_t>(x_shape));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mul_out_tensor)),
                     "Failed to add decomposed Mul output tensor.");
@@ -613,8 +615,10 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
   }
 
   if (externalize_bias) {
-    // Add LHS is the Mul output (when externalize_scale) or the LN output, both encoded with
-    // ln_intermediate_qp.
+    // Bias is the Add RHS; size it to cover beta directly. final_output_info.quant_param is
+    // sized for z*gamma+beta and so covers beta alone with room to spare. ln_intermediate_qp
+    // is too narrow here (its sqrt(N-1) range was sized for z, not beta — a bias whose magnitude
+    // exceeds sqrt(N-1) would silently saturate during requantize).
     std::string bias_name = input_names[2];
     TensorInfo bias_info{};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[2], bias_info));
@@ -630,15 +634,15 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
                     "LayerNorm decomposition: externalized bias must be a static initializer.");
       RETURN_IF_NOT(bias_info.quant_param.IsPerTensor(/*include_bw*/ true),
                     "LayerNorm decomposition: externalized bias must be per-tensor quantized.");
-      RETURN_IF_NOT(ln_intermediate_qp.IsPerTensor(/*include_bw*/ true),
-                    "LayerNorm decomposition: requantized bias requires per-tensor intermediate quant params.");
+      RETURN_IF_NOT(final_output_info.quant_param.IsPerTensor(/*include_bw*/ true),
+                    "LayerNorm decomposition: requantized bias requires per-tensor final output quant params.");
 
       float src_scale = 0.0f;
       int32_t src_offset = 0;
       RETURN_IF_ERROR(bias_info.quant_param.GetPerTensorScaleOffset(src_scale, src_offset));
       float dst_scale = 0.0f;
       int32_t dst_offset = 0;
-      RETURN_IF_ERROR(ln_intermediate_qp.GetPerTensorScaleOffset(dst_scale, dst_offset));
+      RETURN_IF_ERROR(final_output_info.quant_param.GetPerTensorScaleOffset(dst_scale, dst_offset));
 
       // Allowlist bias dtypes upfront so a future QDQ pipeline emitting an unknown bias dtype
       // fails loudly here, rather than silently producing an all-zero requantized bias via the
@@ -671,7 +675,7 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
       QnnTensorWrapper requant_bias_tensor(requant_bias_name,
                                            QNN_TENSOR_TYPE_STATIC,
                                            x_qnn_data_type,
-                                           ln_intermediate_qp.Copy(),
+                                           final_output_info.quant_param.Copy(),
                                            std::vector<uint32_t>(bias_info.shape),
                                            std::move(requant_bias));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(requant_bias_tensor)),
