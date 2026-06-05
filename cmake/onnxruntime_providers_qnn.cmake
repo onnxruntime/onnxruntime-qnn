@@ -55,6 +55,28 @@
 
   add_dependencies(onnxruntime_providers_qnn ort_core_target)
 
+  # ----------------------------------------------------------------------------
+  # Generated header: QNN_EP_MIN_ORT_API_VERSION
+  # The Python script computes the floor from \since annotations in the ORT
+  # headers + the API call sites in QNN EP source. CMake regenerates the
+  # header on every build; the script short-circuits writes when the value is
+  # unchanged. ort_core_target dependency ensures the ORT headers are unpacked
+  # before the script runs.
+  # ----------------------------------------------------------------------------
+  set(QNN_EP_MIN_API_HEADER ${CMAKE_CURRENT_BINARY_DIR}/qnn_ep_min_ort_api_version.h)
+  set(QNN_EP_MIN_API_SCRIPT ${REPO_ROOT}/qcom/scripts/all/compute_min_ort_api_version.py)
+  add_custom_target(qnn_ep_min_api_version_header_gen ALL
+    COMMAND ${Python3_EXECUTABLE} ${QNN_EP_MIN_API_SCRIPT}
+            --ep-source-root ${ONNXRUNTIME_ROOT}/core/providers/qnn
+            --ort-header-root ${ORT_SOURCE_DIR}/include
+            --write-header ${QNN_EP_MIN_API_HEADER}
+    BYPRODUCTS ${QNN_EP_MIN_API_HEADER}
+    COMMENT "Computing QNN EP minimum ORT API version"
+    VERBATIM
+  )
+  add_dependencies(qnn_ep_min_api_version_header_gen ort_core_target)
+  add_dependencies(onnxruntime_providers_qnn qnn_ep_min_api_version_header_gen)
+
   message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: " ${ONNXRUNTIME_APPLICATION_INCLUDES})
   target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
                                                                ${ONNXRUNTIME_APPLICATION_INCLUDES}
