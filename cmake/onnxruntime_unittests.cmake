@@ -413,7 +413,6 @@ block()
 
     target_include_directories(QnnMockSSR PRIVATE
       ${onnxruntime_QNN_HOME}/include/QNN
-      ${TEST_SRC_DIR}/providers/qnn/ssr
     )
 
     set_target_properties(QnnMockSSR PROPERTIES
