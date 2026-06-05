@@ -146,7 +146,12 @@ Environment variables
     parser.add_argument(
         "--use-ort-prebuilt",
         action="store_true",
-        help="Download and use ORT prebuilt binaries instead of building from source.",
+        help="Use ORT prebuilt binaries instead of building from source. Downloads automatically unless --ort-prebuilt is specified.",
+    )
+    parser.add_argument(
+        "--ort-prebuilt",
+        type=Path,
+        help="Path to pre-built ORT. Implies --use-ort-prebuilt.",
     )
     parser.add_argument(
         "--qairt-sdk",
@@ -201,6 +206,7 @@ class TaskLibrary:
         config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
         use_ort_prebuilt: bool,
+        ort_prebuilt_root: Path | None,
         qairt_sdk_root: Path | None,
         docker_ccache_root: Path | None,
         build_nuget: bool,
@@ -213,6 +219,7 @@ class TaskLibrary:
         # pylance somehow cannot correctly deduce the type of self.__target_py_version
         self.__target_py_version: TargetPyVersionT | None = target_py_version
         self.__use_ort_prebuilt = use_ort_prebuilt
+        self.__ort_prebuilt_root = ort_prebuilt_root
         self.__qairt_sdk_root = qairt_sdk_root
         self.__docker_ccache_root = docker_ccache_root
         self.__build_nuget = build_nuget
@@ -265,6 +272,7 @@ class TaskLibrary:
                 self.__config,
                 self.__target_py_version,
                 self.__use_ort_prebuilt,
+                self.__ort_prebuilt_root,
                 self.__qairt_sdk_root,
                 "build",
                 extra_args=extra_args,
@@ -288,6 +296,7 @@ class TaskLibrary:
                         self.__config,
                         None,  # target-py_version
                         self.__use_ort_prebuilt,
+                        self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "archive",
                         extra_args=["--build-java"] if self.__build_aar else None,
@@ -310,6 +319,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -329,6 +339,7 @@ class TaskLibrary:
                     self.__config,
                     None,  # target-py_version
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -348,6 +359,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -366,6 +378,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -384,6 +397,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -402,6 +416,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                     build_as_x=True,
@@ -421,6 +436,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -458,6 +474,7 @@ class TaskLibrary:
                             "Debug",
                             None,  # target_py_version: ASan task does not exercise the Python wheel
                             self.__use_ort_prebuilt,
+                            self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,
                             "build",
                             extra_args=["--enable-asan"],
@@ -500,6 +517,7 @@ class TaskLibrary:
                         self.__config,
                         None,  # target_py_version
                         self.__use_ort_prebuilt,
+                        self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "build",
                         extra_args=extra_args,
@@ -538,6 +556,7 @@ class TaskLibrary:
                     self.__config,
                     None,  # target-py-version
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                     build_archive=self.__build_archive,
@@ -570,6 +589,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                     build_archive=self.__build_archive,
@@ -594,6 +614,7 @@ class TaskLibrary:
                             "RelWithDebInfo",
                             self.__target_py_version,
                             self.__use_ort_prebuilt,
+                            self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,
                             "build",
                             extra_args=["--enable-coverage"],
@@ -620,6 +641,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                     False,
@@ -641,6 +663,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                     build_nuget=self.__build_nuget,
@@ -664,6 +687,7 @@ class TaskLibrary:
                             self.__config,
                             None,  # Never build the arm64 slice against Python
                             self.__use_ort_prebuilt,
+                            self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
@@ -675,6 +699,7 @@ class TaskLibrary:
                             self.__config,
                             self.__target_py_version,
                             self.__use_ort_prebuilt,
+                            self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
@@ -710,6 +735,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                     build_nuget=self.__build_nuget,
@@ -882,6 +908,7 @@ class TaskLibrary:
                     "Debug",
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "generate_sln",
                 )
@@ -943,6 +970,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -962,6 +990,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -1121,6 +1150,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -1171,6 +1201,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -1253,6 +1284,7 @@ class TaskLibrary:
                     self.__config,
                     self.__target_py_version,
                     self.__use_ort_prebuilt,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -1304,6 +1336,7 @@ def plan_from_dependencies(
     config: BuildConfigT,
     target_py_version: TargetPyVersionT | None,
     use_ort_prebuilt: bool,
+    ort_prebuilt_root: Path | None,
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
@@ -1320,6 +1353,7 @@ def plan_from_dependencies(
         config,
         target_py_version,
         use_ort_prebuilt,
+        ort_prebuilt_root,
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
@@ -1374,6 +1408,7 @@ def plan_from_task_list(
     config: BuildConfigT,
     target_py_version: TargetPyVersionT | None,
     use_ort_prebuilt: bool,
+    ort_prebuilt_root: Path | None,
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
@@ -1390,6 +1425,7 @@ def plan_from_task_list(
         config,
         target_py_version,
         use_ort_prebuilt,
+        ort_prebuilt_root,
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
@@ -1413,9 +1449,13 @@ def build_and_test():
     initialize_logging()
 
     args = parse_arguments()
-    use_ort_prebuilt = args.use_ort_prebuilt
+    use_ort_prebuilt = args.use_ort_prebuilt or args.ort_prebuilt is not None
+    ort_prebuilt_root = args.ort_prebuilt
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
+
+    if ort_prebuilt_root is not None and not ort_prebuilt_root.exists():
+        raise FileNotFoundError(f"ORT Prebuilt root {ort_prebuilt_root} does not exist.")
 
     plan = Plan()
 
@@ -1428,6 +1468,7 @@ def build_and_test():
             args.config,
             args.target_py_version,
             use_ort_prebuilt,
+            ort_prebuilt_root,
             qairt_sdk_root,
             docker_ccache_root,
             args.build_nuget,

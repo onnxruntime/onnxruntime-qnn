@@ -96,7 +96,6 @@ on:
           If true, build with --use-ort-prebuilt which downloads and uses
           prebuilt ORT binaries. Used to validate the --use-ort-prebuilt
           code path in CI.
-          code path in CI.
         default: false
         type: boolean
       build_aar:

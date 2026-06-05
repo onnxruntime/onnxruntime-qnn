@@ -159,7 +159,7 @@ if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
 }
 
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
-if ($OrtPrebuiltRoot -ne "") {
+if ($UseOrtPrebuilt) {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
     $QnnArgs += "--ort_home"
     $QnnArgs += "$OrtPrebuiltRoot"
@@ -356,7 +356,7 @@ else {
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
         $TestRunnerArgs = @{ Config = $Config; OnnxModelsRoot = $OnnxModelsRoot }
-        if ($OrtPrebuiltRoot -ne "") {
+        if ($UseOrtPrebuilt) {
             $TestRunnerArgs["SkipModelTests"] = $true
         }
         & .\run_tests.ps1 @TestRunnerArgs
