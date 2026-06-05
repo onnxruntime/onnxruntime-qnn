@@ -136,9 +136,9 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-# Use static MSVC runtime for ARM64 builds to eliminate MSVCP140.dll and
+# Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
-if ($Arch -in @("aarch64", "arm64", "arm64ec")) {
+if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
     $CommonArgs += "--enable_msvc_static_runtime"
 }
 
@@ -191,6 +191,7 @@ if ($BuildAsX) {
     $CommonArgs += "--buildasx"
 }
 
+$BuildNugetArgs = @()
 if ($BuildNuget) {
     $TargetNugetDir = (Get-NugetBinDir)
     $env:Path = "$TargetNugetDir;" + $env:Path
@@ -199,7 +200,7 @@ if ($BuildNuget) {
         Get-Command nuget.exe -ErrorAction SilentlyContinue
     }
     Write-Host "Building Nuget using $TargetNugetExe"
-    $CommonArgs += "--build_nuget"
+    $BuildNugetArgs += "--build_nuget"
 }
 
 if ($CMakeGenerator -eq "Ninja") {
@@ -215,6 +216,15 @@ if ($env:ORT_VERSION_SUFFIX) {
 $BuildArchiveArgs = @()
 if ($BuildArchive) {
     $BuildArchiveArgs += "--build_archive_asset"
+}
+
+$BuildWheelArgs = @()
+if ($BuildWheel) {
+    $BuildWheelArgs += "--build_wheel"
+    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
+        $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
+        $BuildWheelArgs += "--nightly_build"
+    }
 }
 
 switch ($Mode) {
@@ -299,7 +309,7 @@ else {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
                 Use-PyVenv -PyVenv $BuildVEnv {
                     Assert-Success -ErrorMessage "Failed to build" {
-                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildArchiveArgs
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs $BuildWheelArgs
                     }
                 }
 
@@ -307,46 +317,13 @@ else {
                     $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
                 }
 
-                if ($BuildWheel) {
-                    $PyNightlyArg = ""
-                    $WheelNameSuffix = ""
-                    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
-                        $PyNightlyArg = "--nightly_build"
-                        $WheelNameSuffix = "--wheel_name_suffix=qcom_internal"
-                    }
-                    $PyVersionSuffixArg = ""
-                    if ($env:ORT_VERSION_SUFFIX) {
-                        $PyVersionSuffixArg = "--version_suffix=$env:ORT_VERSION_SUFFIX"
-                    }
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
-                                python.exe (Join-Path $RepoRoot "setup.py") `
-                                    bdist_wheel `
-                                    $WheelNameSuffix `
-                                    --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg `
-                                    $PyVersionSuffixArg
-                            }
-                        }
-                    }
-                }
-
                 if ($BuildNuget) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build nuget" {
-                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
-
-                                $DistDir = Join-Path $BinDir "dist"
-                                if (-not (Test-Path $DistDir)) {
-                                    New-Item -ItemType Directory -Path $DistDir | Out-Null
-                                }
-                                foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
-                                    Copy-Item -Path $Pkg.FullName -Destination $DistDir
-                                }
-                            }
-                        }
+                    $DistDir = Join-Path $BinDir "dist"
+                    if (-not (Test-Path $DistDir)) {
+                        New-Item -ItemType Directory -Path $DistDir | Out-Null
+                    }
+                    foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
+                        Copy-Item -Path $Pkg.FullName -Destination $DistDir
                     }
                 }
             }

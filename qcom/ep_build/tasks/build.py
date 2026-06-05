@@ -13,12 +13,13 @@ from ..task import (
     ExtractArchiveTask,
     PyTestTask,
     RemovePathsTask,
+    RunExecutablesTask,
     RunExecutablesWithVenvTask,
     RunInTempDirectoryTask,
     UpdateJsonFileTask,
 )
 from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
-from ..util import REPO_ROOT, git_head_sha
+from ..util import BASH_EXECUTABLE, REPO_ROOT, git_head_sha
 from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask
 from .windows import RunPowershellScriptsTask
 
@@ -178,6 +179,79 @@ class GenerateCoverageTask(BashScriptsWithVenvTask):
         super().__init__(group_name, venv, [cmd])
 
 
+class RunAsanTask(BashScriptsWithVenvTask):
+    """Run onnxruntime_provider_test under AddressSanitizer via run_asan.sh.
+
+    The script wraps the binary with asan_filter_leaks.sh so that only Direct
+    leaks (ORT/test-side) and ASan heap errors fail the run; Indirect leaks
+    rooted in stripped QAIRT backend libraries are treated as known noise.
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        config: str = "Debug",
+    ) -> None:
+        cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "run_asan.sh"),
+            f"--build-dir={build_dir}",
+            f"--config={config}",
+        ]
+        super().__init__(group_name, venv, [cmd])
+
+
+class GenerateDiffCoverageTask(CompositeTask):
+    """Generate patch/diff coverage report using diff-cover.
+
+    Chains three steps:
+      1. git fetch origin <base_branch>   — ensures the base ref is available locally.
+      2. git diff <base_branch>...HEAD    — captures the PR diff as a unified diff file.
+      3. generate_diff_coverage.sh        — converts coverage.xml + patch.diff into an
+                                            HTML/text diff-cover report.
+
+    Prerequisite: coverage.xml must already exist under <build_dir>/<config>/coverage/,
+    i.e. GenerateCoverageTask must have run first (enforced via @depends in build_and_test.py).
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        config: str = "RelWithDebInfo",
+        base_branch: str = "origin/main",
+    ) -> None:
+        diff_file = build_dir / config / "patch.diff"
+        coverage_xml = build_dir / config / "coverage" / "coverage.xml"
+
+        diff_script_cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_diff_coverage.sh"),
+            f"--coverage-xml={coverage_xml}",
+            f"--diff-file={diff_file}",
+        ]
+
+        super().__init__(
+            group_name,
+            [
+                RunExecutablesTask(
+                    "Fetching base branch",
+                    [["git", "fetch", "origin", base_branch.removeprefix("origin/")]],
+                ),
+                RunExecutablesTask(
+                    "Generating git diff",
+                    [[BASH_EXECUTABLE, "-c", f"git diff {base_branch}...HEAD > {diff_file}"]],
+                ),
+                BashScriptsWithVenvTask(
+                    "Generating diff coverage report",
+                    venv,
+                    [diff_script_cmd],
+                ),
+            ],
+        )
+
+
 class AdbTestsTask(RunInTempDirectoryTask):
     def __init__(
         self,
@@ -231,11 +305,27 @@ class AdbTestsTask(RunInTempDirectoryTask):
                     },
                 ),
                 ExtractArchiveTask(
-                    "Extracting ONNX Runtime test package",
+                    "Extracting per-arch test archive",
                     REPO_ROOT
                     / "build"
                     / f"onnxruntime-tests-{self.__platform}-{self.__target_arch}.{test_archive_ext}",
                     tmpdir,
+                ),
+                BashScriptsWithVenvTask(
+                    "Extracting testdata archive",
+                    None,
+                    [
+                        [
+                            "python3",
+                            str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                            "--target-platform",
+                            f"{self.__platform}-{self.__target_arch}",
+                            "--archive",
+                            str(REPO_ROOT / "build" / f"onnxruntime-testdata.{test_archive_ext}"),
+                            "--repo-root",
+                            str(tmpdir),
+                        ]
+                    ],
                 ),
                 PyTestTask(
                     "Testing ONNX Runtime with a local device",
@@ -271,6 +361,14 @@ class QdcTestsTask(RunExecutablesWithVenvTask):
         if extra_args is not None:
             cmd.extend(extra_args)
 
+        # qualcomm_linux jobs download the .tar.bz2 testdata artifact; everything else uses .zip.
+        # qdc_runner._resolve_testdata_archive() probes the alternate extension as a safety net,
+        # but pointing at the right file from the start makes intent clear when reading this task
+        # in isolation.
+        testdata_ext = "tar.bz2" if set(platforms) == {"qualcomm_linux"} else "zip"
+        testdata_archive = REPO_ROOT / "build" / f"onnxruntime-testdata.{testdata_ext}"
+        cmd.append(f"--testdata-archive={testdata_archive}")
+
         if is_host_github_runner():
             actor = os.environ["GITHUB_ACTOR"]
             branch = os.environ["GITHUB_REF_NAME"]
@@ -283,8 +381,5 @@ class QdcTestsTask(RunExecutablesWithVenvTask):
 def ort_build_env_vars(old_env: Mapping[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy() if old_env is None else dict(old_env)
     if env.get("ORT_NIGHTLY_BUILD", "0") == "1":
-        env["NIGHTLY_BUILD"] = "1"
         env["Build_SourceVersion"] = git_head_sha()
-    elif env.get("ORT_NIGHTLY_BUILD", "0") == "0":
-        env["NIGHTLY_BUILD"] = "0"
     return env

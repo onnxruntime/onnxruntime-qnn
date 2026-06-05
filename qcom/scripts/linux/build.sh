@@ -40,10 +40,15 @@ warnings_as_errors=1
 build_java=
 build_archive=
 enable_coverage=
+enable_asan=
 for i in "$@"; do
   case $i in
     --build-archive)
       build_archive=1
+      shift
+      ;;
+    --enable-asan)
+      enable_asan=1
       shift
       ;;
     --config=*)
@@ -112,7 +117,14 @@ if [ -z "${qairt_sdk_root}" ]; then
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
-PATH="${cmake_bindir}:$(get_ninja_bindir):${PATH}"
+llvm_contentdir="$(get_llvm_contentdir)"
+# Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH.
+get_hexagon_sdk_contentdir > /dev/null
+# Surface the canonical tools dir to cmake so onnxruntime_unittests_udo.cmake can locate
+# LLVM / Hexagon SDK without relying on a CMAKE_*_BINARY_DIR-relative fallback (which can
+# resolve outside ${REPO_ROOT}/build/tools depending on where the cmake file is included).
+export ORT_BUILD_TOOLS_PATH="$(get_tools_dir)"
+PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
 
 mkdir -p "${build_dir}/${config}"
 
@@ -138,7 +150,22 @@ if [ -n "${target_py_version}" ]; then
   build_venv="${build_dir}/venv-${target_py_version}"
   if [ ! -d "${build_venv}" ]; then
     log_debug "Creating venv for build in ${build_venv}"
-    "python${target_py_version}" -m venv "${build_venv}"
+    if command -v "python${target_py_version}" >/dev/null 2>&1; then
+      "python${target_py_version}" -m venv "${build_venv}"
+    elif command -v uv >/dev/null 2>&1; then
+      log_info "python${target_py_version} not found; using uv to provision interpreter."
+      uv venv --seed --python "${target_py_version}" "${build_venv}"
+    else
+      log_info "Neither python${target_py_version} nor uv found; bootstrapping uv into ${build_dir}/_uv_bootstrap."
+      uv_bootstrap_dir="${build_dir}/_uv_bootstrap"
+      python3 -m pip install --quiet --target="${uv_bootstrap_dir}" uv
+      # Prefer the console-script binary; fall back to module form if the wheel didn't ship one.
+      if [ -x "${uv_bootstrap_dir}/bin/uv" ]; then
+        "${uv_bootstrap_dir}/bin/uv" venv --seed --python "${target_py_version}" "${build_venv}"
+      else
+        PYTHONPATH="${uv_bootstrap_dir}" python3 -m uv venv --seed --python "${target_py_version}" "${build_venv}"
+      fi
+    fi
   fi
 
   bash -c ". ${build_venv}/bin/activate && pip install uv"
@@ -301,11 +328,15 @@ else
       package_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
     fi
     if [[ "${ORT_NIGHTLY_BUILD:-}" == "1" ]]; then
-      package_args+=(--wheel_name_suffix "qcom_internal")
+      package_args+=(--wheel_name_suffix "qcom_internal" --nightly_build)
     fi
 
     if [ -n "${enable_coverage}" ]; then
       common_args+=(--cmake_extra_defines "ENABLE_COVERAGE:BOOL=ON")
+    fi
+
+    if [ -n "${enable_asan}" ]; then
+      common_args+=(--enable_address_sanitizer)
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \

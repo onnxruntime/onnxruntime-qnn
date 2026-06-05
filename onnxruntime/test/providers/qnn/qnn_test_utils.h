@@ -4,27 +4,22 @@
 #pragma once
 
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 
-#include "core/framework/provider_options.h"
-#include "core/framework/tensor_shape.h"
-#include "core/common/float16.h"
-#include "core/optimizer/graph_transformer_level.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/util/qmath.h"
 #include "test/util/env_var_utils.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/util/include/test_utils.h"
 #include "test/util/include/test/test_environment.h"
-#include "test/util/include/default_providers.h"
 
 #include "gtest/gtest.h"
 
@@ -37,13 +32,57 @@
 
 namespace onnxruntime {
 namespace test {
+constexpr const char* kOnnxDomain = "";
+constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
+constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
+
+#define QNN_TEST_UNUSED_PARAMETER(x) (void)(x)
+
+inline gsl::span<const std::byte> AsByteSpan(const void* data, size_t size) {
+  return gsl::span<const std::byte>(reinterpret_cast<const std::byte*>(data), size);
+}
+
+inline gsl::span<const int64_t> AsSpan(std::initializer_list<int64_t> list) {
+  return gsl::span<const int64_t>(list.begin(), list.size());
+}
+
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
+using ProviderOptions = std::unordered_map<std::string, std::string>;
+
+// Holds a serialized model and the builder used to construct it.
+struct ModelAndBuilder {
+  std::string model_data;
+  ModelTestBuilder builder;
+};
+
+// Builds a model via `model_build_fn` and serializes it into `result->model_data`.
+void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
+                         const GetTestModelFn& model_build_fn,
+                         int opset_version = 18);
+
+// Forward declaration for QnnHTPBackendTests used in template functions below.
+class QnnHTPBackendTests;
+
+// Forward declaration of ConditionalCheckAndSkipTestOnLinuxARM64 — defined after QnnHTPBackendTests below.
+template <typename QuantType = void>
+inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
+                                                    QnnHtpDevice_Arch_t arch,
+                                                    std::string_view test_type,
+                                                    std::string& skip_reason);
 
 size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension);
 size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension);
 size_t SizeOfShape(std::vector<int64_t> shape);
+
+inline float RoundHalfToEven(float input) {
+  if (!std::isfinite(input)) {
+    return input;
+  }
+  // std::remainder returns x - n, where n is the integral value nearest to x. When |x - n| = 0.5, n is chosen to be even
+  return input - std::remainderf(input, 1.f);
+}
 
 // Class that stores quantization params (scale, zero point).
 // Has a static function that computes quantization parameters from a floating-point range.
@@ -562,6 +601,35 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                           const std::unordered_map<std::string, std::string>& ep_options,
                           bool simulated = false);
 
+// RAII holder that ensures Ort::Session is destroyed before RegisteredEpDeviceUniquePtr.
+// Construct after registering the EP and creating the session:
+//
+//   RegisteredEpDeviceUniquePtr ep;
+//   RegisterQnnEpLibrary(ep, so, name, options);
+//   ScopedOrtSession scoped(std::move(ep), Ort::Session(env, model_path, so));
+//
+// ORDER MATTERS — non-static members are destroyed in reverse declaration order,
+// so ep_device_ is declared first (destroyed last) and session_ second (destroyed first).
+class ScopedOrtSession {
+ public:
+  ScopedOrtSession(RegisteredEpDeviceUniquePtr ep, Ort::Session session)
+      : ep_device_(std::move(ep)), session_(std::move(session)) {}
+
+  ScopedOrtSession(const ScopedOrtSession&) = delete;
+  ScopedOrtSession& operator=(const ScopedOrtSession&) = delete;
+  ScopedOrtSession(ScopedOrtSession&&) = delete;
+  ScopedOrtSession& operator=(ScopedOrtSession&&) = delete;
+
+  Ort::Session& session() { return session_; }
+  const Ort::Session& session() const { return session_; }
+  const OrtEpDevice* ep_device() const { return ep_device_.get(); }
+
+ private:
+  // ORDER MATTERS — destroyed in reverse decl order: session_ first, then ep_device_.
+  RegisteredEpDeviceUniquePtr ep_device_;
+  Ort::Session session_;
+};
+
 /**
  * Inferences a given serialized model. Returns output values via an out-param.
  *
@@ -573,13 +641,13 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
  * \param output_vals Initialized to the inference results.
  * \param is_qnn_ep Ture: QNN EP is used. False: CPU EP is used (default).
  * \param session_option_pairs extra session options.
- * \param graph_checker Function called on the Graph.
  */
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
+                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
+                       Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 void InferenceModel(const std::string& model_data,
                     const char* log_id,
@@ -590,7 +658,8 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                    std::function<void(const Graph&)>* graph_checker = nullptr);
+                    std::function<void(const Ort::Session&)>* graph_checker = nullptr,
+                    Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
@@ -826,9 +895,35 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  * \param tolerance The percent tolerance (as fraction) QNN EP results are allowed to differ from the QDQ model
  *                  on CPU EP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
- * \param ep_graph_checker Function called on the Graph generated for the QNN EP's session. Used to check node
- *                         EP assignment.
+ * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
+ *                         EP assignment via public API.
  */
+
+// Helper macro to check if QuantType is a supported QDQ type
+#define QNN_IS_SUPPORTED_QDQ_TYPE(QuantType)                                    \
+  (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> ||   \
+   std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> || \
+   std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> || \
+   std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>)
+
+// Macro for test skip logic based on provider options and architecture
+// Parameters: qnn_options (const ProviderOptions&), arch (QnnHtpDevice_Arch_t),
+//             test_type (QDQ, FP16, FP32, GPU), QuantType (optional, for QDQ tests)
+// Only skips tests on Linux ARM64 (__aarch64__)
+#if defined(__aarch64__)
+#define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                  \
+  do {                                                                                                           \
+    std::string skip_reason;                                                                                     \
+    if (ConditionalCheckAndSkipTestOnLinuxARM64<__VA_ARGS__>((qnn_options), (arch), (test_type), skip_reason)) { \
+      GTEST_SKIP() << skip_reason;                                                                               \
+    }                                                                                                            \
+  } while (0)
+#else
+#define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
+  do {                                                                          \
+  } while (0)
+#endif  // defined(__aarch64__)
+
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const GetTestQDQModelFn<QuantType>& qdq_model_fn,
@@ -839,7 +934,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+                                 std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr,
+                                 Ort::CustomOpDomain* custom_op_domain = nullptr) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -870,7 +967,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level, custom_op_domain);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -919,7 +1016,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
-  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
+  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level, custom_op_domain);
 
   qnn_options["dump_json_qnn_graph"] = "1";
 
@@ -961,7 +1058,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    qnn_qdq_outputs,
                    log_severity,
                    session_option_pairs,
-                   graph_optimization_level);
+                   graph_optimization_level,
+                   nullptr,
+                   custom_op_domain);
   } else {
     InferenceModel(qdq_model_data,
                    "qdq_model_logger",
@@ -972,7 +1071,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    log_severity,
                    session_option_pairs,
                    graph_optimization_level,
-                   qnn_ep_graph_checker);
+                   qnn_ep_graph_checker,
+                   custom_op_domain);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -1013,11 +1113,11 @@ inline void VerifyFp16Output(const std::vector<Ort::Value>& cpu_f16_outputs,
 
     const size_t num_vals = output_vals[i].size();
     gsl::span<const float> cpu_f32_vals = output_vals[i];
-    const MLFloat16* cpu_f16_data = cpu_f16_outputs[i].GetTensorData<MLFloat16>();
-    const MLFloat16* qnn_f16_data = qnn_f16_outputs[i].GetTensorData<MLFloat16>();
+    const Ort::Float16_t* cpu_f16_data = cpu_f16_outputs[i].GetTensorData<Ort::Float16_t>();
+    const Ort::Float16_t* qnn_f16_data = qnn_f16_outputs[i].GetTensorData<Ort::Float16_t>();
     // Create spans over the data
-    gsl::span<const MLFloat16> cpu_f16_vals(cpu_f16_data, cpu_f16_info.GetElementCount());
-    gsl::span<const MLFloat16> qnn_f16_vals(qnn_f16_data, qnn_f16_info.GetElementCount());
+    gsl::span<const Ort::Float16_t> cpu_f16_vals(cpu_f16_data, cpu_f16_info.GetElementCount());
+    gsl::span<const Ort::Float16_t> qnn_f16_vals(qnn_f16_data, qnn_f16_info.GetElementCount());
 
     ASSERT_EQ(num_vals, cpu_f16_vals.size());
     ASSERT_EQ(num_vals, qnn_f16_vals.size());
@@ -1097,6 +1197,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1232,14 +1334,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
  *
  * \param builder Model builder object used to build the model's inputs, outputs, and nodes.
  * \param input_def Input definition that describes what kind of input to create.
- * \param allocator Optional allocator to use to allocate the input ORT value.
  * \return A pointer to the new input.
  */
 template <typename T>
 inline void MakeTestInput(ModelTestBuilder& builder,
                           std::string name,
-                          const TestInputDef<T>& input_def,
-                          AllocatorPtr allocator = nullptr) {
+                          const TestInputDef<T>& input_def) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1249,7 +1349,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
     if (is_initializer) {
       builder.MakeInitializer<T>(name, shape, raw_data);
     } else {
-      builder.MakeInput<T>(name, shape, raw_data, allocator);
+      builder.MakeInput<T>(name, shape, raw_data);
     }
   } else {  // Random data
     const auto& rand_info = input_def.GetRandomDataInfo();
@@ -1257,7 +1357,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
     if (is_initializer) {
       builder.MakeInitializer<T>(name, shape, rand_info.min, rand_info.max);
     } else {
-      builder.MakeInput<T>(name, shape, rand_info.min, rand_info.max, allocator);
+      builder.MakeInput<T>(name, shape, rand_info.min, rand_info.max);
     }
   }
 
@@ -1267,8 +1367,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
 template <>
 inline void MakeTestInput(ModelTestBuilder& builder,
                           std::string name,
-                          const TestInputDef<bool>& input_def,
-                          AllocatorPtr allocator) {
+                          const TestInputDef<bool>& input_def) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1278,13 +1377,13 @@ inline void MakeTestInput(ModelTestBuilder& builder,
     if (is_initializer) {
       builder.MakeInitializerBool(name, shape, raw_data);
     } else {
-      builder.MakeInput<bool>(name, shape, raw_data, allocator);
+      builder.MakeInput<bool>(name, shape, raw_data);
     }
   } else {  // Random data
     if (is_initializer) {
       builder.MakeRandInitializerBool(name, shape);
     } else {
-      builder.MakeInputBool(name, shape, allocator);
+      builder.MakeInputBool(name, shape);
     }
   }
 
@@ -1309,7 +1408,6 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& n
  * \param input_defs_2 List of input definitions of type InputType2.
  * \param attrs List of operator attributes.
  * \param op_domain The operator's domain. Defaults to the ONNX domain (i.e., "").
- * \param input_allocator Optional allocator to use to allocate input ORT values.
  * \returns A model building function.
  */
 template <typename InputType1, typename InputType2 = int64_t>
@@ -1318,15 +1416,14 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                      const std::string& op_domain = kOnnxDomain,
-                                      AllocatorPtr input_allocator = nullptr) {
-  return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+                                      const std::string& op_domain = kOnnxDomain) {
+  return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain](ModelTestBuilder& builder) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
     for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i]);
       op_input_names.push_back(tmp_name);
     }
 
@@ -1335,7 +1432,7 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
         op_input_names.push_back("");
       } else {
         const std::string tmp_name = "input_defs_2_" + std::to_string(i);
-        MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+        MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i]);
         op_input_names.push_back(tmp_name);
       }
     }
@@ -1358,27 +1455,26 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_3,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                      const std::string& op_domain = kOnnxDomain,
-                                      AllocatorPtr input_allocator = nullptr) {
-  return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+                                      const std::string& op_domain = kOnnxDomain) {
+  return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain](ModelTestBuilder& builder) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
     for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i]);
       op_input_names.push_back(tmp_name);
     }
 
     for (size_t i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
-      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i]);
       op_input_names.push_back(tmp_name);
     }
 
     for (size_t i = 0; i < input_defs_3.size(); i++) {
       const std::string tmp_name = "input_defs_3_" + std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i]);
       op_input_names.push_back(tmp_name);
     }
 
@@ -1402,7 +1498,6 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
  * \param attrs List of operator attributes.
  * \param op_domain The operator's domain. Defaults to the ONNX domain (i.e., "").
  * \param use_contrib_qdq Whether to use Q/DQ ops from the MS domain instead of the ONNX domain.
- * \param input_allocator Optional allocator to use to allocate input ORT values.
  * \returns A model building function.
  */
 template <typename QuantType, typename OtherInputType = int64_t>
@@ -1413,10 +1508,9 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
     const std::string& op_domain = kOnnxDomain,
-    bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr) {
+    bool use_contrib_qdq = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
-          use_contrib_qdq, input_allocator](
+          use_contrib_qdq](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size());
@@ -1424,7 +1518,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
-      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i]);
       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
       op_input_names.push_back(
@@ -1438,7 +1532,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
         op_input_names.push_back("");
       } else {
         const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
-        MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+        MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i]);
         op_input_names.push_back(tmp_name);
       }
     }
@@ -1464,10 +1558,9 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
     const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr,
     bool combine_quant_inputs_qparams = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
-          use_contrib_qdq, input_allocator, combine_quant_inputs_qparams](
+          use_contrib_qdq, combine_quant_inputs_qparams](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<std::string> op_input_names;
 
@@ -1482,7 +1575,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
-      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i]);
       QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
       op_input_names.push_back(
@@ -1493,14 +1586,14 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     // Create non-QDQ inputs
     for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
       const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
-      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i]);
       op_input_names.push_back(tmp_name);
     }
 
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs_2.size(); i++) {
       const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
-      MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i]);
       QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
 
       op_input_names.push_back(
@@ -1533,15 +1626,16 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param fp32_abs_err The acceptable error between CPU EP and QNN EP.
  * \param log_severity The logger's minimum severity level.
  * \param verify_outputs True to verify that the outputs match (within tolerance).
- * \param ep_graph_checker Function called on the Graph generated for the EP's session. Used to check node
- *                         EP assignment.
+ * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
+ *                         EP assignment via public API.
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err = 1e-5f,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
-                     std::function<void(const Graph&)>* ep_graph_checker = nullptr);
+                     std::function<void(const Ort::Session&)>* ep_graph_checker = nullptr,
+                     Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,
@@ -1586,21 +1680,16 @@ class QnnHTPBackendTests : public ::testing::Test {
 
   // Returns true if the test should be skipped because HTP architecture is less than or equal to the provided arch.
   // Example: if (QnnHTPBackendTests::ShouldSkipIfHTPArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) { GTEST_SKIP() << "..."; }
-  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo(QnnHtpDevice_Arch_t arch) {
+  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo([[maybe_unused]] QnnHtpDevice_Arch_t arch) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
     return HasPlatformAttributes() && GetPlatformAttributes().htp_arch <= arch;
+#else
+    return false;
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
   }
 
   // Query QNN platform attributes by directly calling QNN APIs
   Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
-
-  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
-  static bool ShouldSkipIfHtpFp16Unsupported() {
-#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
-  }
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
@@ -1623,8 +1712,57 @@ class QnnCPUBackendTests : public ::testing::Test {
  protected:
   void SetUp() override;
 
+  [[nodiscard]] BackendSupport IsIRBackendSupported() const;
+
   static BackendSupport cached_cpu_support_;  // Set by the first test using this fixture.
+  static BackendSupport cached_ir_support_;   // Set by the first test using this fixture.
 };
+
+// Testing fixture class for Genie backend tests. Checks if the Genie backend is available before the test
+// begins. The test is skipped if the Genie backend is unavailable.
+class GenieBackendTests : public ::testing::Test {
+ protected:
+  void SetUp() override;
+};
+
+// Template function implementing the test skip logic for CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64.
+// Placed after the class definitions so QnnHTPBackendTests is fully defined.
+// QuantType defaults to void (no type specified); when provided, skipping is gated on QNN_IS_SUPPORTED_QDQ_TYPE.
+// Returns true if the test should be skipped, and sets skip_reason with the reason.
+template <typename QuantType>
+inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
+                                                    QnnHtpDevice_Arch_t arch,
+                                                    std::string_view test_type,
+                                                    std::string& skip_reason) {
+  std::string backend_name = "htp";
+  if (qnn_options.find("backend_type") != qnn_options.end()) {
+    backend_name = qnn_options.at("backend_type");
+    std::transform(backend_name.begin(), backend_name.end(), backend_name.begin(), ::tolower);
+  }
+
+  if (backend_name == "gpu" || test_type == "GPU") {
+    skip_reason = "GPU test skipped on ARM64 architecture";
+    return true;
+  } else if (backend_name == "htp") {
+    if (test_type == "QDQ") {
+      if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {
+        if constexpr (std::is_same_v<QuantType, void>) {
+          skip_reason = "QDQ test skipped on HTP architecture <= " + std::to_string(static_cast<int>(arch));
+          return true;
+        } else if (QNN_IS_SUPPORTED_QDQ_TYPE(QuantType)) {
+          skip_reason = "QDQ test skipped on HTP architecture <= " + std::to_string(static_cast<int>(arch));
+          return true;
+        }
+      }
+    } else if (test_type == "FP16" || test_type == "FP32") {
+      if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {
+        skip_reason = "FP16/FP32 HTP test skipped on architecture <= " + std::to_string(static_cast<int>(arch));
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 // Testing fixture class for tests that require the QNN Ir backend. Checks if QNN IR is available before the test
 // begins. The test is skipped if the IR backend is unavailable (may occur with certain QNN versions).
@@ -1712,6 +1850,30 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   do {                                        \
   } while (0)
 #endif
+
+// Skips the test on every platform EXCEPT native ARM64 Windows.
+// The Genie execution pathway in the QNN EP is only available on ARM64 Windows
+// (_WIN32 + _M_ARM64 or __aarch64__). All other platforms must skip.
+// Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
+#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64))
+#define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
+  if (::testing::internal::AlwaysTrue()) {         \
+    GTEST_SKIP() << (reason);                      \
+  } else                                           \
+    static_assert(true, "")
+#else
+#define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
+  do {                                             \
+  } while (0)
+#endif
+
+#define SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(arch)                                              \
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {                              \
+    if (::testing::internal::AlwaysTrue()) {                                                           \
+      GTEST_SKIP() << "HTP test skipped on architecture <= " + std::to_string(static_cast<int>(arch)); \
+    } else                                                                                             \
+      static_assert(true, "");                                                                         \
+  }
 
 }  // namespace test
 }  // namespace onnxruntime

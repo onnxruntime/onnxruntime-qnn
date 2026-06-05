@@ -4,7 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/node_attr_utils.h"
 
 #include "gtest/gtest.h"
 

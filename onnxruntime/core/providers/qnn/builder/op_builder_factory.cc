@@ -28,11 +28,14 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
+  CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
+  CreateIsInfOpBuilder("IsInf", *this);
   CreateIsNaNOpBuilder("IsNaN", *this);
   CreateLayerNormalizationOpBuilder("LayerNormalization", *this);
+  CreateLpPoolOpBuilder("LpPool", *this);
   CreateLRNOpBuilder("LRN", *this);
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
@@ -40,6 +43,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
+  CreateOneHotOpBuilder("OneHot", *this);
   CreatePadOpBuilder("Pad", *this);
   CreatePoolOpBuilder("AveragePool", *this);
   CreatePoolOpBuilder("GlobalAveragePool", *this);
@@ -102,6 +106,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Round", *this);
   CreateScatterElementsOpBuilder("ScatterElements", *this);
   CreateScatterNDOpBuilder("ScatterND", *this);
+  CreateSeluOpBuilder("Selu", *this);
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
   CreateSimpleOpBuilder("Sin", *this);
@@ -112,6 +117,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Sum", *this);
   CreateSimpleOpBuilder("Tanh", *this);
   CreateSimpleOpBuilder("Where", *this);
+  CreateSimpleOpBuilder("Xor", *this);
   CreateSliceOpBuilder("Slice", *this);
   CreateSoftmaxOpBuilder("LogSoftmax", *this);
   CreateSoftmaxOpBuilder("Softmax", *this);

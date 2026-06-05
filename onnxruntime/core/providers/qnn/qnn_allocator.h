@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 
+#include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 

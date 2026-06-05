@@ -202,7 +202,33 @@ genhtml "${build_dir}/${config}/coverage_lcov_filtered.info" \
 cp "${build_dir}/${config}/coverage_lcov.info"          "${output_dir}/coverage_lcov.info"
 cp "${build_dir}/${config}/coverage_lcov_filtered.info" "${output_dir}/coverage_lcov_filtered.info"
 
+# ---------------------------------------------------------------------------
+# Convert filtered .info to Cobertura XML for diff-cover
+# ---------------------------------------------------------------------------
+log_info "--- Converting to Cobertura XML ---"
+if ! command -v lcov_cobertura &>/dev/null; then
+    die "lcov_cobertura not found. Activate the project venv or: pip install lcov_cobertura"
+fi
+lcov_cobertura "${output_dir}/coverage_lcov_filtered.info" \
+    --base-dir "${REPO_ROOT}" \
+    --output "${output_dir}/coverage.xml"
+
 log_info "=== Coverage report complete ==="
 log_info "HTML report  : ${output_dir}/index.html"
 log_info "lcov raw     : ${output_dir}/coverage_lcov.info"
 log_info "lcov filtered: ${output_dir}/coverage_lcov_filtered.info"
+log_info "Cobertura XML: ${output_dir}/coverage.xml"
+
+# ---------------------------------------------------------------------------
+# Copy README.md for CI artifact consumers
+# ---------------------------------------------------------------------------
+cp "${REPO_ROOT}/qcom/scripts/linux/coverage_artifact_README.md" \
+   "${output_dir}/README.md"
+log_info "README       : ${output_dir}/README.md"
+
+# ---------------------------------------------------------------------------
+# Propagate test failure after coverage report has been generated
+# ---------------------------------------------------------------------------
+if [ "${test_exit}" -ne 0 ]; then
+    die "Tests failed with exit code ${test_exit}. Coverage report was still generated at ${output_dir}."
+fi

@@ -67,6 +67,11 @@ cmake_windows_x86_64:
   sha256: cf35a516c4f5f4646b301e51c8e24b168cc012c3b1453b8f675303b54eb0ef45
   content_root: cmake-{version}-windows-x86_64
   bindir: bin
+hexagon_linux_x86_64:
+  version: 6.5.0.0
+  url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.5.0.0/Hexagon_SDK_Linux.zip
+  sha256: 668626f75c38ce1ca993768953db9bf4b632753c3e32ed8363a8287e3aaffc9a
+  content_root: Hexagon_SDK
 lcov_linux_x86_64:
   version: 1.16
   url: https://github.com/linux-test-project/lcov/releases/download/v{version}/lcov-{version}.tar.gz
@@ -104,6 +109,18 @@ java_windows_x86_64:
   sha256: 6cce98ce38b86737c63912fd1df9ecfee1fe209ab08c0e1e16500f054e67de48
   content_root: jdk-{version}
   bindir: bin
+llvm_linux_x86_64:
+  version: 21.1.8
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz
+  sha256: b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b
+  content_root: LLVM-{version}-Linux-X64
+  bindir: bin
+maven_linux_x86_64:
+  version: 3.9.8
+  url: https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.tar.gz
+  sha256: 067672629075b740e3d0a928e21021dd615a53287af36d4ccca44e87e081d102
+  content_root: apache-maven-{version}
+  bindir: bin
 model_zoo:
   version: 2026-04-03
   url: http://ort-ep-win-01.na.qualcomm.com:8000/model-zoo/model-zoo-{version}.zip
@@ -136,7 +153,7 @@ onnx_models:
   sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
 ort_prebuilt_windows_x64: &ort_prebuilt_common
-  version: 1.24.4
+  version: 1.26.0
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
   content_root: onnxruntime-win-x64-{version}
 ort_prebuilt_windows_arm64:
@@ -188,7 +205,7 @@ python_314_windows_arm64:
   version: 3.14.3
   md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
-  version: 2.45.40.260406
+  version: 2.47.0.260601
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
   content_root: qairt/{version}
   bindir: bin

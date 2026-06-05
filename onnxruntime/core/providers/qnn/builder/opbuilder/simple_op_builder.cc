@@ -3,8 +3,10 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -83,7 +85,10 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone DQ op with per-channel quantization");
+    // Per-channel standalone DQ is allowed only if the input is a compile-time constant;
+    const bool is_input_const = qnn_model_wrapper.IsEffectivelyConstantInput(node_unit.Inputs()[0].name);
+    RETURN_IF(is_per_chan_quant && !is_input_const,
+              "QNN EP does not support a standalone DQ op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
@@ -106,7 +111,10 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Outputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone Q op with per-channel quantization");
+    // Per-channel standalone Q is allowed only if the input is a compile-time constant;
+    const bool is_input_const = qnn_model_wrapper.IsEffectivelyConstantInput(node_unit.Inputs()[0].name);
+    RETURN_IF(is_per_chan_quant && !is_input_const,
+              "QNN EP does not support a standalone Q op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
@@ -323,6 +331,14 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 #endif
   }
 
+  // Emit a STATIC tensor instead of an APP_WRITE input for standalone Q/DQ on constant inputs.
+  if (CanFoldConstantQdq(qnn_model_wrapper, node_unit)) {
+    Ort::Status fold_status = TryFoldConstantQDQ(qnn_model_wrapper, node_unit);
+    if (fold_status.IsOK()) {
+      return Ort::Status();
+    }
+  }
+
   std::vector<std::string> param_tensor_names;
   // Add attribute
   if (op_type == "LpNormalization") {
@@ -374,6 +390,10 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                     QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
     param_tensor_names.push_back(operation_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+  }
+
+  if (op_type == "HardSwish") {
+    AddHardSwishNeuronParams(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), param_tensor_names);
   }
 
   if (op_type == "HardSigmoid") {
@@ -435,7 +455,7 @@ static bool OverrideQuantParams(const std::string& op_type, Qnn_DataType_t qnn_d
   const int32_t orig_offset = quant_params.offset;
   const float orig_scale = quant_params.scale;
 
-  if (op_type == "Sigmoid") {
+  if (op_type == "Sigmoid" || op_type == "HardSigmoid") {
     switch (qnn_data_type) {
       case QNN_DATATYPE_UFIXED_POINT_16:
         quant_params.offset = 0;
@@ -481,7 +501,7 @@ Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model
   // Override output quantization parameters for uint16 QDQ Sigmoid or Tanh.
   // QNN requires 16-bit QDQ Sigmoid and Tanh to use specific output scale and zero-point values
   // regardless of floating-point range.
-  if (op_type == "Sigmoid" || op_type == "Tanh") {
+  if (op_type == "Sigmoid" || op_type == "Tanh" || op_type == "HardSigmoid") {
     const auto& outputs = node_unit.Outputs();
     RETURN_IF_NOT(output_index < outputs.size(),
                   ("Invalid output index in OverrideOutputQuantParam for op " + op_type).c_str());

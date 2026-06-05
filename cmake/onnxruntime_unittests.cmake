@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 set(TEST_SRC_DIR ${ONNXRUNTIME_ROOT}/test)
-set(TEST_INC_DIR ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT})
 
 # Exclude files based on CMake options.
 function(filter_test_srcs test_srcs_var)
@@ -95,7 +94,6 @@ function(AddTest)
   endif()
 
   onnxruntime_add_include_to_target(${_UT_TARGET} date::date flatbuffers::flatbuffers)
-  target_include_directories(${_UT_TARGET} PRIVATE ${TEST_INC_DIR})
 
   if(MSVC)
     target_compile_options(${_UT_TARGET} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
@@ -200,6 +198,7 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+  include(onnxruntime_unittests_udo.cmake)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
@@ -214,6 +213,19 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
 
+# qnn_op_tracing_serialization.cc is compiled directly into the test binary so
+# that QnnFrameworkOpTraceUnit tests can call ComputeTraceSummary and
+# SerializeFrameworkOpTrace without linking against the EP library.
+# This translation unit intentionally does NOT include ort_api.h, avoiding
+# the ORT_API_MANUAL_INIT mismatch linker error on Windows.  It is needed in
+# both shared-lib builds (hidden symbol visibility prevents linking) and
+# static-lib builds (test binary has build-order dependency only, not a linker
+# dependency, on the EP).
+if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
+  list(APPEND onnxruntime_test_framework_src
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_tracing/qnn_op_tracing_serialization.cc")
+endif()
+
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same
 #process and you won't know which one you are testing.
@@ -225,7 +237,6 @@ if(MSVC)
   target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /wd6326>"
                 "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/wd6326>")
 else()
-  target_include_directories(onnxruntime_test_utils PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT})
   if (HAS_CHARACTER_CONVERSION)
     target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=character-conversion>")
   endif()
@@ -235,10 +246,7 @@ onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmo
                                   safeint_interface Eigen3::Eigen ${GSL_TARGET} date::date ${ABSEIL_LIBS})
 add_dependencies(onnxruntime_test_utils ${onnxruntime_EXTERNAL_DEPENDENCIES})
 target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/include"
-                           PRIVATE
-                           ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
+                           PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES}
                            )
 set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
 source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
@@ -258,9 +266,7 @@ onnxruntime_add_static_library(onnxruntime_unittest_utils ${onnxruntime_unittest
 add_dependencies(onnxruntime_unittest_utils ort_core_target)
 
 target_include_directories(onnxruntime_unittest_utils PRIVATE
-                           ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
+                           ${ONNXRUNTIME_APPLICATION_INCLUDES}
                            "${TEST_SRC_DIR}/util/include"
                            )
 
@@ -303,6 +309,27 @@ block()
     ${onnxruntime_test_framework_src}
   )
 
+  if(onnxruntime_USE_QNN)
+    # Unlike other QNN tests that link against onnxruntime_providers_qnn.so via the provider
+    # interface, the Genie implementation classes (GenieBackendManager, GenieApiLoader,
+    # GenieNode) are compiled with hidden symbol visibility and are not exported from the
+    # shared library. Re-compiling them directly here is the least-invasive way to make
+    # those symbols accessible to genie_unit_test.cc without changing the EP's public ABI.
+    # Note: genie_node_compute_info.cc is intentionally excluded because it depends on
+    # qnn_utils.cc symbols that are not available to the test binary and none of the
+    # unit tests in genie_unit_test.cc exercise GenieNodeComputeInfo.
+    list(APPEND onnxruntime_provider_test_srcs
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_api_loader.cc
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_backend_manager.cc
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
+      # Stub for OrtGetRuntimePath (defined in ort_api.cc, which is EP DLL only).
+      ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie_test_stubs.cc
+      # ParseOpPackages is consumed by qnn_basic_test.cc; recompile here for the same reason
+      # as the genie sources (the EP shared library is loaded via dlopen, not linked).
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_package/op_package_parser.cc
+    )
+  endif()
+
   set(onnxruntime_provider_test_libs
     ${onnxruntime_test_providers_libs}
     ${onnxruntime_test_common_libs}
@@ -324,15 +351,24 @@ block()
     ${onnxruntime_QNN_HOME}/include/QNN)
   target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
 
-  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
+  if(onnxruntime_USE_QNN)
+    # genie_backend_manager.cc is recompiled here rather than linked from the EP DLL.
+    # ort_api.h (included transitively) defines ORT_API_MANUAL_INIT, which must be
+    # uniform across all TUs in a binary. Suppress the define so the genie TUs match
+    # the rest of the test binary.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+    if(onnxruntime_BUILD_QNN_UDO_TEST)
+      target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
+    endif()
+  endif()
 
-  # For onnxruntime_cxx_api.h
-  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
+  # Dependency on ORT Core public header files
+  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES})
 
   add_custom_command(
     TARGET onnxruntime_provider_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}/test/testdata
+    ${ort_core_SOURCE_DIR}/onnxruntime/test/testdata
     $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
   )
 
@@ -345,6 +381,43 @@ block()
   # there are some in builds where sizeof(size_t) != sizeof(int64_t), e.g., in 'ONNX Runtime Web CI Pipeline'
   if (HAS_SHORTEN_64_TO_32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
+  endif()
+
+  if(onnxruntime_USE_QNN AND WIN32)
+    # ---------------------------------------------------------------------------
+    # MockGenie shared library — test double for the Genie backend.
+    # GenieBackendManager loads it via backend_path="MockGenie.dll". Currently
+    # only built on Windows because the Genie execution pathway in the QNN EP
+    # has not been validated on Linux. When Linux support is confirmed, remove
+    # the WIN32 guard and enable the version-script path for Linux.
+    # ---------------------------------------------------------------------------
+    add_library(MockGenie SHARED
+      ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/genie_mock_dll.cc
+    )
+
+    target_include_directories(MockGenie PRIVATE
+      ${onnxruntime_QNN_HOME}/include
+      ${onnxruntime_QNN_HOME}/include/QNN
+    )
+
+    set_target_properties(MockGenie PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED ON
+      FOLDER "ONNXRuntimeTest"
+    )
+
+    target_link_options(MockGenie PRIVATE
+      "/DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
+
+    # Copy MockGenie next to the test executable so GenieBackendManager
+    # finds it by name when backend_path="MockGenie.dll".
+    add_custom_command(
+      TARGET MockGenie POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:MockGenie>
+        $<TARGET_FILE_DIR:onnxruntime_provider_test>
+      COMMENT "Copying MockGenie to test output directory"
+    )
   endif()
 endblock()
 endif()
@@ -360,7 +433,7 @@ endif()
       ${ep_weight_sharing_ctx_gen_src_patterns}
       )
     onnxruntime_add_executable(ep_weight_sharing_ctx_gen ${ep_weight_sharing_ctx_gen_src})
-    target_include_directories(ep_weight_sharing_ctx_gen PRIVATE ${ONNXRUNTIME_ROOT} ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT} ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
+    target_include_directories(ep_weight_sharing_ctx_gen PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES})
     if (WIN32)
       target_compile_options(ep_weight_sharing_ctx_gen PRIVATE ${disabled_warnings})
       if (NOT DEFINED SYS_PATH_LIB)
@@ -380,23 +453,6 @@ endif()
 
     set_target_properties(ep_weight_sharing_ctx_gen PROPERTIES FOLDER "ONNXRuntimeTest")
   endif()
-
-  # the debug node IO functionality uses static variables, so it is best tested
-  # in its own process
-  if(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS)
-    AddTest(
-      TARGET onnxruntime_test_debug_node_inputs_outputs
-      SOURCES
-        "${TEST_SRC_DIR}/debug_node_inputs_outputs/debug_node_inputs_outputs_utils_test.cc"
-        "${TEST_SRC_DIR}/providers/provider_test_utils.h"
-        ${onnxruntime_unittest_main_src}
-      LIBS ${onnxruntime_test_providers_libs} ${onnxruntime_test_common_libs}
-      DEPENDS ${all_dependencies}
-    )
-
-    target_compile_definitions(onnxruntime_test_debug_node_inputs_outputs
-      PRIVATE DEBUG_NODE_INPUTS_OUTPUTS)
-  endif(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS)
 
   #some ETW tools
   if(WIN32 AND onnxruntime_ENABLE_INSTRUMENT)

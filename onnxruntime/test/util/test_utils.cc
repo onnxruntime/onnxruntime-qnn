@@ -3,19 +3,17 @@
 
 #include "test/util/include/test_utils.h"
 
-#include "core/common/narrow.h"
-#include "core/common/span_utils.h"
-#include "core/framework/ort_value.h"
-#include "core/graph/onnx_protobuf.h"
-#include "core/session/inference_session.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/framework/tensorprotoutils.h"
+#include <algorithm>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include "gmock/gmock.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/util/include/asserts.h"
 #include "test/util/include/test/test_environment.h"
-#include "test/util/include/inference_session_wrapper.h"
-
-#include "gmock/gmock.h"
 
 namespace onnxruntime {
 namespace test {
@@ -187,7 +185,7 @@ static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_b
   std::ifstream stream{std::basic_string<ORTCHAR_T>{model_path},
                        std::ios::in | std::ios::binary | std::ios::ate};
   QNN_ASSERT(stream && "Failed to open file.");
-  const auto num_bytes = narrow<size_t>(stream.tellg());
+  const auto num_bytes = static_cast<size_t>(stream.tellg());
   byte_buffer.resize(num_bytes);
   stream.seekg(0);
   QNN_ASSERT(stream.read(reinterpret_cast<char*>(byte_buffer.data()), num_bytes) && "Failed to read file.");
@@ -239,7 +237,8 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                std::string_view log_id,
                                const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
-                               bool verify_outputs) {
+                               bool verify_outputs,
+                               Ort::CustomOpDomain* custom_op_domain) {
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
@@ -247,6 +246,9 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   // get expected output from CPU EP using public API
   //
   Ort::SessionOptions cpu_so;
+  if (custom_op_domain != nullptr) {
+    cpu_so.Add(*custom_op_domain);
+  }
   Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
 
   // fetch all outputs using public API
@@ -257,7 +259,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   Ort::AllocatorWithDefaultOptions allocator;
   for (size_t i = 0; i < output_count; ++i) {
     auto output_name = cpu_session.GetOutputNameAllocated(i, allocator);
-    output_names.push_back(output_name.release());
+    output_names.push_back(output_name.get());
   }
 
   Ort::RunOptions cpu_run_options;
@@ -265,6 +267,10 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
 
   std::vector<Ort::Value> expected_fetches;
   RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
+
+  if (params.graph_verifier) {
+    ort_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  }
 
   // Run with EP and verify the result
   Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
@@ -281,47 +287,8 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
     VerifyOutputs(output_names, expected_fetches, fetches, params);
   }
 
-  // TODO: graph_verifier requires internal graph access, commented out for public API migration
-  // if (params.graph_verifier) {
-  //   (*params.graph_verifier)(ort_session.GetGraph());
-  // }
-}
-
-void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
-                   std::unique_ptr<IExecutionProvider>, /* execution_provider */
-                   const std::function<void(const Graph&)>& /* check_graph */) {
-  std::vector<std::byte> model_data_buffer{};
-  const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
-
-  Ort::SessionOptions ort_so;
-
-  // Note: EP registration and graph verification require internal APIs
-  // These are not available in the public API, so we just test model loading
-  OrtSessionWrapper session_object(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
-
-  // Note: check_graph callback requires internal graph access, commented out for public API migration
-  // if (check_graph) {
-  //   check_graph(session_object.GetGraph());
-  // }
-}
-
-void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
-                        const ONNX_NAMESPACE::TensorShapeProto* shape2) {
-  EXPECT_NE(shape1, nullptr);
-  EXPECT_NE(shape2, nullptr);
-  EXPECT_EQ(shape1->dim_size(), shape2->dim_size()) << "Shapes do not have same rank";
-  auto min_dims = std::min(shape1->dim_size(), shape2->dim_size());
-  for (int i = 0; i < min_dims; ++i) {
-    auto dim1 = shape1->dim(i);
-    auto dim2 = shape2->dim(i);
-    EXPECT_EQ(dim1.has_dim_value(), dim2.has_dim_value());
-    if (dim1.has_dim_value()) {
-      EXPECT_EQ(dim1.dim_value(), dim2.dim_value());
-    }
-    EXPECT_EQ(dim1.has_dim_param(), dim2.has_dim_param());
-    if (dim1.has_dim_param()) {
-      EXPECT_EQ(dim1.dim_param(), dim2.dim_param());
-    }
+  if (params.graph_verifier) {
+    (*params.graph_verifier)(ort_session);
   }
 }
 

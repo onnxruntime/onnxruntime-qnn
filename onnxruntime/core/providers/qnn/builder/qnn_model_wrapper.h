@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -21,6 +22,7 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
+class OpTraceCollector;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -48,21 +50,31 @@ class QnnModelWrapper {
                   const Ort::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& validator_backend_handle,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
-                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr)
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
+                  OpTraceCollector* op_trace_collector = nullptr)
       : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
+        qnn_validator_interface_(qnn_validator_interface),
+        validator_backend_handle_(validator_backend_handle),
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
-        tensor_name_overrides_(tensor_name_overrides) {
+        tensor_name_overrides_(tensor_name_overrides),
+        op_trace_collector_(op_trace_collector) {
+    // Invariant: validator interface and handle must both be set or both be null.
+    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
+    assert((validator_backend_handle == nullptr) ==
+           (qnn_validator_interface.backendValidateOpConfig == nullptr));
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -194,6 +206,19 @@ class QnnModelWrapper {
     return is_constant_initializer;
   }
 
+  void MarkTensorAsFoldedConstant(const std::string& tensor_name) {
+    folded_constant_tensors_.insert(tensor_name);
+  }
+
+  bool IsFoldedConstant(const std::string& tensor_name) const {
+    return folded_constant_tensors_.count(tensor_name) > 0;
+  }
+
+  // Real graph initializer OR a tensor produced by a previous compile-time fold.
+  bool IsEffectivelyConstantInput(const std::string& tensor_name) const {
+    return IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name);
+  }
+
   // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
   static bool GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape);
 
@@ -212,7 +237,7 @@ class QnnModelWrapper {
   }
 
   Qnn_TensorType_t GetTensorType(const std::string& tensor_name) const {
-    if (IsConstantInput(tensor_name)) {
+    if (IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name)) {
       return QNN_TENSOR_TYPE_STATIC;
     } else if (IsGraphInput(tensor_name)) {
       return QNN_TENSOR_TYPE_APP_WRITE;
@@ -332,11 +357,15 @@ class QnnModelWrapper {
 
   Ort::Status UnpackInitializerData(const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& unpacked_tensor,
-                                    const bool unpack_4_bit_to_8_bit = true) const;
+                                    const bool unpack_sub_byte_to_8_bit = true) const;
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
+
+  const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
+    return model_tensors_map_;
+  }
 
   const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
@@ -410,6 +439,9 @@ class QnnModelWrapper {
   }
 
  private:
+  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
+                              std::string& error_msg) const;
+
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
                                    const std::vector<std::string>& names,
                                    std::vector<Qnn_Tensor_t>& tensor_wrappers,
@@ -465,6 +497,8 @@ class QnnModelWrapper {
   const Ort::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
+  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
+  const Qnn_BackendHandle_t& validator_backend_handle_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`
@@ -488,6 +522,14 @@ class QnnModelWrapper {
   const ApiPtrs api_ptrs_;
 
   std::unordered_map<std::string, std::string>* tensor_name_overrides_ = nullptr;
+
+  // Tensor names produced by compile-time Q/DQ folds; chained across hops.
+  std::unordered_set<std::string> folded_constant_tensors_;
+
+  // Non-owning pointer to the trace collector. Lifetime is managed by
+  // QnnModel::ComposeGraph (stack-allocated unique_ptr).
+  // Null when tracing is disabled.
+  OpTraceCollector* op_trace_collector_ = nullptr;
 };  // QnnModelWrapper
 
 template <typename T>
@@ -571,6 +613,21 @@ class BF16ConversionGuard {
   std::vector<std::string> input_names_;   // Store by value, not reference
   std::vector<std::string> output_names_;  // Store by value, not reference
 };
+
+// Adds ElementWiseNeuron operation=HARD_SWISH param to the model wrapper
+// alpha/beta are not accepted by HTP and hence are not explicitly set here
+inline void AddHardSwishNeuronParams(QnnModelWrapper& qnn_model_wrapper,
+                                     size_t node_index,
+                                     const std::string& node_name,
+                                     std::vector<std::string>& param_tensor_names) {
+  Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+  neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+  neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_HARD_SWISH;
+  QnnParamWrapper operation_param(node_index, node_name,
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+  param_tensor_names.push_back(operation_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+}
 
 }  // namespace qnn
 }  // namespace onnxruntime

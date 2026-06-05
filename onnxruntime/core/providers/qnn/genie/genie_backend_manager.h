@@ -8,6 +8,7 @@
 #include <psapi.h>
 #include <libloaderapi.h>
 #include <set>
+#include <unordered_set>
 #else
 #include <dlfcn.h>
 #endif

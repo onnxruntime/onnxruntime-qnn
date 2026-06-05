@@ -12,7 +12,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 
 - [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
 - [Build (Windows)](#build-windows)
-- [Pre-built Packages (Windows Only)](#pre-built-packages-windows-only)
+- [Pre-built Packages](#pre-built-packages)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
 - [Supported ONNX operators](#supported-onnx-operators)
@@ -25,6 +25,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Usage](#usage)
 - [Error handling](#error-handling)
 - [Add new operator support in QNN EP](#add-new-operator-support-in-qnn-ep)
+- [QNN User-Defined Operation (UDO)](#qnn-user-defined-operation-udo)
 - [Mixed precision support](#mixed-precision-support)
 - [LoRAv2 support](#lorav2-support)
 
@@ -38,23 +39,34 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.3.0         | v2.45.40           | v1.24.4              |
+| v2.2.0         | v2.46.0           | v1.24.4              |
 
-> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.0.zip).
+> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.4.zip).
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 
-## Pre-built Packages (Windows Only)
+## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - **Note**: The NuGet package only supports Windows ARM64 platform
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
     - Windows X64 (for quantizing models. see [Generating a quantized model](./QNN-ExecutionProvider.md#generating-a-quantized-model-x64-only))
+    - Linux ARM64 (for inferencing on local Qualcomm-powered Linux devices)
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
+- Linux ARM64 archive (`.tgz`)
+  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
+- Maven package (Android)
+  - **Note**: The Maven package supports Android ARM64
+  - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`
+  - This release is validated against the following dependency versions:
+    | Dependency | Maven Coordinate | Version |
+    |---|---|---|
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.45.0` |
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -205,6 +217,15 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"dump_qnn_ir_dlc_dir"`|Description|
 |---|---|
 |Directory path (string)|Directory path for dumping QNN IR DLC files. Only effective when `dump_qnn_ir_dlc` is enabled.|
+
+|`"enable_framework_op_trace"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable framework op tracing. Writes a JSON file that maps each ONNX operator (or fused group) to its corresponding QNN operator(s), records unsupported operators, and includes summary statistics. See `framework_op_trace_dir` to control the output location. The trace is produced from the QNN graph composition path: it is emitted on a fresh JIT compile and on AOT context-binary generation (when `ep.context_enable=1` writes a new EPContext model). It is **not** emitted when loading an existing EPContext model (cached run), because no graph composition occurs in that path; in that case an INFO log records that no trace file is written.|
+
+|`"framework_op_trace_dir"`|Description|
+|---|---|
+|Directory path (string)|Directory path for framework op trace JSON files. Only effective when `enable_framework_op_trace` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to (e.g. read-only mount, missing permissions), framework op tracing is disabled with a WARNING log and no trace file is produced. Trace files use the pattern `qnn_op_trace.json`.|
 
 |`"qnn_ir_backend_path"`|Description|
 |---|---|
@@ -1078,6 +1099,126 @@ To enable new operator support in EP, areas to visit:
 - Non-layout sensitive operator. [Enable Hardsigmoid for QNN EP using SDK support direct support](https://github.com/microsoft/onnxruntime/pull/20956)
 
 - Layout sensitive operator. [Add InstanceNormalization operator to QNN EP](https://github.com/microsoft/onnxruntime/pull/14867)
+
+
+## QNN User-Defined Operation (UDO)
+
+A **User-Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are not natively supported in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
+
+### Overview
+
+A UDO lets you define and register custom operations—describing their inputs, outputs, parameters, data types, and backend behavior—so they can run on:
+
+- CPU
+- HTP
+
+Once registered, UDOs integrate transparently into model conversion and runtime execution.
+
+#### Limitations
+
+**HTP UDO is not supported on Windows.** `qnn-op-package-generator` and the Hexagon toolchain only target HTP on Linux; the `x86_64-windows-msvc` host platform supports the CPU backend only. On Windows, CPU UDO must be generated with the `--gen_cmakelists` flag (see Step 2), which produces a `CMakeLists.txt`-based build instead of the Linux Makefile flow.
+
+**The shipped UDO unit test runs on Linux x86_64 only.** `qnn-op-package-generator` requires Python 3.10, while the Windows CI environment ships with Python 3.11+, so the end-to-end UDO build/run loop is currently gated on Linux x86_64. Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
+
+### UDO Workflow
+
+#### **Step 1: Create a UDO Configuration File**
+The configuration defines:
+- Operation name
+- Inputs / outputs
+- Parameter definitions
+- Supported data types
+- Backend information
+
+Schema references are available in the QNN SDK. You can also
+see [MyAddOpPackageCpu.xml](../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageCpu.xml) for CPU backend
+and [MyAddOpPackageHtp.xml](../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageHtp.xml) for HTP backend.
+
+#### **Step 2: Generate the UDO Package**
+
+Use the QNN Op Package Generator:
+
+```bash
+qnn-op-package-generator -p <path/to/op.xml> -o <output_dir>
+```
+
+The generator creates:
+- Package scaffolding
+- Interface provider
+- Backend-specific template code
+
+**Windows (CPU only):** the generator must be invoked from a `Developer PowerShell for VS 2022` shell with `python` and the `--gen_cmakelists` flag, which emits a `CMakeLists.txt` instead of a `Makefile`:
+
+```powershell
+python qnn-op-package-generator -p <path\to\op.xml> -o <output_dir> --gen_cmakelists
+```
+
+HTP UDO generation is not available on Windows (see Limitations).
+
+#### **Step 3: Implement Custom Operation**
+
+Fill in the generated skeleton:
+
+Your custom logic goes into `src/ops/*.cpp`.
+see [MyAddCPU.cpp](../../onnxruntime/test/providers/qnn/udo/MyAddCPU.cpp) for CPU backend
+and [MyAddHTP.cpp](../../onnxruntime/test/providers/qnn/udo/MyAddHTP.cpp) for HTP backend.
+
+#### **Step 4: Compile the UDO Package**
+
+Compile against the QNN SDK and backend toolchains to produce:
+
+- `lib<OpPackage>.so` — Implementation library
+- Registration library used by QNN runtime
+
+Note: To enable UDO compilation on CPU, you must prepare clang++:
+```
+wget https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz
+tar -xvf LLVM-21.1.8-Linux-X64.tar.xz
+export PATH=$(realpath ./LLVM-21.1.8-Linux-X64/bin/):$PATH
+```
+Note: To enable UDO compilation on HTP, you must prepare the Hexagon SDK:
+```
+wget https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.5.0.0/Hexagon_SDK_Linux.zip
+unzip Hexagon_SDK_Linux.zip
+export HEXAGON_SDK_ROOT=$(realpath Hexagon_SDK/6.5.0.0)
+```
+
+After Step 2 generated `<output_dir>/MyAddOpPackage/`, drop the implementation from Step 3 into `src/ops/MyAdd.cpp` and run `make` from inside the package directory.
+
+**CPU backend (`all_x86` target):**
+
+```bash
+export QNN_SDK_ROOT=<path-to-qnn-sdk>
+make -C <output_dir>/MyAddOpPackage all_x86
+# Output: <output_dir>/MyAddOpPackage/libs/x86_64-linux-clang/libMyAddOpPackage.so
+```
+
+**HTP backend (`htp_x86` target):**
+
+The HTP `htp_x86` target needs a Makefile that links the LLVM C++ runtime statically; use the
+[HTP_Makefile](../../onnxruntime/test/providers/qnn/udo/HTP_Makefile) shipped with this repo
+in place of the one produced by the generator.
+
+```bash
+export QNN_SDK_ROOT=<path-to-qnn-sdk>
+export HEXAGON_SDK_ROOT=<path-to-hexagon-sdk>/6.5.0.0
+cp onnxruntime/test/providers/qnn/udo/HTP_Makefile <output_dir>/MyAddOpPackage/Makefile
+make -C <output_dir>/MyAddOpPackage htp_x86
+# Output: <output_dir>/MyAddOpPackage/build/x86_64-linux-clang/libQnnMyAddOpPackage.so
+```
+
+#### **Step 5: Execute the Model with UDO**
+
+```
+./onnx_test_runner -v -e qnn -j 1 -i "backend_path|./libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_nam2e>[:<target2>]" <models>
+```
+
+For the whole pipeline, refer [udo unit test](../../cmake/onnxruntime_unittests_udo.cmake)
+
+### UDO References
+
+- https://docs.qualcomm.com/doc/80-63442-10/topic/tutorial1.html
+- https://docs.qualcomm.com/doc/80-63442-10/topic/op_package_gen_example.html
 
 
 ## Mixed precision support

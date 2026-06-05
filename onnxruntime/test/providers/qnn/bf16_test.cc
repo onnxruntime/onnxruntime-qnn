@@ -8,7 +8,6 @@
 
 #include "gtest/gtest.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
@@ -59,7 +58,7 @@ namespace test {
                                               ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                                               int opset = 18,
                                               float fp32_abs_err = 1e-2f) {
-  ORT_UNUSED_PARAMETER(input_shape);
+  QNN_TEST_UNUSED_PARAMETER(input_shape);
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";

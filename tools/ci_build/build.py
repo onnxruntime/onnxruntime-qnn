@@ -1065,7 +1065,7 @@ def main():
         # TODO: find asan DLL and copy it to onnxruntime/capi folder when args.enable_address_sanitizer is True and
         #  the target OS is Windows
         if args.build_wheel:
-            nightly_build = bool(os.getenv("NIGHTLY_BUILD") == "1")
+            nightly_build = args.nightly_build
             build_python_wheel(
                 source_dir,
                 build_dir,
@@ -1110,7 +1110,9 @@ def main():
                 args.version_suffix,
                 use_ninja=(args.cmake_generator == "Ninja"),
                 target_arch=(
-                    "arm64ec"
+                    "arm64x"
+                    if getattr(args, "arm64ec", False) and getattr(args, "buildasx", False)
+                    else "arm64ec"
                     if getattr(args, "arm64ec", False)
                     else "arm64"
                     if getattr(args, "arm64", False)

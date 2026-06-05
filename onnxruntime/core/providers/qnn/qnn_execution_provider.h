@@ -18,9 +18,11 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn/qnn_node_compute_info_base.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
@@ -92,7 +94,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
-                               std::vector<const OrtNode*>& supported_nodes) const;
+                               std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
@@ -118,6 +121,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
                                                  const Ort::Logger& logger);
 
+  // Framework op trace helpers. trace_ is populated incrementally during
+  // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
+  // function finalizes summary fields and writes the JSON file.
+  void CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph);
+
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
@@ -128,7 +136,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
     return GetProviderOptionPrefix(name_) + key;
   }
 
-  struct QnnNodeComputeInfo : OrtNodeComputeInfo {
+  struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
     static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
@@ -176,6 +184,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
+  bool prepare_only_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
@@ -203,6 +212,15 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
+
+  // === Framework op trace ===
+  bool enable_framework_op_trace_ = false;
+  std::string framework_op_trace_dir_;
+  // Accumulates the trace state for this session: unsupported nodes are pushed
+  // by GetSupportedNodes, per-subgraph mappings are pushed by CompileImpl, and
+  // CollectAndWriteFrameworkOpTrace finalizes/serializes.
+  qnn::FrameworkOpTrace trace_;
+
   bool enable_htp_extended_udma_mode_ = false;
 
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.

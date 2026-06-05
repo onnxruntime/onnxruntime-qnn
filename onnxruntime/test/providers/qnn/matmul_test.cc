@@ -9,8 +9,6 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
-
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -197,9 +195,7 @@ static void RunQDQPerChannelMatMulOpTest(
 
   if (enable_fp16_precision) {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -249,7 +245,9 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
   RunMatMulOpTest({3}, {3, 3, 2}, true, false);
   RunMatMulOpTest({2, 3}, {3}, false, false);
   RunMatMulOpTest({2, 3}, {3}, true, false);
+  RunMatMulOpTest({2, 3, 4}, {4, 2}, false, true);
   RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false);
+  RunMatMulOpTest({1, 1, 2, 2, 4}, {4, 2}, false, true);
 
   // Failed randomly on Linux
   // Expected: contains 36 values, where each value and its corresponding value in 16-byte object
@@ -284,7 +282,9 @@ TEST_F(QnnHTPBackendTests, MatMulOp) {
   RunMatMulOpTest({3}, {3, 3, 2}, true, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
   RunMatMulOpTest({2, 3}, {3}, false, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
   RunMatMulOpTest({2, 3}, {3}, true, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
+  RunMatMulOpTest({2, 3, 4}, {4, 2}, false, true, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
   RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
+  RunMatMulOpTest({1, 1, 2, 2, 4}, {4, 2}, false, true, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
 
   // Failed randomly on Linux
   // Expected: contains 18 values, where each value and its corresponding value in 16-byte object

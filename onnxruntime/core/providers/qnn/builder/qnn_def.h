@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -126,6 +127,8 @@ bool IsNpuBackend(QnnBackendType backend_type);
 bool IsGpuBackend(QnnBackendType backend_type);
 
 bool IsQpuBackend(QnnBackendType backend_type);
+
+std::string QnnBackendTypeToString(QnnBackendType backend_type);
 
 // constexpr config values
 constexpr const int kSleepMinLatency = 40;

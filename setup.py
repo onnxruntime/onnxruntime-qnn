@@ -198,7 +198,7 @@ else:
     ]
     libs.extend(qnn_deps)
 
-if is_manylinux:
+if is_manylinux or platform.system() == "Linux":
     data = list(dl_libs)
 else:
     data = list(libs)
@@ -354,7 +354,7 @@ setup(
     data_files=data_files,
     install_requires=install_requires,
     extras_require=extras_require,
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     keywords="onnx machine learning qnn qualcomm",
     classifiers=classifiers,
 )
