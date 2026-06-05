@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -512,6 +513,12 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
                          std::move(input_names), std::move(output_names), std::move(param_tensor_names));
     qnn_op_property_list_.push_back(std::move(qnn_op));
+
+    if (op_trace_collector_) {
+      op_trace_collector_->RecordOpMapping(qnn_node_name, qnn_node_type,
+                                           qnn_op_property_list_.back().GetOutputNames());
+    }
+
     return true;
   }
 }

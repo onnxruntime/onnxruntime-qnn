@@ -46,6 +46,11 @@ class IQnnNodeGroup {
   virtual const OrtNodeUnit* GetTargetNodeUnit() const = 0;
 
   // Returns a string representation of the IQnnNodeGroup's type.
+  // The returned string is used as a JSON key in the framework op trace
+  // (FrameworkOpTrace::summary::fusion_count). Changing it is a breaking
+  // change for any consumer that keys on fusion_count entries in the trace JSON.
+  // The canonical set of return values is the fusion registration map in
+  // qnn_node_group.cc (the kType string constant of each IQnnNodeGroup subclass).
   virtual std::string_view Type() const = 0;
 };
 
