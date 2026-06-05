@@ -10,7 +10,17 @@ permissions:
 
 on:
   workflow_call:
+    inputs:
+      target_py_vsn:
+        description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
+        type: string
+        default: '3.10'
   workflow_dispatch:
+    inputs:
+      target_py_vsn:
+        description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
+        type: string
+        default: '3.10'
 
 jobs:
   coverage-linux-x86_64:
@@ -45,7 +55,7 @@ jobs:
             exit 1
           fi
 
-          if echo "${changed}" | grep -qE 'onnxruntime/(core|test)/providers/qnn/'; then
+          if echo "${changed}" | grep -qE 'onnxruntime/(core|test)/providers/qnn/|^qcom/'; then
             echo "run=true" >> "${GITHUB_OUTPUT}"
           else
             echo "run=false" >> "${GITHUB_OUTPUT}"
@@ -59,9 +69,9 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: |
           # Python version does not affect C++ code coverage results.
-          # 3.10 matches DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
+          # Defaults to 3.10 to match DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
           python3 qcom/build_and_test.py \
-            --target-py-version 3.10 \
+            --target-py-version ${{ inputs.target_py_vsn }} \
             diff_coverage_linux_x86_64
 
       - name: Upload Coverage Report
