@@ -38,8 +38,10 @@ static void GetContextBinaryFileName(const std::string& onnx_ctx_file,
     int64_t is_main_context = 0;
     std::string ep_cache_context;
     for (const auto& attr : node.attribute()) {
-      if (attr.name() == "main_context") is_main_context = attr.i();
-      else if (attr.name() == "ep_cache_context") ep_cache_context = attr.s();
+      if (attr.name() == "main_context")
+        is_main_context = attr.i();
+      else if (attr.name() == "ep_cache_context")
+        ep_cache_context = attr.s();
     }
     if (is_main_context == 1) {
       ctx_bin_file_out = ep_cache_context;
@@ -253,14 +255,14 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPa
   };
 
   TestQDQModelAccuracy<uint8_t>(build_multi_partition_graph,
-                       qdq_model_fn,
-                       provider_options,  // QnnMockSSR.dll
-                       13,
-                       ExpectedEPNodeAssignment::Some,
-                       QDQTolerance(),
-                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                       context_model_file,
-                       run_session_opts);
+                                qdq_model_fn,
+                                provider_options,  // QnnMockSSR.dll
+                                13,
+                                ExpectedEPNodeAssignment::Some,
+                                QDQTolerance(),
+                                OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                                context_model_file,
+                                run_session_opts);
 
   CleanUpCtxFile(context_model_file);
 }

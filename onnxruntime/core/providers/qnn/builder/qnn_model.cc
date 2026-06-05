@@ -508,9 +508,12 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
     priority_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
     priority_config.priority = QNN_PRIORITY_NORMAL;
     auto ctx_priority = qnn_backend_manager_->GetContextPriority();
-    if (ctx_priority == ContextPriority::LOW) priority_config.priority = QNN_PRIORITY_LOW;
-    else if (ctx_priority == ContextPriority::NORMAL_HIGH) priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
-    else if (ctx_priority == ContextPriority::HIGH) priority_config.priority = QNN_PRIORITY_HIGH;
+    if (ctx_priority == ContextPriority::LOW)
+      priority_config.priority = QNN_PRIORITY_LOW;
+    else if (ctx_priority == ContextPriority::NORMAL_HIGH)
+      priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
+    else if (ctx_priority == ContextPriority::HIGH)
+      priority_config.priority = QNN_PRIORITY_HIGH;
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
     QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
