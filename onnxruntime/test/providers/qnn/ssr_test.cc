@@ -588,7 +588,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
     reference_output.assign(data, data + count);
   }
 
-  // SSR run with QnnMockSSR.dll.
+  // SSR run with QnnMockSSR.dll — both sessions share the same EP device.
   {
     Ort::SessionOptions so1;
     so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -596,34 +596,63 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
 
+    Ort::SessionOptions so2;
+    so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+    so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
 #if defined(_WIN32)
     std::wstring ctx_path1_w(ctx_path1.begin(), ctx_path1.end());
+    std::wstring ctx_path2_w(ctx_path2.begin(), ctx_path2.end());
     ScopedOrtSession scoped1(std::move(registered_ep_device),
                              Ort::Session(*ort_env, ctx_path1_w.c_str(), so1));
+    Ort::Session session2(*ort_env, ctx_path2_w.c_str(), so2);
 #else
     ScopedOrtSession scoped1(std::move(registered_ep_device),
                              Ort::Session(*ort_env, ctx_path1.c_str(), so1));
+    Ort::Session session2(*ort_env, ctx_path2.c_str(), so2);
 #endif
 
-    auto in_name = scoped1.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
-    auto out_name = scoped1.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
-    auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
-                                                 input_shape.data(), input_shape.size());
-    const char* input_names[] = {in_name.get()};
-    const char* output_names[] = {out_name.get()};
+    // Run session 1 — SSR fires on first graphExecute, recovery succeeds.
+    auto in_name1 = scoped1.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto out_name1 = scoped1.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto input_tensor1 = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                  input_shape.data(), input_shape.size());
+    const char* input_names1[] = {in_name1.get()};
+    const char* output_names1[] = {out_name1.get()};
 
-    auto outputs = scoped1.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1,
-                                         output_names, 1);
-    ASSERT_EQ(outputs.size(), 1u);
-    ASSERT_TRUE(outputs[0].IsTensor());
+    auto outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names1, &input_tensor1, 1,
+                                          output_names1, 1);
+    ASSERT_EQ(outputs1.size(), 1u);
+    ASSERT_TRUE(outputs1[0].IsTensor());
 
-    // Verify accuracy: compare SSR-recovered output against reference.
-    auto* ssr_data = outputs[0].GetTensorData<float>();
-    auto count = outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
-    ASSERT_EQ(count, reference_output.size());
-    for (size_t i = 0; i < count; ++i) {
-      EXPECT_NEAR(ssr_data[i], reference_output[i], 1e-5f)
-          << "Output mismatch at index " << i;
+    // Run session 2 — reuses the recovered context via GetQnnContext(0).
+    auto in_name2 = session2.GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto out_name2 = session2.GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+    auto input_tensor2 = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                  input_shape.data(), input_shape.size());
+    const char* input_names2[] = {in_name2.get()};
+    const char* output_names2[] = {out_name2.get()};
+
+    auto outputs2 = session2.Run(Ort::RunOptions{}, input_names2, &input_tensor2, 1,
+                                 output_names2, 1);
+    ASSERT_EQ(outputs2.size(), 1u);
+    ASSERT_TRUE(outputs2[0].IsTensor());
+
+    // Verify accuracy for both sessions against reference.
+    auto* ssr_data1 = outputs1[0].GetTensorData<float>();
+    auto count1 = outputs1[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    ASSERT_EQ(count1, reference_output.size());
+    for (size_t i = 0; i < count1; ++i) {
+      EXPECT_NEAR(ssr_data1[i], reference_output[i], 1e-5f)
+          << "Session 1 output mismatch at index " << i;
+    }
+
+    auto* ssr_data2 = outputs2[0].GetTensorData<float>();
+    auto count2 = outputs2[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    ASSERT_EQ(count2, reference_output.size());
+    for (size_t i = 0; i < count2; ++i) {
+      EXPECT_NEAR(ssr_data2[i], reference_output[i], 1e-5f)
+          << "Session 2 output mismatch at index " << i;
     }
   }
 
