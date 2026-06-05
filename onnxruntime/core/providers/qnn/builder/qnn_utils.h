@@ -25,6 +25,7 @@
 #include "QnnInterface.h"
 #include "QnnTypes.h"
 
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -126,7 +127,7 @@ std::ostream& operator<<(std::ostream& out, const QnnOpConfigWrapper& op_conf_wr
 Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
                            Qnn_DataType_t& tensor_data_type,
-                           bool is_backend_gpu = false);
+                           QnnBackendType backend_type = QnnBackendType::CPU);
 
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
@@ -143,13 +144,13 @@ class UniqueNameGeneratorImpl {
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
 
-std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMap(bool is_backend_gpu);
-std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMapQuantize(bool is_backend_gpu);
+std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMap(QnnBackendType backend_type);
+std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMapQuantize(QnnBackendType backend_type);
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized = false,
-                               bool is_backend_gpu = false);
+                               QnnBackendType backend_type = QnnBackendType::CPU);
 
 inline Ort::Status GetOnnxTensorElemDataType(const OrtValueInfo* value_info,
                                              /*out*/ ONNXTensorElementDataType& onnx_data_type) {
@@ -813,6 +814,31 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
    Intended for ORT logging
 */
 std::string PtrToString(const void* const ptr);
+
+// Re-bias each 4-bit nibble of a packed UInt4x2 buffer by -8 so the values
+// are interpretable as QNN_DATATYPE_SFIXED_POINT_4 in-place.
+inline void TransformUnsignedToSignedFixedPoint4(std::vector<uint8_t>& quant_data,
+                                                 int64_t num_blocks,
+                                                 int64_t block_size) {
+  constexpr uint8_t zero_point = 8;
+  for (int64_t block_idx = 0; block_idx < num_blocks; ++block_idx) {
+    for (int64_t val_idx = 0; val_idx < (block_size / 2); ++val_idx) {
+      SafeInt<int64_t> safe_index = block_idx;
+      safe_index *= (block_size / 2);
+      safe_index += val_idx;
+
+      size_t index = gsl::narrow_cast<size_t>(safe_index);
+      uint8_t quant_value_4x2 = quant_data[index];
+
+      int8_t quant_upper_value =
+          gsl::narrow_cast<int8_t>(((quant_value_4x2 >> 4) & 0xF) - zero_point);
+      int8_t quant_lower_value =
+          gsl::narrow_cast<int8_t>(((quant_value_4x2 >> 0) & 0xF) - zero_point);
+
+      quant_data[index] = ((quant_upper_value & 0xF) << 4) | (quant_lower_value & 0xF);
+    }
+  }
+}
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime
