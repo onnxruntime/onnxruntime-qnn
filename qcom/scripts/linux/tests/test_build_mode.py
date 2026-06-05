@@ -197,6 +197,7 @@ def test_internal_symbol_public_task_passes_required_build_flags(tmp_path: Path)
         venv_path=tmp_path / "venv",
         config="Release",
         target_py_version=None,
+        use_ort_prebuilt=False,
         ort_prebuilt_root=None,
         qairt_sdk_root=None,
         docker_ccache_root=None,

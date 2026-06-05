@@ -253,7 +253,7 @@ test_runner=
 case "${target_platform}" in
   linux)
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
-    if [ -n "${ort_prebuilt_root}" ]; then
+    if [ -n "${use_ort_prebuilt}" ]; then
       qnn_args+=("--ort_home")
       qnn_args+=("${ort_prebuilt_root}")
     fi
@@ -319,7 +319,7 @@ case "${target_platform}" in
     fi
 
     qnn_args=(--use_qnn static_lib --qnn_home "${qairt_sdk_root}")
-    if [ -n "${ort_prebuilt_root}" ]; then
+    if [ -n "${use_ort_prebuilt}" ]; then
       qnn_args+=("--ort_home")
       qnn_args+=("${ort_prebuilt_root}")
     fi
@@ -429,7 +429,7 @@ else
     # Run tests using our ctest wrapper.
     log_info "-=-=-=- Running unit tests -=-=-=-=-"
     test_runner_args=(--python="${python_for_build}")
-    if [ -n "${ort_prebuilt_root}" ]; then
+    if [ -n "${use_ort_prebuilt}" ]; then
       test_runner_args+=(--skip-model-tests)
     fi
     "./$(basename ${test_runner})" "${test_runner_args[@]}"
