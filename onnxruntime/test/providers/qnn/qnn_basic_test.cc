@@ -13,6 +13,7 @@
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
+#include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -218,6 +219,118 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
   }
 }
 
+// Verifies that ParseOpPackages handles a Windows drive-letter path correctly.
+// On Windows, the colon-delimited entry contains an extra ':' from the drive letter
+// (e.g., "MyOp:C:\\path\\foo.dll:Symbol"). The parser must merge the drive letter and
+// the rest of the path into a single token without producing a dangling string_view.
+// On other platforms, the same code path is exercised with a POSIX-style path so that
+// a regression in the cross-platform parsing logic is caught everywhere.
+TEST(QnnEP, ParseOpPackages_AbsolutePath) {
+  Ort::Logger logger;
+  std::vector<onnxruntime::qnn::OpPackage> op_packages;
+
+#if defined(_WIN32)
+  // Create a real placeholder file at a Windows-style absolute path so std::filesystem::exists
+  // returns true and the drive-letter merge branch is exercised.
+  std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
+  std::filesystem::path tmp_dll = tmp_dir / "ort_qnn_parse_oppkg_test.dll";
+  std::ofstream(tmp_dll).put('\0');  // create empty placeholder
+  ASSERT_TRUE(std::filesystem::exists(tmp_dll));
+
+  const std::string entry = "MyOp:" + tmp_dll.string() + ":MyAddOpPackageInterfaceProvider";
+  onnxruntime::ParseOpPackages(entry, op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].op_type, "MyOp");
+  EXPECT_EQ(op_packages[0].path, tmp_dll.string());
+  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_TRUE(op_packages[0].target.empty());
+
+  // Variant with explicit ":CPU" target.
+  op_packages.clear();
+  const std::string entry_with_target = entry + ":CPU";
+  onnxruntime::ParseOpPackages(entry_with_target, op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].path, tmp_dll.string());
+  EXPECT_EQ(op_packages[0].target, "CPU");
+
+  std::filesystem::remove(tmp_dll);
+#else
+  // POSIX path — exercises the same parsing pipeline (without the Windows merge branch).
+  const std::string entry = "MyOp:/tmp/foo.so:MyAddOpPackageInterfaceProvider";
+  onnxruntime::ParseOpPackages(entry, op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].op_type, "MyOp");
+  EXPECT_EQ(op_packages[0].path, "/tmp/foo.so");
+  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_TRUE(op_packages[0].target.empty());
+
+  op_packages.clear();
+  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].target, "CPU");
+#endif
+}
+
+#if defined(_WIN32)
+// Regression test for the Windows drive-letter merge: parsing of the config string must be
+// deterministic in the input — same string → same parse, regardless of filesystem state.
+// If the merge were gated on std::filesystem::exists(), a missing DLL would silently mis-parse
+// `MyOp:C:\path\foo.dll:Symbol` as 4 tokens with "C" landing in the path slot.
+TEST(QnnEP, ParseOpPackages_AbsolutePath_NotYetOnDisk) {
+  Ort::Logger logger;
+  std::vector<onnxruntime::qnn::OpPackage> op_packages;
+
+  // Path that does NOT exist on disk — only the token shape (single-letter drive prefix) drives the merge.
+  const std::string non_existent_path = "C:\\does\\not\\exist\\ort_qnn_parse_oppkg_not_on_disk.dll";
+  ASSERT_FALSE(std::filesystem::exists(non_existent_path));
+
+  const std::string entry = "MyOp:" + non_existent_path + ":MyAddOpPackageInterfaceProvider";
+  onnxruntime::ParseOpPackages(entry, op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].op_type, "MyOp");
+  EXPECT_EQ(op_packages[0].path, non_existent_path);
+  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_TRUE(op_packages[0].target.empty());
+
+  // Variant with explicit ":CPU" target — the merge must leave room for the trailing target token.
+  op_packages.clear();
+  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].path, non_existent_path);
+  EXPECT_EQ(op_packages[0].target, "CPU");
+}
+#endif
+
+// Verifies that ParseOpPackages preserves a relative path as-is. Relative paths must NOT
+// trigger the Windows drive-letter merge branch (which is gated on splitStrings[1] being a
+// single ASCII letter), so the parser should pass the path through to op_packages unchanged.
+TEST(QnnEP, ParseOpPackages_RelativePath) {
+  Ort::Logger logger;
+  std::vector<onnxruntime::qnn::OpPackage> op_packages;
+
+#if defined(_WIN32)
+  // No drive letter → no extra ':' → no merge needed. Path passes through verbatim.
+  const std::string entry = "MyOp:foo.dll:MyAddOpPackageInterfaceProvider";
+#else
+  const std::string entry = "MyOp:foo.so:MyAddOpPackageInterfaceProvider";
+#endif
+  onnxruntime::ParseOpPackages(entry, op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].op_type, "MyOp");
+#if defined(_WIN32)
+  EXPECT_EQ(op_packages[0].path, "foo.dll");
+#else
+  EXPECT_EQ(op_packages[0].path, "foo.so");
+#endif
+  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_TRUE(op_packages[0].target.empty());
+
+  op_packages.clear();
+  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
+  ASSERT_EQ(op_packages.size(), 1u);
+  EXPECT_EQ(op_packages[0].target, "CPU");
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
@@ -372,7 +485,7 @@ static void AddSerializerConfigs(TestBackend serializer_backend, ProviderOptions
       serializer_path_key = "qnn_saver_path";
       break;
     default:
-      assert(false && "Invalid serializer backend.");
+      assert(false && "AddSerializerConfigs: only Ir and Saver are valid serializer backends.");
       return;
   }
 
@@ -560,28 +673,6 @@ TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
       << "params.bin not found in cwd or ./saver_output/";
 }
 
-struct ModelAndBuilder {
-  std::string model_data;
-  ModelTestBuilder builder;
-};
-
-// Creates a model in memory. Input feeds and output names can be accessed from result.builder.
-static void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
-                                const GetTestModelFn& model_build_fn,
-                                const std::string& /*model_name*/,
-                                int opset_version = 18) {
-  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
-  result = std::make_unique<ModelAndBuilder>();
-  model_build_fn(result->builder);
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
-  }
-  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  result->builder.model_.SerializeToString(&result->model_data);
-}
-
 // Runs a session and verifies the outputs. Can be run by individual threads.
 static void RunSessionAndVerify(Ort::Session& session, const Ort::RunOptions& run_options,
                                 const std::unordered_map<std::string, Ort::Value>& feeds,
@@ -668,8 +759,7 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   CreateModelInMemory(model,
                       F32BuildAdd3Tensors(TestInputDef<float>(shape, false, input_data),
                                           TestInputDef<float>(shape, false, input_data),
-                                          TestInputDef<float>(shape, false, input_data)),
-                      "add3.f32");
+                                          TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -744,8 +834,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -795,8 +884,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -856,8 +944,7 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -908,8 +995,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -966,14 +1052,16 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx", TestBackend::Htp);
 }
 
-// Test that QNN Ir generates the expected file for a model meant to run on the QNN HTP backend.
-
-TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN HTP backend,
+// using the HTP backend's validator.
+TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   BackendSupport ir_backend_support = IsIRBackendSupported();
   if (ir_backend_support == BackendSupport::UNSUPPORTED) {
     GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
   }
   ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
 
@@ -982,7 +1070,7 @@ TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                                    TestBackend::Htp,  // backend
+                                    TestBackend::Htp,  // backend (also used as the validator)
                                     TestBackend::Ir);  // serializer backend
 
   // File names are taken from graph node names. Just make sure that we got one .dlc
@@ -1567,7 +1655,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
   TestInputDef<float> input_def(shape, false, input_data);
 
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), "sigmoid.qdq", 21);
+  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), 21);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -1989,7 +2077,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
   TestInputDef<float> input_def({1, 2, 2, 2}, false, input_data);
 
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), "sigmoid.qdq", 21);
+  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), 21);
 
   ProviderOptions provider_options;
 #if defined(_WIN32)
@@ -2025,8 +2113,15 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// Test that QNN Ir generates the expected files for a model meant to run on any QNN backend.
-TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN CPU backend,
+// using the CPU backend's validator.
+TEST_F(QnnCPUBackendTests, QnnIr_CpuValidator_OutputFiles) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
 
   // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
@@ -2034,7 +2129,32 @@ TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                                    TestBackend::Ir,   // backend
+                                    TestBackend::Cpu,  // backend (also used as the validator)
+                                    TestBackend::Ir);  // serializer backend
+
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
+// Test that QNN Ir generates the expected DLC file using the QnnIr backend itself as the validator.
+// Only requires host-side compilation capability (backendCreate + backendValidateOpConfig) and does
+// NOT require inference hardware, so it can run on Windows x64 development hosts.
+TEST_F(QnnIRBackendTests, QnnIr_IrValidator_OutputFiles) {
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                                    TestBackend::Ir,   // backend (also used as the validator)
                                     TestBackend::Ir);  // serializer backend
 
   // File names are taken from graph node names. Just make sure that we got one .dlc
@@ -2094,7 +2214,7 @@ static GetTestModelFn BuildPartitionAddedInputModel() {
 TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   // Build model using public API
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildPartitionAddedInputModel(), "partition_added_input", 13);
+  CreateModelInMemory(model, BuildPartitionAddedInputModel(), 13);
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
@@ -2187,7 +2307,7 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
 TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization) {
   // Build model using public API
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildPartitionAddedInputQDQModel(), "partition_added_input_qdq", 13);
+  CreateModelInMemory(model, BuildPartitionAddedInputQDQModel(), 13);
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
@@ -2284,7 +2404,7 @@ static GetTestModelFn BuildGraphInputFanoutQDQModel() {
 //      to avoid passing more inputs to graphExecute than the QNN graph has APP_WRITE tensors.
 TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInput) {
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), "graph_input_fanout_qdq", 18);
+  CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), 18);
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_DISABLE_ALL);
@@ -2370,7 +2490,7 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnx) {
 
   // Build model using helper function
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildMultiReluModelForIOOrderTest(), "multi_relu_io_order", 13);
+  CreateModelInMemory(model, BuildMultiReluModelForIOOrderTest(), 13);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -2490,7 +2610,7 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantiz
 
   // Build QDQ model using helper function
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildMultiSigmoidQDQModelForIOOrderTest<uint8_t>(), "multi_sigmoid_qdq_io_order", 21);
+  CreateModelInMemory(model, BuildMultiSigmoidQDQModelForIOOrderTest<uint8_t>(), 21);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;

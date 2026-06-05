@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -239,8 +240,19 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
                                        std::move(params));
 
   std::string error_msg;
-  RETURN_IF_NOT(op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg), error_msg.c_str());
+  return ValidateQnnNode(op_config_wrapper, error_msg);
+}
 
+Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
+  bool ok;
+  if (validator_backend_handle_ != nullptr) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
+
+    ok = op_config.QnnGraphOpValidation(qnn_validator_interface_, validator_backend_handle_, error_msg);
+  } else {
+    ok = op_config.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+  }
+  RETURN_IF_NOT(ok, error_msg.c_str());
   return Ort::Status();
 }
 
@@ -488,19 +500,25 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
-    bool rt = op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+    Ort::Status validation_status = ValidateQnnNode(op_config_wrapper, error_msg);
 
-    if (!rt) {
+    if (!validation_status.IsOK()) {
       // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
       // specific validation error (instead of "failed to add node").
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, error_msg.c_str());
     }
-    return rt;
+    return validation_status.IsOK();
   } else {
     // Standard execution - just add the node to the op list
     QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
                          std::move(input_names), std::move(output_names), std::move(param_tensor_names));
     qnn_op_property_list_.push_back(std::move(qnn_op));
+
+    if (op_trace_collector_) {
+      op_trace_collector_->RecordOpMapping(qnn_node_name, qnn_node_type,
+                                           qnn_op_property_list_.back().GetOutputNames());
+    }
+
     return true;
   }
 }
@@ -733,6 +751,16 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const OrtValueInfo* zp_tensor,
   };
 
   switch (onnx_data_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2: {  // INT2 zero-points are unpacked as 8-bit values for QNN
+      auto int8_span = ReinterpretAsSpan<const int8_t>(gsl::make_span(initializer_bytes));
+      std::transform(int8_span.begin(), int8_span.end(), std::back_inserter(zero_points),
+                     [](int8_t masked_zp) -> int32_t {
+                       // Undo the lower-2-bit masking applied during unpacking to recover the true signed value.
+                       int8_t zp = Int2x4::SignExtendLower2Bits(std::byte(masked_zp));
+                       return -static_cast<int32_t>(zp);
+                     });
+      break;
+    }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4: {  // INT4 zero-points are unpacked as 8-bit values for QNN
       auto int8_span = ReinterpretAsSpan<const int8_t>(gsl::make_span(initializer_bytes));
       std::transform(int8_span.begin(), int8_span.end(), std::back_inserter(zero_points),
@@ -749,6 +777,7 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const OrtValueInfo* zp_tensor,
       transform_zero_points(ReinterpretAsSpan<const int8_t>(gsl::make_span(initializer_bytes)));
       break;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:  // UINT4 zero-points are unpacked as 8-bit values for QNN
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:  // UINT2 zero-points are unpacked as 8-bit values for QNN
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
       transform_zero_points(ReinterpretAsSpan<const uint8_t>(gsl::make_span(initializer_bytes)));
       break;
@@ -1025,7 +1054,7 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
 
 Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializer,
                                                    std::vector<uint8_t>& unpacked_tensor,
-                                                   const bool unpack_4_bit_to_8_bit) const {
+                                                   const bool unpack_sub_byte_to_8_bit) const {
   const ORTCHAR_T* model_path = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
   RETURN_IF_ERROR(utils::UnpackInitializerData(api_ptrs_.ort_api,
@@ -1040,16 +1069,24 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
   ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
 
-  // If this is an int4,
-  // If unpack_4_bit_to_8_bit is true, we need to unpack it because QNN HTP treats int4 as a full int8.
-  if (unpack_4_bit_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
+  // If unpack_sub_byte_to_8_bit is true, unpack 2-bit/4-bit elements to one byte each because
+  // QNN HTP treats sub-byte int2/int4 as a full int8.
+  if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
     std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
     const size_t num_int4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
     RETURN_IF_ERROR(utils::UnpackInt4ToInt8<true>(num_int4_elems, unpacked_tensor));
-  } else if (unpack_4_bit_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4) {
+  } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4) {
     std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
     const size_t num_uint4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
     RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_uint4_elems, unpacked_tensor));
+  } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
+    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
+    const size_t num_int2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<true>(num_int2_elems, unpacked_tensor));
+  } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2) {
+    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
+    const size_t num_uint2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<false>(num_uint2_elems, unpacked_tensor));
   }
 
   return Ort::Status();

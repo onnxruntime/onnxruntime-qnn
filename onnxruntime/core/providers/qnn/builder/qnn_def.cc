@@ -647,5 +647,28 @@ bool IsQpuBackend(QnnBackendType backend_type) {
   return IsNpuBackend(backend_type) || IsGpuBackend(backend_type);
 }
 
+std::string QnnBackendTypeToString(QnnBackendType backend_type) {
+  switch (backend_type) {
+    case QnnBackendType::CPU:
+      return "cpu";
+    case QnnBackendType::GPU:
+      return "gpu";
+    case QnnBackendType::DSP:
+      return "dsp";
+    case QnnBackendType::HTP:
+      return "htp";
+    case QnnBackendType::HTP_FP16:
+      return "htp_fp16";
+    case QnnBackendType::SERIALIZER:
+      return "ir";
+  }
+  // Unreachable for well-formed enum values; -Wswitch ensures every enumerator
+  // above is handled. The fallback exists only for defensive runtime safety
+  // (e.g. ill-formed enum value via reinterpret_cast). ORT_THROW is intentionally
+  // not used here because GetStackTrace is a local symbol in libonnxruntime.so
+  // and is not available to plugin EPs at runtime - see common/qnn_safeint.h.
+  return "unknown";
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime

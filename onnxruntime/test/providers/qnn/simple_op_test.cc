@@ -1839,6 +1839,45 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU16) {
                          ExpectedEPNodeAssignment::All);
 }
 
+// Test that QDQ uint16 HardSigmoid -> Mul produces correct output
+// Reproduces MobileNetV3 SE block accuracy bug where HardSigmoid output scale must be
+// overridden to 1/65536 for HTP to compute Mul correctly
+TEST_F(QnnHTPBackendTests, HardSigmoidMul_QU16_ScaleOverride) {
+  // Build: input -> HardSigmoid -> Mul(input, hardsigmoid_output) -> output
+  // This mimics SE attention: x * sigmoid(fc(x))
+  auto input_def = TestInputDef<float>({1, 16, 1, 1}, false, GetFloatDataInRange(-3.0f, 3.0f, 16));
+
+  auto build_f32_model = [input_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    builder.AddNode("HardSigmoid", "HardSigmoid", {"input"}, {"hsig_out"});
+    builder.AddNode("Mul", "Mul", {"input", "hsig_out"}, {"output"});
+    builder.MakeOutput("output");
+  };
+
+  auto build_qdq_model = [input_def](ModelTestBuilder& builder,
+                                     std::vector<QuantParams<uint16_t>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<uint16_t> input_qparams = GetTestInputQuantParams<uint16_t>(input_def);
+
+    std::string input_dq = AddQDQNodePair<uint16_t>(builder, "input_qdq", "input",
+                                                    input_qparams.scale, input_qparams.zero_point, true);
+    builder.AddNode("HardSigmoid", "HardSigmoid", {input_dq}, {"hsig_out"});
+    std::string hsig_dq = AddQDQNodePair<uint16_t>(builder, "hsig_qdq", "hsig_out",
+                                                   1.0f / 65536.0f, static_cast<uint16_t>(0), true);
+    builder.AddNode("Mul", "Mul", {input_dq, hsig_dq}, {"mul_out"});
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "output_qdq", "mul_out",
+                                                    output_qparams[0].scale, output_qparams[0].zero_point, true);
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  GetTestQDQModelFn<uint16_t> qdq_fn = build_qdq_model;
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance());
+}
+
 // Test that QDQ HardSigmoid is supported by QNN EP.
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QDQ_Supported) {
   RunQDQOpTest<uint8_t>("HardSigmoid",

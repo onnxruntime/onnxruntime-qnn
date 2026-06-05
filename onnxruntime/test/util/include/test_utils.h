@@ -74,7 +74,8 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                std::string_view log_id,
                                const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params = EPVerificationParams(),
-                               bool verify_outputs = true);
+                               bool verify_outputs = true,
+                               Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 void RunWithEP(Ort::Session& ort_session,
                const Ort::RunOptions& ort_ro,
