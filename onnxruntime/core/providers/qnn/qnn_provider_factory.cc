@@ -497,6 +497,27 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 
 }  // namespace onnxruntime
 
+namespace {
+// Parse the host ORT version string ("1.X.Y") and return the API version (the
+// minor component). Returns 0 if the string is null, malformed, or major != 1.
+// The "minor == API version" contract is documented for ORT 1.x; rejecting
+// non-1 majors keeps a hypothetical ORT 2.x from being silently misparsed.
+uint32_t ParseRuntimeOrtApiVersion(const char* version_str) {
+  if (version_str == nullptr) {
+    return 0;
+  }
+  int major = 0;
+  int minor = 0;
+  if (std::sscanf(version_str, "%d.%d", &major, &minor) < 2) {
+    return 0;
+  }
+  if (major != 1 || minor < 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>(minor);
+}
+}  // namespace
+
 extern "C" {
 //
 // Public symbols
