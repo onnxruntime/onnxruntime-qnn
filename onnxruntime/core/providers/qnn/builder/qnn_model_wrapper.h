@@ -22,6 +22,7 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
+class OpTraceCollector;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -55,7 +56,8 @@ class QnnModelWrapper {
                   const GraphInputOutputInfo& graph_outputs,
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
-                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr)
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
+                  OpTraceCollector* op_trace_collector = nullptr)
       : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
@@ -67,7 +69,8 @@ class QnnModelWrapper {
         qnn_backend_type_(qnn_backend_type),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
-        tensor_name_overrides_(tensor_name_overrides) {
+        tensor_name_overrides_(tensor_name_overrides),
+        op_trace_collector_(op_trace_collector) {
     // Invariant: validator interface and handle must both be set or both be null.
     // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
     assert((validator_backend_handle == nullptr) ==
@@ -360,6 +363,10 @@ class QnnModelWrapper {
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
+  const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
+    return model_tensors_map_;
+  }
+
   const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
   // Unpack scales from initializer (1 scale for per-tensor, > 1 for per-axis or per-block).
@@ -518,6 +525,11 @@ class QnnModelWrapper {
 
   // Tensor names produced by compile-time Q/DQ folds; chained across hops.
   std::unordered_set<std::string> folded_constant_tensors_;
+
+  // Non-owning pointer to the trace collector. Lifetime is managed by
+  // QnnModel::ComposeGraph (stack-allocated unique_ptr).
+  // Null when tracing is disabled.
+  OpTraceCollector* op_trace_collector_ = nullptr;
 };  // QnnModelWrapper
 
 template <typename T>

@@ -213,6 +213,19 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
 
+# qnn_op_tracing_serialization.cc is compiled directly into the test binary so
+# that QnnFrameworkOpTraceUnit tests can call ComputeTraceSummary and
+# SerializeFrameworkOpTrace without linking against the EP library.
+# This translation unit intentionally does NOT include ort_api.h, avoiding
+# the ORT_API_MANUAL_INIT mismatch linker error on Windows.  It is needed in
+# both shared-lib builds (hidden symbol visibility prevents linking) and
+# static-lib builds (test binary has build-order dependency only, not a linker
+# dependency, on the EP).
+if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
+  list(APPEND onnxruntime_test_framework_src
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_tracing/qnn_op_tracing_serialization.cc")
+endif()
+
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same
 #process and you won't know which one you are testing.

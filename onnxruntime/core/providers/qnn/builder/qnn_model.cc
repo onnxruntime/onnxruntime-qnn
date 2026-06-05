@@ -12,6 +12,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -238,6 +239,13 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
   RETURN_IF_ERROR(SetGraphInputOutputInfo(context));
 
+  // Framework op trace: create collector before QnnModelWrapper so it can be
+  // passed at construction time. nullptr when tracing is disabled.
+  std::unique_ptr<OpTraceCollector> trace_collector;
+  if (context.op_trace_output) {
+    trace_collector = std::make_unique<OpTraceCollector>();
+  }
+
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
                                                       qnn_backend_manager_->GetQnnBackendHandle(),
@@ -247,7 +255,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       graph_outputs_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
-                                                      context.tensor_name_overrides);
+                                                      context.tensor_name_overrides,
+                                                      trace_collector.get());
 
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -280,6 +289,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                         node_unit_holder.size(), logger));
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
+    NodeGroupGuard guard(trace_collector.get(), qnn_node_group.get());
+
     Ort::Status status = qnn_node_group->AddToModelBuilder(qnn_model_wrapper, logger);
 
     if (!status.IsOK()) {
@@ -294,6 +305,11 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
   RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+
+  // Collect framework op trace after graph composition
+  if (trace_collector) {
+    trace_collector->Finalize(graph_name, qnn_model_wrapper, *context.op_trace_output);
+  }
 
   LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
 

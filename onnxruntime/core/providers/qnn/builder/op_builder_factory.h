@@ -79,6 +79,7 @@ void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& 
 void CreateIsInfOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLayerNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateLpPoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
