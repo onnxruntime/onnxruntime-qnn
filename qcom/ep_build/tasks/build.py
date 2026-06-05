@@ -76,6 +76,7 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         target_arch: TargetArchLinuxT,
         config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
+        use_ort_prebuilt: bool,
         ort_prebuilt_root: Path | None,
         qairt_sdk_root: Path | None,
         mode: str,
@@ -93,6 +94,9 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
 
         if target_py_version is not None:
             cmd.append(f"--target-py-version={target_py_version}")
+
+        if use_ort_prebuilt:
+            cmd.append("--use-ort-prebuilt")
 
         if ort_prebuilt_root is not None:
             cmd.append(f"--ort-home={ort_prebuilt_root}")
@@ -117,6 +121,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         target_arch: TargetArchWindowsT,
         config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
+        use_ort_prebuilt: bool,
         ort_prebuilt_root: Path | None,
         qairt_sdk_root: Path | None,
         mode: str,
@@ -136,6 +141,8 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
 
         if venv is not None:
             cmd.extend(["-PyVEnv", str(venv).replace(" ", "` ")])
+        if use_ort_prebuilt:
+            cmd.extend(["-UseOrtPrebuilt", "1"])
         if ort_prebuilt_root is not None:
             cmd.extend(["-OrtPrebuiltRoot", str(ort_prebuilt_root).replace(" ", "` ")])
         if qairt_sdk_root is not None:

@@ -20,6 +20,10 @@ param (
     [bool]$BuildArchive = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "If true, download and use ORT prebuilt.")]
+    [bool]$UseOrtPrebuilt = $false,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
     [string]$OrtPrebuiltRoot = "",
 
@@ -88,6 +92,18 @@ else {
 
 $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
 
+if ($UseOrtPrebuilt -and $OrtPrebuiltRoot -eq "") {
+    switch ($Arch) {
+        { $_ -in @("aarch64", "arm64", "arm64ec") } {
+            $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
+        }
+        "x86_64" {
+            $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
+        }
+        Default { throw "Unknown arch $Arch for ORT prebuilt" }
+    }
+}
+
 if ($Mode -eq "generate_sln") {
     $CMakeGenerator = (Get-InstalledVsGenerator).Generator
     $BuildIsDirty = $true
@@ -143,7 +159,7 @@ if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
 }
 
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
-if ($OrtPrebuiltRoot -ne "") {
+if ($UseOrtPrebuilt) {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
     $QnnArgs += "--ort_home"
     $QnnArgs += "$OrtPrebuiltRoot"
@@ -339,7 +355,11 @@ else {
 
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
-        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
+        $TestRunnerArgs = @{ Config = $Config; OnnxModelsRoot = $OnnxModelsRoot }
+        if ($UseOrtPrebuilt) {
+            $TestRunnerArgs["SkipModelTests"] = $true
+        }
+        & .\run_tests.ps1 @TestRunnerArgs
 
         if (-not $?) {
             $failed = $true

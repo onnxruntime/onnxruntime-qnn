@@ -33,6 +33,7 @@ function save_qairt_sdk_path() {
 config="Release"
 qairt_sdk_root=
 ort_prebuilt_root=
+use_ort_prebuilt=
 qnn_arch_abi=
 target_py_version=
 use_cache=1
@@ -79,6 +80,10 @@ for i in "$@"; do
       ort_prebuilt_root="${i#*=}"
       shift
       ;;
+    --use-ort-prebuilt)
+      use_ort_prebuilt=1
+      shift
+      ;;
     --qairt-sdk-root=*)
       qairt_sdk_root="${i#*=}"
       shift
@@ -114,6 +119,20 @@ qairt_sdk_file_path="${build_dir}/qairt-sdk-path-${config}.txt"
 
 if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
+fi
+
+if [ -n "${use_ort_prebuilt}" ] && [ -z "${ort_prebuilt_root}" ]; then
+    case "${target_arch}" in
+      x86_64|x64)
+        ort_prebuilt_root="$(get_ort_x64_prebuilt_root)"
+        ;;
+      aarch64|arm64)
+        ort_prebuilt_root="$(get_ort_aarch64_prebuilt_root)"
+        ;;
+      *)
+        die "Unknown arch '${target_arch}' for ORT prebuilt"
+        ;;
+    esac
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
@@ -195,7 +214,7 @@ test_runner=
 case "${target_platform}" in
   linux)
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
-    if [ -n "${ort_prebuilt_root}" ]; then
+    if [ -n "${use_ort_prebuilt}" ]; then
       qnn_args+=("--ort_home")
       qnn_args+=("${ort_prebuilt_root}")
     fi
@@ -258,7 +277,7 @@ case "${target_platform}" in
     fi
 
     qnn_args=(--use_qnn static_lib --qnn_home "${qairt_sdk_root}")
-    if [ -n "${ort_prebuilt_root}" ]; then
+    if [ -n "${use_ort_prebuilt}" ]; then
       qnn_args+=("--ort_home")
       qnn_args+=("${ort_prebuilt_root}")
     fi
@@ -352,6 +371,10 @@ else
 
     # Run tests using our ctest wrapper.
     log_info "-=-=-=- Running unit tests -=-=-=-=-"
-    "./$(basename ${test_runner})" --python="${python_for_build}"
+    test_runner_args=(--python="${python_for_build}")
+    if [ -n "${use_ort_prebuilt}" ]; then
+      test_runner_args+=(--skip-model-tests)
+    fi
+    "./$(basename ${test_runner})" "${test_runner_args[@]}"
   fi
 fi

@@ -91,6 +91,13 @@ on:
           Empty disables the download.
         type: string
         default: ""
+      use_ort_home:
+        description: |
+          If true, build with --use-ort-prebuilt which downloads and uses
+          prebuilt ORT binaries. Used to validate the --use-ort-prebuilt
+          code path in CI.
+        default: false
+        type: boolean
       build_aar:
         description: |
           If true, also build the Android AAR during the Android build.
@@ -128,7 +135,7 @@ env:
 
 jobs:
   build:
-    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "${{ inputs.use_ort_home && 'build-ort-home' || 'build' }}-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
@@ -138,7 +145,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
@@ -146,14 +153,16 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
+          ${{ inputs.use_ort_home && '--use-ort-prebuilt' || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
-      - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+      - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          ${{ inputs.use_ort_home && '--use-ort-prebuilt' || '' }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
@@ -161,7 +170,7 @@ jobs:
         # Skipped on fork PRs: the action creates a check run, which the fork-PR GITHUB_TOKEN cannot do.
         if: ${{ always() && inputs.run_tests && inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results${{ inputs.use_ort_home && '-ort-home' || '' }}
           group_reports: false
           include_passed: true
           detailed_summary: true
@@ -193,42 +202,42 @@ jobs:
         if: ${{ inputs.upload_test_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
       - name: Upload NuGet to Artifactory
         if: ${{ inputs.upload_nuget && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-nuget"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-nuget${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/Qualcomm.ML.OnnxRuntime.QNN*.nupkg"
 
       - name: Upload Archive to Artifactory
         if: ${{ inputs.upload_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
 
       - name: Upload AAR to Artifactory
         if: ${{ inputs.upload_aar && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-aar"
+          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-aar${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar"
 
       - name: Upload POM to Artifactory
         if: ${{ inputs.upload_aar && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom"
+          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom"
 
       - name: Build Windows ${{ inputs.target_arch }} PDB Archive
@@ -247,11 +256,11 @@ jobs:
         if: ${{ inputs.upload_pdb_archive && inputs.target_os == 'windows' && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn-*-win-*-pdb.zip"
 
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "${{ inputs.use_ort_home && 'test-ort-home' || 'test' }}-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
@@ -276,7 +285,7 @@ jobs:
       - name: Download Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests${{ inputs.use_ort_home && '-ort-home' || '' }}"
 
       - name: Download testdata from Artifactory
         if: ${{ inputs.testdata_archive_artifact_name != '' }}
@@ -288,6 +297,7 @@ jobs:
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          ${{ inputs.use_ort_home && '--use-ort-prebuilt' || '' }}
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
@@ -296,7 +306,7 @@ jobs:
         uses: mikepenz/action-junit-report@v6
         if: always() # always run even if the previous step fails
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results${{ inputs.use_ort_home && '-ort-home' || '' }}
           group_reports: false
           include_passed: true
           detailed_summary: true
@@ -339,7 +349,7 @@ jobs:
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels${{ inputs.use_ort_home && '-ort-home' || '' }}"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
         run: >

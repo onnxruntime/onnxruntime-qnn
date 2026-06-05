@@ -195,3 +195,10 @@ jobs:
       upload_nuget: true
       build_pdb_archive: true
       upload_pdb_archive: true
+
+  build-and-test-ort-home:
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-ort-home.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
