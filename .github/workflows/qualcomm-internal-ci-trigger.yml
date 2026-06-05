@@ -22,11 +22,13 @@ on:
 jobs:
   trigger:
     name: Trigger CI from PR comment
-    # Only act on PR comments (not issue comments) containing "/ci".
+    # Only act on PR comments whose body is exactly "/ci" or starts with "/ci " or "/ci\n".
     # Require write-level association so fork contributors cannot trigger builds.
     if: |
       github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, '/ci') &&
+      (github.event.comment.body == '/ci' ||
+       startsWith(github.event.comment.body, '/ci ') ||
+       startsWith(github.event.comment.body, '/ci\n')) &&
       contains(fromJSON('["COLLABORATOR", "MEMBER", "OWNER"]'),
                github.event.comment.author_association)
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
