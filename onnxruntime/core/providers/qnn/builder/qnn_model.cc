@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "QnnOpDef.h"
+#include "HTP/QnnHtpContext.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
@@ -501,10 +502,37 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
     cache_file.close();
 
     const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+
+    // Build context configs: priority + spill fill buffer.
+    QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
+    priority_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
+    priority_config.priority = QNN_PRIORITY_NORMAL;
+    auto ctx_priority = qnn_backend_manager_->GetContextPriority();
+    if (ctx_priority == ContextPriority::LOW) priority_config.priority = QNN_PRIORITY_LOW;
+    else if (ctx_priority == ContextPriority::NORMAL_HIGH) priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
+    else if (ctx_priority == ContextPriority::HIGH) priority_config.priority = QNN_PRIORITY_HIGH;
+
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+    QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
+    QnnHtpContext_CustomConfig_t spill_fill_custom_config;
+    spill_fill_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+    QnnHtpContext_GroupRegistration_t group_info;
+    group_info.firstGroupHandle = 0x0;  // New group (this is the only context after SSR)
+    group_info.maxSpillFillBuffer = max_spill_fill_size_;
+    spill_fill_custom_config.groupRegistration = group_info;
+    spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    spill_fill_config.customConfig = &spill_fill_custom_config;
+    QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size_ > 0 ? &spill_fill_config : nullptr;
+#else
+    QnnContext_Config_t* spill_fill_ptr = nullptr;
+#endif
+
+    const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
+
     auto rt = qnn_interface.contextCreateFromBinary(
         qnn_backend_manager_->GetQnnBackendHandle(),
         qnn_backend_manager_->GetQnnDeviceHandle(),
-        nullptr,
+        context_configs,
         static_cast<void*>(buffer.get()),
         static_cast<Qnn_ContextBinarySize_t>(buffer_size),
         &new_context,

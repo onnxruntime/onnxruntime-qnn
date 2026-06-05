@@ -201,6 +201,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return context_map_.find(context_handle) != context_map_.end();
   }
 
+  // Returns the context priority setting for this backend.
+  ContextPriority GetContextPriority() const { return context_priority_; }
+
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status SetupBackend(
