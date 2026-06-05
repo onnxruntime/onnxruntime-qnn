@@ -41,7 +41,14 @@ jobs:
             exit 1
           fi
 
-          if echo "${changed}" | grep -qE 'onnxruntime/(core|test)/providers/qnn/'; then
+          # Trigger ASan when QNN EP source/test code changes, or when the
+          # ASan pipeline files themselves change so pipeline edits don't
+          # land unvalidated (chicken-and-egg with the gate itself).
+          if echo "${changed}" | grep -qE \
+              -e 'onnxruntime/(core|test)/providers/qnn/' \
+              -e '^\.github/workflows/qualcomm-internal-asan\.yml$' \
+              -e '^qcom/scripts/linux/(run_asan|asan_filter_leaks)\.sh$' \
+              -e '^tools/ci_build/lsan_suppressions\.txt$'; then
             echo "run=true" >> "${GITHUB_OUTPUT}"
           else
             echo "run=false" >> "${GITHUB_OUTPUT}"

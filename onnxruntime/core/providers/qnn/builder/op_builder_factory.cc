@@ -35,6 +35,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateIsInfOpBuilder("IsInf", *this);
   CreateIsNaNOpBuilder("IsNaN", *this);
   CreateLayerNormalizationOpBuilder("LayerNormalization", *this);
+  CreateLpPoolOpBuilder("LpPool", *this);
   CreateLRNOpBuilder("LRN", *this);
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
