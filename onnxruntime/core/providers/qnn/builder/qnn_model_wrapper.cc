@@ -495,9 +495,9 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
 
     using namespace onnxruntime::qnn::utils;
 
-    // std::ostringstream oss;
-    // oss << op_config_wrapper;
-    // ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
+    std::ostringstream oss;
+    oss << op_config_wrapper;
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
     Ort::Status validation_status = ValidateQnnNode(op_config_wrapper, error_msg);
@@ -685,9 +685,9 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
 
     using namespace onnxruntime::qnn::utils;
 
-    // std::ostringstream oss;
-    // oss << op_config_wrapper;
-    // ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
+    std::ostringstream oss;
+    oss << op_config_wrapper;
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
     bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_interface_, graph_, error_msg);
@@ -844,7 +844,7 @@ Ort::Status QnnModelWrapper::IsPerChannelQuantized(const OrtNodeUnitIODef& io_de
   return Ort::Status();
 }
 
-Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info, bool is_backend_gpu) const {
+Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const {
   const std::string& name = tensor.name;
 
   // Fill in quantization param info.
@@ -855,7 +855,7 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   RETURN_IF_ERROR(utils::GetQnnDataType(tensor.quant_param.has_value(),
                                         tensor.type,
                                         tensor_info.qnn_data_type,
-                                        is_backend_gpu));
+                                        qnn_backend_type_));
 
   // Fill in shape.
   RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");

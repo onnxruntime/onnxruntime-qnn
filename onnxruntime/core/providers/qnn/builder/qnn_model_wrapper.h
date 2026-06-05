@@ -248,7 +248,7 @@ class QnnModelWrapper {
     }
   }
 
-  Ort::Status GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info, bool is_backend_gpu = false) const;
+  Ort::Status GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const;
 
   Ort::Status AddCastNode(const std::string& cast_node_name,
                           const std::string& input_name,
