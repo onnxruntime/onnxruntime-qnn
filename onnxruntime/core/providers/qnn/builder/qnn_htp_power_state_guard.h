@@ -1,7 +1,10 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+
 #pragma once
+
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+
 namespace onnxruntime {
 namespace qnn {
 // RAII guard for HtpPowerConfigManager::SetState.
@@ -34,16 +37,16 @@ class HtpPowerStateGuard {
         valid_power_config_id_(valid_power_config_id),
         done_state_(done_state),
         config_(config),
-        logger_ptr_(&logger),
+        logger_(logger),
         finalized_(false) {
     if (power_manager_ && valid_power_config_id_) {
-      start_status_ = power_manager_->SetState(start_state, config_, *logger_ptr_);
+      start_status_ = power_manager_->SetState(start_state, config_, logger_);
     }
   }
   ~HtpPowerStateGuard() {
     if (!finalized_ && power_manager_ && valid_power_config_id_) {
       // Error cannot be propagated from a destructor; silently ignore.
-      power_manager_->SetState(done_state_, config_, *logger_ptr_);
+      power_manager_->SetState(done_state_, config_, logger_);
     }
   }
   // Returns (by move) the status of setting HTP performance before work begins.
@@ -54,7 +57,7 @@ class HtpPowerStateGuard {
   Ort::Status SetPostRunHtpPerf() {
     finalized_ = true;
     if (power_manager_ && valid_power_config_id_) {
-      return power_manager_->SetState(done_state_, config_, *logger_ptr_);
+      return power_manager_->SetState(done_state_, config_, logger_);
     }
     return Ort::Status();
   }
@@ -66,7 +69,7 @@ class HtpPowerStateGuard {
   bool valid_power_config_id_;
   power::GraphState done_state_;
   power::HtpPerfConfig_t config_;
-  const Ort::Logger* logger_ptr_;
+  const Ort::Logger& logger_;
   Ort::Status start_status_;
   bool finalized_;
 };

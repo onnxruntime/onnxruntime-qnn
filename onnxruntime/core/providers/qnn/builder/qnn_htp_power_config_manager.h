@@ -121,6 +121,8 @@ class HtpPowerConfigManager {
 
   const QNN_INTERFACE_VER_TYPE* qnn_interface_ = nullptr;
 
+  // Lock acquisition order: state_mutex_ must always be acquired before perf_mutex_
+  // to prevent deadlocks. Never acquire state_mutex_ while already holding perf_mutex_.
   std::mutex perf_mutex_;
   std::mutex state_mutex_;
   std::unique_ptr<Timer> timer_;

@@ -508,16 +508,26 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
 }
 
 Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfig_t& config, const Ort::Logger& logger) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
-  if (state != graph_state_) {
-    graph_state_ = state;
-  } else {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
-    return Ort::Status();
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    if (state != graph_state_) {
+      graph_state_ = state;
+    } else {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
+      return Ort::Status();
+    }
+    if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
+      RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
+      RETURN_IF(timer_ == nullptr, "timer is not started");
+    }
   }
+
+  // Dispatch to performance setters outside state_mutex_ to avoid deadlock:
+  // AbortTimer() blocks until the timer thread is idle, but the timer thread
+  // (inside TimerCallback) calls SetState() which acquires state_mutex_.
+  // Holding state_mutex_ across AbortTimer() would therefore deadlock.
+  // The same pattern is already applied in ReleaseTimerThread().
   if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-    RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
-    RETURN_IF(timer_ == nullptr, "timer is not started");
     return SetSustainedPerformance(state, config, logger);
   } else if (config.perf_mode == qnn::HtpPerformanceMode::kHtpDefault) {
     if (timer_ && timer_->TimerInUse()) {
@@ -577,7 +587,7 @@ Ort::Status HtpPowerConfigManager::SetHtpPowerCustomConfigs(uint32_t htp_power_c
   RETURN_IF(qnn_interface_ == nullptr, "QNN interface is not initialized");
   RETURN_IF_ERROR(AddRpcPollingTime(rpc_polling_time, logger));
   RETURN_IF_ERROR(AddRpcControlLatency(rpc_control_latency, logger));
-  RETURN_IF_ERROR(AddHtpPerformanceConfig(power_config));
+  RETURN_IF_ERROR(AddHtpPerformanceConfig(std::move(power_config)));
   RETURN_IF_ERROR(SetPowerConfig(htp_power_config_client_id, *qnn_interface_, logger));
 
   return Ort::Status();
