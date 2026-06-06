@@ -54,6 +54,14 @@ on:
         description: "If true, build an archive with the first ARM64 build."
         type: boolean
         default: true
+      build_windows_arm64_debug:
+        description: "If true, build a Windows ARM64 Debug archive."
+        type: boolean
+        default: false
+      build_windows_arm64_relwithdebinfo:
+        description: "If true, build a Windows ARM64 RelWithDebInfo archive."
+        type: boolean
+        default: false
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -195,3 +203,44 @@ jobs:
       upload_nuget: true
       build_pdb_archive: true
       upload_pdb_archive: true
+
+  setup-debug-matrix:
+    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          items='[]'
+          if [ "${{ inputs.build_windows_arm64_debug }}" = "true" ]; then
+            items=$(jq -nc --argjson a "$items" '$a + [{"build_config":"Debug","suffix":"debug"}]')
+          fi
+          if [ "${{ inputs.build_windows_arm64_relwithdebinfo }}" = "true" ]; then
+            items=$(jq -nc --argjson a "$items" '$a + [{"build_config":"RelWithDebInfo","suffix":"relwithdebinfo"}]')
+          fi
+          echo "matrix={\"include\":$items}" >> "$GITHUB_OUTPUT"
+
+  build-windows-arm64-debug-builds:
+    needs: [archive-testdata, setup-debug-matrix]
+    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    name: build-windows-arm64-${{ matrix.suffix }}
+    strategy:
+      matrix: ${{ fromJSON(needs.setup-debug-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_arch: arm64
+      build_config: ${{ matrix.build_config }}
+      testdata_archive_artifact_name: testdata-zip
+      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_runner_arch: ARM64
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      build_archive: true
+      upload_archive: true
+      upload_wheel: false
