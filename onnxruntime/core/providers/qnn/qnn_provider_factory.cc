@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <string_view>
+#include <system_error>
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -505,12 +507,18 @@ uint32_t ParseRuntimeOrtApiVersion(const char* version_str) {
   if (version_str == nullptr) {
     return 0;
   }
+  std::string_view sv{version_str};
+  const char* end = sv.data() + sv.size();
+
   int major = 0;
-  int minor = 0;
-  if (std::sscanf(version_str, "%d.%d", &major, &minor) < 2) {
+  auto [p1, ec1] = std::from_chars(sv.data(), end, major);
+  if (ec1 != std::errc{} || p1 == end || *p1 != '.' || major != 1) {
     return 0;
   }
-  if (major != 1 || minor < 0) {
+
+  int minor = 0;
+  auto [p2, ec2] = std::from_chars(p1 + 1, end, minor);
+  if (ec2 != std::errc{} || minor < 0) {
     return 0;
   }
   return static_cast<uint32_t>(minor);
