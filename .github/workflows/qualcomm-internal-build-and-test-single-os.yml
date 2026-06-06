@@ -29,6 +29,10 @@ on:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      build_config:
+        description: "Specify the type of build: Debug, Release, or RelWithDebInfo."
+        default: "Release"
+        type: string
       version_suffix:
         description: "Version suffix. If set, the specified suffix will be appended to the version string."
         type: string
@@ -111,7 +115,7 @@ env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
 
   # Cross compilation on Windows adds a folder to the build directory.
-  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && 'Release/Release' || 'Release' }}"
+  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config) || inputs.build_config }}"
 
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
@@ -143,6 +147,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
@@ -154,6 +159,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
@@ -214,7 +220,7 @@ jobs:
         if: ${{ inputs.upload_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
 
       - name: Upload AAR to Artifactory
@@ -288,6 +294,7 @@ jobs:
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          --config ${{ inputs.build_config }}
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
@@ -346,6 +353,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
