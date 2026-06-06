@@ -52,7 +52,7 @@ jobs:
       build_linux_aarch64_oe_gcc11_2: true
       build_linux_x86_64: true
       linux_x86_64_target_py_vsns: "['3.10','3.12']"
-      linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
+      linux_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_arm64_build_archive: true
@@ -169,6 +169,26 @@ jobs:
         with:
           name: linux-aarch64_manylinux_2_34-py3.14-wheels
 
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.12-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.13-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.14-wheels
+
       - name: Download arm64 Windows 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -237,6 +257,11 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tests
+
+      - name: Download x86_64 Ubuntu 22.04 Linux Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tests
 
       - name: Download aarch64 Android Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -328,6 +353,11 @@ jobs:
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tgz
 
+      - name: Download x86_64 Ubuntu 22.04 Linux TGZ Package from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tgz
+
       - name: Download Windows ARM64 PDB Archive from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -370,11 +400,11 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 2 linux x86_64 (py3.10, py3.12) + 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD = 14 wheels
+          # After merge: 2 linux x86_64 (py3.10, py3.12) + 4 linux aarch64 manylinux_2_34 + 4 linux x86_64 ubuntu 22.04 + 4 arm64 + 4 merged AMD = 18 wheels
           # (arm64ec and x86_64 originals are deleted by the merge step above)
           count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
           echo "Found $count wheel(s)"
-          [ "$count" -eq 14 ] || { echo "ERROR: Expected 14 wheels, found $count"; exit 1; }
+          [ "$count" -eq 18 ] || { echo "ERROR: Expected 18 wheels, found $count"; exit 1; }
 
       - name: Verify NuGet artifact
         run: |
@@ -387,6 +417,7 @@ jobs:
           # Expected .tar.bz2 artifacts. Append its glob here for a new one.
           expected=(
             "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2"
+            "onnxruntime-tests-linux-x86_64_ubuntu_22_04.tar.bz2"
             "onnxruntime-tests-linux-aarch64_oe_gcc11_2.tar.bz2"
             "onnxruntime-tests-linux-x86_64.tar.bz2"
             "onnxruntime-testdata.tar.bz2"
@@ -454,7 +485,7 @@ jobs:
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
           echo "Found $count TGZ archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
+          [ "$count" -eq 2 ] || { echo "ERROR: Expected 2 TGZ archive, found $count"; exit 1; }
 
       - name: Verify AAR artifact
         run: |

@@ -19,8 +19,8 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
-      linux_aarch64_manylinux_2_34_target_py_vsns:
-        description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
+      linux_target_py_vsns:
+        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
         type: string
         default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
@@ -50,7 +50,7 @@ jobs:
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: false
       build_linux_x86_64: false
-      linux_aarch64_manylinux_2_34_target_py_vsns: ${{ inputs.linux_aarch64_manylinux_2_34_target_py_vsns }}
+      linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
       windows_arm64_build_archive: true
@@ -92,6 +92,26 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.14-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.12-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.13-wheels
+
+      - name: Download x86_64 Ubuntu 22.04 Linux 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.14-wheels
 
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -158,6 +178,7 @@ jobs:
           mkdir "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
 
       - name: Consolidate Wheels
         run: |
@@ -189,10 +210,10 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD wheels in build/dist/
+          # After merge: 4 linux aarch64 manylinux_2_34 + 4 linux x86_64 ubuntu 22.04 + 4 arm64 + 4 merged AMD wheels in build/dist/
           count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
           echo "Found $count wheel(s) in build/dist"
-          [ "$count" -eq 12 ] || { echo "ERROR: Expected 12 wheels in build/dist, found $count"; exit 1; }
+          [ "$count" -eq 16 ] || { echo "ERROR: Expected 16 wheels in build/dist, found $count"; exit 1; }
 
       - name: Check Wheels
         run: |
@@ -346,6 +367,11 @@ jobs:
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tgz
 
+      - name: Download Linux x86_64 Ubuntu 22.04 TGZ from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tgz
+
       - name: Download Windows ARM64 PDB Archive from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -401,7 +427,7 @@ jobs:
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
           echo "Found $count TGZ archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
+          [ "$count" -eq 2 ] || { echo "ERROR: Expected 2 TGZ archive, found $count"; exit 1; }
 
       - name: Prepare Windows ARM64 Zip lib for signing
         run: |
@@ -459,6 +485,11 @@ jobs:
           # Upload Linux aarch64 manylinux_2_34 zip
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux x86_64 ubuntu 22.04 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
             "$NETRC_FILE"
 
           # Upload Windows ARM64EC PDB archive

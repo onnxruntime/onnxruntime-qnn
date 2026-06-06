@@ -38,8 +38,8 @@ on:
         description: "JSON list of Python versions to build for x86_64 Linux"
         type: string
         default: "['3.10','3.12']"
-      linux_aarch64_manylinux_2_34_target_py_vsns:
-        description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
+      linux_target_py_vsns:
+        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
         type: string
         default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
@@ -100,11 +100,11 @@ jobs:
       target_arch: aarch64
 
   build-linux-aarch64-manylinux_2_34:
-    if: ${{ toJSON(fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)) != '[]' }}
+    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
-        target_py_vsn: ${{ fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns) }}
+        target_py_vsn: ${{ fromJSON(inputs.linux_target_py_vsns) }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -116,10 +116,10 @@ jobs:
       target_py_vsn: ${{ matrix.target_py_vsn }}
       run_tests: false
       # Upload the test archive with the first Python version we encounter
-      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
       # Build Tgz with the first Python version we encounter
-      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
-      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
+      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
@@ -155,6 +155,28 @@ jobs:
       # Test archive is python-version independent; upload only with the first matrix entry
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_x86_64_target_py_vsns)[0] }}
       upload_wheel: true
+
+  build-linux-x86_64-ubuntu-22-04:
+    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: x86_64_ubuntu_22_04
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_wheel: true
+      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-windows:
     if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
