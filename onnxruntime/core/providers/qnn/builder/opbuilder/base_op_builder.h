@@ -398,6 +398,28 @@ inline Ort::Status ComputePadAndOutputShape(const int64_t in_dim,
   return Ort::Status();
 }
 
+// Resolves the common ONNX pooling attributes (kernel_shape, strides, dilations, pads, auto_pad,
+// ceil_mode) into QNN-friendly arrays. Shared by pool_op_builder and lp_pool_op_builder.
+//
+// - 1D values are expanded to {1, val} 2D form (matches the rank-3-as-rank-4 reshape pattern).
+// - SAME_UPPER / SAME_LOWER auto_pad is converted to explicit pads using the provided output
+//   spatial dims. VALID and NOTSET leave pad_amount unchanged from the read value.
+// - pad_amount is returned in ONNX layout: [begin0, begin1, ..., end0, end1, ...]. Callers must
+//   invoke ReArrangePads(...) before handing it to a QNN op param.
+// - rounding_mode is set from the ceil_mode attribute (caller's input value is used as the
+//   default if the attribute is absent — pass 0 for floor-mode default).
+//
+// input_shape / output_shape must be NHWC / NDHWC layout with matching rank (rank 4 NHWC for 2D
+// pool, rank 5 for 3D); spatial dims are at indices [1 .. rank-2].
+Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
+                                  gsl::span<const uint32_t> input_shape,
+                                  gsl::span<const uint32_t> output_shape,
+                                  std::vector<uint32_t>& filter_size,
+                                  std::vector<uint32_t>& stride,
+                                  std::vector<uint32_t>& dilations,
+                                  std::vector<uint32_t>& pad_amount,
+                                  int32_t& rounding_mode);
+
 constexpr inline int64_t ComputeTotalPad(int64_t in_size,
                                          int64_t stride,
                                          int64_t adj,
