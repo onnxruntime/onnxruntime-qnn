@@ -396,6 +396,9 @@ void HtpPowerConfigManager::ReleaseTimerThread() {
   }
   // Deinitialize outside the lock to avoid deadlock: an in-flight
   // TimerCallback calls SetState() which acquires state_mutex_.
+  // Note: DeInitialize()->join() ensures any in-flight callback completes
+  // before the timer and callback_arg are destroyed, so no additional
+  // synchronization is needed to protect callback access to these objects.
   if (local_timer != nullptr) {
     local_timer->DeInitialize();
     local_callback_arg.reset();
@@ -415,7 +418,6 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
         timer_->AbortTimer();
       }
       RETURN_IF_NOT(timer_->Launch(sustainedDurationUs), "Not able to launch timer thread.");
-      graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = false;
       break;
     case GraphState::RUN_START:
@@ -424,14 +426,12 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
       } else {
         status = SetHtpPowerConfigs(config, logger);
       }
-      graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = true;
       break;
     case GraphState::INIT_DONE: {
       QnnHtpPerfInfrastructure_PowerConfig_t init_done_htp_performance_cfg{};
       SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, config.htp_power_config_client_id, DcvsState::DCVS_DEFAULT);
       status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, init_done_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
-      graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = false;
       break;
     }
@@ -441,7 +441,6 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
       } else {
         status = SetHtpPowerConfigs(config, logger);
       }
-      graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = true;
       break;
     case GraphState::TIMEOUT: {
@@ -449,7 +448,6 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
         QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg{};
         SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, config.htp_power_config_client_id, DcvsState::DCVS_DEFAULT);
         status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, timeout_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
-        graph_state_ = GraphState::NONE;
       }
       break;
     }
@@ -493,12 +491,10 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
           ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid performance mode");
           break;
       }
-      graph_state_ = GraphState::NONE;
       break;
     case GraphState::RUN_START:
     case GraphState::INIT_START:
       status = SetHtpPowerConfigs(config, logger);
-      graph_state_ = GraphState::NONE;
       break;
     default:
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
@@ -527,19 +523,28 @@ Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfi
   // (inside TimerCallback) calls SetState() which acquires state_mutex_.
   // Holding state_mutex_ across AbortTimer() would therefore deadlock.
   // The same pattern is already applied in ReleaseTimerThread().
+  Ort::Status status;
   if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-    return SetSustainedPerformance(state, config, logger);
+    status = SetSustainedPerformance(state, config, logger);
   } else if (config.perf_mode == qnn::HtpPerformanceMode::kHtpDefault) {
     if (timer_ && timer_->TimerInUse()) {
       timer_->AbortTimer();
     }
-    return Ort::Status();
+    status = Ort::Status();
   } else {
     if (timer_ && timer_->TimerInUse()) {
       timer_->AbortTimer();
     }
-    return SetPerformance(state, config, logger);
+    status = SetPerformance(state, config, logger);
   }
+
+  // Update graph_state_ to NONE after performance functions complete
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    graph_state_ = GraphState::NONE;
+  }
+
+  return status;
 }
 
 void HtpPowerConfigManager::TimerCallback(void* user_data) {
@@ -548,6 +553,9 @@ void HtpPowerConfigManager::TimerCallback(void* user_data) {
     return;
   }
   HtpPowerConfigManager* instance = args->instance_;
+  if (instance == nullptr) {
+    return;
+  }
   if (instance->timer_resource_.timer_active_) {
     const Ort::Logger& logger = OrtLoggingManager::GetDefaultLogger();
     auto rt = instance->SetState(GraphState::TIMEOUT, {args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0}, logger);
@@ -568,7 +576,7 @@ bool HtpPowerConfigManager::IsTimerThreadRunning() {
 }
 
 Ort::Status HtpPowerConfigManager::SetHtpPowerConfigs(const HtpPerfConfig_t& config, const Ort::Logger& logger) {
-  RETURN_IF(qnn_interface_ == nullptr, "QNN interface is not initialized");
+  RETURN_IF(qnn_interface_ == nullptr, "QNN interface is not initialized. Call Init() first.");
   RETURN_IF_ERROR(AddRpcPollingTime(config.rpc_polling_time, logger));
   RETURN_IF_ERROR(AddRpcControlLatency(config.rpc_control_latency, logger));
   RETURN_IF_ERROR(AddHtpPerformanceMode(config.perf_mode,
@@ -584,10 +592,10 @@ Ort::Status HtpPowerConfigManager::SetHtpPowerCustomConfigs(uint32_t htp_power_c
                                                             uint32_t rpc_polling_time,
                                                             uint32_t rpc_control_latency,
                                                             const Ort::Logger& logger) {
-  RETURN_IF(qnn_interface_ == nullptr, "QNN interface is not initialized");
+  RETURN_IF(qnn_interface_ == nullptr, "QNN interface is not initialized. Call Init() first.");
   RETURN_IF_ERROR(AddRpcPollingTime(rpc_polling_time, logger));
   RETURN_IF_ERROR(AddRpcControlLatency(rpc_control_latency, logger));
-  RETURN_IF_ERROR(AddHtpPerformanceConfig(std::move(power_config)));
+  RETURN_IF_ERROR(AddHtpPerformanceConfig(power_config));
   RETURN_IF_ERROR(SetPowerConfig(htp_power_config_client_id, *qnn_interface_, logger));
 
   return Ort::Status();

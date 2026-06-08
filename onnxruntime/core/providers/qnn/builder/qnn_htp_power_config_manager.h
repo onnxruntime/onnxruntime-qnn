@@ -41,7 +41,12 @@ enum class DcvsState {
 };
 
 // Manages staging of any new power configurations and
-// updates power configurations for the HTP backend
+// updates power configurations for the HTP backend.
+//
+// IMPORTANT: Init() must be called before any other methods that access
+// the QNN interface (SetState, SetPowerConfig, etc.), typically during
+// backend initialization. Failure to call Init() will result in errors
+// when attempting to set power configurations.
 class HtpPowerConfigManager {
  public:
   HtpPowerConfigManager();
