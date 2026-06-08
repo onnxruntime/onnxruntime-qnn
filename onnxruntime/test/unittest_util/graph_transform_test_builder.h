@@ -18,6 +18,8 @@
 #include "core/framework/tensorprotoutils.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
+#include "test/util/include/int4.h"
+#include "test/util/include/int2.h"
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/util/include/test_random_seed.h"
 #include "test/util/include/inference_session_wrapper.h"
@@ -222,6 +224,12 @@ struct IsTypeQuantLinearCompatible<Int4x2> : std::true_type {};
 template <>
 struct IsTypeQuantLinearCompatible<UInt4x2> : std::true_type {};
 
+template <>
+struct IsTypeQuantLinearCompatible<Int2x4> : std::true_type {};
+
+template <>
+struct IsTypeQuantLinearCompatible<UInt2x4> : std::true_type {};
+
 template <typename T>
 struct IsTypeDequantLinearCompatible : utils::IsByteType<T> {};
 
@@ -239,6 +247,12 @@ struct IsTypeDequantLinearCompatible<Int4x2> : std::true_type {};
 
 template <>
 struct IsTypeDequantLinearCompatible<UInt4x2> : std::true_type {};
+
+template <>
+struct IsTypeDequantLinearCompatible<Int2x4> : std::true_type {};
+
+template <>
+struct IsTypeDequantLinearCompatible<UInt2x4> : std::true_type {};
 
 class ModelTestBuilder {
  public:
@@ -673,6 +687,10 @@ class ModelTestBuilder {
       return ONNX_NAMESPACE::TensorProto_DataType_UINT4;
     } else if constexpr (std::is_same_v<T, Int4x2>) {
       return ONNX_NAMESPACE::TensorProto_DataType_INT4;
+    } else if constexpr (std::is_same_v<T, UInt2x4>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_UINT2;
+    } else if constexpr (std::is_same_v<T, Int2x4>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_INT2;
     } else {
       return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
     }
