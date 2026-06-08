@@ -348,6 +348,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       name_{name},
       logger_{Ort::Logger(logger)},
       session_options_{session_options} {
+  ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
   GetCapability = GetCapabilityImpl;
   Compile = CompileImpl;
