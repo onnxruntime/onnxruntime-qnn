@@ -359,6 +359,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 
+  // APPVERIF_LEAK_TEST: intentional leak to verify App Verifier detection.
+  {
+      int* appverif_leak_marker = new int[123];
+      appverif_leak_marker[0] = 0xDEADBEEF;
+      (void)appverif_leak_marker;
+  }
+
   // Initialize from session options
   {
     // Get disable_cpu_ep_fallback setting from session options

@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yueqing Zhang <BoarQing@users.noreply.github.com>
+Date: Mon, 1 Jan 2025 00:00:00 +0000
+Subject: [PATCH 5/5] Fix loader-refcount leak in ProviderLibrary::Load on GetProvider miss
+
+Cherry-picked from upstream PR #28396:
+https://github.com/microsoft/onnxruntime/pull/28396
+
+When GetSymbolFromLibrary() fails (EP DLL doesn't export GetProvider),
+the early return skipped Unload(), leaking the handle. The destructor
+intentionally doesn't unload to avoid static-destruction-order issues,
+so the leaked ref caused STATUS_STACK_BUFFER_OVERRUN crashes on Windows
+during process teardown when the same DLL was loaded again elsewhere.
+---
+ onnxruntime/core/session/provider_bridge_ort.cc | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/onnxruntime/core/session/provider_bridge_ort.cc b/onnxruntime/core/session/provider_bridge_ort.cc
+index e14e5cb..038645e 100644
+--- a/onnxruntime/core/session/provider_bridge_ort.cc
++++ b/onnxruntime/core/session/provider_bridge_ort.cc
+@@ -1943,8 +1943,11 @@ Status ProviderLibrary::Load() {
+       }
+
+       Provider* (*PGetProvider)();
+-      ORT_RETURN_IF_ERROR(Env::Default().GetSymbolFromLibrary(handle_, "GetProvider", (void**)&PGetProvider));
+-
++      auto status = Env::Default().GetSymbolFromLibrary(handle_, "GetProvider", (void**)&PGetProvider);
++      if (!status.IsOK()) {
++        Unload();
++        return status;
++      }
+       provider_ = PGetProvider();
+     }
+   } catch (const std::exception&) {
+--
+2.43.0
