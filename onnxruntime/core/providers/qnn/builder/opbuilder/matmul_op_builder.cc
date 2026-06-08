@@ -49,9 +49,7 @@ uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
 // (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
 // weight with the contraction axis (K, at rank-2) dimension smaller: scale_shape[rank-2] <
 // weight_shape[rank-2]. Only meaningful on the NPU backend.
-// On success, sets num_blocks = scale_shape[rank-2] and block_size = K / num_blocks.
-bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& weight,
-                int64_t& num_blocks, int64_t& block_size) {
+bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& weight) {
   if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return false;
   }
@@ -87,11 +85,10 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   if (scale_shape[k_axis] >= static_cast<int64_t>(weight_shape[k_axis])) {
     return false;
   }
-  num_blocks = scale_shape[k_axis];
+  const int64_t num_blocks = scale_shape[k_axis];
   if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[k_axis]) % num_blocks != 0) {
     return false;
   }
-  block_size = static_cast<int64_t>(weight_shape[k_axis]) / num_blocks;
   return true;
 }
 
@@ -251,9 +248,7 @@ Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
 
   // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight.
   {
-    int64_t num_blocks = 0;
-    int64_t block_size = 0;
-    if (IsBQWeight(qnn_model_wrapper, inputs[1], num_blocks, block_size)) {
+    if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
       return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
     }
   }
@@ -693,9 +688,7 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // A block-quantized weight is always emitted as a QNN MatMul (see ProcessInputsForBQMatMul), even
   // when CheckInputs would otherwise route a rank-2 initializer weight to FullyConnected. Force the
   // MatMul path here so the output handling matches how the inputs were built.
-  int64_t bq_num_blocks = 0;
-  int64_t bq_block_size = 0;
-  if (IsBQWeight(qnn_model_wrapper, inputs[1], bq_num_blocks, bq_block_size)) {
+  if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
     use_fully_connected = false;
   }
 
