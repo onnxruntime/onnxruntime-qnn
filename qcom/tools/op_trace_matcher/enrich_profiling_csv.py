@@ -40,35 +40,55 @@ import sys
 from pathlib import Path
 
 # Mode B (inline matcher) needs the `onnx` package and the sibling matcher
-# script. They are not required for Mode A (pre-computed merged trace),
-# which is pure-stdlib, so the imports are guarded — failing to load them
-# only disables Mode B and surfaces a helpful error at use time.
+# module. They are not required for Mode A (pre-computed merged trace), which
+# is pure-stdlib, so the imports are guarded — failing to load them only
+# disables Mode B and surfaces a helpful error at use time.
 #
-# Temporarily prepend this file's own directory to sys.path so the sibling
-# import resolves regardless of invocation method (direct run, `python -m`,
-# imported as a module, or a different CWD). The entry is removed in `finally`
-# so importing this file as a library does not permanently mutate sys.path.
-_THIS_DIR = str(Path(__file__).resolve().parent)
-sys.path.insert(0, _THIS_DIR)
-try:
-    # Schema constants come from the matcher to keep both tools in lock-step
-    # with the QNN EP's TraceSourcePair serialization. Stdlib-only — always
-    # imported so the Mode A path stays schema-aligned even without `onnx`.
-    from source_to_optimized_matcher import _TRACE_TYPE_OP
+# Predefine the availability flags so any import failure (sibling missing,
+# `onnx` missing, etc.) still leaves these names defined. Without this,
+# downstream references would raise a confusing NameError instead of a
+# diagnosable ImportError.
+_MATCHER_AVAILABLE = False
+_MATCHER_IMPORT_ERROR: str | None = None
+_TRACE_TYPE_OP: str | None = None
+Matcher = None  # type: ignore[assignment]
+join_qnn_trace = None  # type: ignore[assignment]
 
-    # Mode B (inline matcher) additionally requires `onnx`.
+# Try the package-relative import first (set when invoked via `python -m
+# qcom.tools.op_trace_matcher.enrich_profiling_csv`); fall back to a sibling
+# absolute import for direct-script invocation. The package's __init__.py
+# makes the relative path work without a sys.path mutation.
+try:
+    try:
+        from .source_to_optimized_matcher import _TRACE_TYPE_OP  # type: ignore[no-redef]
+    except ImportError:
+        # Direct-script invocation: ensure the file's own directory is on
+        # sys.path for the sibling lookup, then revert.
+        _THIS_DIR = str(Path(__file__).resolve().parent)
+        sys.path.insert(0, _THIS_DIR)
+        try:
+            from source_to_optimized_matcher import _TRACE_TYPE_OP  # type: ignore[no-redef]
+        finally:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(_THIS_DIR)
+
+    # Schema constants imported successfully. Now try the heavier Mode B
+    # imports (onnx + matcher classes).
     try:
         import onnx
-        from source_to_optimized_matcher import Matcher, join_qnn_trace
 
+        try:
+            from .source_to_optimized_matcher import Matcher, join_qnn_trace  # type: ignore[no-redef]
+        except ImportError:
+            from source_to_optimized_matcher import Matcher, join_qnn_trace  # type: ignore[no-redef]
         _MATCHER_AVAILABLE = True
-        _MATCHER_IMPORT_ERROR: str | None = None
     except ImportError as _e:
-        _MATCHER_AVAILABLE = False
         _MATCHER_IMPORT_ERROR = str(_e)
-finally:
-    with contextlib.suppress(ValueError):
-        sys.path.remove(_THIS_DIR)
+except ImportError as _e:
+    # Even the schema-constant import failed (sibling renamed / missing).
+    # _MATCHER_AVAILABLE stays False; record the error so use-time messages
+    # can point at the real cause instead of a NameError.
+    _MATCHER_IMPORT_ERROR = str(_e)
 
 
 # Public API for import-as-a-library use. Underscore-prefixed helpers
@@ -104,7 +124,14 @@ def _format_op_sources(sources: list[dict]) -> str:
     `Serializer::LookupOnnxSources()`. Reused for both `sources[]` (optimized)
     and `original_sources[]` (original), since both follow the same
     `TraceSourcePair` schema."""
-    return ";".join(name for s in sources or [] if s.get("type") == _TRACE_TYPE_OP and (name := s.get("name", "")))
+    parts = []
+    for s in sources or []:
+        if s.get("type") != _TRACE_TYPE_OP:
+            continue
+        name = s.get("name", "")
+        if name:
+            parts.append(name)
+    return ";".join(parts)
 
 
 def build_lookups(merged_trace: dict) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:

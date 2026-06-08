@@ -28,6 +28,7 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
@@ -1030,6 +1031,59 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Provided a directory for framework op trace, but did not enable framework op tracing.");
   }
 
+  // QNN EP input graph dump options. Emits the ONNX graph the EP receives in
+  // GetCapabilityImpl (compile-time, pre-partition) as a QNN-Netron-schema JSON.
+  static constexpr const char* kDumpQnnEpInputGraph = "dump_qnn_ep_input_graph";
+  static constexpr const char* kDumpQnnEpInputGraphDir = "dump_qnn_ep_input_graph_dir";
+
+  dump_qnn_ep_input_graph_ = ParseBoolOption(ort_api,
+                                             session_options_,
+                                             FormatEPConfigKey(kDumpQnnEpInputGraph),
+                                             false,
+                                             logger_);
+
+  if (dump_qnn_ep_input_graph_) {
+    // Resolve the dump directory only when the dump itself is enabled. The
+    // session-config entry overrides the default; an unset/empty value falls
+    // back to the current working directory so the option is usable without
+    // a separate path config.
+    std::string ep_input_graph_dir_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey(kDumpQnnEpInputGraphDir),
+                                   "",
+                                   ep_input_graph_dir_str);
+    if (ep_input_graph_dir_str.empty()) {
+      ep_input_graph_dir_str = std::filesystem::current_path().string();
+    }
+    dump_qnn_ep_input_graph_dir_ = std::move(ep_input_graph_dir_str);
+
+    // Probe writability up-front so a non-writable path disables the feature
+    // before the per-graph walk runs.
+    std::filesystem::path probe_dir(dump_qnn_ep_input_graph_dir_);
+    std::error_code ec;
+    std::filesystem::create_directories(probe_dir, ec);
+    bool probe_ok = !ec;
+    if (probe_ok) {
+      std::filesystem::path probe_file = probe_dir / ".qnn_ep_input_graph_probe";
+      {
+        std::ofstream ofs(probe_file);
+        probe_ok = ofs.is_open() && (ofs << "1").good();
+      }
+      std::filesystem::remove(probe_file, ec);
+    }
+    if (!probe_ok) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("QNN EP input graph dump directory not writable: " + probe_dir.string() +
+                   "; the dump will be disabled.")
+                      .c_str());
+      dump_qnn_ep_input_graph_ = false;
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("QNN EP input graph dump enabled. Output dir: " + dump_qnn_ep_input_graph_dir_).c_str());
+    }
+  }
+
   static const std::string QNN_HTP_EXTENDED_UDMA_MODE = "extended_udma";
   enable_htp_extended_udma_mode_ = ParseBoolOption(ort_api,
                                                    session_options_,
@@ -1687,6 +1741,28 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     if (!ep->onnx_graph_io_names_.has_value()) {
       ep->onnx_graph_io_names_.emplace(std::move(input_order), std::move(output_order));
     }
+  }
+
+  // Dump the EP-input ONNX graph (pre-partition) as a QNN-Netron-schema JSON.
+  // Best-effort diagnostic: failures are logged inside the dumper and never
+  // abort compilation. The filename always carries a per-EP counter so two
+  // graphs whose names sanitize to the same string produce two distinct
+  // files; the sanitized name (when present) is used as a human-readable
+  // prefix.
+  if (ep->dump_qnn_ep_input_graph_) {
+    Ort::ConstGraph dump_graph{graph};
+    std::string raw_name = std::string(dump_graph.GetName());
+    std::string graph_name;
+    if (raw_name.empty()) {
+      graph_name = "graph";
+    } else {
+      graph_name = qnn::SanitizeGraphNameForFilename(raw_name);
+    }
+    size_t count = ep->dump_qnn_ep_input_graph_count_.fetch_add(1, std::memory_order_relaxed);
+    std::filesystem::path out_path =
+        std::filesystem::path(ep->dump_qnn_ep_input_graph_dir_) /
+        (graph_name + "." + std::to_string(count) + "_qnn_ep_input_graph.json");
+    qnn::DumpQnnEpInputGraphToJson(graph, out_path, ep->logger_);
   }
 
   // Get node units for the ABI layer

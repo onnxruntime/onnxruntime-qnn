@@ -3,11 +3,10 @@
 """Source ONNX -> Optimized ONNX node and tensor mapping tool.
 
 Computes a structural correspondence between a user-supplied ONNX model
-(`source.onnx`) and an ORT-optimized ONNX model (`optimized.onnx`, saved via
-`SessionOptions::optimized_model_filepath`). Output JSON aligns with the QNN
-EP `FrameworkOpTrace` schema's `original_sources` extension; combined with
-the QNN EP's existing `qnn_op_trace.json`, this yields end-to-end
-provenance: original ONNX node -> optimized ONNX node -> QNN op.
+(`source.onnx`) and an ORT-optimized graph. Output JSON aligns with
+the QNN EP `FrameworkOpTrace` schema's `original_sources` extension;
+combined with the QNN EP's existing `qnn_op_trace.json`, this yields
+end-to-end provenance: original ONNX node -> optimized ONNX node -> QNN op.
 
 See ./README.md for the feasibility assessment, known limitations, and the
 output schema.
@@ -33,8 +32,10 @@ from pathlib import Path
 try:
     import onnx
     from onnx import ModelProto  # used in string annotations (ModelProto type hints)
+    from onnx import numpy_helper as _onnx_numpy_helper
 except ImportError:
     onnx = None
+    _onnx_numpy_helper = None
 
 
 def _require_onnx() -> None:
@@ -54,6 +55,12 @@ __all__ = [
     "build_output",
     "join_qnn_trace",
 ]
+
+
+# QNN-Netron tensor-type integer for an initializer (weights/constants). Mirrors
+# `Qnn_TensorType_t::QNN_TENSOR_TYPE_STATIC` used by the QNN EP's
+# dump_qnn_ep_input_graph output (see qnn_ep_input_graph_dumper.cc).
+_QNN_TENSOR_TYPE_STATIC = 4
 
 
 # Maximum BFS hop count for the lineage-extension walks (producer-preferred
@@ -132,11 +139,29 @@ class GraphIndex:
 
         initializers: dict[str, bytes] = {}
         for init in graph.initializer:
-            # Hash raw_data when present; otherwise serialize the whole proto.
-            # raw_data is the common case for large weights and gives a stable
-            # identity that survives renaming.
+            # raw_data is the common case for large weights: hash it directly,
+            # decoupled from any protobuf encoding details.
+            #
+            # For non-raw_data initializers (small constants stored in
+            # field-typed lists like int32_data/float_data), hash the canonical
+            # numpy bytes via onnx.numpy_helper.to_array(...).tobytes() rather
+            # than init.SerializeToString(). The proto wire format is not
+            # guaranteed deterministic across re-serializations, but the
+            # underlying numpy buffer is — this keeps the hash stable when the
+            # source and optimized graphs were each round-tripped through
+            # different ONNX load/save passes.
             if init.raw_data:
                 payload = init.raw_data
+            elif _onnx_numpy_helper is not None:
+                try:
+                    payload = _onnx_numpy_helper.to_array(init).tobytes()
+                except Exception:
+                    # Fall back to proto serialization if the initializer cannot
+                    # be converted (unsupported type / external data not yet
+                    # resolved). The hash is still byte-stable within a single
+                    # protobuf process; cross-process stability is the only
+                    # property weakened.
+                    payload = init.SerializeToString()
             else:
                 payload = init.SerializeToString()
             initializers[init.name] = hashlib.sha256(payload).digest()
@@ -179,6 +204,71 @@ class GraphIndex:
             by_initializer_consumer=dict(by_initializer_consumer),
         )
 
+    @classmethod
+    def build_from_qnn_json(cls, doc: dict) -> GraphIndex:
+        """Build a GraphIndex from the QNN-Netron-schema JSON emitted by the
+        QNN EP's `dump_qnn_ep_input_graph` option (see qnn_ep_input_graph_dumper.cc).
+
+        That JSON is the ONNX graph the EP received at compile time. It carries
+        node name/op_type/inputs/outputs and a tensor table that flags each
+        tensor's role via an integer `type` (see _QNN_TENSOR_TYPE_STATIC for the
+        initializer value).
+        It does NOT carry initializer data bytes, so each initializer is given a
+        name-derived sentinel hash: name-based and topology-based matching work
+        unchanged, while data-hash matching (for renamed weights) is inert for
+        this input — acceptable because the QNN-EP-direct workflow keeps weight
+        names stable.
+        """
+        graph = doc.get("graph", {})
+        json_nodes = graph.get("nodes", {}) or {}
+        json_tensors = graph.get("tensors", {}) or {}
+
+        # Initializers: tensors flagged STATIC. Sentinel hash per name.
+        initializers: dict[str, bytes] = {}
+        for tname, tinfo in json_tensors.items():
+            if isinstance(tinfo, dict) and tinfo.get("type") == _QNN_TENSOR_TYPE_STATIC:
+                initializers[tname] = hashlib.sha256(tname.encode("utf-8")).digest()
+
+        nodes: dict[str, NodeRecord] = {}
+        by_output_tensor: dict[str, str] = {}
+        by_input_tensor: dict[str, list[str]] = defaultdict(list)
+        by_initializer_consumer: dict[str, list[str]] = defaultdict(list)
+
+        seen_names: set[str] = set()
+        for idx, (node_name, raw_ninfo) in enumerate(json_nodes.items()):
+            ninfo = raw_ninfo or {}
+            name = node_name or f"<unnamed_{ninfo.get('type', 'op')}_{idx}>"
+            if name in seen_names:
+                name = f"{name}__dup{idx}"
+            seen_names.add(name)
+
+            inputs = tuple(ninfo.get("input_names", []) or [])
+            outputs = tuple(ninfo.get("output_names", []) or [])
+            init_inputs = tuple(i for i in inputs if i in initializers)
+            nodes[name] = NodeRecord(
+                name=name,
+                op_type=ninfo.get("type", ""),
+                inputs=inputs,
+                outputs=outputs,
+                initializer_inputs=init_inputs,
+            )
+            for out in outputs:
+                if out:
+                    by_output_tensor[out] = name
+            for inp in inputs:
+                if inp:
+                    by_input_tensor[inp].append(name)
+            for init_name in init_inputs:
+                by_initializer_consumer[init_name].append(name)
+
+        return cls(
+            nodes=nodes,
+            by_output_tensor=by_output_tensor,
+            by_input_tensor=dict(by_input_tensor),
+            initializers=dict(initializers),
+            by_initializer_consumer=dict(by_initializer_consumer),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Fusion patterns
@@ -190,10 +280,10 @@ class GraphIndex:
 #
 # Only LINEAR source chains can be expressed here — the walker follows one
 # input edge per step. Fusions with branching source patterns (LayerNorm,
-# EmbedLayerNorm, Attention, the Tanh-form FastGelu, …) typically rely on
-# the matcher's initializer-anchoring or lineage-extension strategies
-# instead. Patterns derived by reading the corresponding fusion files in
-# onnxruntime/core/optimizer/.
+# EmbedLayerNorm, Attention, GroupQueryAttention, the Tanh-form FastGelu, …)
+# typically rely on the matcher's initializer-anchoring or lineage-extension
+# strategies instead. Patterns derived by reading the corresponding fusion
+# files in onnxruntime/core/optimizer/.
 FUSION_PATTERNS: dict[str, list[list[str]]] = {
     # MatMul + Add  ->  Gemm                 (matmul_add_fusion)
     "Gemm": [["MatMul", "Add"]],
@@ -242,9 +332,13 @@ class MatcherStats:
 
 
 class Matcher:
-    def __init__(self, source: ModelProto, optimized: ModelProto):
-        self.src = GraphIndex.build(source)
-        self.opt = GraphIndex.build(optimized)
+    def __init__(self, source, optimized):
+        """`source` and `optimized` may each be either an onnx ModelProto (built
+        via GraphIndex.build) or an already-constructed GraphIndex (e.g. from
+        GraphIndex.build_from_qnn_json). This lets the optimized side come from
+        the QNN EP's dump_qnn_ep_input_graph JSON instead of a saved .onnx."""
+        self.src = source if isinstance(source, GraphIndex) else GraphIndex.build(source)
+        self.opt = optimized if isinstance(optimized, GraphIndex) else GraphIndex.build(optimized)
         self.matches: dict[str, Match] = {}
 
     def run(self) -> tuple[list[Match], list[TensorMatch], MatcherStats, list[str], list[str]]:
@@ -438,7 +532,20 @@ class Matcher:
     def _walk_back_for_pattern(self, opt: NodeRecord, pattern: list[str]) -> list[str] | None:
         """Try to find a chain of source nodes matching `pattern` whose final
         output tensor is one of `opt`'s inputs. Pattern is in source topological
-        order (input side first); we walk backward starting from the last op."""
+        order (input side first); we walk backward starting from the last op.
+
+        Limitation for non-commutative fusions (MatMul+Add -> Gemm,
+        Conv+Add -> Conv-with-bias, …): when a node has more than one
+        op-output input, this walker takes the FIRST `inputs[]` entry that
+        has a producer in the source graph and stops. This relies on the
+        assumption that the chain entry sits at the lower input index — true
+        for all currently-supported fusions because their non-chain operand
+        is an initializer (bias / weight) that never appears in
+        `by_output_tensor`. Fusions whose chain entry sits at a higher input
+        index, or whose siblings are both op outputs, will require an
+        explicit per-pattern annotation (e.g. an `input_index` marker on
+        `FUSION_PATTERNS`).
+        """
         for inp in opt.inputs:
             producer_name = self.src.by_output_tensor.get(inp)
             if producer_name is None:
@@ -891,7 +998,14 @@ def join_qnn_trace(
     def lookup_originals(sources: list) -> list[dict]:
         """Collect deduplicated original sources for entries in `sources`,
         preserving QNN EP's `{name, type}` schema. Mutates `stats` counters
-        for unresolved references."""
+        for unresolved references.
+
+        When an OP-typed source name is not in `node_index` (i.e. the optimized
+        graph has no match for it in the source->optimized mapping), but the name
+        exists as a node in the source graph, it is assumed the EP consumed the
+        source ONNX directly without an intervening ORT optimization that would
+        have renamed or fused the node. In that case the source name is already
+        an original-ONNX name and is passed through unchanged (identity match)."""
         seen: set[tuple[int, str]] = set()
         result: list[dict] = []
         for src in sources or []:
@@ -900,6 +1014,21 @@ def join_qnn_trace(
             if src_type == _TRACE_TYPE_OP:
                 chain = node_index.get(src_name)
                 if chain is None:
+                    # Identity fallback: the EP processed this source node directly
+                    # from the user's ONNX (the source -> optimized step was a no-op
+                    # for this node, or the user passed the same file as both).
+                    src_node = src_index.nodes.get(src_name)
+                    if src_node is not None:
+                        entry = {
+                            "name": src_name,
+                            "type": _TRACE_TYPE_OP,
+                            "op_type": src_node.op_type,
+                        }
+                        key = (entry["type"], entry["name"])
+                        if key not in seen:
+                            seen.add(key)
+                            result.append(entry)
+                        continue
                     stats["op_sources_unresolved"] += 1
                     continue
                 for entry in chain:
@@ -948,7 +1077,9 @@ def main() -> int:
         "--optimized-model",
         required=True,
         type=Path,
-        help="ORT-optimized ONNX model (saved via SessionOptions::optimized_model_filepath)",
+        help="ORT-optimized graph the EP consumed. Either an ONNX model (saved via "
+        "SessionOptions::optimized_model_filepath) or a QNN-Netron-schema JSON dumped "
+        "by the QNN EP's `dump_qnn_ep_input_graph` option (detected by a .json extension).",
     )
     ap.add_argument("--output", required=True, type=Path, help="Output JSON path")
     ap.add_argument(
@@ -986,7 +1117,19 @@ def main() -> int:
 
     _require_onnx()
     source = onnx.load(str(args.source_model))
-    optimized = onnx.load(str(args.optimized_model))
+
+    # The optimized side may be a QNN-Netron-schema JSON (from the QNN EP's
+    # dump_qnn_ep_input_graph) instead of an .onnx; detect by extension and
+    # build the GraphIndex directly so no onnx proto load is needed for it.
+    if args.optimized_model.suffix.lower() == ".json":
+        try:
+            opt_doc = json.loads(args.optimized_model.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            sys.stderr.write(f"error: failed to parse {args.optimized_model}: {e}\n")
+            return 2
+        optimized = GraphIndex.build_from_qnn_json(opt_doc)
+    else:
+        optimized = onnx.load(str(args.optimized_model))
 
     matcher = Matcher(source, optimized)
     matches, tensor_matches, stats, unmatched, removed = matcher.run()

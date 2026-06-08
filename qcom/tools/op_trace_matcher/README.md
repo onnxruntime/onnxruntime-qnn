@@ -23,8 +23,11 @@ code changes.
 ## `source_to_optimized_matcher.py`
 
 Offline tool that computes a structural correspondence between a user-supplied
-ONNX model (`source.onnx`) and an ORT-optimized ONNX model (`optimized.onnx`,
-saved via `SessionOptions::optimized_model_filepath`). Output JSON aligns with
+ONNX model (`source.onnx`) and an ORT-optimized graph. The optimized side is
+either an ONNX model (`optimized.onnx`, saved via
+`SessionOptions::optimized_model_filepath`) or a QNN-Netron-schema JSON dumped
+by the QNN EP's `dump_qnn_ep_input_graph` option (the exact graph the EP saw;
+see the QNN EP workflow section below). Output JSON aligns with
 the QNN EP `FrameworkOpTrace` schema's `original_sources` extension and can be
 stitched together with the existing QNN EP op trace to produce end-to-end
 provenance: original ONNX node -> optimized ONNX node -> QNN op.
@@ -76,6 +79,138 @@ The tool produces both **node-level** and **tensor-level** mappings.
 3. **First-version scope.** Patterns currently encoded: `MatMul+Add -> Gemm`, the Erf-form `Gelu`, Tanh-form `FastGelu`, `QuickGelu`, `BiasGelu`, `BiasSoftmax`, `SkipLayerNormalization`, `FusedMatMul`. Branching fusions (LayerNormalization, EmbedLayerNormalization, Attention, GroupQueryAttention) are not in the pattern table because the matcher's walk-back is linear; the matcher will report partial matches for those via initializer anchoring instead.
 4. **Fusion tensor attribution.** For fused nodes, the optimized output tensor is attributed to the **last** source node (deepest in topological order). This matches the semantics of most ORT fusions; the explanatory note in the JSON makes the heuristic explicit.
 5. **No guarantees on attribute equivalence.** The matcher checks op_type and I/O structure but does not verify node attributes (kernel size, strides, etc.) are consistent between source and optimized.
+
+#### QNN EP / QDQ-direct workflow
+
+**Why QNN EP sees the QDQ source graph, not a QLinear-fused graph**
+
+When QNN EP is registered, ORT applies Level 1 optimizations to the graph
+before handing it to the EP. The Level 2 `QDQSelectorActionTransformer`
+— which converts `DQ -> op -> Q` clusters into QLinear* fused ops — does not
+apply to QNN EP's partition because QNN EP does not support QLinear*
+operators; it handles QDQ natively. As a result, **the graph the QNN EP
+receives is structurally very close to the user-supplied source ONNX**, with
+only the following Level 1 changes:
+
+| Level 1 transformation | Visible effect |
+|---|---|
+| `EnsureUniqueDQForNodeUnit` | Each DQ with multiple consumers gets its own copy, named with a `/duplicated` suffix |
+| `TransposeOptimizer` | May add or rearrange Transpose nodes |
+| `ConstantFolding` (DQ preserved) | Some constants folded, but DQ nodes kept intact |
+| `DoubleQDQPairsRemover`, `QDQPropagationTransformer` | Minor QDQ structural cleanup |
+
+**`-o 1` as an approximation of the EP-input graph**
+
+Running `onnxruntime_perf_test -o 1 -u ep_approx.onnx` (basic optimization
+only, no QNN EP) produces a file that is a close approximation of what QNN EP
+sees.  The gap between `-o 1` output and the true EP-input is small — a
+second pass of `MatMulAddFusion` and `QDQFinalCleanupTransformer` from Level
+2 may make minor structural changes — but for typical QDQ models the
+difference is negligible. The crucial Level 2 `QDQSelectorActionTransformer`
+(QDQ->QLinear) is not in that gap: it doesn't apply to QNN EP's partition
+regardless of the optimization level used.
+
+**Obtaining the `--optimized-model` for this workflow**
+
+`SessionOptions::SetOptimizedModelFilePath` (`-u` in perf_test) fails when
+QNN EP is active because the serialization happens after the EP has compiled
+its partition into opaque compiled nodes, and the ORT plugin EP API does not
+expose a graph-serialization interface. The practical alternatives, best first:
+
+1. **QNN EP `dump_qnn_ep_input_graph` (exact)** — the QNN EP can dump the
+   ONNX graph it actually receives at compile time (after ORT Level 1
+   optimizations, before partitioning) as a QNN-Netron-schema JSON. This is
+   the true EP-input graph, not an approximation:
+
+   ```bash
+   onnxruntime_perf_test ... \
+       -i "... dump_qnn_ep_input_graph|1 dump_qnn_ep_input_graph_dir|./"
+   # writes <graph_name>.<n>_qnn_ep_input_graph.json
+   ```
+
+   `--optimized-model` accepts this JSON directly (detected by the `.json`
+   extension) — no `onnx` load is needed for the optimized side:
+
+   ```bash
+   python source_to_optimized_matcher.py \
+       --source-model    model.onnx \
+       --optimized-model graph.0_qnn_ep_input_graph.json \
+       --qnn-trace       qnn_op_trace.json \
+       ...
+   ```
+
+   The dump carries node name/op_type/inputs/outputs and a tensor table that
+   flags initializers (tensor `type == 4`). It does not carry initializer data
+   bytes, so data-hash matching (renamed-weight detection) is inert for this
+   input — name-based and topology-based matching are unaffected, which is what
+   the QNN-EP-direct workflow needs.
+
+   **Multiple dumps for the same graph name — which file to feed.** A single
+   session can produce more than one dump per graph because ORT may invoke
+   `GetCapability` more than once: once before its NHWC layout transform and
+   once after on the rewritten graph; once per `If`/`Loop`/`Scan` subgraph;
+   and once again on EPContext model loads. The atomic counter in the
+   filename (`<graph_name>.<n>_…json`) gives each pass a distinct file, with
+   an overwrite warning logged if the same `<n>` is ever about to be reused.
+
+   For each unique `<graph_name>`, feed the file with the **highest `<n>`**
+   as `--optimized-model`. That is the graph the QNN EP actually compiled,
+   and its node names are the names that appear in `qnn_op_trace.json`'s
+   `sources[]` — the join `source -> optimized -> QNN op` only closes if you
+   feed the post-transform graph. Lower-numbered files are intermediate
+   snapshots and useful for debugging the layout transformer itself, not for
+   matcher input. Models with subgraphs need one matcher run per unique
+   graph name, each pointed at that graph's highest-numbered dump.
+
+2. **`-o 1 -u` without QNN EP** — a close approximation when the dump is not
+   available. Run the model through ORT with only Level 1 optimizations (no
+   QNN EP) and save:
+
+   ```bash
+   onnxruntime_perf_test.exe -o 1 -u ep_approx.onnx -r 0 model.onnx
+   # (omit --plugin_ep_libs / --plugin_eps so QNN EP is not registered)
+   ```
+
+   This applies the same Level 1 passes that QNN EP sees, including
+   `EnsureUniqueDQForNodeUnit` (which adds `/duplicated` DQ copies).
+   The gap is a second pass of `MatMulAddFusion` and
+   `QDQFinalCleanupTransformer` from Level 2 — both are negligible for
+   typical QDQ models. Crucially, `QDQSelectorActionTransformer` (the
+   QDQ->QLinear fusion) does **not** run in either case.
+
+   ```bash
+   python source_to_optimized_matcher.py \
+       --source-model    model.onnx \
+       --optimized-model ep_approx.onnx \
+       --qnn-trace       qnn_op_trace.json \
+       ...
+   ```
+
+3. **Pass the source ONNX as both arguments** — adequate for most QDQ models
+   because the EP-input is structurally very close to the source (Level 1
+   changes are mostly node copies and Transpose rearrangements, not renames):
+
+   ```bash
+   python source_to_optimized_matcher.py \
+       --source-model    model.onnx \
+       --optimized-model model.onnx \
+       --qnn-trace       qnn_op_trace.json \
+       ...
+   ```
+
+The matcher has an identity fallback in `join_qnn_trace`: if a node name
+from `sources[]` is not in the matcher's `node_mappings` but is a node in
+the source ONNX, it is passed through unchanged. This covers the common case
+where source ≈ EP-input, without requiring a precise EP-input dump.
+
+EP-synthesized node names (`_token_N` suffixes, `/duplicated` copies, bare
+`DequantizeLinear` without a namespace) have no user-authored ONNX counterpart
+and remain unresolved; this is correct behaviour.
+
+If you use a file saved with CPU EP or full ORT optimization
+(`SessionOptions::optimized_model_filepath` from a default session), it will
+contain QLinear* fused nodes that do not match what QNN EP consumed; most
+`original_sources[]` entries will be empty.
 
 ### Usage
 
