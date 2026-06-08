@@ -198,71 +198,26 @@ static void RunQLinearConvTest(const std::vector<int64_t>& x_shape,
 }
 
 // ---------------------------------------------------------------------------
-// Rejection / IsOpSupported tests
+// Note: QLinearConv is only supported on the QNN HTP backend. The QNN CPU
+// backend does not implement quantized Conv2d/Conv3d, so all accuracy and
+// IsOpSupported tests for QLinearConv live under the HTP guard below. (The
+// existing conv_test.cc follows the same pattern: only float Conv runs on CPU,
+// all quantized Conv tests are HTP-only.)
 // ---------------------------------------------------------------------------
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_DynamicScale_Unsupported) {
-  // x_scale is a graph input (not initializer) — must not be assigned to QNN EP.
-  QLinearConvAttrs attrs;
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>(
-      {1, 2, 5, 5}, {3, 2, 3, 3}, attrs, "cpu", ExpectedEPNodeAssignment::None,
-      /*has_bias=*/false, /*per_channel_weight=*/false, /*dynamic_x_scale=*/true);
-}
-
-// ---------------------------------------------------------------------------
-// CPU backend accuracy tests (uint8)
-// ---------------------------------------------------------------------------
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Basic2D) {
-  QLinearConvAttrs attrs;
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 3, 8, 8}, {4, 3, 3, 3}, attrs, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Bias) {
-  QLinearConvAttrs attrs;
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 3, 8, 8}, {4, 3, 3, 3}, attrs, "cpu",
-                                                ExpectedEPNodeAssignment::All, /*has_bias=*/true);
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Strides) {
-  QLinearConvAttrs attrs;
-  attrs.strides = {2, 2};
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 3, 8, 8}, {4, 3, 3, 3}, attrs, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Pads) {
-  QLinearConvAttrs attrs;
-  attrs.pads = {1, 1, 1, 1};
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 3, 8, 8}, {4, 3, 3, 3}, attrs, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_AutoPadSameUpper) {
-  QLinearConvAttrs attrs;
-  attrs.auto_pad = "SAME_UPPER";
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 3, 8, 8}, {4, 3, 3, 3}, attrs, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Depthwise) {
-  QLinearConvAttrs attrs;
-  attrs.group = 4;
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 4, 8, 8}, {4, 1, 3, 3}, attrs, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Conv1D) {
-  QLinearConvAttrs attrs;
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 2, 8}, {3, 2, 3}, attrs, "cpu");
-}
-
-TEST_F(QnnCPUBackendTests, QLinearConvOp_CPU_u8_Conv3D) {
-  QLinearConvAttrs attrs;
-  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>({1, 2, 5, 5, 5}, {3, 2, 3, 3, 3}, attrs, "cpu");
-}
 
 // ---------------------------------------------------------------------------
 // HTP backend accuracy tests
 // ---------------------------------------------------------------------------
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+TEST_F(QnnHTPBackendTests, QLinearConvOp_DynamicScale_Unsupported) {
+  // x_scale is a graph input (not initializer) — must not be assigned to QNN EP.
+  QLinearConvAttrs attrs;
+  RunQLinearConvTest<uint8_t, uint8_t, uint8_t>(
+      {1, 2, 5, 5}, {3, 2, 3, 3}, attrs, "htp", ExpectedEPNodeAssignment::None,
+      /*has_bias=*/false, /*per_channel_weight=*/false, /*dynamic_x_scale=*/true);
+}
 
 TEST_F(QnnHTPBackendTests, QLinearConvOp_DynamicZeroPoint_Unsupported) {
   // x_zero_point is a dynamic graph input — must not be assigned to QNN EP.
