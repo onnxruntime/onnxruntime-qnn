@@ -2318,6 +2318,15 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
     *should_convert = 1;
   }
 
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "QLinearConv") {
+    // QLinearConv is translated to QNN's Conv2d/DepthWiseConv2d/Conv3d, which require the NHWC
+    // layout for processing. ORT core's layout transformer transposes the activation/output and
+    // re-presents the node in kMSInternalNHWCDomain; QLinearConv is a recognized layout-sensitive
+    // op in ORT core, so only the activation is transposed (the weight and scalar quant-param
+    // inputs are left untouched, which is what the QLinearConv builder expects).
+    *should_convert = 1;
+  }
+
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "ConvInteger") {
     // DQConvIntegerFusion handles NCHW->NHWC transposition internally via QNN Transpose ops.
     // Suppress ORT's layout transformer so it does not rewrite ConvInteger to kMSInternalNHWCDomain,

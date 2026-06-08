@@ -19,6 +19,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateConcatOpBuilder("Concat", *this);
   CreateConvOpBuilder("Conv", *this);
   CreateConvOpBuilder("ConvTranspose", *this);
+  CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateCumSumOpBuilder("CumSum", *this);
   CreateEinsumOpBuilder("Einsum", *this);
   CreateExpandOpBuilder("Expand", *this);
