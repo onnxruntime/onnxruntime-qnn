@@ -336,6 +336,7 @@ Ort::Status QLinearConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger,
                                                         std::vector<std::string>& input_names,
                                                         bool do_op_validation) const {
+  ORT_UNUSED_PARAMETER(logger);
   const auto& inputs = node_unit.Inputs();
   const size_t num_inputs = inputs.size();
 
@@ -412,16 +413,16 @@ Ort::Status QLinearConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_mod
         RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_src)), "Failed to add weight tensor.");
       }
       RETURN_IF_ERROR(qnn_model_wrapper.AddNchwToHwcnTranspose(node_unit.Index(),
-                                                              w_name,
-                                                              actual_w_name,
-                                                              w_info.shape,
-                                                              hwcn_shape,
-                                                              qnn_dtype_w,
-                                                              quant_w,
-                                                              do_op_validation,
-                                                              qnn_model_wrapper.IsGraphInput(w_name),
-                                                              false,
-                                                              is_3d));
+                                                               w_name,
+                                                               actual_w_name,
+                                                               w_info.shape,
+                                                               hwcn_shape,
+                                                               qnn_dtype_w,
+                                                               quant_w,
+                                                               do_op_validation,
+                                                               qnn_model_wrapper.IsGraphInput(w_name),
+                                                               false,
+                                                               is_3d));
     }
 
     Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(actual_w_name);
@@ -574,9 +575,9 @@ Ort::Status QLinearConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model
                                                        qnn_dtype_w, quant_w, do_op_validation,
                                                        qnn_model_wrapper.IsGraphInput(w_name)));
       RETURN_IF_ERROR(qnn_model_wrapper.AddNchwToHwcnTranspose(node_unit.Index(), reshape_output,
-                                                              actual_w_name, shape_2d, hwcn_shape,
-                                                              qnn_dtype_w, quant_w, do_op_validation,
-                                                              false, false, /*is_3d=*/false));
+                                                               actual_w_name, shape_2d, hwcn_shape,
+                                                               qnn_dtype_w, quant_w, do_op_validation,
+                                                               false, false, /*is_3d=*/false));
     }
 
     Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(actual_w_name);
