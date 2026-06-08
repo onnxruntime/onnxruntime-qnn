@@ -479,8 +479,13 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
     Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    // FullyConnected → 2-D FP16 output. Reuse the original QL node's input name.
-    const std::string fc_fp16_out = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName();
+    // FullyConnected → 2-D FP16 output.
+    // When output is quantized: reuse the original QL node's input name for the FP16 tensor,
+    // keeping the QNN graph aligned with the ONNX graph naming.
+    // When output is unquantized (float): output directly to org_output_name.
+    const std::string fc_fp16_out = output_info.quant_param.IsQuantized()
+                                        ? Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName()
+                                        : org_output_name;
     QnnTensorWrapper fc_fp16_wrapper(fc_fp16_out, QNN_TENSOR_TYPE_NATIVE,
                                      QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
                                      std::vector<uint32_t>(output_shape));
@@ -492,16 +497,19 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                   {}, do_op_validation),
                   "Failed to add BQ FullyConnected node.");
 
-    // FP16 → INT16 quantized output.
-    QnnTensorWrapper int16_out_wrapper(org_output_name, out_tensor_type, output_info.qnn_data_type,
-                                       output_info.quant_param.Copy(), std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                  "Failed to add INT16 BQ Gemm output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(org_output_name, "_fp16_quantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                      {fc_fp16_out}, {org_output_name}, {}, do_op_validation),
-                  "Failed to add FP16→INT16 Quantize node for BQ Gemm output.");
+    if (output_info.quant_param.IsQuantized()) {
+      // FP16 → INT16 quantized output.
+      QnnTensorWrapper int16_out_wrapper(org_output_name, out_tensor_type, output_info.qnn_data_type,
+                                         output_info.quant_param.Copy(), std::vector<uint32_t>(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
+                    "Failed to add INT16 BQ Gemm output tensor.");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                        utils::UniqueNameGenerator().New(org_output_name, "_fp16_quantize"),
+                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
+                        {fc_fp16_out}, {org_output_name}, {}, do_op_validation),
+                    "Failed to add FP16→INT16 Quantize node for BQ Gemm output.");
+    }
+    // Unquantized (float) output: the FC node already outputs to org_output_name.
     return Ort::Status();
   }
 
