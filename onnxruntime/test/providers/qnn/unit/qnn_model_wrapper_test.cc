@@ -615,7 +615,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_NoValidation_ReturnsTrue) {
   EXPECT_TRUE(ok);
 }
 
-// ── Wave 3: ComposeQnnGraph full path via tensorCreateGraphTensor + graphAddNode stubs ──
+// ── ComposeQnnGraph full path via tensorCreateGraphTensor + graphAddNode stubs ──
 
 namespace {
 Qnn_ErrorHandle_t StubTensorCreateSuccess(Qnn_GraphHandle_t, Qnn_Tensor_t*) {
@@ -737,7 +737,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16Enabled_ProcessesConversions)
   EXPECT_TRUE(wrapper->ComposeQnnGraph());
 }
 
-// ── Wave 4: CreateQnnGraph extra paths, validation, error paths, Graph_GetNumInitializers stub ──
+// ── CreateQnnGraph extra paths, validation, error paths, Graph_GetNumInitializers stub ──
 
 namespace {
 // Stub for graphCreate: sets graph_ to a non-null sentinel and returns success.
@@ -880,7 +880,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeIntermediateInput_Conv
   EXPECT_TRUE(wrapper->ComposeQnnGraph());
 }
 
-// ── Wave 5: ProcessBF16OutputConversion NATIVE path, RegisterGraphInputOutputInOrder skips,
+// ── ProcessBF16OutputConversion NATIVE path, RegisterGraphInputOutputInOrder skips,
 //           ProcessBF16InputConversion reuse + STATIC branch ──────────────────────────────
 
 // ProcessBF16OutputConversion: NATIVE FP32 output NOT in graph_outputs is converted to BF16
@@ -1030,7 +1030,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_StaticNonConstantInput_AddsC
   EXPECT_TRUE(wrapper->ComposeQnnGraph());
 }
 
-// ── Wave 6: graphAddNode failure, RegisterGraphInputOutputInOrder failure and offload-io-quant,
+// ── graphAddNode failure, RegisterGraphInputOutputInOrder failure and offload-io-quant,
 //           build_json_qnn_graph path, ProcessBF16Conversions failure, missing output tensor ────
 
 namespace {
@@ -1177,13 +1177,13 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingOutputTensor_ReturnsFalse)
   EXPECT_FALSE(wrapper->ComposeQnnGraph());
 }
 
-// ── Wave 7: graphRetrieve fallback, input/param tensor create failures in main loop,
+// ── graphRetrieve fallback, input/param tensor create failures in main loop,
 //            BF16 else branches, ApplyBF16ConversionForValidation failure ──
 
 namespace {
 // graphCreate: fails without setting graph_ → triggers the graphRetrieve fallback (line ~38).
-Qnn_ErrorHandle_t StubGraphCreateFail_W7(Qnn_ContextHandle_t, const char*,
-                                         const QnnGraph_Config_t**, Qnn_GraphHandle_t*) {
+Qnn_ErrorHandle_t StubGraphCreateFail(Qnn_ContextHandle_t, const char*,
+                                      const QnnGraph_Config_t**, Qnn_GraphHandle_t*) {
   return QNN_TENSOR_ERROR_INVALID_HANDLE;  // any non-zero Qnn_ErrorHandle_t
 }
 // graphRetrieve: fails → lines ~39-41 hit → CreateQnnGraph returns false.
@@ -1191,7 +1191,7 @@ Qnn_ErrorHandle_t StubGraphRetrieveFail(Qnn_ContextHandle_t, const char*, Qnn_Gr
   return QNN_TENSOR_ERROR_INVALID_HANDLE;
 }
 // graphRetrieve: succeeds → lines ~38-39 hit → CreateQnnGraph returns true.
-// Reuses g_graph_sentinel from the Wave 4 namespace (same translation unit).
+// Reuses g_graph_sentinel from the same anonymous namespace (same translation unit).
 Qnn_ErrorHandle_t StubGraphRetrieveSuccess(Qnn_ContextHandle_t, const char*,
                                            Qnn_GraphHandle_t* graph_out) {
   *graph_out = reinterpret_cast<Qnn_GraphHandle_t>(&g_graph_sentinel);
@@ -1202,7 +1202,7 @@ Qnn_ErrorHandle_t StubGraphRetrieveSuccess(Qnn_ContextHandle_t, const char*,
 // graphCreate fails AND graphRetrieve also fails → lines ~39-41 are hit → return false.
 TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFails_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ctx.qnn_interface.graphCreate = StubGraphCreateFail_W7;
+  ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveFail;
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1214,7 +1214,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFail
 // graphCreate fails but graphRetrieve succeeds → lines ~38-39, ~47-49 are hit → return true.
 TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveSucceeds_ReturnsTrue) {
   QnnModelWrapperTestContext ctx;
-  ctx.qnn_interface.graphCreate = StubGraphCreateFail_W7;
+  ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveSuccess;
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1329,7 +1329,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
   EXPECT_FALSE(ok);
 }
 
-// ── Wave 8: ValidateQnnNode with real QNN CPU backend ─────────────────────
+// ── ValidateQnnNode with real QNN CPU backend ─────────────────────
 //
 // These tests dlopen libQnnCpu.so and create a real Qnn_BackendHandle_t so that
 // QnnGraphOpValidation / backendValidateOpConfig exercises the actual SDK path.
@@ -1395,7 +1395,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_CpuBackend_InvalidOpType_Fails) {
   EXPECT_FALSE(status.IsOK());
 }
 
-// ── Wave 9: IsExternalOverrideTarget, IsPerChannelQuantized (no-quant path) ──
+// ── IsExternalOverrideTarget, IsPerChannelQuantized (no-quant path) ──
 
 // IsExternalOverrideTarget: null override map → always returns false.
 TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_NullMap_ReturnsFalse) {
@@ -1447,32 +1447,32 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NoQuantParam_ReturnsFalse) 
   EXPECT_FALSE(is_per_channel);
 }
 
-// ── Wave 10: IsConstantInput true path, GetConstantTensor, GetTensorType STATIC ──
+// ── IsConstantInput true path, GetConstantTensor, GetTensorType STATIC ──
 
 namespace {
 // Fake OrtValueInfo sentinel — its address is used as an opaque pointer in stub arrays.
-static int g_wave10_vi_sentinel = 0;
+static int g_init_vi_sentinel = 0;
 
-// Name returned by StubGetVIName_W10.  Set before each test that uses it.
-static const char* g_wave10_vi_name = "";
+// Name returned by StubGetVIName.  Set before each test that uses it.
+static const char* g_init_vi_name = "";
 
-OrtStatus* StubGetNumInit1_W10(const OrtGraph*, size_t* n) noexcept {
+OrtStatus* StubGetNumInit1(const OrtGraph*, size_t* n) noexcept {
   *n = 1;
   return nullptr;
 }
-OrtStatus* StubGetInits1_W10(const OrtGraph*, const OrtValueInfo** arr, size_t) noexcept {
-  arr[0] = reinterpret_cast<const OrtValueInfo*>(&g_wave10_vi_sentinel);
+OrtStatus* StubGetInits1(const OrtGraph*, const OrtValueInfo** arr, size_t) noexcept {
+  arr[0] = reinterpret_cast<const OrtValueInfo*>(&g_init_vi_sentinel);
   return nullptr;
 }
-OrtStatus* StubGetVIName_W10(const OrtValueInfo*, const char** nm) noexcept {
-  *nm = g_wave10_vi_name;
+OrtStatus* StubGetVIName(const OrtValueInfo*, const char** nm) noexcept {
+  *nm = g_init_vi_name;
   return nullptr;
 }
-OrtStatus* StubVIIsConstantTrue_W10(const OrtValueInfo*, bool* b) noexcept {
+OrtStatus* StubVIIsConstantTrue(const OrtValueInfo*, bool* b) noexcept {
   *b = true;
   return nullptr;
 }
-OrtStatus* StubVIIsConstantFalse_W10(const OrtValueInfo*, bool* b) noexcept {
+OrtStatus* StubVIIsConstantFalse(const OrtValueInfo*, bool* b) noexcept {
   *b = false;
   return nullptr;
 }
@@ -1482,11 +1482,11 @@ OrtStatus* StubVIIsConstantFalse_W10(const OrtValueInfo*, bool* b) noexcept {
 // Covers FindInitializer "found" path + IsConstantInput true branch.
 TEST(QnnUnit_ModelWrapperTest, IsConstantInput_FoundAndIsConstant_ReturnsTrue) {
   QnnModelWrapperTestContext ctx;
-  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1_W10;
-  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1_W10;
-  ctx.stub_ort_api.GetValueInfoName = StubGetVIName_W10;
-  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue_W10;
-  g_wave10_vi_name = "my_weight";
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1;
+  ctx.stub_ort_api.GetValueInfoName = StubGetVIName;
+  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
+  g_init_vi_name = "my_weight";
 
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1498,11 +1498,11 @@ TEST(QnnUnit_ModelWrapperTest, IsConstantInput_FoundAndIsConstant_ReturnsTrue) {
 // Covers the "found but not constant" branch in IsConstantInput.
 TEST(QnnUnit_ModelWrapperTest, IsConstantInput_FoundButNotConstant_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1_W10;
-  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1_W10;
-  ctx.stub_ort_api.GetValueInfoName = StubGetVIName_W10;
-  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantFalse_W10;
-  g_wave10_vi_name = "my_weight";
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1;
+  ctx.stub_ort_api.GetValueInfoName = StubGetVIName;
+  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantFalse;
+  g_init_vi_name = "my_weight";
 
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1514,11 +1514,11 @@ TEST(QnnUnit_ModelWrapperTest, IsConstantInput_FoundButNotConstant_ReturnsFalse)
 // Covers the success path of GetConstantTensor.
 TEST(QnnUnit_ModelWrapperTest, GetConstantTensor_FoundAndIsConstant_ReturnsNonNull) {
   QnnModelWrapperTestContext ctx;
-  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1_W10;
-  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1_W10;
-  ctx.stub_ort_api.GetValueInfoName = StubGetVIName_W10;
-  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue_W10;
-  g_wave10_vi_name = "const_w";
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1;
+  ctx.stub_ort_api.GetValueInfoName = StubGetVIName;
+  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
+  g_init_vi_name = "const_w";
 
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1543,11 +1543,11 @@ TEST(QnnUnit_ModelWrapperTest, GetConstantTensor_NotFound_ReturnsNull) {
 // Covers the IsConstantInput-true branch of GetTensorType.
 TEST(QnnUnit_ModelWrapperTest, GetTensorType_ConstantInput_ReturnsStatic) {
   QnnModelWrapperTestContext ctx;
-  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1_W10;
-  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1_W10;
-  ctx.stub_ort_api.GetValueInfoName = StubGetVIName_W10;
-  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue_W10;
-  g_wave10_vi_name = "const_w";
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1;
+  ctx.stub_ort_api.GetValueInfoName = StubGetVIName;
+  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
+  g_init_vi_name = "const_w";
 
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1555,7 +1555,7 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorType_ConstantInput_ReturnsStatic) {
   EXPECT_EQ(wrapper->GetTensorType("const_w"), QNN_TENSOR_TYPE_STATIC);
 }
 
-// ── Wave 11: GetTensorInfo, MakeTensorWrapper(TensorInfo), MakeTensorWrapper(OrtNodeUnitIODef),
+// ── GetTensorInfo, MakeTensorWrapper(TensorInfo), MakeTensorWrapper(OrtNodeUnitIODef),
 //             AddNoopReshapeNode ──────────────────────────────────────────────────────────────
 
 // GetTensorInfo: FP32 tensor with no quant_param, not an initializer.
@@ -1591,11 +1591,11 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_NoQuantParam_Float_NotInitializer_S
 // and GetConstantTensor call inside GetTensorInfo.
 TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_IsConstantInitializer_SetsInitializerFields) {
   QnnModelWrapperTestContext ctx;
-  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1_W10;
-  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1_W10;
-  ctx.stub_ort_api.GetValueInfoName = StubGetVIName_W10;
-  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue_W10;
-  g_wave10_vi_name = "const_w";
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInit1;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInits1;
+  ctx.stub_ort_api.GetValueInfoName = StubGetVIName;
+  ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
+  g_init_vi_name = "const_w";
 
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
@@ -1761,95 +1761,95 @@ TEST(QnnUnit_ModelWrapperTest, AddNoopReshapeNode_ShapeMismatch_ReturnsError) {
   EXPECT_FALSE(status.IsOK());
 }
 
-// ── Wave 9: UnpackInitializerData / UnpackZeroPoints ─────────────────────────
+// ── UnpackInitializerData / UnpackZeroPoints ─────────────────────────
 // Covers two previously-uncovered functions that require OrtApi tensor-data stubs.
 
 namespace {
-// Sentinels for opaque ORT types used only in Wave 9 tests.
-static int g_type_info_sentinel_w9 = 0;
-static int g_shape_info_sentinel_w9 = 0;
-static int g_initializer_value_sentinel_w9 = 0;
+// Sentinels for opaque ORT types used in unpack stubs.
+static int g_type_info_sentinel = 0;
+static int g_shape_info_sentinel = 0;
+static int g_initializer_value_sentinel = 0;
 
-// Per-test configuration set before each Wave 9 test.
-static ONNXTensorElementDataType g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-static std::vector<int64_t> g_tensor_dims_w9;
-static const void* g_tensor_raw_data_w9 = nullptr;
+// Per-test configuration set before each unpack/shape test.
+static ONNXTensorElementDataType g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+static std::vector<int64_t> g_tensor_dims;
+static const void* g_tensor_raw_data = nullptr;
 
-OrtStatus* StubGraphGetModelPathEmpty_W9(const OrtGraph*,
-                                         const ORTCHAR_T** model_path) noexcept {
+OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
+                                      const ORTCHAR_T** model_path) noexcept {
   static const ORTCHAR_T empty_path[] = "";
   *model_path = empty_path;
   return nullptr;
 }
-OrtStatus* StubValueInfoGetExternalNull_W9(const OrtValueInfo*,
-                                           OrtExternalInitializerInfo** info) noexcept {
+OrtStatus* StubValueInfoGetExternalNull(const OrtValueInfo*,
+                                        OrtExternalInitializerInfo** info) noexcept {
   *info = nullptr;
   return nullptr;
 }
-OrtStatus* StubGetValueInfoTypeInfo_W9(const OrtValueInfo*,
-                                       const OrtTypeInfo** type_info) noexcept {
-  *type_info = reinterpret_cast<const OrtTypeInfo*>(&g_type_info_sentinel_w9);
+OrtStatus* StubGetValueInfoTypeInfo(const OrtValueInfo*,
+                                    const OrtTypeInfo** type_info) noexcept {
+  *type_info = reinterpret_cast<const OrtTypeInfo*>(&g_type_info_sentinel);
   return nullptr;
 }
-OrtStatus* StubCastTypeInfoToTensorInfo_W9(const OrtTypeInfo*,
-                                           const OrtTensorTypeAndShapeInfo** info) noexcept {
-  *info = reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(&g_shape_info_sentinel_w9);
+OrtStatus* StubCastTypeInfoToTensorInfo(const OrtTypeInfo*,
+                                        const OrtTensorTypeAndShapeInfo** info) noexcept {
+  *info = reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(&g_shape_info_sentinel);
   return nullptr;
 }
-OrtStatus* StubGetTensorElementType_W9(const OrtTensorTypeAndShapeInfo*,
-                                       ONNXTensorElementDataType* out) noexcept {
-  *out = g_element_type_w9;
+OrtStatus* StubGetTensorElementType(const OrtTensorTypeAndShapeInfo*,
+                                    ONNXTensorElementDataType* out) noexcept {
+  *out = g_element_type;
   return nullptr;
 }
-OrtStatus* StubGetDimensionsCount_W9(const OrtTensorTypeAndShapeInfo*,
-                                     size_t* out) noexcept {
-  *out = g_tensor_dims_w9.size();
+OrtStatus* StubGetDimensionsCount(const OrtTensorTypeAndShapeInfo*,
+                                  size_t* out) noexcept {
+  *out = g_tensor_dims.size();
   return nullptr;
 }
-OrtStatus* StubGetDimensions_W9(const OrtTensorTypeAndShapeInfo*,
-                                int64_t* dim_values, size_t count) noexcept {
-  for (size_t i = 0; i < count && i < g_tensor_dims_w9.size(); ++i) {
-    dim_values[i] = g_tensor_dims_w9[i];
+OrtStatus* StubGetDimensions(const OrtTensorTypeAndShapeInfo*,
+                             int64_t* dim_values, size_t count) noexcept {
+  for (size_t i = 0; i < count && i < g_tensor_dims.size(); ++i) {
+    dim_values[i] = g_tensor_dims[i];
   }
   return nullptr;
 }
-OrtStatus* StubValueInfoGetInitializerValue_W9(const OrtValueInfo*,
-                                               const OrtValue** value) noexcept {
-  *value = reinterpret_cast<const OrtValue*>(&g_initializer_value_sentinel_w9);
+OrtStatus* StubValueInfoGetInitializerValue(const OrtValueInfo*,
+                                            const OrtValue** value) noexcept {
+  *value = reinterpret_cast<const OrtValue*>(&g_initializer_value_sentinel);
   return nullptr;
 }
-OrtStatus* StubGetTensorData_W9(const OrtValue*, const void** out) noexcept {
-  *out = g_tensor_raw_data_w9;
+OrtStatus* StubGetTensorData(const OrtValue*, const void** out) noexcept {
+  *out = g_tensor_raw_data;
   return nullptr;
 }
 
-// Installs all Wave 9 stubs on ctx.
+// Installs all unpack stubs on ctx.
 void SetupUnpackStubs(QnnModelWrapperTestContext& ctx) {
-  ctx.stub_ort_api.Graph_GetModelPath = StubGraphGetModelPathEmpty_W9;
-  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternalNull_W9;
-  ctx.stub_ort_api.GetValueInfoTypeInfo = StubGetValueInfoTypeInfo_W9;
-  ctx.stub_ort_api.CastTypeInfoToTensorInfo = StubCastTypeInfoToTensorInfo_W9;
-  ctx.stub_ort_api.GetTensorElementType = StubGetTensorElementType_W9;
-  ctx.stub_ort_api.GetDimensionsCount = StubGetDimensionsCount_W9;
-  ctx.stub_ort_api.GetDimensions = StubGetDimensions_W9;
-  ctx.stub_ort_api.ValueInfo_GetInitializerValue = StubValueInfoGetInitializerValue_W9;
-  ctx.stub_ort_api.GetTensorData = StubGetTensorData_W9;
+  ctx.stub_ort_api.Graph_GetModelPath = StubGraphGetModelPathEmpty;
+  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternalNull;
+  ctx.stub_ort_api.GetValueInfoTypeInfo = StubGetValueInfoTypeInfo;
+  ctx.stub_ort_api.CastTypeInfoToTensorInfo = StubCastTypeInfoToTensorInfo;
+  ctx.stub_ort_api.GetTensorElementType = StubGetTensorElementType;
+  ctx.stub_ort_api.GetDimensionsCount = StubGetDimensionsCount;
+  ctx.stub_ort_api.GetDimensions = StubGetDimensions;
+  ctx.stub_ort_api.ValueInfo_GetInitializerValue = StubValueInfoGetInitializerValue;
+  ctx.stub_ort_api.GetTensorData = StubGetTensorData;
 }
 }  // namespace
 
 // UnpackInitializerData: basic UINT8 tensor — raw bytes are copied as-is.
 TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_UINT8_ReturnsRawBytes) {
   static const uint8_t kData[] = {10, 20, 30, 40};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-  g_tensor_dims_w9 = {4};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  g_tensor_dims = {4};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<uint8_t> result;
   Ort::Status s = wrapper->UnpackInitializerData(fake_vi, result, /*unpack_4bit=*/false);
   ASSERT_TRUE(s.IsOK());
@@ -1861,16 +1861,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_UINT8_ReturnsRawBytes) {
 // UnpackInitializerData: INT8 scalar — 1-byte tensor.
 TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_INT8_ReturnsRawBytes) {
   static const int8_t kData[] = {-5};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
-  g_tensor_dims_w9 = {1};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  g_tensor_dims = {1};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<uint8_t> result;
   Ort::Status s = wrapper->UnpackInitializerData(fake_vi, result, /*unpack_4bit=*/false);
   ASSERT_TRUE(s.IsOK());
@@ -1893,16 +1893,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_NullInput_ReturnsError) {
 // UnpackZeroPoints: UINT8 — zero-points are negated (QNN uses -offset).
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT8_NegatesValues) {
   static const uint8_t kData[] = {128, 0, 255, 1};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-  g_tensor_dims_w9 = {4};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  g_tensor_dims = {4};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
@@ -1918,16 +1918,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT8_NegatesValues) {
 // UnpackZeroPoints: INT8 — signed zero-points are negated.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT8_NegatesValues) {
   static const int8_t kData[] = {-10, 5};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
-  g_tensor_dims_w9 = {2};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  g_tensor_dims = {2};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
@@ -1940,16 +1940,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT8_NegatesValues) {
 // UnpackZeroPoints: UINT16 — covers uint16_t lambda instantiation.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT16_NegatesValues) {
   static const uint16_t kData[] = {1000, 2000};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
-  g_tensor_dims_w9 = {2};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+  g_tensor_dims = {2};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
@@ -1962,16 +1962,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT16_NegatesValues) {
 // UnpackZeroPoints: INT16 — covers int16_t lambda instantiation.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT16_NegatesValues) {
   static const int16_t kData[] = {-300, 400};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
-  g_tensor_dims_w9 = {2};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+  g_tensor_dims = {2};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
@@ -1984,16 +1984,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT16_NegatesValues) {
 // UnpackZeroPoints: INT32 — covers int32_t lambda instantiation.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT32_NegatesValues) {
   static const int32_t kData[] = {100000, -1};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
-  g_tensor_dims_w9 = {2};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+  g_tensor_dims = {2};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
@@ -2006,16 +2006,16 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT32_NegatesValues) {
 // UnpackZeroPoints: UINT32 — covers uint32_t lambda instantiation.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT32_NegatesValues) {
   static const uint32_t kData[] = {7u};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32;
-  g_tensor_dims_w9 = {1};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32;
+  g_tensor_dims = {1};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
@@ -2027,34 +2027,34 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT32_NegatesValues) {
 // UnpackZeroPoints: unsupported type (FLOAT) → hits default case → error.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UnsupportedType_ReturnsError) {
   static const float kData[] = {1.0f};
-  g_element_type_w9 = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
-  g_tensor_dims_w9 = {1};
-  g_tensor_raw_data_w9 = kData;
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  g_tensor_dims = {1};
+  g_tensor_raw_data = kData;
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   std::vector<int32_t> zps;
   ONNXTensorElementDataType dt = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   Ort::Status s = wrapper->UnpackZeroPoints(fake_vi, zps, dt);
   EXPECT_FALSE(s.IsOK());
 }
 
-// ── Wave 10: IsPerChannelQuantized ───────────────────────────────────────────
+// ── IsPerChannelQuantized ───────────────────────────────────────────────────
 // GetInitializerShape (called internally) uses GetValueInfoTypeInfo,
 // CastTypeInfoToTensorInfo, GetDimensionsCount, GetDimensions — all already
-// provided by the Wave 9 _W9 stubs.  Set g_tensor_dims_w9 before each test.
+// provided by the unpack stubs above.  Set g_tensor_dims before each test.
 
 namespace {
 // Installs only the 4 stubs required by utils::GetInitializerShape.
 void SetupShapeStubs(QnnModelWrapperTestContext& ctx) {
-  ctx.stub_ort_api.GetValueInfoTypeInfo = StubGetValueInfoTypeInfo_W9;
-  ctx.stub_ort_api.CastTypeInfoToTensorInfo = StubCastTypeInfoToTensorInfo_W9;
-  ctx.stub_ort_api.GetDimensionsCount = StubGetDimensionsCount_W9;
-  ctx.stub_ort_api.GetDimensions = StubGetDimensions_W9;
+  ctx.stub_ort_api.GetValueInfoTypeInfo = StubGetValueInfoTypeInfo;
+  ctx.stub_ort_api.CastTypeInfoToTensorInfo = StubCastTypeInfoToTensorInfo;
+  ctx.stub_ort_api.GetDimensionsCount = StubGetDimensionsCount;
+  ctx.stub_ort_api.GetDimensions = StubGetDimensions;
 }
 }  // namespace
 
@@ -2077,7 +2077,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NullScale_ReturnsError) {
 
 // IsPerChannelQuantized: scalar scale (0-dim tensor) → per-tensor.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_ScalarScale_PerTensor) {
-  g_tensor_dims_w9 = {};  // 0-dim scalar
+  g_tensor_dims = {};  // 0-dim scalar
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
@@ -2087,7 +2087,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_ScalarScale_PerTensor) {
   OrtNodeUnitIODef io_def;
   io_def.name = "t";
   io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   io_def.quant_param = OrtNodeUnitIODef::QuantParam{fake_scale};
 
   bool is_per_channel = true;
@@ -2099,7 +2099,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_ScalarScale_PerTensor) {
 
 // IsPerChannelQuantized: 1-element vector scale → per-tensor.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_OneElemVectorScale_PerTensor) {
-  g_tensor_dims_w9 = {1};  // 1-element vector
+  g_tensor_dims = {1};  // 1-element vector
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
@@ -2109,7 +2109,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_OneElemVectorScale_PerTenso
   OrtNodeUnitIODef io_def;
   io_def.name = "t";
   io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   io_def.quant_param = OrtNodeUnitIODef::QuantParam{fake_scale};
 
   bool is_per_channel = true;
@@ -2121,7 +2121,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_OneElemVectorScale_PerTenso
 
 // IsPerChannelQuantized: multi-element scale, no axis → per-channel, default axis = 1.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_DefaultAxis) {
-  g_tensor_dims_w9 = {4};  // 4-element → per-channel
+  g_tensor_dims = {4};  // 4-element → per-channel
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
@@ -2131,7 +2131,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_DefaultAxis)
   OrtNodeUnitIODef io_def;
   io_def.name = "t";
   io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   io_def.quant_param = OrtNodeUnitIODef::QuantParam{fake_scale};  // axis = nullopt
 
   bool is_per_channel = false;
@@ -2144,7 +2144,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_DefaultAxis)
 
 // IsPerChannelQuantized: multi-element scale, explicit positive axis → preserved.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_PositiveAxis) {
-  g_tensor_dims_w9 = {4};
+  g_tensor_dims = {4};
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
@@ -2154,7 +2154,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_PositiveAxis
   OrtNodeUnitIODef io_def;
   io_def.name = "t";
   io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   io_def.quant_param = OrtNodeUnitIODef::QuantParam{fake_scale, nullptr, /*axis=*/2};
 
   bool is_per_channel = false;
@@ -2168,7 +2168,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_PositiveAxis
 // IsPerChannelQuantized: negative axis → normalized to rank + axis.
 // scale=[4], axis=-1, tensor shape=[4,4,4] (rank 3) → axis = 3 + (-1) = 2.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NormalizedToPositive) {
-  g_tensor_dims_w9 = {4};
+  g_tensor_dims = {4};
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
@@ -2179,7 +2179,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NormalizedToPo
   io_def.name = "t";
   io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
   io_def.shape = std::vector<int64_t>{4, 4, 4};  // rank 3
-  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   io_def.quant_param = OrtNodeUnitIODef::QuantParam{fake_scale, nullptr, /*axis=*/-1};
 
   bool is_per_channel = false;
@@ -2193,7 +2193,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NormalizedToPo
 // IsPerChannelQuantized: negative axis but shape is nullopt
 // → GetOnnxShape returns false → RETURN_IF_NOT fires → error.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NoShape_ReturnsError) {
-  g_tensor_dims_w9 = {4};
+  g_tensor_dims = {4};
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
@@ -2204,7 +2204,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NoShape_Return
   io_def.name = "t";
   io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
   io_def.shape = std::nullopt;  // no shape → GetOnnxShape returns false
-  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel_w9);
+  auto fake_scale = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
   io_def.quant_param = OrtNodeUnitIODef::QuantParam{fake_scale, nullptr, /*axis=*/-1};
 
   bool is_per_channel = false;

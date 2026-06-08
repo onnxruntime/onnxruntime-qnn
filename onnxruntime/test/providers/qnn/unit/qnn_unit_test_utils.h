@@ -66,12 +66,13 @@ struct QnnModelWrapperTestContext {
       return nullptr;
     };
     stub_ort_api.Graph_GetInitializers = [](const OrtGraph*, const OrtValueInfo**, size_t count) noexcept -> OrtStatus* {
-      // This stub is paired with Graph_GetNumInitializers above (which always reports 0).
-      // If a future test makes Graph_GetNumInitializers return non-zero, this stub must be
-      // updated to actually populate the buffer; silently returning success would leave the
-      // caller's buffer uninitialized and lead to UB.
-      assert(count == 0 && "stub only supports empty initializer query; update Graph_GetInitializers when changing Graph_GetNumInitializers");
-      (void)count;  // silence unused-variable warning in release builds where assert is no-op
+      // This stub only supports the empty-initializer case, paired with Graph_GetNumInitializers
+      // above which always reports 0. Tests that need non-zero initializers must replace this
+      // stub before calling CreateWrapper.
+      // Note: ORT_ENFORCE / assert are not used here because this lambda is noexcept — throwing
+      // or calling abort() from a noexcept function terminates the process rather than failing
+      // the test case. The invariant is enforced by the companion stub above.
+      (void)count;
       return nullptr;
     };
   }

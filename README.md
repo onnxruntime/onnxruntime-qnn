@@ -146,11 +146,11 @@ See [`onnxruntime/test/providers/qnn/unit/README.md`](onnxruntime/test/providers
 
 ```
 onnxruntime/test/providers/qnn/
-├── unit/                   # Tiers 1–2: pure-logic tests, no QNN SDK calls
+├── unit/                   # Tier 1: pure-logic tests, no QNN SDK calls
 │   ├── qnn_def_test.cc
 │   ├── qnn_model_wrapper_test.cc
 │   └── ...
-└── integration/            # Tiers 3–5: require QNN SDK / hardware (planned)
+└── integration/            # Tiers 2–4: require QNN SDK / hardware (planned)
     └── ...
 ```
 

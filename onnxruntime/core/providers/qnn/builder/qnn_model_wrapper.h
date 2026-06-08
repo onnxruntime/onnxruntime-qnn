@@ -416,7 +416,10 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
-  const OrtGraph& GetOrtGraph() const { return *ort_graph_ptr_; }
+  const OrtGraph& GetOrtGraph() const {
+    assert(ort_graph_ptr_ != nullptr);  // must not be called when constructed with null graph (test-only path)
+    return *ort_graph_ptr_;
+  }
 
   const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
     return model_tensors_map_;
