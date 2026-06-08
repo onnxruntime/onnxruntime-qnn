@@ -76,12 +76,13 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Download x86_64 Linux 3.10 Wheel from Artifactory
+      # We only publish this for AI Hub to use and they only want x86_64 Linux
+      - name: Download Linux x86_64 Python 3.10 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
 
-      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+      - name: Download Linux x86_64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.12-wheels
@@ -197,8 +198,8 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.12-wheels
-          
-      - name: Download Windows ARM64 Python 3.13 from Artifactory
+
+      - name: Download Windows ARM64 Python 3.13 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.13-wheels
@@ -212,7 +213,7 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64ec-py3.13-wheels
-    
+
       - name: Download Windows ARM64EC Python 3.11 from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -232,7 +233,7 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.11-wheels
-          
+
       - name: Download Windows x86_64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -325,12 +326,12 @@ jobs:
         with:
           name: windows-arm64x-py3.11-nuget
 
-      - name: Download Windows ARM64 Zip Package
+      - name: Download Windows ARM64 Zip Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-zip
 
-      - name: Download Windows ARM64 (ARM64x) Zip Package
+      - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64x-py3.11-zip
@@ -367,7 +368,7 @@ jobs:
         with:
           name: windows-arm64x-py3.11-pdb-zip
 
-      - name: Download Linux Aarch64 manylinux_2_34 Linux TGZ Package from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 TGZ Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tgz
