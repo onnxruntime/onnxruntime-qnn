@@ -35,7 +35,9 @@ def main(deps_dir: Path, mirror_dir: Path) -> None:
             failed.append(name)
 
     if failed:
-        logging.error(f"Could not fetch {len(failed)} dep(s): {', '.join(failed)}. CMake will attempt to download them directly.")
+        logging.error(
+            f"Could not fetch {len(failed)} dep(s): {', '.join(failed)}. CMake will attempt to download them directly."
+        )
 
     logging.info(f"Making dependencies available in {mirror_dir}")
     if mirror_dir.exists():
