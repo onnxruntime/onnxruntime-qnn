@@ -997,8 +997,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
                                                    TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data)));
 
-  onnxruntime::ProviderOptions options;
-
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -1017,25 +1016,21 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
 
-  {
-    Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts));
 
-    std::vector<std::thread> threads;
-    constexpr int num_threads = 5;
-    constexpr int loop_count = 10;
+  std::vector<std::thread> threads;
+  constexpr int num_threads = 5;
+  constexpr int loop_count = 10;
+  for (int i = 0; i < num_threads; i++) {
+    threads.push_back(std::thread(RunSessionAndVerify, std::ref(scoped.session()), Ort::RunOptions{nullptr},
+                                  std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
+  }
 
-    for (int i = 0; i < num_threads; i++) {
-      Ort::RunOptions run_opts;
-      run_opts.SetRunTag("logger0");
-      threads.push_back(std::thread(RunSessionAndVerify, std::ref(session), std::move(run_opts),
-                                    std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
-    }
-
-    for (auto& th : threads) {
-      th.join();
-    }
+  for (auto& th : threads) {
+    th.join();
   }
 }
 
