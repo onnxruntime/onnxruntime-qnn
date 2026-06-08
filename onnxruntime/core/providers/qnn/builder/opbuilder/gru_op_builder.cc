@@ -205,6 +205,14 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   // Use the actual ONNX direction so QNN sees the correct gate ordering.
   // Time step ordering for reverse is handled by the unrolling loop (iterating t from seq-1 down to 0).
   std::vector<std::string> param_names;
+  // hidden_size
+  // The QAIRT SDK GRU opdef does not declare hidden_size as a formal QNN parameter; the native
+  // converter emits it as a supplemental attribute (assertAttrExists) required by the IR/DLC path.
+  // Only emit it for the IR backend (SERIALIZER).
+  if (IsIrBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_" + direction,
+                                           hidden_size, "hidden_size", param_names));
+  }
   const uint32_t qnn_direction = (direction == "reverse") ? QNN_OP_GRU_DIRECTION_REVERSE : QNN_OP_GRU_DIRECTION_FORWARD;
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_" + direction,
                                          qnn_direction, QNN_OP_GRU_PARAM_DIRECTION, param_names));
@@ -216,7 +224,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   // and post-concat transpose), then let CPU use time_major=true uniformly with layout=0.
   // time_major: on CPU, always use false to work around its batch dimension bug with time_major=true.
   // On other backends (HTP), follow the ONNX layout attribute: layout=0 -> true, layout=1 -> false.
-  const bool is_cpu_backend = qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU;
+  const bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
   const bool time_major = is_cpu_backend ? false : (layout == 0);
   RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), time_major,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));

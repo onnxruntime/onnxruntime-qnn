@@ -340,6 +340,15 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
   // params
   std::vector<std::string> param_names;
 
+  // hidden_size
+  // The QAIRT SDK LSTM opdef does not declare hidden_size as a formal QNN parameter; the native
+  // converter emits it as a supplemental attribute (assertAttrExists) required by the IR/DLC path.
+  // Only emit it for the IR backend (SERIALIZER).
+  if (IsIrBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           hidden_size, "hidden_size", param_names));
+  }
+
   // direction
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_" + direction,
                                          direction == "forward" ? QNN_OP_LSTM_DIRECTION_FORWARD : QNN_OP_LSTM_DIRECTION_REVERSE,

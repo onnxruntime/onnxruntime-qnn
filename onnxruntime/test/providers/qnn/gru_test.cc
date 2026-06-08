@@ -217,6 +217,64 @@ static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
                   tolerance);
 }
 
+// Verify that QNN IR backend successfully generates a DLC for a forward GRU model.
+// All optional inputs are provided as initializers so the IR backend can serialize the graph
+// without null tensor placeholders (the IR serializer does not support null optional tensors).
+TEST_F(QnnIRBackendTests, GRU_HiddenSize_DLC) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "ir";
+  provider_options["dump_qnn_ir_dlc"] = "1";
+  provider_options["dump_qnn_ir_dlc_dir"] = "gru_hidden_size_dlc_output";
+
+  std::filesystem::remove_all("gru_hidden_size_dlc_output");
+
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 2;
+  uint32_t hidden_size = 5;
+  uint32_t input_size = 3;
+  uint32_t seq_len = 4;
+
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -0.1f, 0.1f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -0.1f, 0.1f);
+
+  // Build the model in memory and create a QNN IR backend session.
+  // The IR backend is a compile-only serializer: it generates a DLC during session initialization
+  // but does not support inference execution. We intentionally do not run inference here.
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model,
+                      BuildGRUTestCase<float>(
+                          TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                          TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                          TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                          std::ref(B_def),                                                                         // B
+                          std::ref(H_def),                                                                         // initial_h
+                          true,                                                                                    // has_Y
+                          true,                                                                                    // has_Y_h
+                          direction,
+                          hidden_size,
+                          0 /*layout*/,
+                          0 /*linear_before_reset*/),
+                      22 /*opset_version*/);
+
+  Ort::SessionOptions session_opts;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, provider_options);
+
+  // Session creation triggers QNN graph compile + DLC serialization. No inference is run.
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model->model_data.data(),
+                                       model->model_data.size(), session_opts));
+
+  ASSERT_TRUE(std::filesystem::exists("gru_hidden_size_dlc_output"));
+  int dlc_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator("gru_hidden_size_dlc_output")) {
+    if (entry.path().extension() == ".dlc") ++dlc_count;
+  }
+  EXPECT_GT(dlc_count, 0);
+  std::filesystem::remove_all("gru_hidden_size_dlc_output");
+}
+
 // ============================================================
 // CPU FP32 Tests
 // ============================================================
