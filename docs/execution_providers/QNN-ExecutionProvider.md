@@ -284,6 +284,13 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |---|---|
 |Directory path (string)|Directory path for framework op trace JSON files. Only effective when `enable_framework_op_trace` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to (e.g. read-only mount, missing permissions), framework op tracing is disabled with a WARNING log and no trace file is produced. Trace files use the pattern `qnn_op_trace.json`.|
 
+**Schema migration note:** The `qnn_op_trace.json` schema moves the `compilation_target` object out of the document root and into a new `soc_traces` array. Single-SoC sessions emit exactly one entry; multi-SoC FCB sessions emit one entry per `(htp_arch, soc_model)` pair. `subgraph_traces` (the ONNX-to-QNN op mapping) stays at the document root because op-builder output is SoC-agnostic. A new `summary.total_socs` field reports the entry count. A top-level `"schema_version"` field (currently `2`) is bumped on every breaking schema change so consumers can branch on it.
+
+- Old (legacy): `j["compilation_target"]["htp_arch"]`
+- New: `j["soc_traces"][0]["compilation_target"]["htp_arch"]`
+
+Consumers that read the compilation target must update the JSON path. Consumers of `subgraph_traces`, `unsupported_nodes`, and `summary` are unaffected.
+
 |`"qnn_ir_backend_path"`|Description|
 |---|---|
 |Backend path (string)|Path to the QNN IR backend library. Defaults to 'libQnnIr.so' or 'QnnIr.dll'. Only effective when `dump_qnn_ir_dlc` is enabled.|

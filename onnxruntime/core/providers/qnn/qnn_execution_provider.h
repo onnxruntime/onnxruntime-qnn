@@ -19,6 +19,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"
@@ -104,7 +105,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* GetMultiSocSupportedNodes(const OrtGraph* graph,
                                        const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                        const size_t node_unit_size,
-                                       std::vector<const OrtNode*>& supported_nodes) const;
+                                       std::vector<const OrtNode*>& supported_nodes,
+                                       std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
@@ -112,7 +114,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                               const OrtNode** fused_nodes,
                               size_t count,
                               OrtNodeComputeInfo** node_compute_infos,
-                              const qnn::HtpGraphConfigs_t& htp_graph_configs);
+                              const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                              bool collect_subgraph_traces = true);
 
   OrtStatus* CompileMultiSocOnnxModel(const OrtGraph** graphs,
                                       const OrtNode** fused_nodes,
@@ -138,10 +141,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Helper functions
   void ParsePerSocHtpConfigs();
 
-  // Framework op trace helpers. trace_ is populated incrementally during
-  // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
-  // function finalizes summary fields and writes the JSON file.
-  void CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph);
+  // Append a SocTrace: from live backend state (single-SoC), or one per configured SoC.
+  void AppendSingleSocTrace();
+  void AppendMultiSocTraces();
+  // Feed EP-side inputs (model name, backend type, dir) to op_trace_builder_ and write.
+  void WriteFrameworkOpTrace(const OrtGraph* primary_graph);
 
   // Emit a one-shot WARNING when the QNN EP is running on the HTP user-driver (HNRD) fallback path.
   void WarnIfHnrdPathActive();
@@ -261,10 +265,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // === Framework op trace ===
   bool enable_framework_op_trace_ = false;
   std::string framework_op_trace_dir_;
-  // Accumulates the trace state for this session: unsupported nodes are pushed
-  // by GetSupportedNodes, per-subgraph mappings are pushed by CompileImpl, and
-  // CollectAndWriteFrameworkOpTrace finalizes/serializes.
-  qnn::FrameworkOpTrace trace_;
+  // Owns trace assembly; the EP only feeds it data during GetCapability/Compile.
+  qnn::FrameworkOpTraceBuilder op_trace_builder_;
 
   bool enable_htp_extended_udma_mode_ = false;
 
