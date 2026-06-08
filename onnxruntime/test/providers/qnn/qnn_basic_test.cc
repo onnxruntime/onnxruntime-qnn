@@ -995,8 +995,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   onnxruntime::ProviderOptions options;
 
