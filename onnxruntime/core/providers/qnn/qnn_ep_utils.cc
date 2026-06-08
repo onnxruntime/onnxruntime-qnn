@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 
+#include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 
@@ -96,6 +97,146 @@ bool CheckQuantTypes(std::initializer_list<ONNXTensorElementDataType> dtypes,
     if (require_all_same && dt != first_dt) return false;
   }
   return true;
+}
+
+// Forward declaration
+const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_api, const char* name);
+
+// Helper to get a constant initializer OrtValue from a ValueInfo (combines name lookup + initializer fetch).
+const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi& ort_api,
+                                            const OrtValueInfo* value_info) {
+  const char* name = nullptr;
+  if (ort_api.GetValueInfoName(value_info, &name) != nullptr || name == nullptr) {
+    return nullptr;
+  }
+  return GetConstantInitializer(graph, ort_api, name);
+}
+
+// Helper to read a scalar zero_point value from an OrtValue initializer
+// Returns the zero_point as int64_t and the corresponding Qnn_DataType_t
+bool GetZeroPointValue(const OrtApi& ort_api, const OrtValue* zp_init,
+                       int64_t& zero_point, Qnn_DataType_t& qnn_data_type) {
+  OrtTensorTypeAndShapeInfo* zp_info = nullptr;
+  if (ort_api.GetTensorTypeAndShape(zp_init, &zp_info) != nullptr) {
+    return false;
+  }
+
+  ONNXTensorElementDataType zp_type;
+  if (ort_api.GetTensorElementType(zp_info, &zp_type) != nullptr) {
+    ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+    return false;
+  }
+  ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+
+  void* zp_data = nullptr;
+  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(zp_init), &zp_data) != nullptr || zp_data == nullptr) {
+    return false;
+  }
+
+  switch (zp_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<uint8_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_UFIXED_POINT_8;
+      return true;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<uint16_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_UFIXED_POINT_16;
+      return true;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<int8_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_SFIXED_POINT_8;
+      return true;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<int16_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_SFIXED_POINT_16;
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Helper to read a scalar value of type T from an OrtValue initializer.
+template <typename T>
+bool GetScalarValue(const OrtApi& ort_api, const OrtValue* initializer, T& value) {
+  T* data = nullptr;
+  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(initializer), (void**)&data) != nullptr) {
+    return false;
+  }
+  value = *data;
+  return true;
+}
+
+// Helper to read scale and zero_point from a Q/DQ node.
+// Returns true if both scale and zero_point could be read successfully.
+bool GetQNodeScaleAndZeroPoint(const OrtGraph* graph, const OrtApi& ort_api,
+                               const OrtNode* q_node,
+                               float& scale, int64_t& zero_point,
+                               Qnn_DataType_t& qnn_data_type) {
+  size_t num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(q_node, &num_inputs) != nullptr || num_inputs < 3) {
+    return false;
+  }
+
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  if (ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size()) != nullptr) {
+    return false;
+  }
+
+  // Read scale (input[1])
+  const OrtValue* scale_init = GetInitializerFromValueInfo(graph, ort_api, inputs[1]);
+  if (scale_init == nullptr || !GetScalarValue(ort_api, scale_init, scale)) {
+    return false;
+  }
+
+  // Read zero_point (input[2])
+  const OrtValue* zp_init = GetInitializerFromValueInfo(graph, ort_api, inputs[2]);
+  if (zp_init == nullptr) {
+    return false;
+  }
+
+  return GetZeroPointValue(ort_api, zp_init, zero_point, qnn_data_type);
+}
+
+// Helper to read Clip node's min and max values.
+// Handles both opset 6 (attributes) and opset 11+ (input initializers).
+void GetClipMinMax(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* clip_node,
+                   float& clip_min, float& clip_max) {
+  clip_min = std::numeric_limits<float>::lowest();
+  clip_max = std::numeric_limits<float>::max();
+
+  // Try attributes (opset 6)
+  OrtNodeAttrHelper clip_helper(*clip_node);
+  if (clip_helper.HasAttr("min") || clip_helper.HasAttr("max")) {
+    clip_min = clip_helper.Get("min", clip_min);
+    clip_max = clip_helper.Get("max", clip_max);
+    return;
+  }
+
+  // Opset 11+: read from input initializers
+  size_t clip_num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(clip_node, &clip_num_inputs) != nullptr || clip_num_inputs < 2) {
+    return;
+  }
+  std::vector<const OrtValueInfo*> clip_inputs(clip_num_inputs);
+  if (ort_api.Node_GetInputs(clip_node, clip_inputs.data(), clip_inputs.size()) != nullptr) {
+    return;
+  }
+
+  // input[1] = min
+  if (clip_num_inputs >= 2 && clip_inputs[1] != nullptr) {
+    const OrtValue* min_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[1]);
+    if (min_init != nullptr) {
+      GetScalarValue(ort_api, min_init, clip_min);
+    }
+  }
+
+  // input[2] = max
+  if (clip_num_inputs >= 3 && clip_inputs[2] != nullptr) {
+    const OrtValue* max_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[2]);
+    if (max_init != nullptr) {
+      GetScalarValue(ort_api, max_init, clip_max);
+    }
+  }
 }
 
 // Helper function to get a constant initializer from a node's input
@@ -1283,7 +1424,62 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
           }
 
           if (next_num_consumers == 1 && !produces_graph_output) {
-            clip_node = next_node;
+            // Determine whether to fuse Relu/Clip into the QDQ node unit
+            //
+            // When fused, EP emits a single Conv/Gemm with the post-activation output encoding
+            // and no separate Relu/Clip node. QNN HTP will only clamp the output if the encoding
+            // cannot represent values outside the activation range — i.e., HTP respects the encoding
+            // bounds but does NOT apply Relu/Clip semantics independently.
+            //
+            // Safe to fuse when: encoding_min >= activation_min
+            //   encoding_min = scale * (type_min - zero_point)
+            //   - Relu:  activation_min = 0. Fuse if encoding_min >= 0 (zp == 0 for unsigned types).
+            //   - Clip:  activation_min = clip.min. Fuse if encoding_min >= clip.min.
+            //
+            // NOT safe to fuse when: encoding_min < activation_min
+            //   The encoding can represent values below activation_min (e.g., negatives after Relu). In which case,
+            //   HTP will NOT clamp these values — it just quantizes the Conv output as-is and hence breaking the orig model
+            //   Must keep Relu/Clip as a separate QNN ElementWiseNeuron node to enforce clamping
+            bool should_fuse = true;
+
+            // Find the Q node consuming the Relu/Clip output
+            const OrtValueInfo* relu_out_info = next_outputs[0];
+            const OrtNode* q_after_clip = nullptr;
+            size_t relu_out_consumers = 0;
+            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(relu_out_info, &relu_out_consumers), ort_api);
+            if (relu_out_consumers == 1) {
+              int64_t unused_idx = 0;
+              ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(relu_out_info, &q_after_clip, &unused_idx, 1), ort_api);
+            }
+
+            if (q_after_clip != nullptr && Ort::ConstNode(q_after_clip).GetOperatorType() == "QuantizeLinear") {
+              float scale_val = 0.0f;
+              int64_t zero_point = 0;
+              Qnn_DataType_t qnn_dt = QNN_DATATYPE_UNDEFINED;
+
+              if (GetQNodeScaleAndZeroPoint(graph, ort_api, q_after_clip, scale_val, zero_point, qnn_dt)) {
+                int64_t qmin = 0, qmax = 0;
+                if (qnn::utils::GetQminQmax(qnn_dt, qmin, qmax).IsOK()) {
+                  float encoding_min = scale_val * static_cast<float>(qmin - zero_point);
+                  float encoding_max = scale_val * static_cast<float>(qmax - zero_point);
+
+                  // activation bounds: Relu has min=0, no max. Clip has both min and max.
+                  float activation_min = 0.0f;
+                  float activation_max = std::numeric_limits<float>::max();
+                  if (next_node_op_type == "Clip") {
+                    GetClipMinMax(graph, ort_api, next_node, activation_min, activation_max);
+                  }
+
+                  if (encoding_min < activation_min || encoding_max > activation_max) {
+                    should_fuse = false;
+                  }
+                }
+              }
+            }
+
+            if (should_fuse) {
+              clip_node = next_node;
+            }
           }
         }
       }
