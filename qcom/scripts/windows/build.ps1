@@ -286,7 +286,9 @@ else {
 
     if ($GenerateBuild -or $DoBuild) {
         try {
-            python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
+                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            }
             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
             if ($GenerateBuild) {
