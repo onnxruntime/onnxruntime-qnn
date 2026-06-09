@@ -48,7 +48,7 @@ find "$INPUT_DIR" \( -name "*.zip" -o -name "*.tgz" \) -type f -print0 | while I
     curl --fail -s -T "$file" \
         --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
         --netrc-file "$NETRC_FILE" \
-        https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"${version}${TARGET_SUFFIX}"/"$file_basename" > /dev/null
+        https://artifactory-las.qualcomm.com/artifactory/aisw-zip-testproj-generic-virtual/onnxruntime-qnn/"${version}${TARGET_SUFFIX}"/"$file_basename" > /dev/null
 
     echo "Successfully uploaded $file_basename"
 done
