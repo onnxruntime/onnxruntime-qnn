@@ -8,10 +8,10 @@
 
 namespace onnxruntime {
 namespace qnn {
-class IsNanOpBuilder : public BaseOpBuilder {
+class IsNaNOpBuilder : public BaseOpBuilder {
  public:
-  IsNanOpBuilder() : BaseOpBuilder("IsNanOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(IsNanOpBuilder);
+  IsNaNOpBuilder() : BaseOpBuilder("IsNaNOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(IsNaNOpBuilder);
 
  protected:
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -27,7 +27,7 @@ class IsNanOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Ort::Status IsNanOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+Ort::Status IsNaNOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           const Ort::Logger& logger,
                                           std::vector<std::string>& input_names,
@@ -50,7 +50,7 @@ Ort::Status IsNanOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+Ort::Status IsNaNOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                         const OrtNodeUnit& node_unit,
                                                         std::vector<std::string>&& input_names,
                                                         const Ort::Logger& logger,
@@ -64,7 +64,7 @@ Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   const std::string& org_output_name = node_unit.Outputs()[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
   std::vector<uint32_t> output_shape = output_info.shape;
-  const std::string isnan_node_name = utils::GetUniqueName(node_unit, "_IsNan");
+  const std::string isnan_node_name = utils::UniqueNameGenerator().New(node_unit, "_IsNan");
 
   QnnTensorWrapper isnan_output(org_output_name,
                                 is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
@@ -84,8 +84,8 @@ Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   return Ort::Status();
 }
 
-void CreateIsNanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<IsNanOpBuilder>());
+void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+  op_registrations.AddOpBuilder(op_type, std::make_unique<IsNaNOpBuilder>());
 }
 
 }  // namespace qnn

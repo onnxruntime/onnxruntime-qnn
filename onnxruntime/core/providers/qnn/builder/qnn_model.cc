@@ -12,6 +12,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -24,9 +25,10 @@ namespace qnn {
 
 namespace {
 
-// Resolves the correct I/O order, preferring ONNX declaration order when available.
-// When names don't match directly (e.g., with offload_graph_io_quantization), uses
-// tensor_name_overrides_reversed to translate ONNX names to internal tensor names.
+// Resolves the correct I/O order for a QNN fused subgraph, preferring ONNX declaration order.
+// For each ONNX-declared name, tries `tensor_name_overrides_reversed` first (handles renames),
+// then a direct match. Fallback to fused_order if any name is unresolvable. Appends partition-
+// boundary entries not in the ONNX declaration.
 std::vector<std::string> ResolveGraphInputOutputOrder(
     const std::vector<std::string>* onnx_names,
     const std::unordered_set<std::string>& fused_names,
@@ -36,26 +38,28 @@ std::vector<std::string> ResolveGraphInputOutputOrder(
     return fused_order;
   }
 
-  bool names_match = std::all_of(onnx_names->begin(), onnx_names->end(),
-                                 [&](const std::string& n) { return fused_names.count(n) > 0; });
-  if (names_match) {
-    return *onnx_names;
-  }
+  std::vector<std::string> resolved_onnx_order;
+  resolved_onnx_order.reserve(onnx_names->size());
 
-  if (!tensor_name_overrides_reversed.empty()) {
-    std::vector<std::string> mapped_order;
-    for (const auto& onnx_name : *onnx_names) {
-      auto it = tensor_name_overrides_reversed.find(onnx_name);
-      if (it != tensor_name_overrides_reversed.end() && fused_names.count(it->second)) {
-        mapped_order.push_back(it->second);
-      }
-    }
-    if (mapped_order.size() == onnx_names->size()) {
-      return mapped_order;
+  for (const auto& onnx_name : *onnx_names) {
+    auto it = tensor_name_overrides_reversed.find(onnx_name);
+    if (it != tensor_name_overrides_reversed.end() && fused_names.count(it->second)) {
+      resolved_onnx_order.push_back(it->second);
+    } else if (fused_names.count(onnx_name)) {
+      resolved_onnx_order.push_back(onnx_name);
+    } else {
+      return fused_order;  // Unresolvable; fall back to complete fused order.
     }
   }
 
-  return fused_order;
+  // Append partition-boundary entries absent from ONNX-declared names.
+  std::unordered_set<std::string> already_added(resolved_onnx_order.begin(), resolved_onnx_order.end());
+  for (const auto& name : fused_order) {
+    if (!already_added.count(name)) {
+      resolved_onnx_order.push_back(name);
+    }
+  }
+  return resolved_onnx_order;
 }
 
 }  // namespace
@@ -168,6 +172,35 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
                                    std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
   }
 
+  // DLC tensors may carry overridden names that differ from the fused node I/O names.
+  if (graph_info_) {
+    auto add_qnn_name_aliases = [](GraphInputOutputInfo& io_info,
+                                   const std::vector<QnnTensorWrapper>& qnn_tensors,
+                                   const std::vector<std::string>& fused_order) {
+      for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
+        const std::string& qnn_name = qnn_tensors[i].GetName();
+        const std::string& fused_name = fused_order[i];
+        if (qnn_name != fused_name && io_info.indices.find(qnn_name) == io_info.indices.end()) {
+          auto idx_it = io_info.indices.find(fused_name);
+          if (idx_it != io_info.indices.end()) {
+            io_info.indices.emplace(qnn_name, idx_it->second);
+          }
+          auto tensor_it = io_info.tensors.find(fused_name);
+          if (tensor_it != io_info.tensors.end()) {
+            const OnnxTensorInfo& info = tensor_it->second;
+            io_info.tensors.emplace(std::piecewise_construct,
+                                    std::forward_as_tuple(qnn_name),
+                                    std::forward_as_tuple(info.index_, info.data_type_,
+                                                          std::vector<int64_t>(info.shape_)));
+          }
+        }
+      }
+    };
+
+    add_qnn_name_aliases(graph_inputs_, graph_info_->InputTensors(), fused_input_order);
+    add_qnn_name_aliases(graph_outputs_, graph_info_->OutputTensors(), fused_output_order);
+  }
+
   return Ort::Status();
 }
 
@@ -181,6 +214,8 @@ const OrtNodeUnit& QnnModel::GetNodeUnit(const OrtNode* node,
 }
 
 Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
+  utils::UniqueNameGenerator().Reset();
+
   RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
   RETURN_IF(context.onnx_output_names == nullptr, "onnx_output_names is required for ComposeGraph");
   RETURN_IF(context.model_settings == nullptr, "model_settings is required for ComposeGraph");
@@ -204,14 +239,24 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
   RETURN_IF_ERROR(SetGraphInputOutputInfo(context));
 
+  // Framework op trace: create collector before QnnModelWrapper so it can be
+  // passed at construction time. nullptr when tracing is disabled.
+  std::unique_ptr<OpTraceCollector> trace_collector;
+  if (context.op_trace_output) {
+    trace_collector = std::make_unique<OpTraceCollector>();
+  }
+
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
                                                       qnn_backend_manager_->GetQnnBackendHandle(),
+                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
+                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
                                                       graph_inputs_,
                                                       graph_outputs_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
-                                                      context.tensor_name_overrides);
+                                                      context.tensor_name_overrides,
+                                                      trace_collector.get());
 
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -244,6 +289,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                         node_unit_holder.size(), logger));
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
+    NodeGroupGuard guard(trace_collector.get(), qnn_node_group.get());
+
     Ort::Status status = qnn_node_group->AddToModelBuilder(qnn_model_wrapper, logger);
 
     if (!status.IsOK()) {
@@ -258,6 +305,11 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
   RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+
+  // Collect framework op trace after graph composition
+  if (trace_collector) {
+    trace_collector->Finalize(graph_name, qnn_model_wrapper, *context.op_trace_output);
+  }
 
   LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
 
@@ -394,14 +446,17 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     size_t length;
     tensor_status = ort_api.GetTensorShapeElementCount(tensor_type_and_shape, &length);
     if (tensor_status != nullptr) {
+      ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
       return 0;  // Return 0 on error, will be handled by caller
     }
     ONNXTensorElementDataType element_type;
     tensor_status = ort_api.GetTensorElementType(tensor_type_and_shape, &element_type);
     if (tensor_status != nullptr) {
+      ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
       return 0;  // Return 0 on error, will be handled by caller
     }
     size_t element_size = GetElementSizeByType(element_type);
+    ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
     return element_size * length;
   };
 

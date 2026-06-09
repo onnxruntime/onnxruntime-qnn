@@ -6,6 +6,8 @@
 #include <climits>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -22,6 +24,12 @@ namespace qnn {
 #if QNN_API_VERSION_MAJOR > 2 || \
     (QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 29))
 #define QNN_SYSTEM_PROFILE_API_ENABLED
+#endif
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if QNN_API_VERSION_MAJOR > 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR >= 32))
+#define QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#endif
 #endif
 
 // QNN only support subset of POSIX of dlopen/dlsym/dladdr/dlerror/dlclose
@@ -124,6 +132,8 @@ bool IsGpuBackend(QnnBackendType backend_type);
 
 bool IsQpuBackend(QnnBackendType backend_type);
 
+std::string QnnBackendTypeToString(QnnBackendType backend_type);
+
 // constexpr config values
 constexpr const int kSleepMinLatency = 40;
 constexpr const int kSleepLowLatency = 100;
@@ -175,10 +185,11 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const std::string& node_name,
                             const std::string& tensor_name,
                             Qnn_Tensor_t& qnn_tensor,
-                            std::unordered_map<std::string, bool>& tensors_created_table,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg);
 
 uint32_t GetQnnTensorID(const Qnn_Tensor_t& qnn_tensor);
+void SetQnnTensorID(Qnn_Tensor_t& qnn_tensor, uint32_t id);
 Qnn_TensorType_t GetQnnTensorType(const Qnn_Tensor_t& qnn_tensor);
 const char* GetQnnTensorName(const Qnn_Tensor_t& qnn_tensor);
 Qnn_TensorDataFormat_t GetQnnTensorDataFormat(const Qnn_Tensor_t& qnn_tensor);
@@ -236,7 +247,25 @@ class QnnTensorWrapper {
         data_type = QNN_DATATYPE_INT_32;
         client_buf_ = std::move(cast_data);
       }
+    } else if (data_type == QNN_DATATYPE_FLOAT_64) {
+      // QNN doesn't support double, so we cast to float.
+      if (tensor_type == QNN_TENSOR_TYPE_NATIVE) {
+        data_type = QNN_DATATYPE_FLOAT_32;
+      }
+      if (client_buf_.size()) {
+        const size_t num_elems = client_buf_.size() / sizeof(double);
+        std::vector<uint8_t> cast_data;
+        cast_data.resize(num_elems * sizeof(float));
+        gsl::span<double> origin_values{reinterpret_cast<double*>(client_buf_.data()), num_elems};
+        gsl::span<float> new_values(reinterpret_cast<float*>(cast_data.data()), num_elems);
+        for (size_t i = 0; i < num_elems; i++) {
+          new_values[i] = static_cast<float>(origin_values[i]);
+        }
+        data_type = QNN_DATATYPE_FLOAT_32;
+        client_buf_ = std::move(cast_data);
+      }
     }
+
     SetQnnTensorType(qnn_tensor_, tensor_type);
     SetQnnTensorName(qnn_tensor_, tensor_name_.c_str());
     SetQnnTensorDataType(qnn_tensor_, data_type);
@@ -273,7 +302,7 @@ class QnnTensorWrapper {
     dimensions_.assign(shape_data, shape_data + shape_rank);
     SetQnnTensorDim(qnn_tensor_, dimensions_);
 
-    SetQnnTensorMemType(qnn_tensor_, QNN_TENSORMEMTYPE_RAW);
+    SetQnnTensorMemType(qnn_tensor_, GetQnnTensorMemType(qnn_tensor));
 
     return Ort::Status();
   }
@@ -334,7 +363,7 @@ class QnnTensorWrapper {
   bool CreateQnnGraphTensor(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const Qnn_GraphHandle_t& graph,
                             const std::string& node_name,
-                            std::unordered_map<std::string, bool>& tensors_created_table,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg) {
     return CreateTensorInQnnGraph(qnn_interface, graph, node_name, GetResolvedTensorName(),
                                   qnn_tensor_, tensors_created_table, error_msg);
@@ -454,7 +483,7 @@ class QnnParamWrapper {
   bool CreateQnnGraphParam(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                            const Qnn_GraphHandle_t& graph,
                            const std::string& node_name,
-                           std::unordered_map<std::string, bool>& tensors_created_table,
+                           std::unordered_map<std::string, uint32_t>& tensors_created_table,
                            std::string& error_msg);
 
  private:

@@ -9,13 +9,14 @@
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/shared_context.h"
 
 namespace onnxruntime {
 namespace qnn {
 
-bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
+bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api, const std::string& ep_context_type) {
   // It's an Onnx model with Qnn context cache binary if it has a node with EPContext type
   // and the source is QNN or QNNExecutionProvider.
   size_t num_nodes = 0;
@@ -31,7 +32,8 @@ bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
     if (op_type == EPCONTEXT_OP) {
       OrtNodeAttrHelper node_helper(*node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
-      if (cache_source == "qnnexecutionprovider" || cache_source == "qnn") {
+      std::string ep_context_type_of_node = qnn::utils::GetLowercaseString(node_helper.Get(EP_CONTEXT_TYPE, EP_CONTEXT_TYPE_BIN));
+      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qairtexport") && ep_context_type == ep_context_type_of_node) {
         return true;
       }
     }
@@ -40,13 +42,49 @@ bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
   return false;
 }
 
-bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api) {
+bool GraphHasDlcContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
+  return GraphHasEpContextNode(graph, ort_api, EP_CONTEXT_TYPE_DLC);
+}
+
+bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
+                          const std::string& ep_context_type) {
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-    if (GraphHasEpContextNode(graphs[graph_idx], ort_api)) {
+    if (GraphHasEpContextNode(graphs[graph_idx], ort_api, ep_context_type)) {
       return true;
     }
   }
   return false;
+}
+
+bool IsOrtGraphHasDlcCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api) {
+  return IsOrtGraphHasCtxNode(graphs, count, ort_api, EP_CONTEXT_TYPE_DLC);
+}
+
+Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
+                                std::string& dlc_path) {
+  for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+    if (GraphHasEpContextNode(graphs[graph_idx], ort_api, EP_CONTEXT_TYPE_DLC)) {
+      size_t num_nodes = 0;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[graph_idx], &num_nodes));
+
+      std::vector<const OrtNode*> nodes(num_nodes);
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[graph_idx], nodes.data(), nodes.size()));
+
+      for (const OrtNode* node : nodes) {
+        const char* op_type = nullptr;
+        ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOperatorType(node, &op_type));
+
+        if (op_type != nullptr && std::string(op_type) == EPCONTEXT_OP) {
+          OrtNodeAttrHelper node_helper(*node);
+          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get("ep_dlc_context", ""));
+          if (dlc_path != "") {
+            return Ort::Status();
+          }
+        }
+      }
+    }
+  }
+  return MAKE_EP_FAIL("Failed to extract dlc_path from EP_CONTEXT node");
 }
 
 Ort::Status GetMainContextNode(const OrtGraph** graphs,
@@ -97,6 +135,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
                                                                static_cast<uint64_t>(context_binary.length()),
+                                                               "",
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size);
@@ -136,6 +175,18 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
     return Ort::Status("The file path in ep_cache_context does not exist or is not accessible.", ORT_INVALID_GRAPH);
   }
 
+  std::string context_binary_path_str = context_binary_path.string();
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  if (qnn_backend_manager->FileMappingIsEnabled()) {
+    return qnn_backend_manager->LoadCachedQnnContextFromBuffer(nullptr,
+                                                               0,
+                                                               context_binary_path_str,
+                                                               main_context_node_name,
+                                                               qnn_models,
+                                                               max_spill_fill_size);
+  }
+#endif
+
   size_t buffer_size{0};
   std::ifstream cache_file(context_binary_path.string().c_str(), std::ifstream::binary);
   RETURN_IF(!cache_file || !cache_file.good(), "Failed to open cache file.");
@@ -153,6 +204,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   cache_file.close();
   return qnn_backend_manager->LoadCachedQnnContextFromBuffer(buffer.get(),
                                                              static_cast<uint64_t>(buffer_size),
+                                                             context_binary_path_str,
                                                              main_context_node_name,
                                                              qnn_models,
                                                              max_spill_fill_size);
@@ -166,12 +218,17 @@ Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
   max_spill_fill_size = 0;
   int max_size_index = 0;
   for (uint32_t idx = 0; idx < total_context_size; ++idx) {
+    // 'graphs' contains ALL EPContext subgraphs, not just main contexts. Indirect through
+    // 'main_context_pos_list' to pick out the main-context graph at this iteration.
+    // Using 'idx' directly would read non-main (or unrelated) graphs when main contexts
+    // are at non-consecutive positions, producing a wrong max spill-fill size.
+    int graph_idx = main_context_pos_list[idx];
     size_t num_nodes = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[idx], &num_nodes));
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[graph_idx], &num_nodes));
     RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
 
     std::vector<const OrtNode*> nodes(num_nodes);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[idx], nodes.data(), nodes.size()));
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[graph_idx], nodes.data(), nodes.size()));
 
     const OrtNode* ep_context_node = nodes[0];
 

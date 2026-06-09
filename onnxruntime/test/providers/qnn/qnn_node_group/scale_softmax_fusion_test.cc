@@ -5,9 +5,6 @@
 
 #include <filesystem>
 
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
-
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -25,34 +22,40 @@ GetTestModelFn BuildTestCaseScalar(
     bool reverse_input_order,
     std::optional<int64_t> softmax_axis = std::nullopt) {
   return [=, &input_def](ModelTestBuilder& builder) -> void {
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    NodeArg* scale{nullptr};
+    MakeTestInput<float>(builder, "input", input_def);
     if (use_constant) {
       onnx::TensorProto scale_value_proto;
       scale_value_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
-      utils::SetRawDataInTensorProto(scale_value_proto, reinterpret_cast<const char*>(&scale_value), sizeof(float));
-      scale = builder.MakeIntermediate();
-      builder.AddNode("Constant", {}, {scale}).AddAttribute("value", scale_value_proto);
+      builder.SetRawDataInTensorProto(scale_value_proto, reinterpret_cast<const char*>(&scale_value), sizeof(float));
+      ONNX_NAMESPACE::AttributeProto scale_attr;
+      scale_attr.set_name("value");
+      scale_attr.set_type(ONNX_NAMESPACE::AttributeProto_AttributeType_TENSOR);
+      *scale_attr.mutable_t() = scale_value_proto;
+      builder.AddNode("constant_node", "Constant", {}, {"scale"}, "", {scale_attr});
     } else {
-      scale = builder.MakeScalarInitializer<float>(scale_value);
+      builder.MakeScalarInitializer<float>("scale", scale_value);
     }
-    NodeArg* intermediate = builder.MakeIntermediate();
-    auto mul_inputs = reverse_input_order ? std::vector<NodeArg*>{scale, input} : std::vector<NodeArg*>{input, scale};
-    builder.AddNode("Mul", mul_inputs, {intermediate});
-    Node& softmax = builder.AddNode("Softmax", {intermediate}, {builder.MakeOutput()});
+    std::vector<std::string> mul_inputs = reverse_input_order
+                                              ? std::vector<std::string>{"scale", "input"}
+                                              : std::vector<std::string>{"input", "scale"};
+    builder.AddNode("mul", "Mul", mul_inputs, {"mul_output"});
+    builder.MakeOutput("softmax_output");
     if (softmax_axis.has_value()) {
-      softmax.AddAttribute("axis", softmax_axis.value());
+      builder.AddNode("softmax", "Softmax", {"mul_output"}, {"softmax_output"}, "",
+                      {builder.MakeScalarAttribute("axis", softmax_axis.value())});
+    } else {
+      builder.AddNode("softmax", "Softmax", {"mul_output"}, {"softmax_output"});
     }
   };
 }
 
 GetTestModelFn BuildTestCaseNoScalar(const TestInputDef<float>& input_def1, const TestInputDef<float>& input_def2) {
   return [&input_def1, input_def2](ModelTestBuilder& builder) -> void {
-    NodeArg* input = MakeTestInput<float>(builder, input_def1);
-    NodeArg* scale = MakeTestInput<float>(builder, input_def2);
-    NodeArg* intermediate = builder.MakeIntermediate();
-    builder.AddNode("Mul", {input, scale}, {intermediate});
-    builder.AddNode("Softmax", {intermediate}, {builder.MakeOutput()});
+    MakeTestInput<float>(builder, "input", input_def1);
+    MakeTestInput<float>(builder, "scale", input_def2);
+    builder.AddNode("mul", "Mul", {"input", "scale"}, {"mul_output"});
+    builder.MakeOutput("softmax_output");
+    builder.AddNode("softmax", "Softmax", {"mul_output"}, {"softmax_output"});
   };
 }
 
@@ -68,6 +71,7 @@ ProviderOptions GetProviderOptions() {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializer";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -89,6 +93,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstant";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -110,6 +115,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializerReversed";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -131,6 +137,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstantReversed";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -152,6 +159,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSoftmaxNegativeAxis";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -174,6 +182,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar4d";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -196,6 +205,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar1d";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

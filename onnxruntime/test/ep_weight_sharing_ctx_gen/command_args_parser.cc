@@ -7,8 +7,11 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <stdexcept>
+#include <unordered_set>
 
 // Windows Specific
 #ifdef _WIN32
@@ -18,9 +21,22 @@
 #include <unistd.h>
 #endif
 
-#include <core/graph/constants.h>
-#include <core/platform/path_lib.h>
-#include <core/optimizer/graph_transformer_level.h>
+#include "onnxruntime_cxx_api.h"
+
+// QNN-EP COPY START
+template <typename T>
+inline int CompareCString(const T* s1, const T* s2);
+template <>
+inline int CompareCString<char>(const char* s1, const char* s2) {
+  return strcmp(s1, s2);
+}
+#ifdef _WIN32
+template <>
+inline int CompareCString<wchar_t>(const wchar_t* s1, const wchar_t* s2) {
+  return wcscmp(s1, s2);
+}
+#endif
+// QNN-EP COPY END
 
 #include "nlohmann/json.hpp"
 #include "test_configuration.h"
@@ -130,11 +146,46 @@ static bool ParseSessionConfigs(const std::string& configs_string,
   return true;
 }
 
+// QNN-EP COPY START
+// Below are string utilities copied from MS onnxruntime\core\common\helper.cc directly.
+#ifdef _WIN32
+std::string ToUTF8String(std::wstring_view s) {
+  if (s.size() >= static_cast<size_t>(std::numeric_limits<int>::max()))
+    throw std::runtime_error("length overflow");
+
+  const int src_len = static_cast<int>(s.size() + 1);
+  const int len = WideCharToMultiByte(CP_UTF8, 0, s.data(), src_len, nullptr, 0, nullptr, nullptr);
+  assert(len > 0);
+  std::string ret(static_cast<size_t>(len) - 1, '\0');
+#pragma warning(disable : 4189)
+  const int r = WideCharToMultiByte(CP_UTF8, 0, s.data(), src_len, (char*)ret.data(), len, nullptr, nullptr);
+  assert(len == r);
+#pragma warning(default : 4189)
+  return ret;
+}
+
+std::wstring ToWideString(std::string_view s) {
+  if (s.size() >= static_cast<size_t>(std::numeric_limits<int>::max()))
+    throw std::runtime_error("length overflow");
+
+  const int src_len = static_cast<int>(s.size() + 1);
+  const int len = MultiByteToWideChar(CP_UTF8, 0, s.data(), src_len, nullptr, 0);
+  assert(len > 0);
+  std::wstring ret(static_cast<size_t>(len) - 1, '\0');
+#pragma warning(disable : 4189)
+  const int r = MultiByteToWideChar(CP_UTF8, 0, s.data(), src_len, (wchar_t*)ret.data(), len);
+  assert(len == r);
+#pragma warning(default : 4189)
+  return ret;
+}
+#endif  // #ifdef _WIN32
+// QNN-EP COPY END
+
 static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfig& config_out) {
   using json = nlohmann::json;
   bool success = true;
 
-  ORT_TRY {
+  try {
     std::ifstream ifs{json_file_path};
     if (!ifs) {
       std::cerr << "ERROR: Failed to open plugin EP configuration file at path: "
@@ -165,21 +216,18 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
 
     config_out = std::move(config);
     return success;
-  }
-  ORT_CATCH(const json::exception& e) {
-    ORT_HANDLE_EXCEPTION([&]() {
-      std::string kExampleValidJsonStr =
-          "{\n"
-          "  \"ep_library_registration_name\": \"example_plugin_ep\",\n"
-          "  \"ep_library_path\": \"/path/to/example_plugin_ep.dll\",\n"
-          "  \"selected_ep_name\": \"example_plugin_ep\"\n"
-          "}";
+  } catch (const json::exception& e) {
+    std::string kExampleValidJsonStr =
+        "{\n"
+        "  \"ep_library_registration_name\": \"example_plugin_ep\",\n"
+        "  \"ep_library_path\": \"/path/to/example_plugin_ep.dll\",\n"
+        "  \"selected_ep_name\": \"example_plugin_ep\"\n"
+        "}";
 
-      success = false;
-      std::cerr << "ERROR: JSON parse error: " << e.what() << std::endl;
-      std::cerr << "This is an example valid JSON configuration:\n"
-                << kExampleValidJsonStr.c_str() << std::endl;
-    });
+    success = false;
+    std::cerr << "ERROR: JSON parse error: " << e.what() << std::endl;
+    std::cerr << "This is an example valid JSON configuration:\n"
+              << kExampleValidJsonStr.c_str() << std::endl;
   }
   return success;
 }
@@ -190,13 +238,13 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
     switch (ch) {
       case 'e':
         if (!CompareCString(optarg, ORT_TSTR("qnn"))) {
-          test_config.machine_config.provider_type_name = onnxruntime::kQnnExecutionProvider;
+          test_config.machine_config.provider_type_name = "QNNExecutionProvider";
         } else if (!CompareCString(optarg, ORT_TSTR("openvino"))) {
-          test_config.machine_config.provider_type_name = onnxruntime::kOpenVINOExecutionProvider;
+          test_config.machine_config.provider_type_name = "OpenVINOExecutionProvider";
         } else if (!CompareCString(optarg, ORT_TSTR("tensorrt"))) {
-          test_config.machine_config.provider_type_name = onnxruntime::kTensorrtExecutionProvider;
+          test_config.machine_config.provider_type_name = "TensorrtExecutionProvider";
         } else if (!CompareCString(optarg, ORT_TSTR("vitisai"))) {
-          test_config.machine_config.provider_type_name = onnxruntime::kVitisAIExecutionProvider;
+          test_config.machine_config.provider_type_name = "VitisAIExecutionProvider";
         } else {
           fprintf(stderr, "The execution provider is not included in this tool.\n");
           return false;
@@ -234,7 +282,7 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
           }
           auto pos = token.find("|");
           if (pos == std::string::npos || pos == 0 || pos == token.length()) {
-            ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.");
+            throw std::runtime_error("Use a '|' to separate the key and value for the run-time option you are trying to use.");
           }
 
           std::string key(token.substr(0, pos));
@@ -250,7 +298,7 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
               std::copy(supported_htp_graph_final_opt_modes.begin(), supported_htp_graph_final_opt_modes.end(),
                         std::ostream_iterator<std::string>(str_stream, ","));
               std::string str = str_stream.str();
-              ORT_THROW("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
+              throw std::runtime_error("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
             }
           } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" ||
                      key == "enable_htp_spill_fill_buffer") {
@@ -260,10 +308,10 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
               std::copy(supported_options.begin(), supported_options.end(),
                         std::ostream_iterator<std::string>(str_stream, ","));
               std::string str = str_stream.str();
-              ORT_THROW("Wrong value for " + key + ". select from: " + str);
+              throw std::runtime_error("Wrong value for " + key + ". select from: " + str);
             }
           } else {
-            ORT_THROW(
+            throw std::runtime_error(
                 "Wrong key type entered. Choose from options: ['backend_type', 'backend_path', 'vtcm_mb', "
                 "'htp_performance_mode', 'htp_graph_finalization_optimization_mode', 'soc_model', 'htp_arch', "
                 "'enable_htp_fp16_precision', 'offload_graph_io_quantization', 'enable_htp_spill_fill_buffer']");

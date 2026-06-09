@@ -6,6 +6,10 @@
 #include <iostream>
 #include <string>
 
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/common/inlined_containers.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
+
 namespace onnxruntime {
 namespace QDQ {
 
@@ -18,97 +22,221 @@ void OrtSelectors::RegisterSelector(const OrtOpVersionsAndSelector::OpVersionsMa
   selectors_set_.push_back(std::move(entry));
 }
 
-// Helper function to get the number of actual values (inputs or outputs) for a node
-int NumActualValues(const OrtNode* node, const OrtApi& ort_api, bool input) {
-  size_t num_defs = 0;
-  OrtStatus* status = nullptr;
+namespace {
 
-  if (input) {
-    status = ort_api.Node_GetNumInputs(node, &num_defs);
-  } else {
-    status = ort_api.Node_GetNumOutputs(node, &num_defs);
+// Helper function to extract the data type from a value info
+std::optional<ONNXTensorElementDataType> GetDataTypeFromValueInfo(const OrtApi& ort_api,
+                                                                  const OrtValueInfo* value_info) {
+  const OrtTypeInfo* type_info = nullptr;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(value_info, &type_info), ort_api, std::nullopt);
+
+  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, std::nullopt);
+  if (tensor_info == nullptr) {
+    return std::nullopt;
   }
 
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return 0;
-  }
+  ONNXTensorElementDataType element_type;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorElementType(tensor_info, &element_type), ort_api, std::nullopt);
 
-  return static_cast<int>(num_defs);
+  return element_type;
 }
 
-// Helper function to get the data type of a node's input or output
-int32_t GetNodeIODataType(const OrtNode* node, const OrtApi& ort_api, bool is_input, int index) {
-  // Get the inputs or outputs as OrtValueInfo instances
-  OrtStatus* status = nullptr;
-
+// Helper function to get the data type of a node's input at a given index
+std::optional<ONNXTensorElementDataType> GetNodeInputDataType(const OrtNode* node, const OrtApi& ort_api, int index) {
   size_t num_defs = 0;
-
-  if (is_input) {
-    status = ort_api.Node_GetNumInputs(node, &num_defs);
-  } else {
-    status = ort_api.Node_GetNumOutputs(node, &num_defs);
-  }
-
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_defs), ort_api, std::nullopt);
 
   if (index >= static_cast<int>(num_defs)) {
-    return -1;
+    return std::nullopt;
   }
 
-  std::vector<const OrtValueInfo*> io_array(num_defs);
-  if (is_input) {
-    status = ort_api.Node_GetInputs(node, io_array.data(), io_array.size());
-  } else {
-    status = ort_api.Node_GetOutputs(node, io_array.data(), io_array.size());
-  }
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
-  }
+  std::vector<const OrtValueInfo*> inputs(num_defs);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api, std::nullopt);
 
-  // Get the OrtValueInfo at the specified index
-  const OrtValueInfo* value_info = io_array[index];
-
-  // Get the type info from the value info
-  const OrtTypeInfo* type_info = nullptr;
-  status = ort_api.GetValueInfoTypeInfo(value_info, &type_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
-  }
-
-  // Get the tensor element data type from the type info
-  ONNXTensorElementDataType element_type;
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  status = ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info);
-  if (status != nullptr || tensor_info == nullptr) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    return -1;
-  }
-
-  status = ort_api.GetTensorElementType(tensor_info, &element_type);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
-  }
-
-  return static_cast<int32_t>(element_type);
+  return GetDataTypeFromValueInfo(ort_api, inputs[index]);
 }
 
-// Helper function to check if a data type is a 16-bit integer type
-bool Is16BitIntType(int32_t data_type) {
-  return (data_type == 5) ||  // INT16
-         (data_type == 17);   // UINT16
+// Helper function to get the data type of a node's output at a given index
+std::optional<ONNXTensorElementDataType> GetNodeOutputDataType(const OrtNode* node, const OrtApi& ort_api, int index) {
+  size_t num_defs = 0;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &num_defs), ort_api, std::nullopt);
+
+  if (index >= static_cast<int>(num_defs)) {
+    return std::nullopt;
+  }
+
+  std::vector<const OrtValueInfo*> outputs(num_defs);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api, std::nullopt);
+
+  return GetDataTypeFromValueInfo(ort_api, outputs[index]);
 }
 
-// Helper function to check if a data type is a 4-bit integer type
-bool Is4BitIntType(int32_t data_type) {
-  return (data_type == 20) ||  // INT4
-         (data_type == 21);    // UINT4
+bool Is16BitIntType(ONNXTensorElementDataType data_type) {
+  return data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 ||
+         data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+}
+
+bool Is4BitIntType(ONNXTensorElementDataType data_type) {
+  return data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
+         data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4;
+}
+
+bool IsDisallowedType(ONNXTensorElementDataType dt, bool allow_16bit, bool allow_4bit) {
+  return (!allow_16bit && Is16BitIntType(dt)) || (!allow_4bit && Is4BitIntType(dt));
+}
+
+//  Helper which returns false if any dtype is disallowed (by allow_16bit/allow_4bit)
+//  or if require_all_same is true and the types differ
+bool CheckQuantTypes(std::initializer_list<ONNXTensorElementDataType> dtypes,
+                     bool allow_16bit, bool allow_4bit,
+                     bool require_all_same = true) {
+  auto first_dt = *dtypes.begin();
+  for (auto dt : dtypes) {
+    if (IsDisallowedType(dt, allow_16bit, allow_4bit)) return false;
+    if (require_all_same && dt != first_dt) return false;
+  }
+  return true;
+}
+
+// Forward declaration
+const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_api, const char* name);
+
+// Helper to get a constant initializer OrtValue from a ValueInfo (combines name lookup + initializer fetch).
+const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi& ort_api,
+                                            const OrtValueInfo* value_info) {
+  const char* name = nullptr;
+  if (ort_api.GetValueInfoName(value_info, &name) != nullptr || name == nullptr) {
+    return nullptr;
+  }
+  return GetConstantInitializer(graph, ort_api, name);
+}
+
+// Helper to read a scalar zero_point value from an OrtValue initializer
+// Returns the zero_point as int64_t and the corresponding Qnn_DataType_t
+bool GetZeroPointValue(const OrtApi& ort_api, const OrtValue* zp_init,
+                       int64_t& zero_point, Qnn_DataType_t& qnn_data_type) {
+  OrtTensorTypeAndShapeInfo* zp_info = nullptr;
+  if (ort_api.GetTensorTypeAndShape(zp_init, &zp_info) != nullptr) {
+    return false;
+  }
+
+  ONNXTensorElementDataType zp_type;
+  if (ort_api.GetTensorElementType(zp_info, &zp_type) != nullptr) {
+    ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+    return false;
+  }
+  ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+
+  void* zp_data = nullptr;
+  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(zp_init), &zp_data) != nullptr || zp_data == nullptr) {
+    return false;
+  }
+
+  switch (zp_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<uint8_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_UFIXED_POINT_8;
+      return true;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<uint16_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_UFIXED_POINT_16;
+      return true;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<int8_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_SFIXED_POINT_8;
+      return true;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      zero_point = static_cast<int64_t>(*reinterpret_cast<int16_t*>(zp_data));
+      qnn_data_type = QNN_DATATYPE_SFIXED_POINT_16;
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Helper to read a scalar value of type T from an OrtValue initializer.
+template <typename T>
+bool GetScalarValue(const OrtApi& ort_api, const OrtValue* initializer, T& value) {
+  T* data = nullptr;
+  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(initializer), (void**)&data) != nullptr) {
+    return false;
+  }
+  value = *data;
+  return true;
+}
+
+// Helper to read scale and zero_point from a Q/DQ node.
+// Returns true if both scale and zero_point could be read successfully.
+bool GetQNodeScaleAndZeroPoint(const OrtGraph* graph, const OrtApi& ort_api,
+                               const OrtNode* q_node,
+                               float& scale, int64_t& zero_point,
+                               Qnn_DataType_t& qnn_data_type) {
+  size_t num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(q_node, &num_inputs) != nullptr || num_inputs < 3) {
+    return false;
+  }
+
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  if (ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size()) != nullptr) {
+    return false;
+  }
+
+  // Read scale (input[1])
+  const OrtValue* scale_init = GetInitializerFromValueInfo(graph, ort_api, inputs[1]);
+  if (scale_init == nullptr || !GetScalarValue(ort_api, scale_init, scale)) {
+    return false;
+  }
+
+  // Read zero_point (input[2])
+  const OrtValue* zp_init = GetInitializerFromValueInfo(graph, ort_api, inputs[2]);
+  if (zp_init == nullptr) {
+    return false;
+  }
+
+  return GetZeroPointValue(ort_api, zp_init, zero_point, qnn_data_type);
+}
+
+// Helper to read Clip node's min and max values.
+// Handles both opset 6 (attributes) and opset 11+ (input initializers).
+void GetClipMinMax(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* clip_node,
+                   float& clip_min, float& clip_max) {
+  clip_min = std::numeric_limits<float>::lowest();
+  clip_max = std::numeric_limits<float>::max();
+
+  // Try attributes (opset 6)
+  OrtNodeAttrHelper clip_helper(*clip_node);
+  if (clip_helper.HasAttr("min") || clip_helper.HasAttr("max")) {
+    clip_min = clip_helper.Get("min", clip_min);
+    clip_max = clip_helper.Get("max", clip_max);
+    return;
+  }
+
+  // Opset 11+: read from input initializers
+  size_t clip_num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(clip_node, &clip_num_inputs) != nullptr || clip_num_inputs < 2) {
+    return;
+  }
+  std::vector<const OrtValueInfo*> clip_inputs(clip_num_inputs);
+  if (ort_api.Node_GetInputs(clip_node, clip_inputs.data(), clip_inputs.size()) != nullptr) {
+    return;
+  }
+
+  // input[1] = min
+  if (clip_num_inputs >= 2 && clip_inputs[1] != nullptr) {
+    const OrtValue* min_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[1]);
+    if (min_init != nullptr) {
+      GetScalarValue(ort_api, min_init, clip_min);
+    }
+  }
+
+  // input[2] = max
+  if (clip_num_inputs >= 3 && clip_inputs[2] != nullptr) {
+    const OrtValue* max_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[2]);
+    if (max_init != nullptr) {
+      GetScalarValue(ort_api, max_init, clip_max);
+    }
+  }
 }
 
 // Helper function to get a constant initializer from a node's input
@@ -154,32 +282,20 @@ const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_
 bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* q_node) {
   // Get the scale input (index 1) of the Q/DQ node
   size_t num_inputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumInputs(q_node, &num_inputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  OrtStatus* status = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(q_node, &num_inputs), ort_api);
   if (num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  status = ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size());
-
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size()), ort_api);
 
   // Get the scale input name
   const OrtValueInfo* scale_value_info = inputs[1];
   const char* scale_name = nullptr;
   // Use the correct API function to get the name of a value info
-  status = ort_api.GetValueInfoName(scale_value_info, &scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(scale_value_info, &scale_name), ort_api);
 
   // Get the scale initializer
   const OrtValue* scale_initializer = GetConstantInitializer(graph, ort_api, scale_name);
@@ -189,18 +305,10 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
 
   // Check if the scale is a scalar
   OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  status = ort_api.GetTensorTypeAndShape(scale_initializer, &tensor_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorTypeAndShape(scale_initializer, &tensor_info), ort_api);
 
   size_t num_dims = 0;
-  status = ort_api.GetDimensionsCount(tensor_info, &num_dims);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetDimensionsCount(tensor_info, &num_dims), ort_api);
   if (num_dims != 0) {  // Scalar has 0 dimensions
     return false;
   }
@@ -219,19 +327,11 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   // Check the value based on the data type
   if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
     float* scale_data = nullptr;
-    status = ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data), ort_api);
     return *scale_data > 0.0f;
   } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
     double* scale_data = nullptr;
-    status = ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data), ort_api);
     return *scale_data > 0.0;
   }
 
@@ -252,8 +352,9 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   }
 
   // Check if the number of DQ inputs matches the number of inputs that exist
-  int num_inputs = NumActualValues(node, ort_api, true);
-  if (num_inputs < static_cast<int>(dq_nodes.size())) {
+  size_t num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+  if (num_inputs < dq_nodes.size()) {
     return false;
   }
 
@@ -263,36 +364,21 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   }
 
   // Check if the number of Q outputs matches the number of outputs that exist
-  int num_outputs = NumActualValues(node, ort_api, false);
-  if (num_outputs < static_cast<int>(q_nodes.size())) {
+  size_t num_outputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs), ort_api);
+  if (num_outputs < q_nodes.size()) {
     return false;
   }
 
-  // Get the outputs as OrtValueInfo instances
-  size_t num_outputs_actual = 0;
-  OrtStatus* status = ort_api.Node_GetNumOutputs(node, &num_outputs_actual);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
-  status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  std::vector<const OrtValueInfo*> outputs(num_outputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     bool is_graph_output = false;
-    status = ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
 
     if (is_graph_output) {
       produces_graph_output = true;
@@ -302,19 +388,15 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
   // Count the total number of consumers for all outputs
   size_t total_consumers = 0;
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
 
     total_consumers += num_consumers;
   }
 
-  return (num_outputs == static_cast<int>(q_nodes.size())) &&
+  return (num_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
@@ -323,50 +405,33 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* q_node, const OrtNode* dq_node) {
   // Check if both nodes have the same scale
   size_t q_num_inputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumInputs(q_node, &q_num_inputs);
-  if (status != nullptr || q_num_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  OrtStatus* status = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(q_node, &q_num_inputs), ort_api);
+  if (q_num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> q_inputs(q_num_inputs);
-  status = ort_api.Node_GetInputs(q_node, q_inputs.data(), q_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(q_node, q_inputs.data(), q_inputs.size()), ort_api);
 
   size_t dq_num_inputs = 0;
-  status = ort_api.Node_GetNumInputs(dq_node, &dq_num_inputs);
-  if (status != nullptr || dq_num_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(dq_node, &dq_num_inputs), ort_api);
+  if (dq_num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
-  status = ort_api.Node_GetInputs(dq_node, dq_inputs.data(), dq_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(dq_node, dq_inputs.data(), dq_inputs.size()), ort_api);
 
   // Get the scale input names
   const OrtValueInfo* q_scale_value_info = q_inputs[1];
   const OrtValueInfo* dq_scale_value_info = dq_inputs[1];
 
   const char* q_scale_name = nullptr;
-  status = ort_api.GetValueInfoName(q_scale_value_info, &q_scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(q_scale_value_info, &q_scale_name), ort_api);
 
   const char* dq_scale_name = nullptr;
-  status = ort_api.GetValueInfoName(dq_scale_value_info, &dq_scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(dq_scale_value_info, &dq_scale_name), ort_api);
 
   // Check if the scale names are the same (indicating they're the same initializer)
   bool same_scale = (strcmp(q_scale_name, dq_scale_name) == 0);
@@ -382,11 +447,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
     // Check if both scales have the same data type and shape
     OrtTensorTypeAndShapeInfo* q_tensor_info = nullptr;
-    status = ort_api.GetTensorTypeAndShape(q_scale_initializer, &q_tensor_info);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorTypeAndShape(q_scale_initializer, &q_tensor_info), ort_api);
 
     OrtTensorTypeAndShapeInfo* dq_tensor_info = nullptr;
     status = ort_api.GetTensorTypeAndShape(dq_scale_initializer, &dq_tensor_info);
@@ -469,6 +530,8 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   return same_scale;
 }
 
+}  // namespace
+
 bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi& ort_api, const OrtNode* node,
                                          const OrtNode* /*redundant_clip_node*/,
                                          const std::vector<const OrtNode*>& dq_nodes,
@@ -476,7 +539,9 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
                                          int num_dq_inputs,
                                          bool is_empty_q_nodes_allowed) const {
   if (num_dq_inputs == -1) {
-    num_dq_inputs = NumActualValues(node, ort_api, true);
+    size_t num_inputs = 0;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+    num_dq_inputs = static_cast<int>(num_inputs);
   }
 
   // Check if the number of DQ inputs matches the expected number
@@ -490,34 +555,19 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   }
 
   // Check if the number of Q outputs matches the number of outputs that exist
-  int num_outputs = NumActualValues(node, ort_api, false);
+  size_t num_outputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs), ort_api);
 
-  // Get the outputs as OrtValueInfo instances
-  size_t num_outputs_actual = 0;
-  OrtStatus* status = ort_api.Node_GetNumOutputs(node, &num_outputs_actual);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
-  status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  std::vector<const OrtValueInfo*> outputs(num_outputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
 
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     bool is_graph_output = false;
-    status = ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
 
     if (is_graph_output) {
       produces_graph_output = true;
@@ -527,19 +577,15 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
 
   // Count the total number of consumers for all outputs
   size_t total_consumers = 0;
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
 
     total_consumers += num_consumers;
   }
 
-  return (num_outputs == static_cast<int>(q_nodes.size())) &&
+  return (num_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
@@ -556,18 +602,14 @@ bool OrtDropQDQNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort
     return false;
   }
 
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  if (dt_input != dt_output) {
+  if (!dt_input.has_value() || !dt_output.has_value()) {
     return false;
   }
 
-  if (!allow_16bit_ && Is16BitIntType(dt_input)) {
-    return false;
-  }
-
-  if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -602,15 +644,13 @@ bool OrtDropDQNodeGroupSelector::Check(const OrtGraph* /*graph*/, const OrtApi& 
 
   // Check if the DQ input has the expected data type
   const OrtNode* dq_node = dq_nodes.front();
-  int32_t dt_input = GetNodeIODataType(dq_node, ort_api, true, 0);
+  auto dt_input = GetNodeInputDataType(dq_node, ort_api, 0);
 
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input)) {
+  if (!dt_input.has_value()) {
     return false;
   }
 
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+  if (IsDisallowedType(dt_input.value(), allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -628,20 +668,14 @@ bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   }
 
   // Check if the input and output data types match
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  if (dt_input != dt_output) {
+  if (!dt_input.has_value() || !dt_output.has_value()) {
     return false;
   }
 
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input)) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -665,19 +699,40 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  // If Clip feeds a Q node, require the data input[0] to come from a DQ node.
+  // DQ -> Clip -> Q can form Clip ORT Unit, but DQ -> Op -> Clip -> Q is not allowed as Clip here is redundant.
+  if (!q_nodes.empty()) {
+    // 1. get num of inputs
+    size_t clip_input_count = 0;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &clip_input_count), ort_api);
 
-  if (dt_input != dt_output) {
+    // 2. get inputs as OrtValueInfo instances
+    std::vector<const OrtValueInfo*> clip_inputs(clip_input_count);
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, clip_inputs.data(), clip_inputs.size()), ort_api);
+
+    // 3. get the producer/parent of the Clip first input
+    const OrtNode* data_producer = nullptr;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(clip_inputs[0], &data_producer, nullptr), ort_api);
+
+    // 4. check if the Clip first input producer is a DQ node
+    if (data_producer == nullptr || Ort::ConstNode(data_producer).GetOperatorType() != "DequantizeLinear") {
+      return false;
+    }
+
+    // 5. check if DQ node in the same group
+    if (std::find(dq_nodes.begin(), dq_nodes.end(), data_producer) == dq_nodes.end()) {
+      return false;
+    }
+  }
+
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input.has_value() || !dt_output.has_value()) {
     return false;
   }
 
-  // 16-bit int types must be explicitly allowed.
-  if (!allow_16bit_ && Is16BitIntType(dt_input)) {
-    return false;
-  }
-
-  if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -695,22 +750,15 @@ bool OrtBinaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   // Check if the input and output data types match
-  int32_t dt_input_1 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_input_2 = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input_1 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_input_2 = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  // All input and output types must match
-  if (dt_input_1 != dt_input_2 || dt_input_1 != dt_output) {
+  if (!dt_input_1.has_value() || !dt_input_2.has_value() || !dt_output.has_value()) {
     return false;
   }
 
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input_1)) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input_1)) {
+  if (!CheckQuantTypes({dt_input_1.value(), dt_input_2.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -728,33 +776,30 @@ bool OrtVariadicNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
   }
 
   // Check if all DQ inputs have the same data type
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  if (!dt_input.has_value()) {
+    return false;
+  }
   for (size_t i = 1; i < dq_nodes.size(); ++i) {
-    if (dt_input != GetNodeIODataType(dq_nodes[i], ort_api, true, 0)) {
+    auto dt_i = GetNodeInputDataType(dq_nodes[i], ort_api, 0);
+    if (!dt_i.has_value() || dt_input.value() != dt_i.value()) {
       return false;
     }
   }
 
   // Check if all Q outputs have the same data type
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+  if (!dt_output.has_value()) {
+    return false;
+  }
   for (size_t i = 1; i < q_nodes.size(); ++i) {
-    if (dt_output != GetNodeIODataType(q_nodes[i], ort_api, false, 0)) {
+    auto dt_o = GetNodeOutputDataType(q_nodes[i], ort_api, 0);
+    if (!dt_o.has_value() || dt_output.value() != dt_o.value()) {
       return false;
     }
   }
 
-  // Check if the input and output data types match
-  if (dt_input != dt_output) {
-    return false;
-  }
-
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input)) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -774,9 +819,13 @@ bool OrtSplitNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   }
 
   const OrtNode* dq_node = dq_nodes.front();
-  int32_t dt_input = GetNodeIODataType(dq_node, ort_api, true, 0);
+  auto dt_input = GetNodeInputDataType(dq_node, ort_api, 0);
 
-  if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+  if (!dt_input.has_value()) {
+    return false;
+  }
+
+  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
     return false;
   }
 
@@ -784,8 +833,8 @@ bool OrtSplitNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   for (size_t q_idx = 0; q_idx < q_nodes.size(); q_idx++) {
     const OrtNode* q_node = q_nodes[q_idx];
 
-    int32_t dt_output = GetNodeIODataType(q_node, ort_api, false, 0);
-    if (dt_input != dt_output) {
+    auto dt_output = GetNodeOutputDataType(q_node, ort_api, 0);
+    if (!dt_output.has_value() || dt_input.value() != dt_output.value()) {
       return false;
     }
 
@@ -806,33 +855,37 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // Input and output types need to be same
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_weight = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_weight = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  if (dt_input != dt_output) {
+  if (!dt_input.has_value() || !dt_weight.has_value() || !dt_output.has_value()) {
     return false;
   }
 
-  if (!allow_4bit_weight_ && Is4BitIntType(dt_weight)) {
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
-  if (dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
-    if (!int8_allowed_ || dt_weight != dt_input) {
+  if (!allow_4bit_weight_ && Is4BitIntType(dt_weight.value())) {
+    return false;
+  }
+
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+    if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
       return false;
     }
   }
 
   if (dq_nodes.size() == 3) {  // has bias
-    int32_t dt_bias = GetNodeIODataType(dq_nodes[2], ort_api, true, 0);
-    if (dt_bias != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32)) {
+    auto dt_bias = GetNodeInputDataType(dq_nodes[2], ort_api, 0);
+    if (!dt_bias.has_value() || dt_bias.value() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
       return false;
     }
   }
 
   // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_input) || Is16BitIntType(dt_weight))) {
+  if (!allow_16bit_ && (Is16BitIntType(dt_input.value()) || Is16BitIntType(dt_weight.value()))) {
     return false;
   }
 
@@ -849,30 +902,38 @@ bool OrtEinsumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
   size_t num_dq_inputs = dq_nodes.size();
   for (size_t i = 0; i < num_dq_inputs; ++i) {
-    int32_t dt_input = GetNodeIODataType(dq_nodes[i], ort_api, true, 0);
+    auto dt_input = GetNodeInputDataType(dq_nodes[i], ort_api, 0);
+
+    if (!dt_input.has_value()) {
+      return false;
+    }
 
     // Check if INT8 is allowed
-    if (!allow_int8_ && dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
       return false;
     }
 
     // Check if 16-bit int types are allowed
-    if (!allow_16bit_ && Is16BitIntType(dt_input)) {
+    if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
       return false;
     }
 
     // Check if 4-bit int types are allowed
-    if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+    if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
       return false;
     }
   }
 
   if (!q_nodes.empty()) {
-    int32_t dt_input0 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-    int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+    auto dt_input0 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+    if (!dt_input0.has_value() || !dt_output.has_value()) {
+      return false;
+    }
 
     // Check if input and output data types match
-    if (dt_input0 != dt_output) {
+    if (dt_input0.value() != dt_output.value()) {
       return false;
     }
   }
@@ -890,21 +951,27 @@ bool OrtReciprocalNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& 
   }
   size_t num_dq_inputs = dq_nodes.size();
   for (size_t i = 0; i < num_dq_inputs; ++i) {
-    int32_t dt_input = GetNodeIODataType(dq_nodes[i], ort_api, true, 0);
-    if (!allow_int8_ && dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+    auto dt_input = GetNodeInputDataType(dq_nodes[i], ort_api, 0);
+    if (!dt_input.has_value()) {
       return false;
     }
-    if (!allow_16bit_ && Is16BitIntType(dt_input)) {
+    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
       return false;
     }
-    if (!allow_4bit_ && Is4BitIntType(dt_input)) {
+    if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
+      return false;
+    }
+    if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
       return false;
     }
   }
   if (!q_nodes.empty()) {
-    int32_t dt_input0 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-    int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
-    if (dt_input0 != dt_output) {
+    auto dt_input0 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+    if (!dt_input0.has_value() || !dt_output.has_value()) {
+      return false;
+    }
+    if (dt_input0.value() != dt_output.value()) {
       return false;
     }
   }
@@ -920,23 +987,22 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   // Get input data types
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_weight = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_weight = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+
+  if (!dt_input.has_value() || !dt_weight.has_value()) {
+    return false;
+  }
 
   // Check if INT8 is allowed
-  if (dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
-    if (!int8_allowed_ || dt_weight != dt_input) {
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+    if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
       return false;
     }
   }
 
-  // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_input) || Is16BitIntType(dt_weight))) {
-    return false;
-  }
-
-  // 4-bit int types must be explicitly allowed
-  if (!allow_4bit_ && (Is4BitIntType(dt_input) || Is4BitIntType(dt_weight))) {
+  if (IsDisallowedType(dt_input.value(), allow_16bit_, allow_4bit_) ||
+      IsDisallowedType(dt_weight.value(), allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -949,298 +1015,12 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
       return false;
     }
 
-    int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
-    return dt_input == dt_output;
+    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+    return dt_output.has_value() && dt_input.value() == dt_output.value();
   } else {
     // Can be converted to MatMulIntegerToFloat if EP supports that
     return matmulintegertofloat_allowed_;
   }
-}
-
-bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
-                                         const OrtNode* redundant_clip_node,
-                                         const std::vector<const OrtNode*>& dq_nodes,
-                                         const std::vector<const OrtNode*>& q_nodes) const {
-  if (redundant_clip_node) {
-    return false;
-  }
-
-  // Should not have any Q nodes
-  if (!q_nodes.empty()) {
-    return false;
-  }
-
-  // MatMul has only 1 DQ input
-  if (dq_nodes.size() != 1) {
-    return false;
-  }
-
-  // Check if DQ node has only one output edge and is not a graph output
-  size_t num_dq_outputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumOutputs(dq_nodes[0], &num_dq_outputs);
-  if (status != nullptr || num_dq_outputs != 1) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  std::vector<const OrtValueInfo*> dq_outputs(num_dq_outputs);
-  status = ort_api.Node_GetOutputs(dq_nodes[0], dq_outputs.data(), dq_outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  const OrtValueInfo* dq_output_value_info = dq_outputs[0];
-
-  // Check if DQ output is a graph output
-  bool is_graph_output = false;
-  status = ort_api.ValueInfo_IsGraphOutput(dq_output_value_info, &is_graph_output);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  if (is_graph_output) {
-    return false;
-  }
-
-  // Check if DQ node has only one consumer
-  size_t num_consumers = 0;
-  status = ort_api.ValueInfo_GetValueNumConsumers(dq_output_value_info, &num_consumers);
-  if (status != nullptr || num_consumers != 1) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  // Check if DQ is connected to MatMul's second input
-  // This requires checking the inputs of the MatMul node
-  size_t num_inputs = 0;
-  status = ort_api.Node_GetNumInputs(node, &num_inputs);
-  if (status != nullptr || num_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  std::vector<const OrtValueInfo*> node_inputs(num_inputs);
-  status = ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  const OrtValueInfo* second_input_value_info = node_inputs[1];
-
-  // Get the producer of the second input
-  const OrtNode* second_input_producer = nullptr;
-  status = ort_api.ValueInfo_GetValueProducer(second_input_value_info, &second_input_producer, nullptr);
-  if (status != nullptr || second_input_producer != dq_nodes[0]) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  // Get DQ node inputs to check weight and scale types
-  size_t num_dq_inputs = 0;
-  status = ort_api.Node_GetNumInputs(dq_nodes[0], &num_dq_inputs);
-  if (status != nullptr || num_dq_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  std::vector<const OrtValueInfo*> dq_inputs(num_dq_inputs);
-  status = ort_api.Node_GetInputs(dq_nodes[0], dq_inputs.data(), dq_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  // Get weight and scale data types
-  const OrtValueInfo* weight_value_info = dq_inputs[0];
-  const OrtValueInfo* scale_value_info = dq_inputs[1];
-
-  int32_t dt_weight = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_scales = GetNodeIODataType(dq_nodes[0], ort_api, true, 1);
-
-  // Check if scales are float or float16
-  if (dt_scales != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) &&
-      dt_scales != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16)) {
-    return false;
-  }
-
-  // Check if weight is 4-bit integer type
-  if (!Is4BitIntType(dt_weight)) {
-    return false;
-  }
-
-  // Get DQ node attributes to check blockwise quantization parameters
-  // Check if axis attribute is 0
-
-  // Check if axis attribute is 0
-  OrtNodeAttrHelper attr_helper(*dq_nodes[0]);
-  int64_t axis_value = attr_helper.Get("axis", int64_t(-1));
-  if (axis_value != 0) {
-    return false;
-  }
-
-  // Check if block_size attribute exists and is valid
-  int64_t block_size = attr_helper.Get("block_size", int64_t(0));
-  if (block_size == 0) {
-    return false;
-  }
-
-  // Check if block_size is a power of 2 and >= 16
-  if (block_size < 16 || ((block_size - 1) & block_size)) {
-    return false;
-  }
-
-  // Get names of weight, scale, and zero point
-  const char* weight_name = nullptr;
-  status = ort_api.GetValueInfoName(weight_value_info, &weight_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  const char* scale_name = nullptr;
-  status = ort_api.GetValueInfoName(scale_value_info, &scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  // Check for zero point (optional)
-  const OrtValueInfo* zero_point_value_info = nullptr;
-  const char* zero_point_name = nullptr;
-  if (num_dq_inputs > 2) {
-    zero_point_value_info = dq_inputs[2];
-    status = ort_api.GetValueInfoName(zero_point_value_info, &zero_point_name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
-  }
-
-  // Check if weight, scale, and zero point are constants
-  const OrtValue* weight_initializer = GetConstantInitializer(graph, ort_api, weight_name);
-  const OrtValue* scale_initializer = GetConstantInitializer(graph, ort_api, scale_name);
-  const OrtValue* zp_initializer = zero_point_name ? GetConstantInitializer(graph, ort_api, zero_point_name) : nullptr;
-
-  if (!weight_initializer || !scale_initializer) {
-    return false;
-  }
-
-  if (zero_point_name && !zp_initializer) {
-    return false;
-  }
-
-  // Check tensor shapes
-  OrtTensorTypeAndShapeInfo* weight_tensor_info = nullptr;
-  status = ort_api.GetTensorTypeAndShape(weight_initializer, &weight_tensor_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
-
-  OrtTensorTypeAndShapeInfo* scale_tensor_info = nullptr;
-  status = ort_api.GetTensorTypeAndShape(scale_initializer, &scale_tensor_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-    return false;
-  }
-
-  OrtTensorTypeAndShapeInfo* zp_tensor_info = nullptr;
-  if (zp_initializer) {
-    status = ort_api.GetTensorTypeAndShape(zp_initializer, &zp_tensor_info);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-      ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-      return false;
-    }
-  }
-
-  // Check if tensors have rank 2
-  size_t weight_dims_count = 0;
-  status = ort_api.GetDimensionsCount(weight_tensor_info, &weight_dims_count);
-  if (status != nullptr || weight_dims_count != 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-    ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-    if (zp_tensor_info) ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-    return false;
-  }
-
-  size_t scale_dims_count = 0;
-  status = ort_api.GetDimensionsCount(scale_tensor_info, &scale_dims_count);
-  if (status != nullptr || scale_dims_count != 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
-    ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-    ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-    if (zp_tensor_info) ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-    return false;
-  }
-
-  if (zp_tensor_info) {
-    size_t zp_dims_count = 0;
-    status = ort_api.GetDimensionsCount(zp_tensor_info, &zp_dims_count);
-    if (status != nullptr || zp_dims_count != 2) {
-      if (status != nullptr) ort_api.ReleaseStatus(status);
-      ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-      ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-      ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-      return false;
-    }
-  }
-
-  // Get dimensions of tensors
-  int64_t weight_dims[2];
-  status = ort_api.GetDimensions(weight_tensor_info, weight_dims, 2);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-    ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-    if (zp_tensor_info) ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-    return false;
-  }
-
-  int64_t scale_dims[2];
-  status = ort_api.GetDimensions(scale_tensor_info, scale_dims, 2);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-    ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-    if (zp_tensor_info) ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-    return false;
-  }
-
-  int64_t zp_dims[2] = {0, 0};
-  if (zp_tensor_info) {
-    status = ort_api.GetDimensions(zp_tensor_info, zp_dims, 2);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-      ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-      ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-      return false;
-    }
-  }
-
-  // Check shape compatibility
-  bool shapes_compatible = ((weight_dims[0] + block_size - 1) / block_size == scale_dims[0]) &&
-                           (weight_dims[1] == scale_dims[1]);
-
-  if (zp_tensor_info) {
-    shapes_compatible = shapes_compatible &&
-                        (zp_dims[0] == scale_dims[0]) &&
-                        (zp_dims[1] == scale_dims[1]);
-  }
-
-  // Clean up resources
-  ort_api.ReleaseTensorTypeAndShapeInfo(weight_tensor_info);
-  ort_api.ReleaseTensorTypeAndShapeInfo(scale_tensor_info);
-  if (zp_tensor_info) ort_api.ReleaseTensorTypeAndShapeInfo(zp_tensor_info);
-
-  return shapes_compatible;
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1258,31 +1038,30 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // Get input data types for A and B
-  int32_t dt_A = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_B = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
+  auto dt_A = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_B = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+
+  if (!dt_A.has_value() || !dt_B.has_value()) {
+    return false;
+  }
 
   // If A is INT8, B must also be INT8
-  if (dt_A == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
-    if (dt_A != dt_B) {  // if A is signed int, B must be signed int
+  if (dt_A.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+    if (dt_A.value() != dt_B.value()) {  // if A is signed int, B must be signed int
       return false;
     }
   }
 
   // If there are Q nodes, check if activation and output have the same type
   if (!q_nodes.empty()) {
-    int32_t dt_Y = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
-    if (dt_A != dt_Y) {  // activation and output must be same type
+    auto dt_Y = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+    if (!dt_Y.has_value() || dt_A.value() != dt_Y.value()) {  // activation and output must be same type
       return false;
     }
   }
 
-  // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_A) || Is16BitIntType(dt_B))) {
-    return false;
-  }
-
-  // 4-bit int types must be explicitly allowed
-  if (!allow_4bit_ && (Is4BitIntType(dt_A) || Is4BitIntType(dt_B))) {
+  if (IsDisallowedType(dt_A.value(), allow_16bit_, allow_4bit_) ||
+      IsDisallowedType(dt_B.value(), allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -1301,8 +1080,8 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // Check if bias has the correct data type (INT32)
-  int32_t dt_bias = GetNodeIODataType(dq_nodes[2], ort_api, true, 0);
-  return dt_bias == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32);
+  auto dt_bias = GetNodeInputDataType(dq_nodes[2], ort_api, 0);
+  return dt_bias.has_value() && dt_bias.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
 }
 
 bool OrtWhereNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1315,24 +1094,17 @@ bool OrtWhereNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   }
 
   // Check if all DQ inputs have the same data type
-  const int32_t dt_input_1 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  const int32_t dt_input_2 = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
+  const auto dt_input_1 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  const auto dt_input_2 = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
 
   // Check if all Q outputs have the same data type
-  const int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  const auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  // All input and output types must match
-  if (dt_input_1 != dt_input_2 || dt_input_1 != dt_output) {
+  if (!dt_input_1.has_value() || !dt_input_2.has_value() || !dt_output.has_value()) {
     return false;
   }
 
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input_1)) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input_1)) {
+  if (!CheckQuantTypes({dt_input_1.value(), dt_input_2.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -1354,14 +1126,18 @@ bool OrtPadNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
     return false;
   }
 
-  const int32_t dt_input_1 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  const int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  const auto dt_input_1 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  const auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input_1.has_value() || !dt_output.has_value()) {
+    return false;
+  }
 
   if (dq_nodes.size() > 1) {
-    const int32_t dt_input_2 = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
-    return dt_input_1 == dt_input_2 && dt_input_1 == dt_output;
+    const auto dt_input_2 = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+    return dt_input_2.has_value() && dt_input_1.value() == dt_input_2.value() && dt_input_1.value() == dt_output.value();
   } else {
-    return dt_input_1 == dt_output;
+    return dt_input_1.value() == dt_output.value();
   }
 }
 
@@ -1373,22 +1149,29 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
     return false;
   }
 
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_bias = 0;
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input.has_value() || !dt_output.has_value()) {
+    return false;
+  }
+
   bool has_bias = false;
+  std::optional<int32_t> dt_bias;
 
   // bias is optional for LayerNorm
   if (dq_nodes.size() > 2) {
     has_bias = true;
-    dt_bias = GetNodeIODataType(dq_nodes[2], ort_api, true, 0);
+    dt_bias = GetNodeInputDataType(dq_nodes[2], ort_api, 0);
+    if (!dt_bias.has_value()) {
+      return false;
+    }
   }
-
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
 
   // Input, output, need to be the same type. The bias is int32.
   // Scale can be different with input for a16w8 case
-  return (dt_input == dt_output) &&
-         (has_bias ? dt_bias == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) : true);  // 6 is INT32 in ONNX_NAMESPACE::TensorProto_DataType
+  return (dt_input.value() == dt_output.value()) &&
+         (has_bias ? dt_bias.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32 : true);
 }
 
 bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1398,7 +1181,7 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
   // BatchNormalization has 5 inputs: x, scale, bias, mean, var.
   // Require DQ on x and scale (indices 0,1). mean, var may optionally have DQ.
   const int num_dq_nodes = gsl::narrow_cast<int>(dq_nodes.size());
-  if (num_dq_nodes < 3 || num_dq_nodes > 5) {
+  if (num_dq_nodes < 2 || num_dq_nodes > 5) {
     return false;
   }
 
@@ -1406,17 +1189,21 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
     return false;
   }
 
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_scale = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_scale = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  if (dt_input != dt_output) {
+  if (!dt_input.has_value() || !dt_scale.has_value() || !dt_output.has_value()) {
+    return false;
+  }
+
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
   // INT8 is 3 in ONNX_NAMESPACE::TensorProto_DataType
-  if (dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {  // INT8
-    if (!int8_allowed_ || dt_scale != dt_input) {
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+    if (!int8_allowed_ || dt_scale.value() != dt_input.value()) {
       return false;
     }
   }
@@ -1432,9 +1219,9 @@ bool OrtLogicalComparisonNodeGroupSelector::Check(const OrtGraph* graph, const O
     return false;
   }
 
-  int32_t dt_input_1 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_input_2 = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
-  return dt_input_1 == dt_input_2;
+  auto dt_input_1 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_input_2 = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+  return dt_input_1.has_value() && dt_input_2.has_value() && dt_input_1.value() == dt_input_2.value();
 }
 
 bool OrtTopKNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1463,10 +1250,14 @@ bool OrtTopKNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   const OrtNode* dq_node = dq_nodes.front();
   const OrtNode* q_node = q_nodes.front();
 
-  int32_t dt_input = GetNodeIODataType(dq_node, ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_node, ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_node, ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_node, ort_api, 0);
 
-  if (dt_input != dt_output) {
+  if (!dt_input.has_value() || !dt_output.has_value()) {
+    return false;
+  }
+
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
@@ -1483,10 +1274,14 @@ bool OrtCumSumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     return false;
   }
 
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  if (dt_input != dt_output) {
+  if (!dt_input.has_value() || !dt_output.has_value()) {
+    return false;
+  }
+
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
@@ -1502,12 +1297,16 @@ bool OrtScatterElementsNodeGroupSelector::Check(const OrtGraph* graph, const Ort
     return false;
   }
 
-  const int32_t dt_input_1 = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  const int32_t dt_input_2 = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
-  const int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  const auto dt_input_1 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  const auto dt_input_2 = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
+  const auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input_1.has_value() || !dt_input_2.has_value() || !dt_output.has_value()) {
+    return false;
+  }
 
   // All input and output types must match.
-  if (dt_input_1 != dt_input_2 || dt_input_1 != dt_output) {
+  if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
     return false;
   }
 
@@ -1522,12 +1321,15 @@ bool OrtRMSNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const Or
     return false;
   }
 
-  int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
-  ;
-  int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input.has_value() || !dt_output.has_value()) {
+    return false;
+  }
 
   // input and output need to be the same type.
-  return (dt_input == dt_output);
+  return (dt_input.value() == dt_output.value());
 }
 
 // Helper function to get QDQ selection for a node
@@ -1538,18 +1340,10 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // Get the inputs as OrtValueInfo instances
   size_t num_inputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumInputs(node, &num_inputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api, std::nullopt);
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  status = ort_api.Node_GetInputs(node, inputs.data(), inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api, std::nullopt);
 
   // For each input, get the producer node
   for (size_t i = 0; i < num_inputs; ++i) {
@@ -1560,11 +1354,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
     // Get the producer node
     const OrtNode* producer_node = nullptr;
-    status = ort_api.ValueInfo_GetValueProducer(value_info, &producer_node, nullptr);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(value_info, &producer_node, nullptr), ort_api);
 
     if (producer_node == nullptr) {
       continue;
@@ -1581,72 +1371,44 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // Get the outputs to check count
   size_t output_count = 0;
-  status = ort_api.Node_GetNumOutputs(node, &output_count);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &output_count), ort_api, std::nullopt);
 
   if (output_count == 1) {
     // Get the outputs as OrtValueInfo instances
     std::vector<const OrtValueInfo*> outputs(output_count);
-    status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return std::nullopt;
-    }
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api, std::nullopt);
 
     // For each output, get the consumer nodes
     const OrtValueInfo* value_info = outputs[0];
 
     // Get the number of consumers
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return std::nullopt;
-    }
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api, std::nullopt);
 
     if (num_consumers == 1) {
       // Get the consumer node
       const OrtNode* next_node = nullptr;
       int64_t input_index = 0;  // This value is not used, but necessary for the API call
-      status = ort_api.ValueInfo_GetValueConsumers(value_info, &next_node, &input_index, 1);
-      if (status != nullptr) {
-        ort_api.ReleaseStatus(status);
-        return std::nullopt;
-      }
+      RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(value_info, &next_node, &input_index, 1), ort_api, std::nullopt);
 
       // Check if it's a Relu or Clip node
       const std::string next_node_op_type = Ort::ConstNode(next_node).GetOperatorType();
       if (next_node_op_type == "Relu" || next_node_op_type == "Clip") {
         // Get the outputs of the next node to check count
         size_t next_output_count = 0;
-        status = ort_api.Node_GetNumOutputs(next_node, &next_output_count);
-        if (status != nullptr) {
-          ort_api.ReleaseStatus(status);
-          return std::nullopt;
-        }
+        RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(next_node, &next_output_count), ort_api, std::nullopt);
 
         if (next_output_count == 1) {
           // Get the outputs of the next node
           std::vector<const OrtValueInfo*> next_outputs(next_output_count);
-          status = ort_api.Node_GetOutputs(next_node, next_outputs.data(), next_outputs.size());
-          if (status != nullptr) {
-            ort_api.ReleaseStatus(status);
-            return std::nullopt;
-          }
+          RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(next_node, next_outputs.data(), next_outputs.size()), ort_api, std::nullopt);
 
           // Check if any of the outputs are graph outputs
           bool produces_graph_output = false;
           for (size_t i = 0; i < next_output_count; i++) {
             const OrtValueInfo* next_value_info = next_outputs[i];
             bool is_graph_output = false;
-            status = ort_api.ValueInfo_IsGraphOutput(next_value_info, &is_graph_output);
-            if (status != nullptr) {
-              ort_api.ReleaseStatus(status);
-              continue;
-            }
+            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(next_value_info, &is_graph_output), ort_api);
 
             if (is_graph_output) {
               produces_graph_output = true;
@@ -1658,15 +1420,66 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
           size_t next_num_consumers = 0;
           if (next_output_count > 0) {
             const OrtValueInfo* next_value_info = next_outputs[0];
-            status = ort_api.ValueInfo_GetValueNumConsumers(next_value_info, &next_num_consumers);
-            if (status != nullptr) {
-              ort_api.ReleaseStatus(status);
-              return std::nullopt;
-            }
+            RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(next_value_info, &next_num_consumers), ort_api, std::nullopt);
           }
 
           if (next_num_consumers == 1 && !produces_graph_output) {
-            clip_node = next_node;
+            // Determine whether to fuse Relu/Clip into the QDQ node unit
+            //
+            // When fused, EP emits a single Conv/Gemm with the post-activation output encoding
+            // and no separate Relu/Clip node. QNN HTP will only clamp the output if the encoding
+            // cannot represent values outside the activation range — i.e., HTP respects the encoding
+            // bounds but does NOT apply Relu/Clip semantics independently.
+            //
+            // Safe to fuse when: encoding_min >= activation_min
+            //   encoding_min = scale * (type_min - zero_point)
+            //   - Relu:  activation_min = 0. Fuse if encoding_min >= 0 (zp == 0 for unsigned types).
+            //   - Clip:  activation_min = clip.min. Fuse if encoding_min >= clip.min.
+            //
+            // NOT safe to fuse when: encoding_min < activation_min
+            //   The encoding can represent values below activation_min (e.g., negatives after Relu). In which case,
+            //   HTP will NOT clamp these values — it just quantizes the Conv output as-is and hence breaking the orig model
+            //   Must keep Relu/Clip as a separate QNN ElementWiseNeuron node to enforce clamping
+            bool should_fuse = true;
+
+            // Find the Q node consuming the Relu/Clip output
+            const OrtValueInfo* relu_out_info = next_outputs[0];
+            const OrtNode* q_after_clip = nullptr;
+            size_t relu_out_consumers = 0;
+            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(relu_out_info, &relu_out_consumers), ort_api);
+            if (relu_out_consumers == 1) {
+              int64_t unused_idx = 0;
+              ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(relu_out_info, &q_after_clip, &unused_idx, 1), ort_api);
+            }
+
+            if (q_after_clip != nullptr && Ort::ConstNode(q_after_clip).GetOperatorType() == "QuantizeLinear") {
+              float scale_val = 0.0f;
+              int64_t zero_point = 0;
+              Qnn_DataType_t qnn_dt = QNN_DATATYPE_UNDEFINED;
+
+              if (GetQNodeScaleAndZeroPoint(graph, ort_api, q_after_clip, scale_val, zero_point, qnn_dt)) {
+                int64_t qmin = 0, qmax = 0;
+                if (qnn::utils::GetQminQmax(qnn_dt, qmin, qmax).IsOK()) {
+                  float encoding_min = scale_val * static_cast<float>(qmin - zero_point);
+                  float encoding_max = scale_val * static_cast<float>(qmax - zero_point);
+
+                  // activation bounds: Relu has min=0, no max. Clip has both min and max.
+                  float activation_min = 0.0f;
+                  float activation_max = std::numeric_limits<float>::max();
+                  if (next_node_op_type == "Clip") {
+                    GetClipMinMax(graph, ort_api, next_node, activation_min, activation_max);
+                  }
+
+                  if (encoding_min < activation_min || encoding_max > activation_max) {
+                    should_fuse = false;
+                  }
+                }
+              }
+            }
+
+            if (should_fuse) {
+              clip_node = next_node;
+            }
           }
         }
       }
@@ -1678,18 +1491,10 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs = 0;
-  status = ort_api.Node_GetNumOutputs(clip_node ? clip_node : node, &num_outputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(clip_node ? clip_node : node, &num_outputs), ort_api, std::nullopt);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs);
-  status = ort_api.Node_GetOutputs(clip_node ? clip_node : node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(clip_node ? clip_node : node, outputs.data(), outputs.size()), ort_api, std::nullopt);
 
   // For each output, get the consumer nodes
   for (size_t i = 0; i < num_outputs; ++i) {
@@ -1700,11 +1505,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
     // Get the number of consumers
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
 
     if (num_consumers > 0) {
       // Allocate arrays for consumer nodes and input indices
@@ -1712,11 +1513,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
       std::vector<int64_t> input_indices_vec(num_consumers);
 
       // Get the consumer nodes
-      status = ort_api.ValueInfo_GetValueConsumers(value_info, consumer_nodes_vec.data(), input_indices_vec.data(), num_consumers);
-      if (status != nullptr) {
-        ort_api.ReleaseStatus(status);
-        continue;
-      }
+      ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(value_info, consumer_nodes_vec.data(), input_indices_vec.data(), num_consumers), ort_api);
 
       // Check each consumer node
       for (size_t j = 0; j < num_consumers; ++j) {
@@ -1770,64 +1567,65 @@ void OrtSelectorManager::CreateSelectors() {
 
   // Register misc ops
   OrtOpVersionsAndSelector::OpVersionsMap misc_ops = {
-      {"Gather", {}},
-      {"GatherElements", {}},
-      {"Reshape", {}},
       {"Expand", {}},
       {"Flatten", {}},
-      {"Transpose", {}},
+      {"Gather", {}},
+      {"GatherElements", {}},
       {"MaxPool", {12}},
+      {"Reshape", {}},
       {"Resize", {}},
       {"Squeeze", {}},
-      {"Unsqueeze", {}},
-      {"Tile", {}}};
+      {"Tile", {}},
+      {"Transpose", {}},
+      {"Unsqueeze", {}}};
   ort_selectors_.RegisterSelector(misc_ops, std::make_unique<OrtDropQDQNodeGroupSelector>());
 
   // Register drop DQ ops
   OrtOpVersionsAndSelector::OpVersionsMap drop_dq_ops = {
       {"ArgMax", {}},
-      {"ArgMin", {}}};
+      {"ArgMin", {}},
+      {"NonZero", {}}};
   ort_selectors_.RegisterSelector(drop_dq_ops, std::make_unique<OrtDropDQNodeGroupSelector>());
 
   // Register unary ops
   OrtOpVersionsAndSelector::OpVersionsMap unary_ops = {
+      {"Abs", {}},
+      {"Asin", {}},
+      {"Atan", {}},
       {"AveragePool", {}},
+      {"Ceil", {}},
+      {"Cos", {}},
+      {"DepthToSpace", {}},
+      {"Elu", {}},
+      {"Erf", {}},
+      {"Exp", {}},
+      {"Floor", {}},
+      {"Gelu", {}},
       {"GlobalAveragePool", {}},
       {"GlobalMaxPool", {}},
+      {"HardSigmoid", {}},
+      {"HardSwish", {}},
+      {"LRN", {}},
       {"LeakyRelu", {}},
+      {"Log", {}},
+      {"LogSoftmax", {}},
+      {"LpNormalization", {}},
+      {"Neg", {}},
+      {"ReduceMax", {}},
       {"ReduceMean", {}},
       {"ReduceMin", {}},
-      {"ReduceMax", {}},
       {"ReduceProd", {}},
       {"ReduceSum", {}},
       {"Relu", {}},
-      {"Gelu", {}},
-      {"Elu", {}},
-      {"Erf", {}},
-      {"HardSigmoid", {}},
-      {"HardSwish", {}},
-      {"Sigmoid", {}},
-      {"Slice", {}},
-      {"LogSoftmax", {}},
-      {"Softmax", {}},
-      {"Sqrt", {}},
-      {"Atan", {}},
-      {"Asin", {}},
-      {"Sin", {}},
-      {"Cos", {}},
-      {"Sign", {}},
-      {"Tanh", {}},
-      {"Exp", {}},
-      {"Log", {}},
-      {"LRN", {}},
-      {"Ceil", {}},
-      {"Floor", {}},
       {"Round", {}},
-      {"Abs", {}},
-      {"Neg", {}},
-      {"DepthToSpace", {}},
+      {"Sigmoid", {}},
+      {"Sign", {}},
+      {"Sin", {}},
+      {"Slice", {}},
+      {"Softmax", {}},
       {"SpaceToDepth", {}},
-      {"LpNormalization", {}}};
+      {"Sqrt", {}},
+      {"Tanh", {}}};
   ort_selectors_.RegisterSelector(unary_ops, std::make_unique<OrtUnaryNodeGroupSelector>());
 
   // Register clip ops
@@ -1839,11 +1637,11 @@ void OrtSelectorManager::CreateSelectors() {
   OrtOpVersionsAndSelector::OpVersionsMap binary_ops = {
       {"Add", {}},
       {"Div", {}},
+      {"GridSample", {}},
       {"Mul", {}},
       {"Pow", {}},
-      {"Sub", {}},
       {"PRelu", {}},
-      {"GridSample", {}}};
+      {"Sub", {}}};
   ort_selectors_.RegisterSelector(binary_ops, std::make_unique<OrtBinaryNodeGroupSelector>());
 
   // Register variadic ops
@@ -1976,11 +1774,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
     // Get node domain
     const char* domain = nullptr;
-    status = ort_api.Node_GetDomain(node, &domain);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.Node_GetDomain(node, &domain), ort_api);
 
     // Check domain (similar to the GraphViewer version)
     std::string domain_str(domain);
@@ -2001,11 +1795,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
     if (!versions.empty()) {
       // Get node version
       int since_version = 0;
-      status = ort_api.Node_GetSinceVersion(node, &since_version);
-      if (status != nullptr) {
-        ort_api.ReleaseStatus(status);
-        continue;
-      }
+      ORT_CONTINUE_ON_ERROR(ort_api.Node_GetSinceVersion(node, &since_version), ort_api);
 
       if (std::find(versions.cbegin(), versions.cend(), since_version) == versions.cend()) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op version is not supported for " + op_type).c_str());
@@ -2026,6 +1816,18 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 }  // namespace QDQ
 
 namespace utils {
+
+// QNN-EP COPY START
+// Below implementations are directly copied from "core/common/common.h"
+// Returns whether `key` is in `container`.
+// Like C++20's map/set contains() member function.
+template <typename Key, typename... OtherContainerArgs,
+          template <typename...> typename AssociativeContainer,
+          typename LookupKey>
+inline bool Contains(const AssociativeContainer<Key, OtherContainerArgs...>& container, LookupKey&& key) {
+  return container.find(std::forward<LookupKey>(key)) != container.end();
+}
+// QNN-EP COPY END
 
 std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     const OrtGraph* graph,
@@ -2102,11 +1904,7 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
 
     // A node that is already assigned to an EP other than current EP is unsupported.
     const char* node_ep_name;
-    status = ort_api.Node_GetEpName(node, &node_ep_name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.Node_GetEpName(node, &node_ep_name), ort_api);
     const bool is_node_supported = ((std::string(node_ep_name).empty() || node_ep_name == ep_type) &&
                                     std::find(supported_nodes.cbegin(), supported_nodes.cend(), node) != supported_nodes.cend());
 

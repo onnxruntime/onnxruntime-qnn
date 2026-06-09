@@ -1,31 +1,71 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
+#include "test/unittest_util/model_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include <cassert>
+#include <limits>
+#include <stdexcept>
 #include "test/util/include/api_asserts.h"
 #include "test/util/include/asserts.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/test/test_environment.h"
 
-#include "core/platform/env_var_utils.h"
-#include "core/common/span_utils.h"
-#include "core/framework/compute_capability.h"
-#include "core/framework/error_code_helper.h"
-#include "core/graph/ep_api_types.h"
-#include "core/graph/constants.h"
-#include "core/graph/graph.h"
-#include "core/session/abi_devices.h"
-#include "core/session/abi_ep_types.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/optimizer/graph_optimizer_registry.h"
-#include "core/platform/env.h"
+#include "test/util/env_var_utils.h"
+
+// Platform-specific includes for dynamic library loading
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace onnxruntime {
 namespace test {
+
+// Self-contained dynamic library loading functions to avoid using internal ORT APIs
+namespace {
+
+#if defined(_WIN32)
+// Windows implementation using Win32 API
+void* LoadDynamicLibraryImpl(const std::string& library_path) {
+  return static_cast<void*>(LoadLibraryA(library_path.c_str()));
+}
+
+void* GetSymbolFromLibraryImpl(void* library_handle, const std::string& symbol_name) {
+  if (!library_handle) return nullptr;
+  return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(library_handle), symbol_name.c_str()));
+}
+
+void UnloadDynamicLibraryImpl(void* library_handle) {
+  if (library_handle) {
+    FreeLibrary(static_cast<HMODULE>(library_handle));
+  }
+}
+
+#else
+// Linux implementation using dlopen/dlsym/dlclose
+void* LoadDynamicLibraryImpl(const std::string& library_path) {
+  return dlopen(library_path.c_str(), RTLD_LAZY);
+}
+
+void* GetSymbolFromLibraryImpl(void* library_handle, const std::string& symbol_name) {
+  if (!library_handle) return nullptr;
+  return dlsym(library_handle, symbol_name.c_str());
+}
+
+void UnloadDynamicLibraryImpl(void* library_handle) {
+  if (library_handle) {
+    dlclose(library_handle);
+  }
+}
+#endif
+
+}  // anonymous namespace
 
 std::vector<float> GetFloatDataInRange(float min_val, float max_val, size_t num_elems) {
   if (num_elems == 0) {
@@ -74,27 +114,73 @@ std::vector<float> GetSequentialFloatData(const std::vector<int64_t>& shape, flo
   return data;
 }
 
-TestInputDef<MLFloat16> ConvertToFP16InputDef(const TestInputDef<float>& input_def) {
+TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& input_def) {
   if (input_def.IsRawData()) {
-    std::vector<MLFloat16> input_data_fp16;
+    std::vector<Ort::Float16_t> input_data_fp16;
     input_data_fp16.reserve(input_def.GetRawData().size());
     for (float f32_val : input_def.GetRawData()) {
-      input_data_fp16.push_back(MLFloat16(f32_val));
+      input_data_fp16.push_back(Ort::Float16_t(f32_val));
     }
 
-    return TestInputDef<MLFloat16>(input_def.GetShape(), input_def.IsInitializer(), input_data_fp16);
+    return TestInputDef<Ort::Float16_t>(input_def.GetShape(), input_def.IsInitializer(), input_data_fp16);
   } else {
     auto rand_data = input_def.GetRandomDataInfo();
-    return TestInputDef<MLFloat16>(input_def.GetShape(), input_def.IsInitializer(),
-                                   MLFloat16(rand_data.min), MLFloat16(rand_data.max));
+    return TestInputDef<Ort::Float16_t>(input_def.GetShape(), input_def.IsInitializer(),
+                                        Ort::Float16_t(rand_data.min), Ort::Float16_t(rand_data.max));
   }
+}
+
+// Mirrors SafeIntExceptionHandler in core/providers/qnn/common/qnn_safeint.h.
+// Defined here because that header cannot be included in test builds:
+// ORT's core/common/safeint.h declares SafeIntExceptionHandler as a class
+// template, which conflicts with qnn_safeint.h's concrete class definition.
+class SafeIntExceptionHandler : public std::exception {
+ public:
+  [[noreturn]] static void SafeIntOnOverflow() {
+    throw std::runtime_error("Integer overflow");
+  }
+
+  [[noreturn]] static void SafeIntOnDivZero() {
+    throw std::runtime_error("Divide by zero");
+  }
+};
+
+size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
+  // Must return 1 for an empty sequence
+  int64_t size = 1;
+  for (size_t i = start; i < end; i++) {
+    if (shape[i] < 0) return static_cast<size_t>(-1);
+    if (shape[i] != 0 && size > std::numeric_limits<int64_t>::max() / shape[i]) {
+      return static_cast<size_t>(-1);
+    }
+    size *= shape[i];
+  }
+  return static_cast<size_t>(size);
+}
+
+size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
+  QNN_ASSERT(dimension <= shape.size());
+
+  int64_t size = SizeHelper(shape, 0, dimension);
+  return size;
+}
+
+size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension) {
+  const size_t num_dims = shape.size();
+  QNN_ASSERT(dimension <= num_dims);
+
+  int64_t size = SizeHelper(shape, dimension, num_dims);
+  return size;
+}
+
+size_t SizeOfShape(std::vector<int64_t> shape) {
+  return SizeHelper(shape, 0, shape.size());
 }
 
 void TryEnableQNNSaver(ProviderOptions& qnn_options) {
   // Allow dumping QNN API calls to file by setting an environment variable that enables the QNN Saver backend.
   constexpr auto kEnableQNNSaverEnvironmentVariableName = "ORT_UNIT_TEST_ENABLE_QNN_SAVER";
-  static std::optional<int> enable_qnn_saver = onnxruntime::ParseEnvironmentVariable<int>(
-      kEnableQNNSaverEnvironmentVariableName);
+  static std::optional<int> enable_qnn_saver = ParseEnvironmentVariable<int>(kEnableQNNSaverEnvironmentVariableName);
 
   if (enable_qnn_saver.has_value() && *enable_qnn_saver != 0) {
 #if defined(_WIN32)
@@ -147,7 +233,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                                   "libQnnHtp.so"
 #endif
        )) {
-#if defined(__linux__)
+#if defined(__linux__) || (defined(_WIN32) && defined(_M_X64))
     target_hw_device_type = OrtHardwareDeviceType_CPU;
 #else
     target_hw_device_type = OrtHardwareDeviceType_NPU;
@@ -187,8 +273,10 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                     float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
-                     std::function<void(const Graph&)>* ep_graph_checker) {
+                     float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
+                     std::function<void(const Ort::Session&)>* ep_graph_checker,
+                     Ort::CustomOpDomain* custom_op_domain) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_json() ||
@@ -203,33 +291,26 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(log_severity);
-  if (QNNTestEnvironment::GetInstance().verbose()) {
-    logging_manager.RemoveSink(logging::SinkType::EtwSink);
-    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
-  }
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  ModelTestBuilder helper;
   build_test_case(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  helper.model_.SerializeToString(&model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
-    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, dump_path));
+    // TODO: Use public logger
+    // LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
+    auto dump_path = output_dir / "dumped_f32_model.onnx";
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(model_data.data(), static_cast<std::streamsize>(model_data.size()));
   }
-
-  TryEnableQNNSaver(provider_options);
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     provider_options["dump_qnn_ir_dlc"] = "1";
@@ -245,84 +326,121 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     provider_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
   // Run with QNN.
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
+  const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
 
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  session_options.SetLogSeverityLevel(log_severity);
+  if (QNNTestEnvironment::GetInstance().verbose()) {
+    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+  }
+
+  TryEnableQNNSaver(provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
                             session_options,
                             registration_name,
                             "QNN_EP_TestLogID",
                             helper.feeds_,
                             verification_params,
-                            verify_outputs);
+                            verify_outputs,
+                            custom_op_domain);
 }
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
-                       const NameMLValMap& feeds,
-                       std::vector<OrtValue>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level) {
-  SessionOptions so;
-  so.session_logid = log_id;
+                       std::unordered_map<std::string, Ort::Value>& feeds,
+                       std::vector<Ort::Value>& output_vals,
+                       std::optional<GraphOptimizationLevel> graph_optimization_level,
+                       Ort::CustomOpDomain* custom_op_domain) {
+  Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
+  session_options.SetLogId(log_id);
+
   if (graph_optimization_level.has_value()) {
-    so.graph_optimization_level = static_cast<TransformerLevel>(*graph_optimization_level);
-  }
-  RunOptions run_options;
-  run_options.run_tag = so.session_logid;
-
-  InferenceSessionWrapper session_object{so, GetEnvironment()};
-
-  std::string provider_type = kCpuExecutionProvider;
-  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
-  ASSERT_STATUS_OK(session_object.Initialize());
-
-  const auto& graph = session_object.GetGraph();
-
-  auto ep_nodes = CountAssignedNodes(graph, provider_type);
-  if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-    // Verify the entire graph is assigned to the EP
-    ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << provider_type;
-  } else if (expected_ep_assignment == ExpectedEPNodeAssignment::None) {
-    ASSERT_EQ(ep_nodes, 0) << "No nodes are supposed to be assigned to " << provider_type;
-  } else {
-    ASSERT_GT(ep_nodes, 0) << "No nodes were assigned to " << provider_type;
+    session_options.SetGraphOptimizationLevel(graph_optimization_level.value());
   }
 
-  const auto& outputs = graph.GetOutputs();
-  std::vector<std::string> output_names;
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
 
-  output_names.reserve(outputs.size());
-  for (const auto* node_arg : outputs) {
-    if (node_arg->Exists()) {
-      output_names.push_back(node_arg->Name());
-    }
+  // Prepare inputs using public API
+  std::vector<std::string> ort_input_names = session.GetInputNames();
+  std::vector<std::string> ort_output_names = session.GetOutputNames();
+  size_t input_count = ort_input_names.size();
+  size_t output_count = ort_output_names.size();
+  std::vector<const char*> ort_input_names_cstr(input_count);
+  std::vector<const char*> ort_output_names_cstr(output_count);
+  std::transform(ort_input_names.begin(), ort_input_names.end(), ort_input_names_cstr.begin(),
+                 [](const std::string& s) { return s.c_str(); });
+  std::transform(ort_output_names.begin(), ort_output_names.end(), ort_output_names_cstr.begin(),
+                 [](const std::string& s) { return s.c_str(); });
+
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.reserve(input_count);
+  for (size_t i = 0; i < input_count; ++i) {
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+    ort_inputs.emplace_back(Ort::Value::CreateTensor(
+        memory_info,
+        (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
+        feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType()));
   }
 
-  ASSERT_STATUS_OK(session_object.Run(run_options, feeds, output_names, &output_vals));
+  // Run inference
+  output_vals = session.Run(
+      Ort::RunOptions{nullptr},
+      ort_input_names_cstr.data(),
+      ort_inputs.data(),
+      ort_inputs.size(),
+      ort_output_names_cstr.data(),
+      ort_output_names_cstr.size());
 }
 
 void InferenceModel(const std::string& model_data,
                     const char* log_id,
                     const ProviderOptions& provider_options,
                     ExpectedEPNodeAssignment expected_ep_assignment,
-                    const NameMLValMap& feeds,
-                    std::vector<OrtValue>& output_vals,
+                    std::unordered_map<std::string, Ort::Value>& feeds,
+                    std::vector<Ort::Value>& output_vals,
+                    OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Graph&)>* graph_checker) {
+                    std::function<void(const Ort::Session&)>* graph_checker,
+                    Ort::CustomOpDomain* custom_op_domain) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
+  const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
   if (graph_optimization_level.has_value()) {
     session_options.SetGraphOptimizationLevel(*graph_optimization_level);
   }
+
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
+  session_options.SetLogSeverityLevel(log_severity);
+
+  if (QNNTestEnvironment::GetInstance().verbose()) {
+    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+  }
+
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
   }
@@ -330,31 +448,24 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
-  OrtSessionWrapper ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), session_options);
-
-  // Verify node assignment.
-  const auto& graph = ort_session.GetGraph();
-
-  auto ep_nodes = CountAssignedNodes(graph, registration_name);
-  if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-    ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
-  } else if (expected_ep_assignment == ExpectedEPNodeAssignment::None) {
-    ASSERT_EQ(ep_nodes, 0) << "No nodes are supposed to be assigned to " << registration_name;
-  } else {
-    ASSERT_GT(ep_nodes, 0) << "No nodes were assigned to " << registration_name;
-  }
+  auto provider_type = "QNNExecutionProvider";
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), provider_type, expected_ep_assignment));
 
   if (graph_checker) {
-    (*graph_checker)(graph);
+    (*graph_checker)(scoped.session());
   }
 
-  RunWithEP(&ort_session, ort_run_options, feeds, output_vals);
+  RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
-NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-                              bool use_contrib_qdq) {
-  NodeArg* bias_int32 = nullptr;
-
+std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
+                                 const std::string& name,
+                                 const TestInputDef<float>& bias_def,
+                                 float bias_scale,
+                                 bool use_contrib_qdq) {
   // Bias must be int32 to be detected as a QDQ node unit.
   // We must quantize the data.
   if (bias_def.IsRandomData()) {
@@ -363,9 +474,9 @@ NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<floa
     TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(),
                                          static_cast<int32_t>(rand_info.min / bias_scale),
                                          static_cast<int32_t>(rand_info.max / bias_scale));
-    bias_int32 = MakeTestInput(builder, bias_int32_def);
+    MakeTestInput(builder, name, bias_int32_def);
   } else {
-    assert(bias_def.IsRawData());
+    QNN_ASSERT(bias_def.IsRawData());
     // Create raw data initializer def that is quantized to int32
     const auto& bias_f32_raw = bias_def.GetRawData();
     const size_t num_elems = bias_f32_raw.size();
@@ -376,131 +487,65 @@ NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<floa
     }
 
     TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(), bias_int32_raw);
-    bias_int32 = MakeTestInput(builder, bias_int32_def);
+    MakeTestInput(builder, name, bias_int32_def);
   }
 
-  auto* bias = builder.MakeIntermediate();
-  builder.AddDequantizeLinearNode<int32_t>(bias_int32, bias_scale, 0, bias, use_contrib_qdq);
-
-  return bias;
+  builder.AddDequantizeLinearNode<int32_t>(
+      name + "_dq",
+      name.c_str(),
+      bias_scale,
+      0,
+      (name + "_dq_out").c_str(),
+      use_contrib_qdq);
+  return name + "_dq_out";
 }
 
-// Mock IKernelLookup class passed to QNN EP's GetCapability() function in order to
-// determine if the HTP backend is supported on specific platforms (e.g., Windows ARM64).
-// TODO: Remove once HTP can be emulated on Windows ARM64.
-class MockKernelLookup : public onnxruntime::IExecutionProvider::IKernelLookup {
- public:
-  const KernelCreateInfo* LookUpKernel(const Node& /* node */) const {
-    // Do nothing.
-    return nullptr;
-  }
-};
-
-// Testing helper function that calls QNN EP's GetCapability() function with a mock graph to check
-// if the HTP backend is available.
-// TODO: Remove once HTP can be emulated on Windows ARM64.
-static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) {
-  onnxruntime::Model model("Check if HTP is available", false, logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
-
-  // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
-  GetQDQTestCaseFn build_test_case = [](ModelTestBuilder& builder) {
-    const uint8_t quant_zero_point = 0;
-    const float quant_scale = 1.0f;
-
-    auto* dq_scale_output = builder.MakeIntermediate();
-    auto* scale = builder.MakeInitializer<uint8_t>({2}, std::vector<uint8_t>{1, 2});
-    builder.AddDequantizeLinearNode<uint8_t>(scale, quant_scale, quant_zero_point, dq_scale_output);
-
-    // Add bias (initializer) -> DQ ->
-    auto* dq_bias_output = builder.MakeIntermediate();
-    auto* bias = builder.MakeInitializer<int32_t>({2}, std::vector<int32_t>{1, 1});
-    builder.AddDequantizeLinearNode<int32_t>(bias, 1.0f, 0, dq_bias_output);
-
-    // Add input_u8 -> DQ ->
-    auto* input_u8 = builder.MakeInput<uint8_t>({1, 2, 3}, std::vector<uint8_t>{1, 2, 3, 4, 5, 6});
-    auto* dq_input_output = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(input_u8, quant_scale, quant_zero_point, dq_input_output);
-
-    // Add dq_input_output -> InstanceNormalization ->
-    auto* instance_norm_output = builder.MakeIntermediate();
-    builder.AddNode("InstanceNormalization", {dq_input_output, dq_scale_output, dq_bias_output},
-                    {instance_norm_output});
-
-    // Add instance_norm_output -> Q -> output_u8
-    auto* output_u8 = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(instance_norm_output, quant_scale, quant_zero_point, output_u8);
-  };
-
-  build_test_case(helper);
-  helper.SetGraphOutputs();
-  auto status = model.MainGraph().Resolve();
-
-  if (!status.IsOK()) {
-    return BackendSupport::SUPPORT_ERROR;
-  }
-
-  // Create QNN EP and call GetCapability().
-  onnxruntime::GraphViewer graph_viewer(graph);
-  std::unique_ptr<EpGraph> ep_graph = nullptr;
-  if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  MockKernelLookup kernel_lookup;
-  OrtEpGraphSupportInfo graph_support_info(*ep_graph, kernel_lookup);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger.ToExternal(), &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-
-  return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
+// TODO: Consider using public DeviceCompatibility API for this function
+static BackendSupport GetHTPSupport() {
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnHTPBackendTests::SetUp() {
   if (cached_htp_support_ == BackendSupport::SUPPORTED) {
     return;
   }
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
+
+  Ort::Logger logger = Ort::Logger();
 
   if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_htp_support_ = GetHTPSupport(logger);
+    cached_htp_support_ = GetHTPSupport();
   }
   // Determine if HTP backend is supported only if we done so haven't before.
   if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
-    LOGS(logger, WARNING) << "QNN HTP backend is not available! Skipping test.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN HTP backend is not available! Skipping test.");
     GTEST_SKIP();
   } else if (cached_htp_support_ == BackendSupport::SUPPORT_ERROR) {
-    LOGS(logger, ERROR) << "Failed to check if QNN HTP backend is available.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN HTP backend is available.");
     FAIL();
   }
 
   // query the platform attributes if not already cached.
   if (!cached_platform_attrs_.has_value()) {
     QnnPlatformAttributes attrs;
-    Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
+
+    Ort::Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
     if (!query_status.IsOK()) {
-      LOGS(logger, WARNING) << "QueryQnnPlatformAttributesDirectly failed: " << query_status.ErrorMessage();
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("QueryQnnPlatformAttributesDirectly failed: " + query_status.GetErrorMessage()).c_str());
     } else {
-      LOGS(logger, INFO) << "QNN platform attributes: "
-                         << "HTP arch: " << attrs.htp_arch
-                         << ", DLBC supported: " << attrs.dlbc_supported
-                         << ", VTCM size MB: " << attrs.vtcm_size_mb
-                         << ", SoC model: " << attrs.soc_model
-                         << ", SDK version: " << attrs.sdk_version;
+      // Create a string stream to build the output message
+      std::stringstream ss;
+      ss << "QNN platform attributes: "
+         << "HTP arch: " << attrs.htp_arch
+         << ", DLBC supported: " << attrs.dlbc_supported
+         << ", VTCM size MB: " << attrs.vtcm_size_mb
+         << ", SoC model: " << attrs.soc_model
+         << ", Backend API version: " << attrs.backend_api_version;
+
+      std::string platform_info_str = ss.str();
+      std::cout << platform_info_str << std::endl;
+      // TODO: Fix the crash here with ORT_CXX_LOG
+      // ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, platform_info_str.c_str());
+
       cached_platform_attrs_ = attrs;
     }
   }
@@ -508,55 +553,9 @@ void QnnHTPBackendTests::SetUp() {
 
 // Checks if Qnn Gpu backend can run a graph on the system.
 // Creates a one node graph with relu op,
-// then calls QNN EP's GetCapability() function
 // to check if the GPU backend is available.
-static BackendSupport GetGPUSupport(const onnxruntime::logging::Logger& logger) {
-  onnxruntime::Model model("Check if GPU is available", false, logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
-
-  // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
-  auto build_test_case = BuildOpTestCase<float, float>(
-      "Relu",
-      {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
-      {},
-      {});
-
-  build_test_case(helper);
-  helper.SetGraphOutputs();
-  auto status = model.MainGraph().Resolve();
-
-  if (!status.IsOK()) {
-    return BackendSupport::SUPPORT_ERROR;
-  }
-
-  // Create QNN EP and call GetCapability().
-  onnxruntime::GraphViewer graph_viewer(graph);
-  std::unique_ptr<EpGraph> ep_graph = nullptr;
-  if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  MockKernelLookup kernel_lookup;
-  OrtEpGraphSupportInfo graph_support_info(*ep_graph, kernel_lookup);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "gpu"}, {"offload_graph_io_quantization", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger.ToExternal(), &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-
-  return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
+static BackendSupport GetGPUSupport() {
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnGPUBackendTests::SetUp() {
@@ -564,91 +563,42 @@ void QnnGPUBackendTests::SetUp() {
     return;
   }
 
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  Ort::Logger logger = Ort::Logger();
 
   // Determine if GPU backend is supported only if we haven't done so before.
   if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_gpu_support_ = GetGPUSupport(logger);  // BackendSupport::SUPPORTED;
+    cached_gpu_support_ = GetGPUSupport();
   }
 
   if (cached_gpu_support_ == BackendSupport::UNSUPPORTED) {
-    LOGS(logger, WARNING) << "QNN GPU backend is not available! Skipping test.";
-    GTEST_SKIP();
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN GPU backend is not available! Skipping test.");
   } else if (cached_gpu_support_ == BackendSupport::SUPPORT_ERROR) {
-    LOGS(logger, ERROR) << "Failed to check if QNN GPU backend is available.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN GPU backend is available.");
     FAIL();
   }
 }
 
-static BackendSupport GetIRSupport(const onnxruntime::logging::Logger& logger);
+static BackendSupport GetIRSupport();
 
 BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
-
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport(logger);
+    cached_ir_support_ = test::GetIRSupport();
   }
 
   return cached_ir_support_;
 }
 
-// Testing helper function that calls QNN EP's GetCapability() function with a mock graph to check
-// if the QNN CPU backend is available.
-// TODO: Remove once the QNN CPU backend works on Windows ARM64 pipeline VM.
-static BackendSupport GetCPUSupport(const onnxruntime::logging::Logger& logger, const std::string& backend_type = "cpu") {
-  onnxruntime::Model model("Check if " + backend_type + " is available", false, logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
-
-  auto get_test_model_func = [](const std::vector<int64_t>& input_shape) -> GetTestModelFn {
-    return [input_shape](ModelTestBuilder& builder) {
-      const int64_t num_channels = input_shape[1];
-
-      auto* scale = builder.MakeInitializer<float>({num_channels}, 0.0f, 1.0f);
-      auto* bias = builder.MakeInitializer<float>({num_channels}, 0.0f, 4.0f);
-      auto* input_arg = builder.MakeInput<float>(input_shape, 0.0f, 10.0f);
-      auto* instance_norm_output = builder.MakeOutput();
-      builder.AddNode("InstanceNormalization", {input_arg, scale, bias}, {instance_norm_output});
-    };
-  };
-
-  // Build simple graph with a InstanceNormalization op.
-  GetQDQTestCaseFn build_test_case = get_test_model_func({1, 2, 3, 3});
-  build_test_case(helper);
-  helper.SetGraphOutputs();
-  auto status = model.MainGraph().Resolve();
-
-  if (!status.IsOK()) {
-    return BackendSupport::SUPPORT_ERROR;
+BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
+  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_ir_support_ = test::GetIRSupport();
   }
 
-  // Create QNN EP and call GetCapability().
-  onnxruntime::GraphViewer graph_viewer(graph);
-  std::unique_ptr<EpGraph> ep_graph = nullptr;
-  if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-    return BackendSupport::UNSUPPORTED;
-  }
+  return cached_ir_support_;
+}
 
-  MockKernelLookup kernel_lookup;
-  OrtEpGraphSupportInfo graph_support_info(*ep_graph, kernel_lookup);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", backend_type}, {"offload_graph_io_quantization", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger.ToExternal(), &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-
-  return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
+// TODO: Consider using public DeviceCompatibility API for this function
+static BackendSupport GetCPUSupport() {
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnCPUBackendTests::SetUp() {
@@ -656,26 +606,30 @@ void QnnCPUBackendTests::SetUp() {
     return;
   }
 
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  Ort::Logger logger = Ort::Logger();
 
   // Determine if CPU backend is supported only if we done so haven't before.
   if (cached_cpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_cpu_support_ = GetCPUSupport(logger);
+    cached_cpu_support_ = GetCPUSupport();
   }
 
   if (cached_cpu_support_ == BackendSupport::UNSUPPORTED) {
-    LOGS(logger, WARNING) << "QNN CPU backend is not available! Skipping test.";
     GTEST_SKIP();
   } else if (cached_cpu_support_ == BackendSupport::SUPPORT_ERROR) {
-    LOGS(logger, ERROR) << "Failed to check if QNN CPU backend is available.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN CPU backend is available.");
     FAIL();
   }
 }
 
-static BackendSupport GetIRSupport(const onnxruntime::logging::Logger& logger) {
+void GenieBackendTests::SetUp() {
+  // Base fixture — derived fixtures (e.g. GenieSessionTest) are responsible
+  // for platform and availability checks.
+}
+
+static BackendSupport GetIRSupport() {
   // QnnIr should be able to serialize any model supported by the QNN reference spec.
   // Use a model that works on QnnCpu to verify QnnIr availability.
-  return GetCPUSupport(logger, "ir");
+  return GetCPUSupport();
 }
 
 void QnnIRBackendTests::SetUp() {
@@ -683,24 +637,24 @@ void QnnIRBackendTests::SetUp() {
     return;
   }
 
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  Ort::Logger logger = Ort::Logger();
 
   // Determine if IR backend is supported only if we done so haven't before.
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = GetIRSupport(logger);
+    cached_ir_support_ = GetIRSupport();
   }
 
   if (cached_ir_support_ == BackendSupport::UNSUPPORTED) {
-    LOGS(logger, WARNING) << "QNN IR backend is not available! Skipping test.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN IR backend is not available! Skipping test.");
     GTEST_SKIP();
   } else if (cached_ir_support_ == BackendSupport::SUPPORT_ERROR) {
-    LOGS(logger, ERROR) << "Failed to check if QNN IR backend is available.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN IR backend is available.");
     FAIL();
   }
 }
 
-#if defined(_WIN32)
-// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
 // TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
@@ -708,9 +662,10 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
 BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
-#endif  // defined(_WIN32)
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
@@ -737,7 +692,7 @@ std::optional<QnnHTPBackendTests::QnnPlatformAttributes> QnnHTPBackendTests::cac
  *   - If QNN context initialization or attribute querying fails, returns an error status.
  *   - In all error cases, the output parameter 'out' is not modified.
  */
-Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests::QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger) {
+Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests::QnnPlatformAttributes& out, const Ort::Logger& logger) {
   void* qnn_lib_handle = nullptr;
 
 #if defined(_WIN32)
@@ -746,21 +701,21 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   const std::string backend_path = "libQnnHtp.so";
 #endif
 
-  // Load QNN HTP backend library
-  auto status = Env::Default().LoadDynamicLibrary(ToPathString(backend_path).c_str(), false, &qnn_lib_handle);
-  if (!status.IsOK()) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to load QNN HTP backend library: ", backend_path);
+  // Load QNN HTP backend library using self-contained implementation
+  qnn_lib_handle = LoadDynamicLibraryImpl(backend_path);
+  if (!qnn_lib_handle) {
+    return Ort::Status(("Failed to load QNN HTP backend library: " + backend_path).c_str(), ORT_FAIL);
   }
 
   // Get QNN interface providers function
   using QnnInterfaceGetProvidersFn_t = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
   QnnInterfaceGetProvidersFn_t qnn_interface_get_providers = nullptr;
 
-  status = Env::Default().GetSymbolFromLibrary(qnn_lib_handle, "QnnInterface_getProviders",
-                                               (void**)&qnn_interface_get_providers);
-  if (!status.IsOK() || !qnn_interface_get_providers) {
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to get QnnInterface_getProviders symbol");
+  qnn_interface_get_providers = reinterpret_cast<QnnInterfaceGetProvidersFn_t>(
+      GetSymbolFromLibraryImpl(qnn_lib_handle, "QnnInterface_getProviders"));
+  if (!qnn_interface_get_providers) {
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("Failed to get QnnInterface_getProviders symbol", ORT_FAIL);
   }
 
   // Get QNN interface
@@ -769,15 +724,15 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   Qnn_ErrorHandle_t qnn_status = qnn_interface_get_providers(&interface_providers, &num_providers);
 
   if (qnn_status != QNN_SUCCESS || num_providers == 0 || !interface_providers) {
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QnnInterface_getProviders failed");
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("QnnInterface_getProviders failed", ORT_FAIL);
   }
 
   // Use the first provider
   const QnnInterface_t* qnn_interface = interface_providers[0];
   if (!qnn_interface) {
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QnnInterface_getProviders failed");
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("QnnInterface_getProviders failed", ORT_FAIL);
   }
 
   // Extract function pointers from the versioned interface
@@ -792,7 +747,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   if (logCreateFn) {
     qnn_status = logCreateFn(nullptr, QNN_LOG_LEVEL_WARN, &log_handle);
     if (qnn_status != QNN_SUCCESS) {
-      LOGS(logger, WARNING) << "Failed to create QNN log handle, continuing without logging";
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Failed to create QNN log handle, continuing without logging");
     }
   }
 
@@ -802,8 +757,8 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
     if (log_handle && logFreeFn) {
       logFreeFn(log_handle);
     }
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "deviceGetPlatformInfo function not available");
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("deviceGetPlatformInfo function not available", ORT_FAIL);
   }
 
   qnn_status = getPlatformInfoFn(log_handle, &platform_info_ptr);
@@ -812,11 +767,11 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
     if (log_handle && logFreeFn) {
       logFreeFn(log_handle);
     }
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "deviceGetPlatformInfo failed with error: ", qnn_status);
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("deviceGetPlatformInfo failed", ORT_FAIL);
   }
 
-  auto ret = Status::OK();
+  auto ret = Ort::Status();
   // Extract platform attributes
   if (platform_info_ptr->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
     const QnnDevice_PlatformInfoV1_t& p = platform_info_ptr->v1;
@@ -826,9 +781,9 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
       Qnn_ApiVersion_t api_version;
       qnn_status = backendGetApiVersionFn(&api_version);
       if (qnn_status == QNN_SUCCESS) {
-        out.sdk_version = std::to_string(api_version.coreApiVersion.major) + "." +
-                          std::to_string(api_version.coreApiVersion.minor) + "." +
-                          std::to_string(api_version.coreApiVersion.patch);
+        out.backend_api_version = std::to_string(api_version.coreApiVersion.major) + "." +
+                                  std::to_string(api_version.coreApiVersion.minor) + "." +
+                                  std::to_string(api_version.coreApiVersion.patch);
       }
     }
 
@@ -850,7 +805,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
       }
     }
   } else {
-    ret = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported QNN device platform info version: ", platform_info_ptr->version);
+    ret = Ort::Status("Unsupported QNN device platform info version", ORT_FAIL);
   }
 
   // Free platform info
@@ -864,7 +819,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   }
 
   // Unload library
-  ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
+  UnloadDynamicLibraryImpl(qnn_lib_handle);
 
   return ret;
 }
@@ -882,6 +837,21 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version) {
   const auto it = opset_with_axes_as_input.find(op_type);
 
   return (it != opset_with_axes_as_input.cend()) && (it->second <= opset_version);
+}
+
+void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
+                         const GetTestModelFn& model_build_fn,
+                         int opset_version) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
+  result = std::make_unique<ModelAndBuilder>();
+  model_build_fn(result->builder);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  result->builder.model_.SerializeToString(&result->model_data);
 }
 
 }  // namespace test

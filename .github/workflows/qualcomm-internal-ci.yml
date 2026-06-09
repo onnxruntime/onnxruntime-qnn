@@ -6,12 +6,13 @@ name: Qualcomm Internal PR Workflow
 permissions:
   contents: read
   checks: write
+  pull-requests: write
 
 on:
   push:
-    branches: [main, rel-*]
+    branches: [main, rel-*, rel/**/*]
   pull_request:
-    branches: [main, rel-*]
+    branches: [main, rel-*, rel/**/*]
   merge_group:
     types: [checks_requested]
 
@@ -31,3 +32,13 @@ jobs:
     secrets: inherit
     with:
       do_all: true
+
+  coverage:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/qualcomm-internal-coverage.yml
+    secrets: inherit
+
+  asan:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/qualcomm-internal-asan.yml
+    secrets: inherit

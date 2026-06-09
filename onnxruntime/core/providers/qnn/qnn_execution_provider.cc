@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -20,15 +21,21 @@
 
 #include "HTP/QnnHtpGraph.h"
 
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/qnn_thread_pool.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -36,17 +43,22 @@ namespace onnxruntime {
 
 static std::string MakeSharedLibraryPath(std::string_view name) {
 #if defined(_WIN32)
-  return MakeString(name, ".dll");
+  return std::string(name) + ".dll";
 #else
-  return MakeString("lib", name, ".so");
+  return "lib" + std::string(name) + ".so";
 #endif
 }
 
 const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
+const std::string kDefaultGenieBackendPath = MakeSharedLibraryPath("Genie");
 const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
 const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
 const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
 const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
+
+// File-scope (unlike the other backend type name constants defined inside ParseBackendTypeName)
+// because kGenieBackendTypeName is also referenced from other call sites in this file.
+constexpr std::string_view kGenieBackendTypeName{"genie"};
 
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
@@ -59,6 +71,7 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
 
   constexpr std::array kAllowedBackendTypeNames{
       kCpuBackendTypeName,
+      kGenieBackendTypeName,
       kGpuBackendTypeName,
       kHtpBackendTypeName,
       kSaverBackendTypeName,
@@ -68,6 +81,8 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
   std::optional<std::string> associated_backend_path{};
   if (backend_type_name == kCpuBackendTypeName) {
     associated_backend_path = kDefaultCpuBackendPath;
+  } else if (backend_type_name == kGenieBackendTypeName) {
+    associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
   } else if (backend_type_name == kHtpBackendTypeName) {
@@ -93,6 +108,13 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
   }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, warning.str().c_str());
   return false;
+}
+
+static GenieLog_Level_t ResolveGenieLogLevel(std::string_view lvl) {
+  if (lvl == "warn") return GENIE_LOG_LEVEL_WARN;
+  if (lvl == "verbose") return GENIE_LOG_LEVEL_VERBOSE;
+  if (lvl == "info") return GENIE_LOG_LEVEL_INFO;
+  return GENIE_LOG_LEVEL_ERROR;
 }
 
 static void ParseProfilingLevel(std::string profiling_level_string,
@@ -212,53 +234,6 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string,
     qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V81;
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid HTP architecture: " + htp_arch_string).c_str());
-  }
-}
-
-static void ParseOpPackages(const std::string& op_packages_string,
-                            std::vector<onnxruntime::qnn::OpPackage>& op_packages,
-                            const Ort::Logger& logger) {
-  for (const auto& op_package : qnn::utils::SplitString(op_packages_string, ",", true)) {
-    auto splitStrings = qnn::utils::SplitString(op_package, ":", true);
-    if (splitStrings.size() < 3 || splitStrings.size() > 4) {
-      std::string msg =
-          "Invalid op_package passed, "
-          "expected <OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>], "
-          "got ";
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, (msg + std::string(op_package)).c_str());
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Skip registration.");
-      continue;
-    }
-
-    std::string op_type = std::string(splitStrings[0]);
-    std::string op_package_path = std::string(splitStrings[1]);
-    std::string op_package_interface = std::string(splitStrings[2]);
-    std::string op_package_target;
-
-    if (op_type.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op type is empty. Skip registration.");
-      continue;
-    }
-
-    if (op_package_path.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op package path is empty. Skip registration");
-      continue;
-    }
-
-    if (op_package_interface.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op package interface is empty. Skip registration");
-      continue;
-    }
-
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Loading op package from path: " + op_package_path + " for op " + op_type).c_str());
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op package interface " + op_package_interface).c_str());
-    if (splitStrings.size() > 3 && splitStrings[3].size()) {
-      op_package_target = std::string(splitStrings[3]);
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op package target: " + op_package_target).c_str());
-    }
-    op_packages.push_back({op_type, op_package_path, op_package_interface, op_package_target});
   }
 }
 
@@ -441,6 +416,17 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified context cache path: " + context_cache_path_cfg_).c_str());
 
+    std::string genie_log_level;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey("genie_log_level"),
+                                   "",
+                                   genie_log_level);
+    genie_log_level_ = ResolveGenieLogLevel(genie_log_level);
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("User specified Genie Log level: " + genie_log_level).c_str());
+
     // For the case that workaround QNN context PD memory limit, user need split the model into pieces and
     // generate the QNN context model separately.
     // It could happen that the generated EPContext node in separate graph has same node name.
@@ -475,6 +461,17 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - stop share EP contexts across sessions: " + stop_share_ep_contexts_str).c_str());
+
+    std::string prepare_only_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey("enable_htp_prepare_only"),
+                                   "0",
+                                   prepare_only_str);
+    prepare_only_ = prepare_only_str == "1";
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -617,34 +614,65 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  // VTCM backup buffer sharing
+  // HTP share resource optimization
+  std::string htp_share_resource_optimization_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("htp_share_resource_optimization"),
+                                 "",
+                                 htp_share_resource_optimization_str);
+
   std::string enable_vtcm_backup_buffer_sharing_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
                                  FormatEPConfigKey("enable_vtcm_backup_buffer_sharing"),
                                  "0",
                                  enable_vtcm_backup_buffer_sharing_str);
-  if (enable_vtcm_backup_buffer_sharing_str == "1") {
-    enable_vtcm_backup_buffer_sharing_ = true;
-  } else if (enable_vtcm_backup_buffer_sharing_str != "0") {
+
+  if (htp_share_resource_optimization_str == "1") {
+    // htp_share_resource_optimization=1 overrides enable_vtcm_backup_buffer_sharing regardless of its value
+    htp_share_resource_optimization_ = 1;
+  } else if (!htp_share_resource_optimization_str.empty()) {
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                ("Invalid value entered for enable_vtcm_backup_buffer_sharing: " + enable_vtcm_backup_buffer_sharing_str + ", only 1 or 0 are allowed. Setting to 0.").c_str());
+                ORT_LOGGING_LEVEL_ERROR,
+                ("Invalid value entered for htp_share_resource_optimization: " + htp_share_resource_optimization_str + ", only 1 is allowed.").c_str());
+  } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
+    // htp_share_resource_optimization not set, fall back to enable_vtcm_backup_buffer_sharing
+    htp_share_resource_optimization_ = 1;
   }
 
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE,
-              ("User specified enable_vtcm_backup_buffer_sharing: " + enable_vtcm_backup_buffer_sharing_str).c_str());
+              ("htp_share_resource_optimization: " + std::to_string(htp_share_resource_optimization_)).c_str());
 
 #if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
-  if (enable_vtcm_backup_buffer_sharing_) {
+  if (htp_share_resource_optimization_ == 1) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
-                "User specified enable_vtcm_backup_buffer_sharing but QNN API version is older than 2.26.");
+                "User specified htp_share_resource_optimization but QNN API version is older than 2.26.");
   }
 #endif
 
-  // Device ID
+  std::string disable_file_mapped_weights_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disable_file_mapped_weights"), "0", disable_file_mapped_weights_str);
+  if (disable_file_mapped_weights_str == "1") {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING, ("User specified disable_file_mapped_weights: " + std::to_string(!enable_file_mapped_weights_)).c_str());
+  }
+
+#ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  enable_file_mapped_weights_ = false;
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. Feature will be disabled by default");
+#else
+  if (qnn_context_embed_mode_ && enable_file_mapped_weights_) {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is incompatible with embedded EP contexts. Feature will be disabled by default.");
+  }
+#endif
+
   std::string device_id_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("device_id"), "0", device_id_str);
   if (!device_id_str.empty()) {
@@ -710,7 +738,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_HTP_FP16_precision_ = false;
   } else {
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
+                ORT_LOGGING_LEVEL_ERROR,
                 ("Invalid enable_htp_fp16_precision: " +
                  enable_htp_fp16_precision_str +
                  " only 0 or 1 allowed. Set to 0.")
@@ -720,6 +748,103 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
 
+  // HTP monolithic lstm
+  std::string disable_htp_monolithic_lstm_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("disable_htp_monolithic_lstm"),
+                                 "0",
+                                 disable_htp_monolithic_lstm_str);
+  if (disable_htp_monolithic_lstm_str == "1") {
+    disable_htp_monolithic_lstm_ = true;
+  } else if (disable_htp_monolithic_lstm_str == "0") {
+    disable_htp_monolithic_lstm_ = false;
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_ERROR,
+                ("Invalid disable_htp_monolithic_lstm: " +
+                 disable_htp_monolithic_lstm_str +
+                 " only 0 or 1 allowed. Set to 0.")
+                    .c_str());
+  }
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified disable_htp_monolithic_lstm: " + disable_htp_monolithic_lstm_str).c_str());
+
+  std::string num_graph_prepare_threads_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("num_graph_prepare_threads"),
+                                 "",
+                                 num_graph_prepare_threads_str);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  uint8_t max_num_supported_threads = static_cast<uint8_t>(std::thread::hardware_concurrency());
+  if (max_num_supported_threads) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Number of supported concurrent threads: " + std::to_string(max_num_supported_threads)).c_str());
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Unable to retrieve number of supported concurrent threads from hardware. Setting max to default value of 4.");
+    max_num_supported_threads = 4;
+  }
+  // 8 threads provided the best initialization performance from testing
+  // Default to max number of supported threads if less than 8. Otherwise default to 8 threads
+  uint8_t def_num_graph_prepare_threads = max_num_supported_threads > 8 ? 8 : max_num_supported_threads;
+
+  auto is_valid_number = [this](const std::string& s) {
+    if (s[0] == '0') {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  "num_graph_prepare_threads cannot be 0 or start with 0");
+      return false;
+    }
+
+    auto it = std::find_if(s.begin(), s.end(), [](const char c) {
+      return !std::isdigit(c);
+    });
+
+    if (it == s.end()) {
+      return true;
+    }
+
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_ERROR,
+                "num_graph_prepare_threads must be a positive number");
+    return true;
+  };
+#endif
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  if (!num_graph_prepare_threads_str.empty() && is_valid_number(num_graph_prepare_threads_str)) {
+    uint8_t value = static_cast<uint8_t>(std::stoi(num_graph_prepare_threads_str));
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("User specified num_graph_prepare_threads: " + std::to_string(value)).c_str());
+
+    if (value > max_num_supported_threads) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Specified number of graph prepare threads (" + std::to_string(value) + ") is outside of the allowable range [1," + std::to_string(max_num_supported_threads) + "]. Defaulting to " + std::to_string(def_num_graph_prepare_threads) + " threads.").c_str());
+      num_graph_prepare_threads_ = def_num_graph_prepare_threads;
+    } else {
+      num_graph_prepare_threads_ = value;
+    }
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Using default number threads for graph prepare: " + std::to_string(def_num_graph_prepare_threads)).c_str());
+    num_graph_prepare_threads_ = def_num_graph_prepare_threads;
+  }
+#else
+  if (!num_graph_prepare_threads_str.empty()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
+  }
+#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
     ORT_CXX_LOG(logger_,
@@ -728,10 +853,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Inference will not work as expected!");
   }
 
-  if (qnn_context_embed_mode_ && enable_vtcm_backup_buffer_sharing_) {
+  if (qnn_context_embed_mode_ && htp_share_resource_optimization_ == 1) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
-                "[EP context generation:] VTCM backup buffer sharing enabled conflict with EP context embed mode. "
+                "[EP context generation:] HTP share resource optimization enabled conflict with EP context embed mode. "
                 "Inference will not work as expected!");
   }
 
@@ -803,9 +928,24 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       false,
                       logger_)) {
     // Initialize rpcmem_library_.
-    // This is necessary for HtpSharedMemoryAllocator to function and also indicates that the allocator is available.
-    rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
+    // generation stage, there is no need to load it as no allocations will be made.
+    if (!context_cache_enabled_) {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    }
     model_settings_.htp_shared_memory = true;
+  }
+
+  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+    // Attempt to init rpcmem_library_ if needed. If this fails, then
+    // disable file mapped weights and proceed with normal operation
+    try {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    } catch (const std::exception& e) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING, ("Unable to load RPCMem library: " + std::string(e.what()) + " - Disabling file mapped weights.").c_str());
+      enable_file_mapped_weights_ = false;
+    }
   }
 
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
@@ -833,6 +973,70 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
+  // Framework op trace options
+  static constexpr const char* kEnableFrameworkOpTrace = "enable_framework_op_trace";
+  static constexpr const char* kFrameworkOpTraceDir = "framework_op_trace_dir";
+
+  enable_framework_op_trace_ = ParseBoolOption(ort_api,
+                                               session_options_,
+                                               FormatEPConfigKey(kEnableFrameworkOpTrace),
+                                               false,
+                                               logger_);
+
+  std::string trace_dir_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey(kFrameworkOpTraceDir),
+                                 "",
+                                 trace_dir_str);
+  if (!trace_dir_str.empty()) {
+    framework_op_trace_dir_ = trace_dir_str;
+  }
+
+  if (enable_framework_op_trace_) {
+    if (framework_op_trace_dir_.empty()) {
+      framework_op_trace_dir_ = std::filesystem::current_path().string();
+    }
+    // Probe writability up-front. A non-writable path (read-only Android mount,
+    // read-only network share, missing parent permissions) would otherwise only
+    // surface as a WARNING after the entire compile + in-memory trace build
+    // finishes. Disabling tracing here lets us skip all the per-graph collection
+    // work when the trace can never be written.
+    std::filesystem::path probe_dir(framework_op_trace_dir_);
+    std::error_code ec;
+    std::filesystem::create_directories(probe_dir, ec);
+    bool probe_ok = !ec;
+    if (probe_ok) {
+      std::filesystem::path probe_file = probe_dir / ".qnn_op_trace_probe";
+      {
+        std::ofstream ofs(probe_file);
+        probe_ok = ofs.is_open() && (ofs << "1").good();
+      }
+      std::filesystem::remove(probe_file, ec);
+    }
+    if (!probe_ok) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("Framework op trace directory not writable: " + probe_dir.string() +
+                   "; framework op tracing will be disabled.")
+                      .c_str());
+      enable_framework_op_trace_ = false;
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("Framework op tracing enabled. Output dir: " + framework_op_trace_dir_).c_str());
+    }
+  } else if (!framework_op_trace_dir_.empty()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "Provided a directory for framework op trace, but did not enable framework op tracing.");
+  }
+
+  static const std::string QNN_HTP_EXTENDED_UDMA_MODE = "extended_udma";
+  enable_htp_extended_udma_mode_ = ParseBoolOption(ort_api,
+                                                   session_options_,
+                                                   FormatEPConfigKey(QNN_HTP_EXTENDED_UDMA_MODE),
+                                                   false,
+                                                   logger_);
+
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(ort_api,
@@ -844,9 +1048,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
   if (
-      ((context_cache_enabled_ && share_ep_contexts_) || enable_vtcm_backup_buffer_sharing_) &&
+      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1) &&
       SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
+    // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
+    // previous session.
+    qnn_backend_manager_->ResetLogger(logger_);
     // Clear the QnnBackendManager from singleton to stop the resource share
     if (stop_share_ep_contexts_) {
       SharedContext::GetInstance().ResetSharedQnnBackendManager();
@@ -865,7 +1072,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      op_packages,
                                      skip_qnn_version_check},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    if (enable_vtcm_backup_buffer_sharing_) {
+    if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
@@ -990,7 +1197,8 @@ static void LogNodeSupport(const Ort::Logger& logger,
 OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const size_t node_unit_size,
-                                    std::vector<const OrtNode*>& supported_nodes) const {
+                                    std::vector<const OrtNode*>& supported_nodes,
+                                    std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
   size_t num_graph_inputs = 0;
   size_t num_graph_outputs = 0;
   RETURN_IF_NOT_NULL(ort_api.Graph_GetNumInputs(graph, &num_graph_inputs));
@@ -1032,6 +1240,8 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                                 logger_,
                                                 qnn_backend_manager_->GetQnnInterface(),
                                                 qnn_backend_manager_->GetQnnBackendHandle(),
+                                                qnn_backend_manager_->GetQnnValidatorInterface(),
+                                                qnn_backend_manager_->GetQnnValidatorBackendHandle(),
                                                 model_inputs,
                                                 model_outputs,
                                                 qnn_backend_manager_->GetQnnBackendType(),
@@ -1056,6 +1266,24 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
         for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
           supported_nodes.push_back(node);
         }
+      }
+    } else if (enable_framework_op_trace_) {
+      std::vector<qnn::UnsupportedNodeInfo> batch;
+      for (const OrtNodeUnit* node_unit : qnn_node_group->GetNodeUnits()) {
+        for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
+          Ort::ConstNode const_node(node);
+          batch.push_back({
+              std::string(const_node.GetName()),
+              std::string(const_node.GetOperatorType()),
+              const_node.GetId(),
+              std::string(support_status.GetErrorMessage()),
+          });
+        }
+      }
+      if (!batch.empty()) {
+        unsupported_nodes.insert(unsupported_nodes.end(),
+                                 std::make_move_iterator(batch.begin()),
+                                 std::make_move_iterator(batch.end()));
       }
     }
   }
@@ -1094,6 +1322,16 @@ void QnnEp::InitQnnHtpGraphConfigs(
       gsl::not_null<QnnGraph_Config_t*> graph_precision_config = configs_builder.PushConfig();
       graph_precision_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_precision_config->customConfig = htp_graph_precision_config;
+    }
+
+    if (!disable_htp_monolithic_lstm_) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_monolithic_lstm_config = configs_builder.PushCustomConfig();
+      htp_graph_monolithic_lstm_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM;
+      htp_graph_monolithic_lstm_config->monolithicLstm = true;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = htp_graph_monolithic_lstm_config;
     }
   }
 }
@@ -1261,10 +1499,67 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
   }
 }
 
+OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
+                                                  const OrtGraph* graph,
+                                                  OrtEpGraphSupportInfo* graph_support_info) {
+  // CREATE GENIE_BACKEND_MANAGER
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  if (!ep->genie_backend_manager_) {
+    std::string genie_path = kDefaultGenieBackendPath;
+    std::string backend_path_option;
+    GetSessionConfigEntryOrDefault(ep->ort_api, ep->session_options_,
+                                   ep->FormatEPConfigKey("backend_path"), "",
+                                   backend_path_option);
+    if (!backend_path_option.empty()) {
+      genie_path = backend_path_option;
+    }
+    ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
+        qnn::GenieBackendManagerConfig{genie_path}, ep->logger_);
+    auto setup_st = ep->genie_backend_manager_->SetupBackend();
+    if (!setup_st.IsOK()) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
+    }
+  }
+  ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
+  // Get all nodes from the graph
+  size_t num_nodes = 0;
+  if (ep->ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
+  }
+  if (num_nodes != 1) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
+  }
+  std::vector<const OrtNode*> graph_nodes(num_nodes);
+  if (ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
+  }
+
+  // Identify the single node in the graph (which should be the only node)
+  const OrtNode* node = graph_nodes[0];
+  std::vector<const OrtNode*> supported_group{node};
+  OrtNodeFusionOptions node_fusion_options = {};
+  node_fusion_options.ort_version_supported = ORT_API_VERSION;
+  auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
+                                                                 supported_group.data(),
+                                                                 supported_group.size(),
+                                                                 &node_fusion_options);
+  if (add_status != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
+  }
+  return nullptr;
+}
+
 OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  if (ep->prepare_only_ && !ep->context_cache_enabled_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_prepare_only=1 requires ep.context_enable=1. "
+                "Disabling enable_htp_prepare_only since context cache is not enabled.");
+    ep->prepare_only_ = false;
+  }
 
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
@@ -1278,6 +1573,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
+  // Genie Pathway
+  if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+    return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
+#else
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                    "Genie execution pathway is unsupported on this platform.");
+#endif
+  }
+
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
 
   if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
@@ -1288,7 +1593,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (ep->enable_vtcm_backup_buffer_sharing_) {
+  if (ep->htp_share_resource_optimization_ == 1) {
     std::unordered_set<const OrtNode*> ep_ctx_nodes;
     GetMainEPCtxNodes(graph, ep->ort_api, ep_ctx_nodes, ep->logger_);
 
@@ -1327,8 +1632,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   Ort::Status rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
                                                           ep->context_cache_enabled_,
                                                           ep->share_ep_contexts_,
-                                                          ep->enable_vtcm_backup_buffer_sharing_,
-                                                          context_bin_map);
+                                                          ep->htp_share_resource_optimization_,
+                                                          ep->enable_file_mapped_weights_,
+                                                          ep->rpcmem_library_,
+                                                          context_bin_map,
+                                                          ep->enable_htp_extended_udma_mode_,
+                                                          ep->prepare_only_);
 
   context_bin_map.clear();
 
@@ -1389,7 +1698,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;
-  ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes);
+  ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes,
+                        ep->trace_.unsupported_nodes);
 
   // Helper function that returns a string that lists all unsupported nodes.
   // Ex: { name: mul_123, type: Mul }, {}, ...
@@ -1414,6 +1724,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // If no supported nodes, return empty
   if (supported_nodes.empty()) {
+    // ORT does not invoke CompileImpl when no nodes are supported, so the
+    // unsupported list collected in GetSupportedNodes would otherwise be
+    // discarded. Flush a trace here so the diagnostic record (why every node
+    // was rejected) is preserved.
+    if (ep->enable_framework_op_trace_ && !ep->trace_.unsupported_nodes.empty()) {
+      ep->CollectAndWriteFrameworkOpTrace(graph);
+    }
     return nullptr;
   }
 
@@ -1468,6 +1785,12 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
                                       const OrtNode** fused_nodes,
                                       size_t count,
                                       OrtNodeComputeInfo** node_compute_infos) {
+  if (enable_framework_op_trace_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                "Framework op tracing requested but graph is loaded from EPContext "
+                "(no fresh ComposeGraph) - no trace file will be written.");
+  }
+
   // Collect graph and fused nodes names.
   std::vector<std::pair<std::string, std::string>> names;
   names.reserve(count);
@@ -1683,9 +2006,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              name_));
 
   // Get compatibility info for later query in GetCompiledModelCompatibilityInfo.
-  Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(context_buffer.get(),
-                                                                              buffer_size,
-                                                                              compatibility_info_);
+  Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(compatibility_info_);
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
@@ -1703,6 +2024,82 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   return nullptr;
 }
 
+OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
+                                         const OrtGraph** graphs,
+                                         const OrtNode** fused_nodes,
+                                         size_t count,
+                                         OrtNodeComputeInfo** node_compute_infos) {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  if (ep->enable_framework_op_trace_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "Framework op tracing requested but graph is loaded from EPContext "
+                "(no fresh ComposeGraph) - no trace file will be written.");
+  }
+
+  std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ep->ort_api);
+  std::basic_string<ORTCHAR_T> context_model_path;
+  GetContextOnnxModelFilePath(ep->context_cache_path_cfg_, model_path, context_model_path);
+  std::filesystem::path parent_path = std::filesystem::path(context_model_path).parent_path();
+
+  // Extract the DLC information
+  std::string dlc_path;
+  RETURN_IF_NOT_OK(qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path));
+  std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
+
+  // Populate the Genie APIs
+  const GenieApi& genie_api_ = ep->genie_api_loader_->Get();
+
+  // NOTE: We will have only one node in the fused graph --> Ep_context_node
+  for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+    const OrtNode* fused_node = fused_nodes[graph_idx];
+
+    // Build everything you can at compile time
+    auto builder = std::make_shared<GenieNodeBuilder>();
+    builder->api = &genie_api_;
+    builder->dlc_path = dlc_extracted_path.string();
+    RETURN_IF_NOT_NULL(ep->ort_api.Node_GetNumInputs(fused_node, &(builder->num_inputs)));
+    RETURN_IF_NOT_NULL(ep->ort_api.Node_GetNumOutputs(fused_node, &(builder->num_outputs)));
+
+    auto node_compute_info = std::make_unique<GenieNodeComputeInfo>(*ep, builder);
+    node_compute_infos[graph_idx] = node_compute_info.release();
+  }
+  return nullptr;
+}
+
+void QnnEp::CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph) {
+  trace_.model_name = std::filesystem::path(GetModelPathString(primary_graph, ort_api)).filename().u8string();
+  if (trace_.model_name.empty()) {
+    trace_.model_name = "<in-memory>";
+  }
+  trace_.backend_type = qnn::QnnBackendTypeToString(qnn_backend_manager_->GetQnnBackendType());
+  trace_.compilation_target.device_id = device_id_;
+
+  if (qnn::IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
+    uint32_t soc_model = qnn_backend_manager_->GetSocModel();
+    if (soc_model != QNN_SOC_MODEL_UNKNOWN) {
+      trace_.compilation_target.soc_model = soc_model;
+    }
+    QnnHtpDevice_Arch_t htp_arch = qnn_backend_manager_->GetHtpArch();
+    if (htp_arch != QNN_HTP_DEVICE_ARCH_NONE) {
+      trace_.compilation_target.htp_arch = "V" + std::to_string(htp_arch);
+    }
+  }
+
+  qnn::ComputeTraceSummary(trace_);
+
+  // Write when either compiled subgraphs or unsupported nodes are present.
+  // The unsupported-only branch covers the "entire model is unsupported"
+  // case, where ORT may not invoke CompileImpl at all but the trace still
+  // has diagnostic value (it records why every node was rejected).
+  // A wholly empty trace can still occur on EPContext cached runs
+  // - skip the file write there.
+  if (!trace_.subgraph_traces.empty() || !trace_.unsupported_nodes.empty()) {
+    qnn::WriteTraceToFile(trace_,
+                          std::filesystem::path(framework_op_trace_dir_) / "qnn_op_trace.json",
+                          logger_);
+  }
+}
+
 OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _In_ const OrtGraph** graphs,
                                            _In_ const OrtNode** fused_nodes,
@@ -1713,7 +2110,28 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
+  } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
+    return ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
   }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // Initialize now for possible reuse in loop
+  auto finalize_start = std::chrono::steady_clock::time_point::min();
+  auto end = std::chrono::steady_clock::time_point::min();
+  std::chrono::milliseconds total_finalize_time{0};
+
+  auto compile_start = std::chrono::steady_clock::now();
+  std::vector<GraphFinalizationInfo_t> model_infos;
+
+  bool use_multithreaded_prepare = count >= 5 || ep->num_graph_prepare_threads_ > 1;
+  if (use_multithreaded_prepare) {
+    model_infos.reserve(count);
+  } else {
+    ORT_CXX_LOG(ep->logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Only using single thread for graph prepare due to graph count (" + std::to_string(count) + ") or user request.").c_str());
+  }
+#endif
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const OrtGraph* graph = graphs[graph_idx];
@@ -1783,6 +2201,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
         /*tensor_name_overrides=*/&ep->tensor_name_overrides_,
         /*json_qnn_graph_path=*/std::string{}};
 
+    // Each ComposeGraph writes its mappings into a slot in ep->trace_.subgraph_traces.
+    if (ep->enable_framework_op_trace_) {
+      ep->trace_.subgraph_traces.push_back(qnn::OpTraceInfo{});
+      context.op_trace_output = &ep->trace_.subgraph_traces.back();
+    }
+
     if (ep->dump_json_qnn_graph_) {
       namespace fs = std::filesystem;
       context.json_qnn_graph_path =
@@ -1790,21 +2214,97 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
-    RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
-    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+    if (use_multithreaded_prepare) {
+      auto& model_info = model_infos.emplace_back();
+      model_info.model_name = fused_node_name;
+      model_info.model = std::move(qnn_model);
+      model_info.graph_idx = graph_idx;
+    } else {
+      finalize_start = std::chrono::steady_clock::now();
+#endif
+      RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+      end = std::chrono::steady_clock::now();
+      total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+#endif
 
-    ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+      // SetupQnnInputOutput populates qnn_input_infos_/qnn_output_infos_ which are only consumed
+      // in ExecuteGraph during inference. In prepare_only mode inference never runs, so skip.
+      if (!ep->prepare_only_) {
+        RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+      }
 
-    auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
-    node_compute_infos[graph_idx] = node_compute_info.release();
+      ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+
+      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
+      node_compute_infos[graph_idx] = node_compute_info.release();
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+    }
+#endif
   }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  if (use_multithreaded_prepare) {
+    qnn::thread::QnnJobThreadPool tp(ep->num_graph_prepare_threads_);
+    tp.Start();
+    finalize_start = std::chrono::steady_clock::now();
+    for (auto& model_info : model_infos) {
+      tp.SubmitJob([qnn_model = model_info.model.get(), &logger = ep->logger_, res = &model_info.result] {
+        *res = qnn_model->FinalizeGraphs(logger);
+      });
+    }
+    tp.WaitForQueuedJobsToFinish();
+    end = std::chrono::steady_clock::now();
+    total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+
+    for (auto& model_info : model_infos) {
+      RETURN_IF_NOT_OK(std::move(model_info.result));
+
+      auto qnn_model = std::move(model_info.model);
+      if (!ep->prepare_only_) {
+        RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+      }
+
+      ep->qnn_models_.emplace(model_info.model_name, std::move(qnn_model));
+
+      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
+      node_compute_infos[model_info.graph_idx] = node_compute_info.release();
+    }
+  }
+#endif  // _WIN32
 
   // Clean up transient GetCapability→Compile state.
   ep->onnx_graph_io_names_.reset();
   ep->tensor_name_overrides_.clear();
 
+  // Framework op trace: serialize and write JSON.
+  // When multiple graphs are compiled, all subgraph traces are collected into a single file.
+  if (ep->enable_framework_op_trace_) {
+    ep->CollectAndWriteFrameworkOpTrace(graphs[0]);
+  }
+
   if (ep->context_cache_enabled_) {
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
+  }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  end = std::chrono::steady_clock::now();
+  auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
+
+  ORT_CXX_LOG(ep->logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("Total finalize time for all fused nodes: " + std::to_string(total_finalize_time.count()) + " ms").c_str());
+  ORT_CXX_LOG(ep->logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
+#endif
+
+  if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "prepare_only mode: context saved. Releasing QNN device resources.");
+    ep->qnn_models_.clear();
+    ep->qnn_backend_manager_.reset();
   }
 
   return nullptr;
@@ -1815,7 +2315,9 @@ void ORT_API_CALL QnnEp::ReleaseNodeComputeInfosImpl(OrtEp* this_ptr,
                                                      size_t num_node_compute_infos) noexcept {
   ORT_UNUSED_PARAMETER(this_ptr);
   for (size_t idx = 0; idx < num_node_compute_infos; ++idx) {
-    delete node_compute_infos[idx];
+    // All derived types share QnnNodeComputeInfoBase, which provides the virtual destructor
+    // required to safely delete through the OrtNodeComputeInfo C-API base.
+    delete static_cast<QnnNodeComputeInfoBase*>(node_compute_infos[idx]);
   }
 }
 
@@ -1844,6 +2346,24 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "GroupNormalization") {
     // GroupNormalization is translated to QNN's GroupNorm, which requires the NHWC layout for processing.
     *should_convert = 1;
+  }
+
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "RoiAlign") {
+    // RoiAlign is translated to QNN's RoiAlign, which requires the NHWC layout for processing.
+    *should_convert = 1;
+  }
+
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "LpPool") {
+    // LpPool is translated to a QNN AvgPool-based decomposition, which requires the NHWC layout
+    // for processing.
+    *should_convert = 1;
+  }
+
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "ConvInteger") {
+    // DQConvIntegerFusion handles NCHW->NHWC transposition internally via QNN Transpose ops.
+    // Suppress ORT's layout transformer so it does not rewrite ConvInteger to kMSInternalNHWCDomain,
+    // which would break the fusion's pattern-matching on the second GetCapability pass.
+    *should_convert = 0;
   }
 
   return nullptr;
@@ -1902,6 +2422,12 @@ bool QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping OnRunStart in enable_htp_prepare_only mode.");
+    return nullptr;
+  }
+
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
   if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
     return nullptr;
@@ -1932,6 +2458,12 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
                                             _In_ const ::OrtRunOptions* /*run_options*/,
                                             _In_ bool /*sync_stream*/) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping OnRunEnd in enable_htp_prepare_only mode.");
+    return nullptr;
+  }
 
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
   if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
@@ -1968,11 +2500,24 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                      _In_ size_t num_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                "SetDynamicOptions is a no-op in enable_htp_prepare_only mode.");
+    return nullptr;
+  }
+
   for (size_t opt_idx = 0; opt_idx < num_options; ++opt_idx) {
     std::string key(option_keys[opt_idx]);
     std::string value(option_values[opt_idx]);
 
-    if (key == kOrtEpDynamicOptionsWorkloadType) {
+    if (key == "kvcache_rewind") {
+      uint64_t rewind_value = std::stoull(value);
+      if (!(ep->genie_backend_manager_)) {
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid EP Workload Type: " + value).c_str());
+        return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Genie Execution Not Set.");
+      }
+      ep->genie_kv_cache_rewind_.store(rewind_value, std::memory_order_release);
+    } else if (key == kOrtEpDynamicOptionsWorkloadType) {
       if (value == "Default") {
         RETURN_IF_NOT_OK(ep->qnn_backend_manager_->ResetContextPriority());
       } else if (value == "Efficient") {
@@ -2007,7 +2552,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                   ("EP Dynamic Option \"" + key + "\" is not currently supported.").c_str());
       return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Unsupported EP Dynamic Option");
     }
-  }
+  }  // end for loop
 
   return nullptr;
 }
@@ -2019,7 +2564,6 @@ const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp
   qnn::QnnCompatibilityInfo default_info;
   if (ep->compatibility_info_.sdk_version == default_info.sdk_version ||
       ep->compatibility_info_.backend_api_version == default_info.backend_api_version ||
-      ep->compatibility_info_.context_blob_version == default_info.context_blob_version ||
       ep->compatibility_info_.htp_arch == default_info.htp_arch) {
     return "";
   }
@@ -2093,7 +2637,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, dummy_map);
+    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
   }
 
   Ort::Status status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -2104,6 +2648,55 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   }
 
   return status.release();
+}
+
+OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
+                                                          OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, false, nullptr, dummy_map);
+
+  if (!status.IsOK()) {
+    const std::string error_message = status.GetErrorMessage();
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
+    int32_t error_code = QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED;
+
+    // Classify the failure based on the error message produced by each SetupBackend step.
+    if (error_message.find("Unable to load backend") != std::string::npos ||
+        error_message.find("Failed to get QNN providers") != std::string::npos) {
+      // LoadBackend: GetQnnInterfaceProvider() failed.
+      // The QNN backend shared library (e.g., QnnHtp.dll) or one of its dependencies could
+      // not be found or loaded, or the required symbol was not present in the library.
+      reasons = OrtDeviceEpIncompatibility_MISSING_DEPENDENCY;
+    } else if (error_message.find("Unable to find a valid interface") != std::string::npos) {
+      // LoadBackend: GetQnnInterfaceProvider() failed.
+      // The library was loaded but no interface version compatible with the required QNN
+      // API version was found. The installed QNN driver is too old or too new relative to this build of ORT.
+      reasons = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+    } else if (error_message.find("Failed to initialize backend") != std::string::npos) {
+      // InitializeBackend: QNN backendCreate() failed.
+      // The backend library loaded successfully but the driver could not be initialised.
+      reasons = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+    } else if (error_message.find("Failed to create device") != std::string::npos) {
+      // CreateDevice: QNN deviceCreate() failed.
+      // The hardware device is not present, not accessible, or not supported by the driver.
+      reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
+    }
+
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        error_code,
+        error_message.c_str());
+  }
+
+  // Since this function is always called by temporary QnnEp, so no need to release resource.
+
+  return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+      details,
+      OrtDeviceEpIncompatibility_NONE,
+      QNN_SUCCESS,
+      nullptr);
 }
 
 bool QnnEp::GetHtpPowerConfigId(uint32_t& htp_power_config_id) {
@@ -2156,6 +2749,13 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_p
   auto* node_compute_info = static_cast<QnnNodeComputeInfo*>(this_ptr);
   QnnEp& ep = node_compute_info->ep;
 
+  if (ep.prepare_only_) {
+    ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping CreateState in enable_htp_prepare_only mode.");
+    *compute_state = nullptr;
+    return nullptr;
+  }
+
   std::string fused_node_name = ep.ep_api.NodeComputeContext_NodeName(compute_context);
   auto qnn_model_it = ep.qnn_models_.find(fused_node_name);
 
@@ -2180,6 +2780,12 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
                                                   OrtKernelContext* kernel_context) {
   auto* node_compute_info = static_cast<QnnNodeComputeInfo*>(this_ptr);
   QnnEp& ep = node_compute_info->ep;
+
+  if (ep.prepare_only_) {
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL,
+                                   "QNN EP is in prepare_only mode. Session.Run() is not supported. "
+                                   "Load the generated context model for inference.");
+  }
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_));

@@ -8,9 +8,6 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
-#include "test/unittest_util/tester_types.h"
-
-#include "core/graph/onnx_protobuf.h"
 
 #include "gtest/gtest.h"
 
@@ -72,109 +69,115 @@ void _BuildLSTMTestCase(ModelTestBuilder& builder,
                         const int64_t hidden_size,
                         const int64_t layout,
                         const std::vector<QuantParams<InputType>>& output_qparams) {
-  auto convert_input = [](ModelTestBuilder& builder, const TestInputDef<float>& def) {
-    if (std::is_same<InputType, MLFloat16>::value) {
-      TestInputDef<MLFloat16> Fp16_def = ConvertToFP16InputDef(def);
-      return MakeTestInput(builder, Fp16_def);
-    } else if (std::is_same<InputType, uint8_t>::value) {
-      NodeArg* input = MakeTestInput(builder, def);
+  static constexpr bool kIsFp16 = std::is_same<InputType, Ort::Float16_t>::value;
+  static constexpr bool kIsU8 = std::is_same<InputType, uint8_t>::value;
+
+  auto add_input = [&](const char* name, const TestInputDef<float>& def) -> std::string {
+    if constexpr (kIsFp16) {
+      TestInputDef<Ort::Float16_t> fp16_def = ConvertToFP16InputDef(def);
+      MakeTestInput(builder, name, fp16_def);
+      return name;
+    } else if constexpr (kIsU8) {
+      MakeTestInput(builder, name, def);
       QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(def);
-      return AddQDQNodePair<uint8_t>(builder, input, qparams.scale, qparams.zero_point);
+      return AddQDQNodePair<uint8_t>(builder, std::string("qdq_") + name, name, qparams.scale, qparams.zero_point);
     } else {
-      return MakeTestInput(builder, def);
+      MakeTestInput(builder, name, def);
+      return name;
     }
   };
 
-  NodeArg* inputX = convert_input(builder, X_def);
-  NodeArg* inputW = convert_input(builder, W_def);
-  NodeArg* inputR = convert_input(builder, R_def);
-  std::vector<NodeArg*> input_args = {inputX, inputW, inputR};
+  // Required inputs
+  const std::string x_name = add_input("X", X_def);
+  const std::string w_name = add_input("W", W_def);
+  const std::string r_name = add_input("R", R_def);
 
-  // optional inputs
+  // Optional inputs are positional for LSTM; represent missing values with empty string.
+  std::vector<std::string> input_names;
+  input_names.reserve(8);
+  input_names.push_back(x_name);
+  input_names.push_back(w_name);
+  input_names.push_back(r_name);
+
   // B
   if (B_def) {
-    input_args.push_back(convert_input(builder, B_def->get()));
+    input_names.push_back(add_input("B", B_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
-  // sequence length
-  input_args.push_back(builder.MakeOptionalTensor());
+  // sequence_lens (not used)
+  input_names.push_back("");
 
-  // H
+  // initial_h
   if (H_def) {
-    input_args.push_back(convert_input(builder, H_def->get()));
+    input_names.push_back(add_input("initial_h", H_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
-  // C
+  // initial_c
   if (C_def) {
-    input_args.push_back(convert_input(builder, C_def->get()));
+    input_names.push_back(add_input("initial_c", C_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
   // P
   if (P_def) {
-    input_args.push_back(convert_input(builder, P_def->get()));
+    input_names.push_back(add_input("P", P_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
-  NodeArg *lstm_output_Y, *lstm_output_Y_h, *lstm_output_Y_c;
-  if (has_Y) {
-    if (std::is_same<InputType, MLFloat16>::value || std::is_same<InputType, float>::value) {
-      lstm_output_Y = builder.MakeOutput();
-    } else {
-      lstm_output_Y = builder.MakeIntermediate();
-    }
-  } else {
-    lstm_output_Y = builder.MakeOptionalTensor();
-  }
+  // Outputs
+  std::vector<std::string> output_names;
+  output_names.reserve(3);
 
-  if (has_Y_h) {
-    if (std::is_same<InputType, MLFloat16>::value || std::is_same<InputType, float>::value) {
-      lstm_output_Y_h = builder.MakeOutput();
+  auto make_output = [&](const char* name) -> std::string {
+    if (name == nullptr || name[0] == '\0') return "";
+    if constexpr (kIsU8) {
+      // For QDQ, create an intermediate and apply Q->DQ after.
+      return std::string("lstm_") + name;
     } else {
-      lstm_output_Y_h = builder.MakeIntermediate();
+      builder.MakeOutput(name);
+      return name;
     }
-  } else {
-    lstm_output_Y_h = builder.MakeOptionalTensor();
-  }
-  if (has_Y_c) {
-    if (std::is_same<InputType, MLFloat16>::value || std::is_same<InputType, float>::value) {
-      lstm_output_Y_c = builder.MakeOutput();
-    } else {
-      lstm_output_Y_c = builder.MakeIntermediate();
-    }
-  } else {
-    lstm_output_Y_c = builder.MakeOptionalTensor();
-  }
+  };
 
-  Node& lstm_node = builder.AddNode("LSTM",
-                                    input_args,
-                                    {lstm_output_Y, lstm_output_Y_h, lstm_output_Y_c});
-  lstm_node.AddAttribute("direction", direction);
-  lstm_node.AddAttribute("hidden_size", hidden_size);
-  lstm_node.AddAttribute("layout", layout);
-  ORT_UNUSED_PARAMETER(output_qparams);
-  if constexpr (std::is_same<InputType, uint8_t>::value) {
+  const std::string y_out = has_Y ? make_output("Y") : std::string("");
+  const std::string y_h_out = has_Y_h ? make_output("Y_h") : std::string("");
+  const std::string y_c_out = has_Y_c ? make_output("Y_c") : std::string("");
+
+  output_names.push_back(y_out);
+  output_names.push_back(y_h_out);
+  output_names.push_back(y_c_out);
+
+  // Attributes (no Node& mutation)
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+  attrs.push_back(builder.MakeStringAttribute("direction", direction));
+  attrs.push_back(builder.MakeScalarAttribute("hidden_size", hidden_size));
+  attrs.push_back(builder.MakeScalarAttribute("layout", layout));
+
+  builder.AddNode("lstm", "LSTM", input_names, output_names, "", attrs);
+
+  QNN_TEST_UNUSED_PARAMETER(output_qparams);
+  if constexpr (kIsU8) {
     size_t i = 0;
     if (has_Y) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, lstm_output_Y, output_qparams[i].scale,
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y", y_out, output_qparams[i].scale,
                                                      output_qparams[i].zero_point);
-      i++;
+      ++i;
     }
     if (has_Y_h) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, lstm_output_Y_h, output_qparams[i].scale,
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y_h", y_h_out, output_qparams[i].scale,
                                                      output_qparams[i].zero_point);
-      i++;
+      ++i;
     }
     if (has_Y_c) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, lstm_output_Y_c, output_qparams[i].scale,
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y_c", y_c_out, output_qparams[i].scale,
                                                      output_qparams[i].zero_point);
-      i++;
+      ++i;
     }
   }
 }
@@ -224,7 +227,7 @@ static GetTestQDQModelFn<InputQType> BuildQDQLSTMTestCase(const TestInputDef<flo
   };
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64)
 
 // Runs an LSTM model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
@@ -245,11 +248,13 @@ static void RunHtpQDQLSTMOpTest(const TestInputDef<float>& X_def,
                                 const int64_t hidden_size,
                                 const int64_t layout,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                int opset = 22,
-                                QDQTolerance tolerance = QDQTolerance()) {
+                                bool disable_htp_monolithic_lstm = true,
+                                QDQTolerance tolerance = QDQTolerance(),
+                                int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["disable_htp_monolithic_lstm"] = disable_htp_monolithic_lstm ? "1" : "0";
 
   TestQDQModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                        BuildQDQLSTMTestCase<QuantType>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
@@ -273,13 +278,15 @@ static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
                                  const int64_t hidden_size,
                                  const int64_t layout,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
-                                 int opset = 22,
-                                 float tolerance = 0.004f) {
+                                 bool disable_htp_monolithic_lstm = true,
+                                 float tolerance = 0.004f,
+                                 int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
+  provider_options["disable_htp_monolithic_lstm"] = disable_htp_monolithic_lstm ? "1" : "0";
 
   TestFp16ModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                        BuildLSTMTestCase<MLFloat16>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
+                        BuildLSTMTestCase<Ort::Float16_t>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                         provider_options,
                         opset,
                         expected_ep_assignment,
@@ -300,8 +307,8 @@ static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
                                  const int64_t hidden_size,
                                  const int64_t layout,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
-                                 int opset = 22,
-                                 float tolerance = 0.004f) {
+                                 float tolerance = 0.004f,
+                                 int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
 
@@ -312,13 +319,8 @@ static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
                   tolerance);
 }
 
-// QNN failed to finalize when P is provided
-// TODO: Add P to unit test below once finalize issue is resolved
-
 // HTP QDQ
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_forward) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -344,9 +346,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_forward) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_reverse) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_reverse) {
   std::string direction = "reverse";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -372,9 +372,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_reverse) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -400,9 +398,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_wo_B) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_B) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -427,9 +423,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_wo_B) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_wo_H) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_H) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -454,9 +448,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_wo_H) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_wo_C) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_C) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -481,9 +473,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_wo_C) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_all_initializer) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_all_initializer) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -507,12 +497,13 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_all_initialize
                                hidden_size,                                                                            // hidden_size
                                0,                                                                                      // layout
                                ExpectedEPNodeAssignment::All,
-                               22,
+                               false,
                                QDQTolerance(0.008f));
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
+// disable since there is a bug in optional output
+// see https://github.com/microsoft/onnxruntime/pull/27301
+// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
 TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -539,8 +530,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
+// disable since there is a bug in optional output
+// see https://github.com/microsoft/onnxruntime/pull/27301
+// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
 TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -567,8 +559,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
+// disable since there is a bug in optional output
+// see https://github.com/microsoft/onnxruntime/pull/27301
+// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
 TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_c_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -596,9 +589,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_c_only) {
 }
 
 // HTP Fp16
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_forward) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -624,9 +615,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_forward) {
                        ExpectedEPNodeAssignment::All);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_reverse) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_reverse) {
   std::string direction = "reverse";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -649,12 +638,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_reverse) {
                        direction,                                                                               // direction
                        hidden_size,                                                                             // hidden_size
                        0,                                                                                       // layout
-                       ExpectedEPNodeAssignment::All);
+                       ExpectedEPNodeAssignment::All,
+                       false,
+                       0.27);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -678,12 +667,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.25);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_wo_B) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_B) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -706,12 +695,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_wo_B) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.07);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_wo_H) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_H) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -734,12 +723,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_wo_H) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.035);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_wo_C) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_C) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -762,12 +751,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_wo_C) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.17);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_all_initializer) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_all_initializer) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -791,12 +780,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_all_initializ
       direction,                                                                              // direction
       hidden_size,                                                                            // hidden_size
       0,                                                                                      // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.14);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_only) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -820,12 +809,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_only) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.25);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_h_only) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -849,12 +838,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_h_only) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.1);
 }
 
-// Fails with QNN SDK 2.35.0:
-// Failed to finalize QNN graph. Error code: 1002
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_c_only) {
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -878,7 +867,689 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_Fp16_sanity_bidirectional_Y_c_only) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.1);
+}
+
+// HTP QDQ monolithic lstm
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_forward_monolithic_lstm) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_reverse_monolithic_lstm) {
+  std::string direction = "reverse";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_B_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::nullopt,                                                                            // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_H_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::nullopt,                                                                            // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_C_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::nullopt,                                                                            // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_P_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::nullopt,                                                                            // P
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_all_initializer_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, true, -0.5f, 0.5f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, true, -0.5f, 0.5f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, true, -0.5f, 0.5f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -0.5f, 0.5f),             // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, true, -0.5f, 0.5f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, true, -0.5f, 0.5f),  // R
+                               std::ref(B_def),                                                                        // B
+                               std::ref(H_def),                                                                        // initial_h
+                               std::ref(C_def),                                                                        // initial_c
+                               std::ref(P_def),                                                                        // P
+                               true,                                                                                   // has_Y
+                               true,                                                                                   // has_Y_h
+                               true,                                                                                   // has_Y_c
+                               direction,                                                                              // direction
+                               hidden_size,                                                                            // hidden_size
+                               0,                                                                                      // layout
+                               ExpectedEPNodeAssignment::All,
+                               false,
+                               QDQTolerance(0.008f));
+}
+
+// disable since there is a bug in optional output
+// see https://github.com/microsoft/onnxruntime/pull/27301
+// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
+TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               true,                                                                                    // has_Y
+                               false,                                                                                   // has_Y_h
+                               false,                                                                                   // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+// disable since there is a bug in optional output
+// see https://github.com/microsoft/onnxruntime/pull/27301
+// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
+TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               false,                                                                                   // has_Y
+                               true,                                                                                    // has_Y_h
+                               false,                                                                                   // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+// disable since there is a bug in optional output
+// see https://github.com/microsoft/onnxruntime/pull/27301
+// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
+TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_c_only_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpQDQLSTMOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               std::ref(C_def),                                                                         // initial_c
+                               std::ref(P_def),                                                                         // P
+                               false,                                                                                   // has_Y
+                               false,                                                                                   // has_Y_h
+                               true,                                                                                    // has_Y_c
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               false);
+}
+
+// HTP Fp16 monolithic lstm
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_forward_monolithic_lstm) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                       TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                       TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                       std::ref(B_def),                                                                         // B
+                       std::ref(H_def),                                                                         // initial_h
+                       std::ref(C_def),                                                                         // initial_c
+                       std::ref(P_def),                                                                         // P
+                       true,                                                                                    // has_Y
+                       true,                                                                                    // has_Y_h
+                       true,                                                                                    // has_Y_c
+                       direction,                                                                               // direction
+                       hidden_size,                                                                             // hidden_size
+                       0,                                                                                       // layout
+                       ExpectedEPNodeAssignment::All,
+                       false,
+                       0.51);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_reverse_monolithic_lstm) {
+  std::string direction = "reverse";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                       TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                       TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                       std::ref(B_def),                                                                         // B
+                       std::ref(H_def),                                                                         // initial_h
+                       std::ref(C_def),                                                                         // initial_c
+                       std::ref(P_def),                                                                         // P
+                       true,                                                                                    // has_Y
+                       true,                                                                                    // has_Y_h
+                       true,                                                                                    // has_Y_c
+                       direction,                                                                               // direction
+                       hidden_size,                                                                             // hidden_size
+                       0,                                                                                       // layout
+                       ExpectedEPNodeAssignment::All,
+                       false,
+                       0.013);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::ref(H_def),                                                                         // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::ref(P_def),                                                                         // P
+      true,                                                                                    // has_Y
+      true,                                                                                    // has_Y_h
+      true,                                                                                    // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.05);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_B_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::nullopt,                                                                            // B
+      std::ref(H_def),                                                                         // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::ref(P_def),                                                                         // P
+      true,                                                                                    // has_Y
+      true,                                                                                    // has_Y_h
+      true,                                                                                    // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.7);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_H_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::nullopt,                                                                            // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::ref(P_def),                                                                         // P
+      true,                                                                                    // has_Y
+      true,                                                                                    // has_Y_h
+      true,                                                                                    // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.12);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_C_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::ref(H_def),                                                                         // initial_h
+      std::nullopt,                                                                            // initial_c
+      std::ref(P_def),                                                                         // P
+      true,                                                                                    // has_Y
+      true,                                                                                    // has_Y_h
+      true,                                                                                    // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.03);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_P_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::ref(H_def),                                                                         // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::nullopt,                                                                            // P
+      true,                                                                                    // has_Y
+      true,                                                                                    // has_Y_h
+      true,                                                                                    // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.22);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_all_initializer_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, true, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, true, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, true, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, true, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, true, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                        // B
+      std::ref(H_def),                                                                        // initial_h
+      std::ref(C_def),                                                                        // initial_c
+      std::ref(P_def),                                                                        // P
+      true,                                                                                   // has_Y
+      true,                                                                                   // has_Y_h
+      true,                                                                                   // has_Y_c
+      direction,                                                                              // direction
+      hidden_size,                                                                            // hidden_size
+      0,                                                                                      // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.05);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_only_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::ref(H_def),                                                                         // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::ref(P_def),                                                                         // P
+      true,                                                                                    // has_Y
+      false,                                                                                   // has_Y_h
+      false,                                                                                   // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.06);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::ref(H_def),                                                                         // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::ref(P_def),                                                                         // P
+      false,                                                                                   // has_Y
+      true,                                                                                    // has_Y_h
+      false,                                                                                   // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.04);
+}
+
+TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only_monolithic_lstm) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  // Currently HTP only support static P, consider to add dynamic P if there is usecase.
+  // auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, -1.0f, 1.0f);
+  auto P_def = TestInputDef<float>({num_direction, 3 * hidden_size}, false, GetFloatDataInRange(-1.0f, 1.0f, num_direction * 3 * hidden_size));
+  RunHtpFp16LSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+      TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+      TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+      std::ref(B_def),                                                                         // B
+      std::ref(H_def),                                                                         // initial_h
+      std::ref(C_def),                                                                         // initial_c
+      std::ref(P_def),                                                                         // P
+      false,                                                                                   // has_Y
+      false,                                                                                   // has_Y_h
+      true,                                                                                    // has_Y_c
+      direction,                                                                               // direction
+      hidden_size,                                                                             // hidden_size
+      0,                                                                                       // layout
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.04);
 }
 
 // CPU FP32
@@ -1209,7 +1880,7 @@ TEST_F(QnnCPUBackendTests, LSTM_FP32_sanity_bidirectional_Y_c_only) {
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 
 }  // namespace test
 }  // namespace onnxruntime

@@ -1,10 +1,16 @@
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+
 plugins {
 	id 'com.android.application'
 	id 'kotlin-android'
 }
 
-def minSdkVer = System.properties.get("minSdkVer")?:24
+// minSdkVer defaults to 27: QNN EP requires Android 8.1+ (API 27) for the HTP backend.
+// Override with -PminSdkVer=<N> if testing on older devices against CPU/GPU backends only.
+def minSdkVer = System.properties.get("minSdkVer")?:27
 def qnnVersion = System.properties['qnnVersion']
+def ortVersion = System.properties['ortVersion']
 
 android {
 	compileSdkVersion 34
@@ -18,13 +24,7 @@ android {
 
 		testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-		// Add BuildConfig field for qnnVersion
-		if (qnnVersion != null) {
-			buildConfigField "boolean", "IS_QNN_BUILD", "true"
-		}
-		else {
-			buildConfigField "boolean", "IS_QNN_BUILD", "false"
-		}
+		buildConfigField "boolean", "IS_QNN_BUILD", "true"
 	}
 
 	buildTypes {
@@ -34,31 +34,45 @@ android {
 		}
 	}
 	compileOptions {
-		sourceCompatibility JavaVersion.VERSION_17
-		targetCompatibility JavaVersion.VERSION_17
+		sourceCompatibility JavaVersion.VERSION_11
+		targetCompatibility JavaVersion.VERSION_11
 	}
 	kotlinOptions {
-		jvmTarget = '17'
+		jvmTarget = '11'
 	}
-	// Conditional packagingOptions for QNN builds only
-	if (qnnVersion != null)	{
-		packagingOptions  {
-			jniLibs {
-				useLegacyPackaging = true
-			}
-			// Dsp is used in older QC devices and not supported by ORT
-			// Gpu support isn't the target, we just want Npu support (Htp)
-			exclude 'lib/arm64-v8a/libQnnGpu.so'
-			exclude 'lib/arm64-v8a/libQnnDsp*.so'
+	packagingOptions {
+		jniLibs {
+			useLegacyPackaging = true
 		}
-
-		sourceSets {
-			main {
-				manifest.srcFile 'src/main/AndroidManifestQnn.xml'  // Use QNN manifest
-				}
-			}
+	}
+	sourceSets {
+		main {
+			manifest.srcFile 'src/main/AndroidManifestQnn.xml'
+		}
 	}
 	namespace 'ai.onnxruntime.example.javavalidator'
+}
+
+// Resolve a Maven artifact version, falling back to a known-good version if unavailable.
+// Only performs resolution when requestedVersion matches checkVersion; all other versions pass through.
+def getAvailableVersion(String artifact, String requestedVersion, String checkVersion, String fallbackVersion) {
+	if (requestedVersion != checkVersion) {
+		return requestedVersion
+	}
+	try {
+		configurations.detachedConfiguration(
+			dependencies.create("${artifact}:${requestedVersion}")
+		).resolve()
+		return requestedVersion
+	} catch (org.gradle.api.artifacts.ResolveException e) {
+		// Only fall back when the artifact genuinely cannot be resolved (not found in any
+		// configured repository). Network/TLS/credential failures must NOT be silently
+		// swallowed — they would surface here with a different exception type and we want
+		// them to propagate so a broken Maven mirror in CI is obvious instead of producing
+		// a misleading fallback.
+		logger.warn("${artifact}:${requestedVersion} not found in Maven repository (${e.class.simpleName}: ${e.message}); falling back to ${fallbackVersion}")
+		return fallbackVersion
+	}
 }
 
 dependencies {
@@ -76,13 +90,24 @@ dependencies {
 	androidTestImplementation "androidx.test:rules:1.5.0"
 	androidTestImplementation 'com.microsoft.appcenter:espresso-test-extension:1.4'
 
-	// dependencies for onnxruntime-android-qnn
-	if (qnnVersion != null) {
-		implementation(name: "onnxruntime-android-qnn", ext: "aar")
-		implementation "com.qualcomm.qti:qnn-runtime:$qnnVersion"
-	}
-	else {
-		implementation(name: "onnxruntime-android", ext: "aar")
+	// ORT core, QNN EP (includes libonnxruntime_providers_qnn.so + Kotlin helpers), and QNN runtime
+	// Dynamically check and use available version from Maven repository.
+	// Fallback versions (1.24.3, 2.45.0) are the previous known-good releases used when the
+	// requested version is not yet available in the Maven repository (e.g., same-day CI runs).
+	// See docs/execution_providers/QNN-ExecutionProvider.md for the validated version matrix.
+	def resolvedOrtVersion = getAvailableVersion('com.microsoft.onnxruntime:onnxruntime-android', ortVersion, '1.24.4', '1.24.3')
+	implementation "com.microsoft.onnxruntime:onnxruntime-android:${resolvedOrtVersion}"
+
+	// Use the Maven-published AAR when AAR_MAVEN_COORD is set (CI post-publish validation).
+	// Otherwise use the local flatDir AAR (normal dev / CI build path).
+	def aarMavenCoord = System.getenv("AAR_MAVEN_COORD")
+	if (aarMavenCoord) {
+		// AAR_MAVEN_COORD format: "group:artifact:version"
+		implementation aarMavenCoord
+	} else {
+		implementation(name: 'onnxruntime-android-qnn', ext: 'aar')
 	}
 
+	def resolvedQnnVersion = getAvailableVersion('com.qualcomm.qti:qnn-runtime', qnnVersion, '2.45.40', '2.45.0')
+	implementation "com.qualcomm.qti:qnn-runtime:${resolvedQnnVersion}"
 }

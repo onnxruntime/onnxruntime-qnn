@@ -1,0 +1,21 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "Download CI Artifact"
+description: "Download a CI artifact from Artifactory"
+
+inputs:
+  name:
+    description: Name of the artifact to download
+    required: true
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download from Artifactory
+      shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
+      run: >
+        "${{ runner.os == 'Windows' && 'python.exe' || 'python3' }}"
+        qcom/scripts/artifactory/download_ci.py
+        --name "${{ inputs.name }}"

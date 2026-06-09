@@ -6,11 +6,8 @@
 #include <string>
 #include <unordered_map>
 
-#include "core/graph/node_attr_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
-
-#include "core/graph/onnx_protobuf.h"
 
 #include "gtest/gtest.h"
 
@@ -26,9 +23,8 @@ static GetTestModelFn BuildPadTestCase(const TestInputDef<T>& data_def,
                                        bool has_constant_value = true,
                                        int opset = 18) {
   return [data_def, pads_def, constant_value_def, attrs, has_constant_value, opset](ModelTestBuilder& builder) {
-    NodeArg* data = MakeTestInput(builder, data_def);
-
-    std::vector<NodeArg*> inputs{data};
+    std::vector<std::string> input_names{"data"};
+    MakeTestInput(builder, "data", data_def);
     std::vector<ONNX_NAMESPACE::AttributeProto> pad_attrs{attrs};
     if (2 <= opset && opset < 11) {
       // For opsets < 11, "pads" and "value" are attrs.
@@ -38,9 +34,9 @@ static GetTestModelFn BuildPadTestCase(const TestInputDef<T>& data_def,
                                                               pads_def.GetRandomDataInfo().min,
                                                               pads_def.GetRandomDataInfo().max);
 
-      pad_attrs.push_back(utils::MakeAttribute("pads", pads_data));
+      pad_attrs.push_back(test::MakeAttribute("pads", pads_data));
 
-      if constexpr (!std::is_same_v<T, MLFloat16>) {
+      if constexpr (!std::is_same_v<T, Ort::Float16_t>) {
         if (has_constant_value) {
           const auto value = constant_value_def.IsRawData()
                                  ? constant_value_def.GetRawData()[0]
@@ -48,26 +44,22 @@ static GetTestModelFn BuildPadTestCase(const TestInputDef<T>& data_def,
                                                              constant_value_def.GetRandomDataInfo().min,
                                                              constant_value_def.GetRandomDataInfo().max)[0];
 
-          pad_attrs.push_back(utils::MakeAttribute("value", value));
+          pad_attrs.push_back(test::MakeAttribute("value", value));
         }
       }
 
     } else {
       // For opsets >= 11, "pads" and "constant_value" are inputs rather than attrs.
-      NodeArg* pads = MakeTestInput(builder, pads_def);
-      inputs.push_back(pads);
+      MakeTestInput(builder, "pads", pads_def);
+      input_names.push_back("pads");
       if (has_constant_value) {
-        NodeArg* constant_value = MakeTestInput(builder, constant_value_def);
-        inputs.push_back(constant_value);
+        MakeTestInput(builder, "constant_value", constant_value_def);
+        input_names.push_back("constant_value");
       }
     }
 
-    NodeArg* output = builder.MakeOutput();
-    Node& pad_node = builder.AddNode("Pad", inputs, {output});
-
-    for (const auto& attr : pad_attrs) {
-      pad_node.AddAttributeProto(attr);
-    }
+    builder.MakeOutput("output");
+    builder.AddNode("pad", "Pad", input_names, {"output"}, "", pad_attrs);
   };
 }
 
@@ -79,45 +71,46 @@ GetTestQDQModelFn<QuantType> BuildPadQDQTestCase(const TestInputDef<float>& data
                                                  const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                                  bool has_constant_value,
                                                  bool constant_value_quantized) {
-  return [data_def, pads_def, constant_value_def, attrs, has_constant_value, constant_value_quantized](ModelTestBuilder& builder,
-                                                                                                       std::vector<QuantParams<QuantType>>& output_qparams) {
-    std::vector<NodeArg*> inputs;
-    // data -> Q -> DQ ->
-    NodeArg* data = MakeTestInput(builder, data_def);
-    QuantParams<QuantType> data_qparams = GetTestInputQuantParams<QuantType>(data_def);
-    NodeArg* data_qdq = AddQDQNodePair<QuantType>(builder, data, data_qparams.scale, data_qparams.zero_point);
-    inputs.push_back(data_qdq);
+  return [data_def, pads_def, constant_value_def, attrs, has_constant_value, constant_value_quantized](
+             ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
+    MakeTestInput(builder, "data", data_def);
 
-    // pads
-    NodeArg* pads = MakeTestInput(builder, pads_def);
-    inputs.push_back(pads);
-
-    // constant_value -- QNN support both quantized and non-quantized
+    QuantParams<QuantType> data_qparams;
     if (has_constant_value) {
+      std::vector<TestInputDef<float>> data_defs = {data_def, constant_value_def};
+      data_qparams = GetTestInputsQuantParams<QuantType>(data_defs);
+    } else {
+      data_qparams = GetTestInputQuantParams<QuantType>(data_def);
+    }
+
+    const std::string data_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_data", "data", data_qparams.scale, data_qparams.zero_point);
+
+    MakeTestInput(builder, "pads", pads_def);
+
+    std::vector<std::string> input_names{data_qdq, "pads"};
+
+    // constant_value -- QNN supports both quantized and non-quantized
+    if (has_constant_value) {
+      MakeTestInput(builder, "constant_value", constant_value_def);
       if (constant_value_quantized) {
-        // constant_value -> Q -> DQ ->
-        NodeArg* constant_value = MakeTestInput(builder, constant_value_def);
-        QuantParams<QuantType> constant_value_qparams = GetTestInputQuantParams<QuantType>(constant_value_def);
-        NodeArg* constant_value_qdq = AddQDQNodePair<QuantType>(builder, constant_value,
-                                                                constant_value_qparams.scale,
-                                                                constant_value_qparams.zero_point);
-        inputs.push_back(constant_value_qdq);
+        const QuantParams<QuantType> constant_value_qparams = GetTestInputQuantParams<QuantType>(constant_value_def);
+        const std::string constant_value_qdq = AddQDQNodePair<QuantType>(
+            builder, "qdq_constant_value", "constant_value", constant_value_qparams.scale, constant_value_qparams.zero_point);
+        input_names.push_back(constant_value_qdq);
       } else {
-        NodeArg* constant_value = MakeTestInput(builder, constant_value_def);
-        inputs.push_back(constant_value);
+        input_names.push_back("constant_value");
       }
     }
 
-    NodeArg* output = builder.MakeIntermediate();
-    Node& pad_node = builder.AddNode("Pad", inputs, {output});
+    // Pad output (intermediate), then QDQ to graph output
+    const std::string pad_out = "pad_out";
+    std::vector<std::string> output_names{pad_out};
 
-    for (const auto& attr : attrs) {
-      pad_node.AddAttributeProto(attr);
-    }
+    builder.AddNode("pad", "Pad", input_names, output_names, "", attrs);
 
-    // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, output, output_qparams[0].scale,
-                                                     output_qparams[0].zero_point);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out", pad_out, output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
@@ -140,9 +133,7 @@ static void RunPadOpTest(const TestInputDef<T>& data_def,
 
   if (enable_fp16_precision) {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -188,7 +179,7 @@ TEST_F(QnnCPUBackendTests, Pad2d) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -196,7 +187,7 @@ TEST_F(QnnCPUBackendTests, Pad2dOpset7) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "cpu",
                true,  // has_constant_value
@@ -207,7 +198,7 @@ TEST_F(QnnCPUBackendTests, Pad2dNeg) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, -1, -1, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -215,7 +206,7 @@ TEST_F(QnnCPUBackendTests, Pad2dMix) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {1, -1, -1, 1}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -224,7 +215,7 @@ TEST_F(QnnCPUBackendTests, Pad2dPadsNotIni) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, false, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::None);
 }
 
@@ -237,7 +228,7 @@ TEST_F(QnnCPUBackendTests, PadModeReflect) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "reflect")},
+               {test::MakeAttribute("mode", "reflect")},
                ExpectedEPNodeAssignment::All,
                "cpu",
                has_constant_value);
@@ -248,7 +239,7 @@ TEST_F(QnnCPUBackendTests, PadModeReflectNeg) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 1, -1, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "reflect")},  // reflect mode doesn't support negative padding value.
+               {test::MakeAttribute("mode", "reflect")},  // reflect mode doesn't support negative padding value.
                ExpectedEPNodeAssignment::None,
                "cpu",
                has_constant_value);
@@ -259,7 +250,7 @@ TEST_F(QnnCPUBackendTests, PadModeEdge) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "edge")},
+               {test::MakeAttribute("mode", "edge")},
                ExpectedEPNodeAssignment::All,
                "cpu",
                has_constant_value);
@@ -271,7 +262,7 @@ TEST_F(QnnCPUBackendTests, PadModeWrap) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "wrap")},
+               {test::MakeAttribute("mode", "wrap")},
                ExpectedEPNodeAssignment::None,  // not supported
                "cpu",
                has_constant_value);
@@ -286,7 +277,7 @@ TEST_F(QnnCPUBackendTests, Pad4d) {
                                     1.0f, 1.0f}),
                TestInputDef<int64_t>({8}, true, {0, 0, 0, 1, 0, 0, 0, 1}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -298,7 +289,7 @@ TEST_F(QnnCPUBackendTests, Pad4dNeg) {
                                     1.0f, 1.0f}),
                TestInputDef<int64_t>({8}, true, {0, 0, 0, -1, 0, 0, -1, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -310,7 +301,7 @@ TEST_F(QnnCPUBackendTests, Pad4dMix) {
                                     1.0f, 1.0f}),
                TestInputDef<int64_t>({8}, true, {1, 0, 0, -1, 0, 0, -1, 1}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -319,7 +310,7 @@ TEST_F(QnnCPUBackendTests, Pad5d) {
   RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 16)),
                TestInputDef<int64_t>({10}, true, {0, 0, 0, 1, 0, 0, 0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {5.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All);
 }
 
@@ -328,7 +319,7 @@ TEST_F(QnnCPUBackendTests, Pad6d) {
   RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 32)),
                TestInputDef<int64_t>({12}, true, {0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::None);
 }
 
@@ -341,7 +332,7 @@ TEST_F(QnnHTPBackendTests, PadNoConstantValue_FP32_as_FP16) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
@@ -357,18 +348,18 @@ TEST_F(QnnHTPBackendTests, PadConstantValue_FP16_0) {
   // Onnx expects data and constant have same dtype.
   auto data_def = TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f});
   auto constant_def = TestInputDef<float>({1}, true, {0.0f});
-  TestInputDef<MLFloat16> input_fp16_data = ConvertToFP16InputDef(data_def);
-  TestInputDef<MLFloat16> input_fp16_constant = ConvertToFP16InputDef(constant_def);
-  RunPadOpTest<MLFloat16>(input_fp16_data,
-                          TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
-                          input_fp16_constant,
-                          {utils::MakeAttribute("mode", "constant")},
-                          ExpectedEPNodeAssignment::All,
-                          "htp",
-                          has_constant_value_input,
-                          18,  // opset
-                          enable_fp16_precision,
-                          2e-3f);
+  TestInputDef<Ort::Float16_t> input_fp16_data = ConvertToFP16InputDef(data_def);
+  TestInputDef<Ort::Float16_t> input_fp16_constant = ConvertToFP16InputDef(constant_def);
+  RunPadOpTest<Ort::Float16_t>(input_fp16_data,
+                               TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
+                               input_fp16_constant,
+                               {test::MakeAttribute("mode", "constant")},
+                               ExpectedEPNodeAssignment::All,
+                               "htp",
+                               has_constant_value_input,
+                               18,  // opset
+                               enable_fp16_precision,
+                               2e-3f);
 }
 
 // Test MLFlaot 16 Constant = 1
@@ -379,18 +370,18 @@ TEST_F(QnnHTPBackendTests, PadConstantValue_FP16_1) {
   // Onnx expects data and constant have same dtype.
   auto data_def = TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f});
   auto constant_def = TestInputDef<float>({1}, true, {1.0f});
-  TestInputDef<MLFloat16> input_fp16_data = ConvertToFP16InputDef(data_def);
-  TestInputDef<MLFloat16> input_fp16_constant = ConvertToFP16InputDef(constant_def);
-  RunPadOpTest<MLFloat16>(input_fp16_data,
-                          TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
-                          input_fp16_constant,
-                          {utils::MakeAttribute("mode", "constant")},
-                          ExpectedEPNodeAssignment::None,  // Should not be assigned to htp
-                          "htp",
-                          has_constant_value_input,
-                          18,  // opset
-                          enable_fp16_precision,
-                          2e-3f);
+  TestInputDef<Ort::Float16_t> input_fp16_data = ConvertToFP16InputDef(data_def);
+  TestInputDef<Ort::Float16_t> input_fp16_constant = ConvertToFP16InputDef(constant_def);
+  RunPadOpTest<Ort::Float16_t>(input_fp16_data,
+                               TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
+                               input_fp16_constant,
+                               {test::MakeAttribute("mode", "constant")},
+                               ExpectedEPNodeAssignment::None,  // Should not be assigned to htp
+                               "htp",
+                               has_constant_value_input,
+                               18,  // opset
+                               enable_fp16_precision,
+                               2e-3f);
 }
 
 TEST_F(QnnHTPBackendTests, PadReflectMode_FP32_as_FP16) {
@@ -399,7 +390,7 @@ TEST_F(QnnHTPBackendTests, PadReflectMode_FP32_as_FP16) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "reflect")},
+               {test::MakeAttribute("mode", "reflect")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
@@ -408,25 +399,23 @@ TEST_F(QnnHTPBackendTests, PadReflectMode_FP32_as_FP16) {
                2e-3f);
 }
 
-// HTP\HTP\src\hexagon\prepare\graph_prepare.cc:203:ERROR:could not create op: q::flat_from_vtcm
-// HTP\HTP\src\hexagon\prepare\graph_prepare.cc:1238:ERROR:Op 0x104100000011 preparation failed with err:-1
-// Completed stage: Graph Transformations and Optimizations (13372 us)
-// QnnDsp <E> "node" generated: could not create op
-// QnnDsp <E> RouterWindows graph prepare failed 12
-// QnnDsp <E> Failed to finalize graph (id: 1) with err 1002
-TEST_F(QnnHTPBackendTests, DISABLED_PadReflectMode_FP32_as_FP16_big_data) {
+// Since QAIRT 2.35, default float precision on QNN HTP became FP16.
+// Converting FP32 -> FP16 -> FP32 may introduce minor accuracy loss.
+// For example, a value of 8.00300312 could become 8.00000095 after the conversion.
+// The expected difference is approximately 0.00300217, so the tolerance is adjusted to 4e-3f.
+TEST_F(QnnHTPBackendTests, PadReflectMode_FP32_as_FP16_big_data) {
   bool has_constant_value_input = true;
   bool enable_fp16_precision = true;
   RunPadOpTest(TestInputDef<float>({1, 4, 512, 512}, false, GetFloatDataInRange(1.0f, 10.0f, 4 * 512 * 512)),
                TestInputDef<int64_t>({8}, true, {0, 0, 3, 3, 0, 0, 3, 3}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "reflect")},
+               {test::MakeAttribute("mode", "reflect")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
                18,  // opset
                enable_fp16_precision,
-               2e-3f);
+               4e-3f);
 }
 
 TEST_F(QnnHTPBackendTests, PadNoConstantNegValue_FP32_as_FP16) {
@@ -435,7 +424,7 @@ TEST_F(QnnHTPBackendTests, PadNoConstantNegValue_FP32_as_FP16) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, -1, -1, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
@@ -450,7 +439,7 @@ TEST_F(QnnHTPBackendTests, PadNoConstantMixValue_FP32_as_FP16) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {1, -1, -1, 1}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
@@ -465,7 +454,7 @@ TEST_F(QnnHTPBackendTests, Pad_Noop_FP32_as_FP16) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 0, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
@@ -481,7 +470,7 @@ TEST_F(QnnHTPBackendTests, PadNoConstantValue) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -491,7 +480,7 @@ TEST_F(QnnHTPBackendTests, PadNoConstantNegValue) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, -1, -1, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -501,7 +490,7 @@ TEST_F(QnnHTPBackendTests, PadNoConstantMixValue) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {1, -1, -1, 1}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -512,7 +501,7 @@ TEST_F(QnnHTPBackendTests, PadHasConstantValueNonQuantized) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input,
                            constant_value_quantized);
@@ -524,7 +513,7 @@ TEST_F(QnnHTPBackendTests, PadHasConstantValueQuantized) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input,
                            constant_value_quantized);
@@ -535,7 +524,7 @@ TEST_F(QnnHTPBackendTests, PadReflectMode) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 1, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "reflect")},
+                           {test::MakeAttribute("mode", "reflect")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -545,18 +534,22 @@ TEST_F(QnnHTPBackendTests, PadReflectModeNeg) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, -1, -1, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "reflect")},
+                           {test::MakeAttribute("mode", "reflect")},
                            ExpectedEPNodeAssignment::None,  // reflect mode doesn't support negative padding value.
                            has_constant_value_input);
 }
 
 // Pad amount should not be greater than shape(input[0])[i] - 1
-TEST_F(QnnHTPBackendTests, PadReflectModeOutOfRangePadAmount) {
+// Disabled: ORT v1.26.0 (microsoft/onnxruntime#27652) added strict reflect-pad
+// bounds in the CPU kernel, causing the FP32 baseline in TestQDQModelAccuracy
+// to throw before QNN's rejection can be verified.
+// TODO: [AISW-183490]
+TEST_F(QnnHTPBackendTests, DISABLED_PadReflectModeOutOfRangePadAmount) {
   bool has_constant_value_input = true;
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "reflect")},
+                           {test::MakeAttribute("mode", "reflect")},
                            ExpectedEPNodeAssignment::None,
                            has_constant_value_input);
 }
@@ -570,7 +563,7 @@ TEST_F(QnnHTPBackendTests, Pad4dReflectMode) {
                                                 7.0f, 8.0f}),
                            TestInputDef<int64_t>({8}, true, {0, 1, 1, 1, 0, 1, 1, 1}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "reflect")},
+                           {test::MakeAttribute("mode", "reflect")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -580,7 +573,7 @@ TEST_F(QnnHTPBackendTests, PadEdgeMode) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "edge")},
+                           {test::MakeAttribute("mode", "edge")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -590,7 +583,7 @@ TEST_F(QnnHTPBackendTests, PadWrapMode) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "wrap")},
+                           {test::MakeAttribute("mode", "wrap")},
                            ExpectedEPNodeAssignment::None);
 }
 
@@ -602,7 +595,7 @@ TEST_F(QnnHTPBackendTests, Pad4d) {
                                                 7.0f, 8.0f}),
                            TestInputDef<int64_t>({8}, true, {0, 0, 0, 1, 0, 0, 0, 1}),
                            TestInputDef<float>({1}, true, {5.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            true);
 }
@@ -615,7 +608,7 @@ TEST_F(QnnHTPBackendTests, Pad4dNeg) {
                                                 7.0f, 8.0f}),
                            TestInputDef<int64_t>({8}, true, {0, 0, 0, -1, 0, 0, -1, 0}),
                            TestInputDef<float>({1}, true, {5.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            true);
 }
@@ -628,19 +621,12 @@ TEST_F(QnnHTPBackendTests, Pad4dMix) {
                                                 7.0f, 8.0f}),
                            TestInputDef<int64_t>({8}, true, {0, 1, 0, -1, 0, 1, 0, 1}),
                            TestInputDef<float>({1}, true, {5.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            true);
 }
 
-// Inaccuracy detected for output 'output', element 0.
-// Output quant params: scale=0.035294119268655777, zero_point=0.
-// Expected val: 9
-// QNN QDQ val: 8.0117654800415039 (err 0.98823451995849609)
-// CPU QDQ val: 9 (err 0)
-// QNN limitation? pad_constant_value has to be within the range of input[0].
-// Here pad_constant_value = 9.0 > max(input[0]) = 8.0
-TEST_F(QnnHTPBackendTests, DISABLED_Pad4dOutOfRangePadConstantValue) {
+TEST_F(QnnHTPBackendTests, Pad4dOutOfRangePadConstantValue) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({1, 2, 2, 2}, false,
                                                {1.0f, 2.0f,
                                                 3.0f, 4.0f,
@@ -648,16 +634,32 @@ TEST_F(QnnHTPBackendTests, DISABLED_Pad4dOutOfRangePadConstantValue) {
                                                 7.0f, 8.0f}),
                            TestInputDef<int64_t>({8}, true, {0, 0, 0, 1, 0, 0, 0, 1}),
                            TestInputDef<float>({1}, true, {9.0f}),  // pad_constant_value out of input[0] range
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            true);
+}
+
+TEST_F(QnnHTPBackendTests, Pad4dOutOfRangePadNonQuantizedConstantValue) {
+  bool has_constant_value_input = true;
+  bool constant_value_quantized = false;
+  RunQDQPadOpTest<uint8_t>(TestInputDef<float>({1, 2, 2, 2}, false,
+                                               {1.0f, 2.0f,
+                                                3.0f, 4.0f,
+                                                5.0f, 6.0f,
+                                                7.0f, 8.0f}),
+                           TestInputDef<int64_t>({8}, true, {0, 0, 0, 1, 0, 0, 0, 1}),
+                           TestInputDef<float>({1}, true, {9.0f}),  // pad_constant_value out of input[0] range
+                           {test::MakeAttribute("mode", "constant")},
+                           ExpectedEPNodeAssignment::All,
+                           has_constant_value_input,
+                           constant_value_quantized);
 }
 
 TEST_F(QnnHTPBackendTests, Pad5d) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 16)),
                            TestInputDef<int64_t>({10}, true, {0, 0, 0, 1, 0, 0, 0, 1, 0, 0}),
                            TestInputDef<float>({1}, true, {2.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            true);
 }
@@ -667,7 +669,7 @@ TEST_F(QnnHTPBackendTests, Pad_Noop_QDQ) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 0, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }
@@ -684,7 +686,7 @@ TEST_F(QnnGPUBackendTests, Pad2d) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "gpu");
 }
@@ -693,7 +695,7 @@ TEST_F(QnnGPUBackendTests, Pad2dOpset7) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "gpu",
                true,  // has_constant_value
@@ -704,7 +706,7 @@ TEST_F(QnnGPUBackendTests, Pad2dNeg) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, -1, -1, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "gpu");
 }
@@ -713,7 +715,7 @@ TEST_F(QnnGPUBackendTests, Pad2dMix) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {1, -1, -1, 1}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "gpu");
 }
@@ -725,7 +727,7 @@ TEST_F(QnnGPUBackendTests, DISABLED_PadModeReflect) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "reflect")},
+               {test::MakeAttribute("mode", "reflect")},
                ExpectedEPNodeAssignment::All,
                "gpu",
                has_constant_value);
@@ -737,7 +739,7 @@ TEST_F(QnnGPUBackendTests, PadModeEdge) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "edge")},
+               {test::MakeAttribute("mode", "edge")},
                ExpectedEPNodeAssignment::All,
                "gpu",
                has_constant_value);
@@ -749,7 +751,7 @@ TEST_F(QnnGPUBackendTests, PadModeWrap) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "wrap")},
+               {test::MakeAttribute("mode", "wrap")},
                ExpectedEPNodeAssignment::None,  // not supported
                "gpu",
                has_constant_value);
@@ -764,7 +766,7 @@ TEST_F(QnnGPUBackendTests, Pad4d) {
                                     1.0f, 1.0f}),
                TestInputDef<int64_t>({8}, true, {0, 0, 0, 1, 0, 0, 0, 1}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "gpu");
 }
@@ -774,7 +776,7 @@ TEST_F(QnnGPUBackendTests, Pad5d) {
   RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 16)),
                TestInputDef<int64_t>({10}, true, {0, 0, 0, 1, 0, 0, 0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {5.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "gpu");
 }
@@ -784,7 +786,7 @@ TEST_F(QnnGPUBackendTests, Pad6d) {
   RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 32)),
                TestInputDef<int64_t>({12}, true, {0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::None,
                "gpu");
 }

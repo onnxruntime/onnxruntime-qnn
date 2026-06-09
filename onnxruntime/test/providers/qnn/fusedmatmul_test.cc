@@ -4,7 +4,7 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/constants.h"
+
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -29,9 +29,7 @@ static void RunFusedMatMulTest(const TestInputDef<DataType>& input_a_def,
 
   if (backend_name == "htp") {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -40,18 +38,15 @@ static void RunFusedMatMulTest(const TestInputDef<DataType>& input_a_def,
   }
 
   auto model_builder = [input_a_def, input_b_def, transA, transB, transBatchA, transBatchB, alpha](ModelTestBuilder& builder) {
-    NodeArg* input_a = MakeTestInput<DataType>(builder, input_a_def);
-    NodeArg* input_b = MakeTestInput<DataType>(builder, input_b_def);
-    std::vector<NodeArg*> inputs = {input_a, input_b};
-
-    auto* output = builder.MakeOutput();
-
-    Node& node = builder.AddNode("FusedMatMul", inputs, {output}, kMSDomain);
-    node.AddAttribute("transA", static_cast<int64_t>(transA));
-    node.AddAttribute("transB", static_cast<int64_t>(transB));
-    node.AddAttribute("transBatchA", static_cast<int64_t>(transBatchA));
-    node.AddAttribute("transBatchB", static_cast<int64_t>(transBatchB));
-    node.AddAttribute("alpha", alpha);
+    MakeTestInput<DataType>(builder, "input_a", input_a_def);
+    MakeTestInput<DataType>(builder, "input_b", input_b_def);
+    builder.MakeOutput("output");
+    builder.AddNode("fused_matmul", "FusedMatMul", {"input_a", "input_b"}, {"output"}, kMSDomain,
+                    {builder.MakeScalarAttribute("transA", static_cast<int64_t>(transA)),
+                     builder.MakeScalarAttribute("transB", static_cast<int64_t>(transB)),
+                     builder.MakeScalarAttribute("transBatchA", static_cast<int64_t>(transBatchA)),
+                     builder.MakeScalarAttribute("transBatchB", static_cast<int64_t>(transBatchB)),
+                     builder.MakeScalarAttribute("alpha", alpha)});
   };
 
   RunQnnModelTest(model_builder,
@@ -78,47 +73,44 @@ static void RunQDQFusedMatMulTest(const TestInputDef<float>& input_a_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   GetTestModelFn model_builder_fn = [input_a_def, input_b_def, transA, transB, transBatchA, transBatchB, alpha](ModelTestBuilder& builder) {
-    NodeArg* input_a = MakeTestInput<float>(builder, input_a_def);
-    NodeArg* input_b = MakeTestInput<float>(builder, input_b_def);
-    std::vector<NodeArg*> inputs = {input_a, input_b};
-
-    auto* output = builder.MakeOutput();
-
-    Node& node = builder.AddNode("FusedMatMul", inputs, {output}, kMSDomain);
-    node.AddAttribute("transA", static_cast<int64_t>(transA));
-    node.AddAttribute("transB", static_cast<int64_t>(transB));
-    node.AddAttribute("transBatchA", static_cast<int64_t>(transBatchA));
-    node.AddAttribute("transBatchB", static_cast<int64_t>(transBatchB));
-    node.AddAttribute("alpha", alpha);
+    MakeTestInput<float>(builder, "input_a", input_a_def);
+    MakeTestInput<float>(builder, "input_b", input_b_def);
+    builder.MakeOutput("output");
+    builder.AddNode("fused_matmul", "FusedMatMul", {"input_a", "input_b"}, {"output"}, kMSDomain,
+                    {builder.MakeScalarAttribute("transA", static_cast<int64_t>(transA)),
+                     builder.MakeScalarAttribute("transB", static_cast<int64_t>(transB)),
+                     builder.MakeScalarAttribute("transBatchA", static_cast<int64_t>(transBatchA)),
+                     builder.MakeScalarAttribute("transBatchB", static_cast<int64_t>(transBatchB)),
+                     builder.MakeScalarAttribute("alpha", alpha)});
   };
 
   GetTestQDQModelFn<QType> qdq_model_builder_fn = [input_a_def, input_b_def, transA, transB, transBatchA, transBatchB, alpha, use_contrib_qdq](
                                                       ModelTestBuilder& builder, std::vector<QuantParams<QType>>& output_qparams) {
     // Process input A with QDQ
-    NodeArg* input_a = MakeTestInput<float>(builder, input_a_def);
+    MakeTestInput<float>(builder, "input_a", input_a_def);
     QuantParams<QType> input_a_qparams = GetTestInputQuantParams<QType>(input_a_def);
-    NodeArg* input_a_qdq = AddQDQNodePair<QType>(builder, input_a, input_a_qparams.scale,
-                                                 input_a_qparams.zero_point, use_contrib_qdq);
+    std::string input_a_qdq = AddQDQNodePair<QType>(builder, "qdq_input_a", "input_a",
+                                                    input_a_qparams.scale,
+                                                    input_a_qparams.zero_point, use_contrib_qdq);
 
     // Process input B with QDQ
-    NodeArg* input_b = MakeTestInput<float>(builder, input_b_def);
+    MakeTestInput<float>(builder, "input_b", input_b_def);
     QuantParams<QType> input_b_qparams = GetTestInputQuantParams<QType>(input_b_def);
-    NodeArg* input_b_qdq = AddQDQNodePair<QType>(builder, input_b, input_b_qparams.scale,
-                                                 input_b_qparams.zero_point, use_contrib_qdq);
-
-    std::vector<NodeArg*> inputs = {input_a_qdq, input_b_qdq};
+    std::string input_b_qdq = AddQDQNodePair<QType>(builder, "qdq_input_b", "input_b",
+                                                    input_b_qparams.scale,
+                                                    input_b_qparams.zero_point, use_contrib_qdq);
 
     // FusedMatMul -> op_output
-    auto* op_output = builder.MakeIntermediate();
-    Node& node = builder.AddNode("FusedMatMul", inputs, {op_output}, kMSDomain);
-    node.AddAttribute("transA", static_cast<int64_t>(transA));
-    node.AddAttribute("transB", static_cast<int64_t>(transB));
-    node.AddAttribute("transBatchA", static_cast<int64_t>(transBatchA));
-    node.AddAttribute("transBatchB", static_cast<int64_t>(transBatchB));
-    node.AddAttribute("alpha", alpha);
+    builder.AddNode("fused_matmul", "FusedMatMul", {input_a_qdq, input_b_qdq}, {"op_output"}, kMSDomain,
+                    {builder.MakeScalarAttribute("transA", static_cast<int64_t>(transA)),
+                     builder.MakeScalarAttribute("transB", static_cast<int64_t>(transB)),
+                     builder.MakeScalarAttribute("transBatchA", static_cast<int64_t>(transBatchA)),
+                     builder.MakeScalarAttribute("transBatchB", static_cast<int64_t>(transBatchB)),
+                     builder.MakeScalarAttribute("alpha", alpha)});
 
     // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QType>(builder, op_output, output_qparams[0].scale,
+    AddQDQNodePairWithOutputAsGraphOutput<QType>(builder, "qdq_output", "op_output",
+                                                 output_qparams[0].scale,
                                                  output_qparams[0].zero_point, use_contrib_qdq);
   };
 
@@ -246,7 +238,7 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_Default) {
 
 // Test FusedMatMul with float16 inputs and custom alpha on HTP
 TEST_F(QnnHTPBackendTests, FusedMatMul_Float16_CustomAlpha) {
-  RunFusedMatMulTest<MLFloat16>(
+  RunFusedMatMulTest<Ort::Float16_t>(
       ConvertToFP16InputDef(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6))),  // input A
       ConvertToFP16InputDef(TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6))),  // input B
       false,                                                                                           // transA
@@ -260,7 +252,7 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_Float16_CustomAlpha) {
 
 // Test FusedMatMul with float16 inputs, transpose, and custom alpha on HTP
 TEST_F(QnnHTPBackendTests, FusedMatMul_Float16_TransposeA_CustomAlpha) {
-  RunFusedMatMulTest<MLFloat16>(
+  RunFusedMatMulTest<Ort::Float16_t>(
       ConvertToFP16InputDef(TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6))),   // input A
       ConvertToFP16InputDef(TestInputDef<float>({3, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 12))),  // input B
       true,                                                                                             // transA

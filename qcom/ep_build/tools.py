@@ -26,6 +26,10 @@ def get_onnx_models_root(package_manager_venv: Path | None) -> Path:
     return get_package_content_dir(package_manager_venv, "onnx_models")
 
 
+def get_qualcomm_device_cloud_sdk_root(package_manager_venv: Path | None) -> Path:
+    return get_package_content_dir(package_manager_venv, "qualcomm_device_cloud_sdk")
+
+
 def get_package_bin_dir(package_manager_venv: Path | None, package: str) -> Path:
     install_package(package_manager_venv, package)
     return Path(_package_action(package_manager_venv, package, "print-bin-dir"))
@@ -45,7 +49,7 @@ def get_python_executable(
     version: TargetPyVersionT,
 ) -> Path:
     if not is_host_windows():
-        raise NotImplementedError("Not available on this platform")
+        return Path(f"python{version}")
 
     py_package = f"python_{version.replace('.', '')}_windows_{arch}"
 

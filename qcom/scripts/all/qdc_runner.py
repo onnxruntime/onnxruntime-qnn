@@ -10,6 +10,7 @@ import os
 import random
 import shutil
 import signal
+import tarfile
 import tempfile
 import time
 import uuid
@@ -23,38 +24,39 @@ from typing import ClassVar, NamedTuple
 
 import backoff
 import requests
+from extract_testdata import MAPPING as _TESTDATA_MAPPING
 from package_manager import PackageManager
 from prettytable import PrettyTable
-from qdc_public_api_client import Client
-from qdc_public_api_client.api.artifacts import (
-    post_artifacts_startupload,
-    post_artifacts_uuid_continueupload,
-    post_artifacts_uuid_endupload,
+from qualcomm_device_cloud_sdk import Client
+from qualcomm_device_cloud_sdk.api.artifacts import (
+    post_artifacts_start_upload,
+    post_artifacts_uuid_continue_upload,
+    post_artifacts_uuid_end_upload,
 )
-from qdc_public_api_client.api.jobs import (
-    get_jobs_downloadlogs,
-    get_jobs_id,
+from qualcomm_device_cloud_sdk.api.jobs import (
+    get_jobs_download_logs,
+    get_jobs_job_id,
     get_jobs_job_id_logs,
     post_jobs,
     post_jobs_job_id_abort,
 )
-from qdc_public_api_client.models.artifact_type import ArtifactType
-from qdc_public_api_client.models.artifact_type_0 import ArtifactType0
-from qdc_public_api_client.models.create_job_type_0 import CreateJobType0
-from qdc_public_api_client.models.error_message_type_0 import ErrorMessageType0
-from qdc_public_api_client.models.job_logs_type_0 import JobLogsType0
-from qdc_public_api_client.models.job_mode import JobMode
-from qdc_public_api_client.models.job_result import JobResult
-from qdc_public_api_client.models.job_state import JobState
-from qdc_public_api_client.models.job_submission_parameter import JobSubmissionParameter
-from qdc_public_api_client.models.job_type import JobType
-from qdc_public_api_client.models.job_type_0 import JobType0
-from qdc_public_api_client.models.log_upload_status import LogUploadStatus
-from qdc_public_api_client.models.post_artifacts_uuid_continueupload_body import (
-    PostArtifactsUuidContinueuploadBody,
+from qualcomm_device_cloud_sdk.models.artifact_type import ArtifactType
+from qualcomm_device_cloud_sdk.models.artifact_type_0 import ArtifactType0
+from qualcomm_device_cloud_sdk.models.create_job_type_0 import CreateJobType0
+from qualcomm_device_cloud_sdk.models.error_message_type_0 import ErrorMessageType0
+from qualcomm_device_cloud_sdk.models.job_logs_type_0 import JobLogsType0
+from qualcomm_device_cloud_sdk.models.job_mode import JobMode
+from qualcomm_device_cloud_sdk.models.job_result import JobResult
+from qualcomm_device_cloud_sdk.models.job_state import JobState
+from qualcomm_device_cloud_sdk.models.job_submission_parameter import JobSubmissionParameter
+from qualcomm_device_cloud_sdk.models.job_type import JobType
+from qualcomm_device_cloud_sdk.models.job_type_0 import JobType0
+from qualcomm_device_cloud_sdk.models.log_upload_status import LogUploadStatus
+from qualcomm_device_cloud_sdk.models.post_artifacts_uuid_continue_upload_body import (
+    PostArtifactsUuidContinueUploadBody,
 )
-from qdc_public_api_client.models.test_framework import TestFramework
-from qdc_public_api_client.types import File, Response, Unset
+from qualcomm_device_cloud_sdk.models.test_framework import TestFramework
+from qualcomm_device_cloud_sdk.types import File, Response, Unset
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
 
@@ -329,7 +331,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_startupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        result = post_artifacts_startupload.sync_detailed(
+        result = post_artifacts_start_upload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -351,7 +353,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_uuid_endupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        result = post_artifacts_uuid_endupload.sync_detailed(
+        result = post_artifacts_uuid_end_upload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -362,7 +364,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_uuid_continueupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        result = post_artifacts_uuid_continueupload.sync_detailed(
+        result = post_artifacts_uuid_continue_upload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -384,7 +386,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def get_jobs_id(self, *args, **kwargs) -> Response["JobType0 | None"]:
-        result = get_jobs_id.sync_detailed(
+        result = get_jobs_job_id.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -413,7 +415,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def _download_zipped_log(self, qdc_log_path: PurePosixPath) -> Response[File]:
-        result = get_jobs_downloadlogs.sync_detailed(client=self._client, path=str(qdc_log_path))
+        result = get_jobs_download_logs.sync_detailed(client=self._client, path=str(qdc_log_path))
         if isinstance(result, ErrorMessageType0):
             raise RuntimeError(result.message)
         if result is None:
@@ -622,7 +624,7 @@ class QdcRunner:
         ):
             return self._client.post_artifacts_uuid_continueupload(
                 uuid=artifact_upload_uuid,
-                body=PostArtifactsUuidContinueuploadBody(
+                body=PostArtifactsUuidContinueUploadBody(
                     file=File(
                         payload=buffer,
                         file_name="artifact.zip",
@@ -891,6 +893,13 @@ class RunnerCli:
             help="Append the contents of this package to the Windows test archive in the given subdirectory.",
             required=False,
         )
+        parser.add_argument(
+            "--testdata-archive",
+            type=Path,
+            help="Path to onnxruntime-testdata.{zip,tar.bz2}; if set, its 4 handles are merged into each per-platform archive.",
+            required=False,
+            default=None,
+        )
         args = parser.parse_args()
 
         provided_name = args.name[:100].replace("/", "_")
@@ -910,8 +919,37 @@ class RunnerCli:
         self.append_android_package: str = args.append_android_package
         self.append_qli_package: str = args.append_qli_package
         self.append_windows_package: str = args.append_windows_package
+        self.testdata_archive: Path | None = args.testdata_archive
 
         logging.info(f"Initialized runner. Test name prefix={self.test_name}")
+
+    def _resolve_testdata_archive(self) -> "Path | None":
+        """Resolve the testdata archive path, probing both .zip and .tar.bz2 formats.
+
+        Returns the path if found in either format, or None with a warning if missing.
+        Handles the case where a Linux runner downloads .tar.bz2 but the QdcTestsTask
+        hardcodes the .zip path.
+        """
+        if self.testdata_archive is None:
+            return None
+        if self.testdata_archive.exists():
+            return self.testdata_archive
+        # Probe the alternate format (.zip <-> .tar.bz2).
+        name = self.testdata_archive.name
+        if name.endswith(".tar.bz2"):
+            alt = self.testdata_archive.parent / (name[: -len(".tar.bz2")] + ".zip")
+        elif name.endswith(".zip"):
+            alt = self.testdata_archive.parent / (name[: -len(".zip")] + ".tar.bz2")
+        else:
+            alt = None
+        if alt is not None and alt.exists():
+            logging.info("Testdata archive %s not found; using %s instead", self.testdata_archive, alt)
+            return alt
+        logging.warning(
+            "Testdata archive not found at %s (or alternate format) — testdata will NOT be merged into the QDC payload",
+            self.testdata_archive,
+        )
+        return None
 
     def run(self) -> bool:
         test_runs = TestRuns()
@@ -922,18 +960,36 @@ class RunnerCli:
 
         # If you change this temp dir's prefix, please also update the QDC CI job, which attempts to clean
         # up after us if we're killed and don't do it outselves.
+        testdata_archive = self._resolve_testdata_archive()
         with tempfile.TemporaryDirectory(prefix="QdcRunner-") as tmpdir:
             if android_archive.exists():
                 android_archive = self.__append_package(
-                    android_archive, Path(tmpdir), self.append_android_package, Platform.ANDROID
+                    android_archive,
+                    Path(tmpdir),
+                    self.append_android_package,
+                    Platform.ANDROID,
+                    testdata_archive=testdata_archive,
+                    target_platform_for_testdata="android-aarch64",
                 )
             if qli_archive.exists():
                 qli_archive = self.__append_package(
-                    qli_archive, Path(tmpdir), self.append_qli_package, Platform.QUALCOMM_LINUX
+                    qli_archive,
+                    Path(tmpdir),
+                    self.append_qli_package,
+                    Platform.QUALCOMM_LINUX,
+                    testdata_archive=testdata_archive,
+                    target_platform_for_testdata="linux-aarch64_oe_gcc11_2",
                 )
             if windows_archive.exists():
                 windows_archive = self.__append_package(
-                    windows_archive, Path(tmpdir), self.append_windows_package, None
+                    windows_archive,
+                    Path(tmpdir),
+                    self.append_windows_package,
+                    None,
+                    testdata_archive=testdata_archive,
+                    # QDC currently supports Windows ARM64 only; update if QDC gains
+                    # multi-platform support for testdata path re-mapping.
+                    target_platform_for_testdata="windows-arm64",
                 )
 
             with TemporarySignalHandler(lambda sig, frame: test_runs.abort()):
@@ -1013,16 +1069,57 @@ class RunnerCli:
             archive.write(file_to_archive, arcname)
 
     @classmethod
+    def __merge_testdata(
+        cls,
+        archive_path: Path,
+        testdata_archive: Path,
+        target_platform: str,
+    ) -> None:
+        """Re-pack the 4 handles from the testdata archive into the per-platform QDC payload."""
+        suffix = ".tar.bz2" if testdata_archive.name.endswith(".tar.bz2") else testdata_archive.suffix
+        with tempfile.TemporaryDirectory(prefix="QdcMergeTestdata-") as tmp:
+            staging = Path(tmp)
+            if suffix == ".zip":
+                with zipfile.ZipFile(testdata_archive) as zf:
+                    zf.extractall(staging)
+            else:
+                with tarfile.open(testdata_archive, "r:bz2") as tf:
+                    try:
+                        tf.extractall(staging, filter="data")
+                    except TypeError:
+                        # filter= parameter added in Python 3.12; fall back for older runtimes.
+                        tf.extractall(staging)
+
+            with zipfile.ZipFile(archive_path, mode="a") as out_zip:
+                for handle, rel_template in _TESTDATA_MAPPING.items():
+                    src = staging / handle
+                    if not src.exists():
+                        continue
+                    # QDC payloads always use a flat Release/ layout regardless of build config.
+                    target_prefix = rel_template.format(plat=target_platform, config="Release")
+                    for p in src.glob("**/*"):
+                        if p.is_file():
+                            arcname = f"{target_prefix}/{p.relative_to(src).as_posix()}"
+                            out_zip.write(p, arcname)
+
+    @classmethod
     def __append_package(
         cls,
         orig_archive_path: Path,
         new_archive_dir: Path,
         package_and_subdir: str | None,
         append_appium: Platform | None,
+        testdata_archive: Path | None = None,
+        target_platform_for_testdata: str | None = None,
     ) -> Path:
         """Add the contents of a package and/or directory into the QDC payload archive."""
         new_archive_path = new_archive_dir / orig_archive_path.name
         shutil.copyfile(orig_archive_path, new_archive_path)
+
+        if testdata_archive is not None:
+            if target_platform_for_testdata is None:
+                raise ValueError("testdata_archive requires target_platform_for_testdata")
+            cls.__merge_testdata(new_archive_path, testdata_archive, target_platform_for_testdata)
 
         if package_and_subdir is not None:
             package, subdir = package_and_subdir.split(":")

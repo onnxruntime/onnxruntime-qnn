@@ -36,10 +36,10 @@ Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit) const {
   auto alpha = node_helper.Get("alpha", (float)1.0);
   RETURN_IF(alpha != 1.0, "QNN FullyConnected Op only support alpha=1.0.");
   auto beta = node_helper.Get("beta", (float)1.0);
-  RETURN_IF(beta != 1.0, "QNN FullyConnected Op only support beta=1.0.");
+  RETURN_IF(beta != 1.0 && beta != 0.0, "QNN FullyConnected Op only support beta=1.0 or beta=0.0.");
 
-  // input C shape need to be [M] or [1, M]
-  if (node_unit.Inputs().size() == 3) {
+  // input C shape need to be [M] or [1, M] (skip validation when beta=0.0 — C is ignored)
+  if (node_unit.Inputs().size() == 3 && beta != 0.0f) {
     auto& inputB = node_unit.Inputs()[1];
     std::vector<uint32_t> inputB_shape;
     QnnModelWrapper::GetOnnxShape(inputB.shape, inputB_shape);
@@ -74,6 +74,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   // for Input A, B, C: 1 -- need transpose, 0 -- not needed
   std::vector<int64_t> input_trans_flag(3, 0);
   OrtNodeAttrHelper node_helper(node_unit);
+  auto beta = node_helper.Get("beta", (float)1.0);
   input_trans_flag.at(0) = node_helper.Get("transA", (int64_t)0);
   auto transB = node_helper.Get("transB", (int64_t)0);
   // QNN input_1 [m, n] vs Onnx [n, m]
@@ -81,6 +82,11 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& inputs = node_unit.Inputs();
   for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
+    // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
+    if (input_i == 2 && beta == 0.0f) {
+      continue;
+    }
+
     QnnQuantParamsWrapper quantize_param;
     RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, inputs[input_i]));
 
@@ -123,7 +129,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
       input_shape[0] = old_input_shape[1];
       input_shape[1] = old_input_shape[0];
       const std::string& node_input_name(input_name);
-      input_tensor_name = utils::GetUniqueName(input_tensor_name, "_transpose");
+      input_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_transpose");
       std::vector<uint32_t> perm{1, 0};
       RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), node_input_name, input_tensor_name,
                                                          old_input_shape, perm, input_shape,
@@ -152,15 +158,25 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        std::vector<std::string>&& input_names,
                                                        const Ort::Logger& logger,
                                                        bool do_op_validation) const {
-  // FullyConnected dosen't support 2d bias with shape [N, M], In this case, decompose Gemm into FullyConnected + Add for compatibility.
+  // Decompose Gemm into FullyConnected + Add when:
+  // 1. Bias (input C) has 2D shape [N, M] where N != 1 (FC doesn't support this shape), OR
+  // 2. Bias is an intermediate (NATIVE) tensor produced by another op (QNN FC requires static bias).
   bool split_gemm = false;
-  if (node_unit.Inputs().size() == 3) {
+  OrtNodeAttrHelper node_helper(node_unit);
+  auto beta = node_helper.Get("beta", (float)1.0);
+  if (node_unit.Inputs().size() == 3 && beta != 0.0f) {
     auto& input_c = node_unit.Inputs()[2];
     std::vector<uint32_t> input_c_shape;
     QnnModelWrapper::GetOnnxShape(input_c.shape, input_c_shape);
 
     // Split when input_c has 2d shape and not [1, M]
     split_gemm = (input_c_shape.size() == 2 && input_c_shape.at(0) != 1);
+
+    // Split when bias is an intermediate (NATIVE) tensor produced by another op.
+    // ORT's MatMulAddFusion can fuse MatMul+Add->Gemm where the Add's other input
+    // is an intermediate tensor (e.g., output of another MatMul). QNN FC requires
+    // bias to be either STATIC (constant) or APP_WRITE (graph input), not NATIVE.
+    split_gemm = split_gemm || qnn_model_wrapper.GetTensorType(input_c.name) == QNN_TENSOR_TYPE_NATIVE;
   }
 
   if (split_gemm) {
@@ -179,12 +195,12 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::vector<std::string> gemm_input_0_1;
     gemm_input_0_1.push_back(input_names[0]);
     gemm_input_0_1.push_back(input_names[1]);
-    const std::string fc_output_name = onnxruntime::qnn::utils::GetUniqueName(org_output_name, "_fc");
+    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(org_output_name, "_fc");
     QnnTensorWrapper fully_connected_output(fc_output_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
                                             QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fully_connected_output)),
                   "Failed to add FullyConnected output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_FULLY_CONNECTED),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_FULLY_CONNECTED,
                                                   std::move(gemm_input_0_1),
@@ -201,7 +217,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                   "Failed to add ElementWiseAdd output tensor.");
     std::string bias_name = input_names[2];
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_ADD),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_ADD,
                                                   {fc_output_name, bias_name},

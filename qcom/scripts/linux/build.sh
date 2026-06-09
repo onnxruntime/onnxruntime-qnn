@@ -37,8 +37,20 @@ qnn_arch_abi=
 target_py_version=
 use_cache=1
 warnings_as_errors=1
+build_java=
+build_archive=
+enable_coverage=
+enable_asan=
 for i in "$@"; do
   case $i in
+    --build-archive)
+      build_archive=1
+      shift
+      ;;
+    --enable-asan)
+      enable_asan=1
+      shift
+      ;;
     --config=*)
       config="${i#*=}"
       shift
@@ -53,6 +65,14 @@ for i in "$@"; do
       ;;
     --no-warnings-as-errors)
       warnings_as_errors=
+      shift
+      ;;
+    --build-java)
+      build_java=1
+      shift
+      ;;
+    --enable-coverage)
+      enable_coverage=1
       shift
       ;;
     --ort-home=*)
@@ -96,16 +116,15 @@ if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
 fi
 
-if [ -z "${ort_prebuilt_root}" ]; then
-    if [ "${target_arch}" == "aarch64_oe_gcc11_2" ]; then
-        ort_prebuilt_root="$(get_ort_aarch64_prebuilt_root)"
-    else
-        ort_prebuilt_root="$(get_ort_x64_prebuilt_root)"
-    fi
-fi
-
 cmake_bindir="$(get_cmake_bindir)"
-PATH="${cmake_bindir}:$(get_ninja_bindir):${PATH}"
+llvm_contentdir="$(get_llvm_contentdir)"
+# Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH.
+get_hexagon_sdk_contentdir > /dev/null
+# Surface the canonical tools dir to cmake so onnxruntime_unittests_udo.cmake can locate
+# LLVM / Hexagon SDK without relying on a CMAKE_*_BINARY_DIR-relative fallback (which can
+# resolve outside ${REPO_ROOT}/build/tools depending on where the cmake file is included).
+export ORT_BUILD_TOOLS_PATH="$(get_tools_dir)"
+PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
 
 mkdir -p "${build_dir}/${config}"
 
@@ -119,8 +138,6 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --config "${config}" \
              --parallel \
              --build_dir "${build_dir}" \
-             --wheel_name_suffix qcom-internal \
-             --no_kleidiai \
 )
 
 if [ -n "${qnn_arch_abi}" ]; then
@@ -133,10 +150,22 @@ if [ -n "${target_py_version}" ]; then
   build_venv="${build_dir}/venv-${target_py_version}"
   if [ ! -d "${build_venv}" ]; then
     log_debug "Creating venv for build in ${build_venv}"
-
-    # TODO: [AISW-156088]: Adopt uvx for POSIX-like builds
-    #  - Also consider dropping 3.10 support to match upstream.
-    "python${target_py_version}" -m venv "${build_venv}"
+    if command -v "python${target_py_version}" >/dev/null 2>&1; then
+      "python${target_py_version}" -m venv "${build_venv}"
+    elif command -v uv >/dev/null 2>&1; then
+      log_info "python${target_py_version} not found; using uv to provision interpreter."
+      uv venv --seed --python "${target_py_version}" "${build_venv}"
+    else
+      log_info "Neither python${target_py_version} nor uv found; bootstrapping uv into ${build_dir}/_uv_bootstrap."
+      uv_bootstrap_dir="${build_dir}/_uv_bootstrap"
+      python3 -m pip install --quiet --target="${uv_bootstrap_dir}" uv
+      # Prefer the console-script binary; fall back to module form if the wheel didn't ship one.
+      if [ -x "${uv_bootstrap_dir}/bin/uv" ]; then
+        "${uv_bootstrap_dir}/bin/uv" venv --seed --python "${target_py_version}" "${build_venv}"
+      else
+        PYTHONPATH="${uv_bootstrap_dir}" python3 -m uv venv --seed --python "${target_py_version}" "${build_venv}"
+      fi
+    fi
   fi
 
   bash -c ". ${build_venv}/bin/activate && pip install uv"
@@ -165,8 +194,12 @@ test_runner=
 
 case "${target_platform}" in
   linux)
-    qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}" --ort_home "${ort_prebuilt_root}")
-    platform_args=(--build_shared_lib)
+    qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
+    if [ -n "${ort_prebuilt_root}" ]; then
+      qnn_args+=("--ort_home")
+      qnn_args+=("${ort_prebuilt_root}")
+    fi
+    platform_args=(--build_shared_lib --cmake_extra_defines CMAKE_BUILD_RPATH_USE_ORIGIN:BOOL=TRUE)
 
     test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
 
@@ -183,9 +216,6 @@ case "${target_platform}" in
           # We need $toolchain_root from the toolchain.cmake, but the toolchain.cmake is sometimes
           # evaluated without the project's CMakeCache.txt entries. Pass it through the environment :-/
           export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="${toolchain_root}"
-
-          # Disable SVE for the time being - https://github.com/microsoft/onnxruntime/issues/26131
-          platform_args+=(--no_sve)
 
           platform_args+=(--cmake_extra_defines
                           CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
@@ -211,7 +241,13 @@ case "${target_platform}" in
       rm -fr "${build_dir}/${config}"
     fi
 
-    PATH="$(get_java_bindir):${PATH}"
+    # JDK 21's jlink is not compatible with Android 34's core modules,
+    # so Java 17 is used instead.
+    PATH="$(get_java17_bindir):${PATH}"
+    if [ -n "${build_java}" ]; then
+      export JAVA_HOME="$(get_java17_contentdir)"
+      export GRADLE_USER_HOME="${build_root}/gradle-home"
+    fi
 
     if [ -n "${ANDROID_HOME:-}" -a -n "${ANDROID_NDK_HOME:-}" ]; then
       android_sdk_path="${ANDROID_HOME}"
@@ -221,13 +257,19 @@ case "${target_platform}" in
       android_ndk_path="$(get_android_ndk_root)"
     fi
 
-    # TODO: Add --ort_home "${ort_prebuilt_root}" once MS release ORT prebuilt for Android
     qnn_args=(--use_qnn static_lib --qnn_home "${qairt_sdk_root}")
+    if [ -n "${ort_prebuilt_root}" ]; then
+      qnn_args+=("--ort_home")
+      qnn_args+=("${ort_prebuilt_root}")
+    fi
     platform_args=(--build_shared_lib \
                    --android_sdk_path "${android_sdk_path}" \
                    --android_ndk_path "${android_ndk_path}" \
                    --android_abi "arm64-v8a" \
                    --android_api "27")
+    if [ -n "${build_java}" ]; then
+      platform_args+=(--build_java)
+    fi
     case "${mode}" in
       build)
         action_args+=("--android")
@@ -277,11 +319,32 @@ else
 
     python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
 
+    package_args=()
+    if [ -n "${build_archive}" ]; then
+      log_info "Building archive asset."
+      package_args+=(--build_archive_asset)
+    fi
+    if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
+      package_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
+    fi
+    if [[ "${ORT_NIGHTLY_BUILD:-}" == "1" ]]; then
+      package_args+=(--wheel_name_suffix "qcom_internal" --nightly_build)
+    fi
+
+    if [ -n "${enable_coverage}" ]; then
+      common_args+=(--cmake_extra_defines "ENABLE_COVERAGE:BOOL=ON")
+    fi
+
+    if [ -n "${enable_asan}" ]; then
+      common_args+=(--enable_address_sanitizer)
+    fi
+
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
       "${action_args[@]}" \
       "${common_args[@]}" \
       "${qnn_args[@]}" \
-      "${platform_args[@]}"
+      "${platform_args[@]}" \
+      "${package_args[@]}"
   fi
 
   if [ -n "${run_tests}" ]; then

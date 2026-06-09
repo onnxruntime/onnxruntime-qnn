@@ -16,8 +16,12 @@ param (
     [bool]$BuildNuget = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "If true, build archive.")]
+    [bool]$BuildArchive = $false,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
-    [string]$OrtPrebuiltRoot,
+    [string]$OrtPrebuiltRoot = "",
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to QAIRT SDK.")]
@@ -39,7 +43,7 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Build a wheel targeting this Python version.")]
-    [ValidateSet("", "3.11", "3.12", "3.13")]
+    [ValidateSet("", "3.11", "3.12", "3.13", "3.14")]
     [string]$TargetPyVersion = "",
 
     [Parameter(Mandatory = $true,
@@ -75,21 +79,6 @@ if (-not (Test-Path $BuildDir)) {
 
 Enter-PyVenv $PyVEnv
 
-if ($OrtPrebuiltRoot -eq "") {
-    if ($Arch -eq "x86_64") {
-        $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
-    }
-    elseif ($Arch -eq "aarch64" -or $Arch -eq "arm64" -or $Arch -eq "arm64ec") {
-        $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
-    }
-    else {
-        Write-Warning "No prebuilt ORT available for architecture '$Arch'. Please provide OrtPrebuiltRoot parameter."
-    }
-}
-else {
-    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
-}
-
 if ($QairtSdkRoot -eq "") {
     $QairtSdkRoot = (Get-QairtRoot)
 }
@@ -100,7 +89,7 @@ else {
 $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
 
 if ($Mode -eq "generate_sln") {
-    $CMakeGenerator = "Visual Studio 17 2022"
+    $CMakeGenerator = (Get-InstalledVsGenerator).Generator
     $BuildIsDirty = $true
 }
 else {
@@ -117,11 +106,22 @@ else {
     }
 }
 
+$BinDir = Join-Path $BuildDir $Config
+if ($CMakeGenerator -ne "Ninja") {
+    # Multi-config generators add an extra config directory.
+    $BinDir = Join-Path $BinDir $Config
+}
+
 $ArchArgs = @()
 if ($CMakeGenerator -eq "Ninja") {
     # We don't have Visual Studio to set up the build environment so do it
     # manually with somthing akin to vcvarsall.bat.
     Enter-MsvcEnv -TargetArch $Arch
+    # When building ARM64X, build.py needs --$Arch to set BUILD_AS_ARM64X
+    # in cmake (controls LINKREPRO capture and arm64x merge).
+    if ($BuildAsX -and $Arch -ne "x86_64") {
+        $ArchArgs += "--$Arch"
+    }
 } elseif ($Arch -ne "x86_64") {
     # Tell the EP build that we're cross-compiling to ARM64.
     # We do not do this when using Ninja because our fake vcvars handles
@@ -136,11 +136,21 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot", "--ort_home", "$OrtPrebuiltRoot"
+# Use static MSVC runtime for builds to eliminate MSVCP140.dll and
+# VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
+if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
+    $CommonArgs += "--enable_msvc_static_runtime"
+}
+
+$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+if ($OrtPrebuiltRoot -ne "") {
+    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
+    $QnnArgs += "--ort_home"
+    $QnnArgs += "$OrtPrebuiltRoot"
+}
 $GenerateBuild = $false
 $DoBuild = $false
 $BuildWheel = $false
-$BuildZip = $true
 $MakeTestArchive = $false
 $RunTests = $false
 $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
@@ -160,7 +170,7 @@ else {
     $FakeClCcacheDir = $BuildDir.Replace("\", "/")
     $CommonArgs += `
         "--cmake_extra_defines", "CMAKE_VS_GLOBALS=CLToolExe=cl.exe;CLToolPath=$FakeClCcacheDir;UseMultiToolTask=true", `
-        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,RelWithDebInfo">":Embedded">"'
+        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,Release,RelWithDebInfo">":Embedded">"'
 }
 
 $TargetPyExe = $null
@@ -169,7 +179,6 @@ if ($TargetPyVersion -ne "")
     # Wheels only supported when we can run Python for the target arch.
     $TargetPyExe = (Join-Path (Get-PythonBinDir -Version $TargetPyVersion -Arch $Arch) "python.exe")
     $BuildWheel = $true
-    $ArchArgs += "--enable_pybind"
     $BuildVEnv = (Join-Path $BuildDir "venv-$TargetPyVersion")
     Write-Host "Building Python wheel using $TargetPyExe"
 }
@@ -182,10 +191,7 @@ if ($BuildAsX) {
     $CommonArgs += "--buildasx"
 }
 
-# The ORT build incorrectly enables use of Kleidiai when using Ninja on Windows,
-# even if ArmNN is not requested. Manually turn it off.
-$PlatformArgs = @("--no_kleidiai")
-
+$BuildNugetArgs = @()
 if ($BuildNuget) {
     $TargetNugetDir = (Get-NugetBinDir)
     $env:Path = "$TargetNugetDir;" + $env:Path
@@ -194,12 +200,31 @@ if ($BuildNuget) {
         Get-Command nuget.exe -ErrorAction SilentlyContinue
     }
     Write-Host "Building Nuget using $TargetNugetExe"
-    $CommonArgs += "--build_nuget"
+    $BuildNugetArgs += "--build_nuget"
 }
 
 if ($CMakeGenerator -eq "Ninja") {
     # The default somehow gives us paths that are too long in CI
     $PlatformArgs += "--cmake_extra_defines", "CMAKE_OBJECT_PATH_MAX=240"
+}
+
+$VersionSuffixArg = @()
+if ($env:ORT_VERSION_SUFFIX) {
+    $VersionSuffixArg += "--version_suffix", "$env:ORT_VERSION_SUFFIX"
+}
+
+$BuildArchiveArgs = @()
+if ($BuildArchive) {
+    $BuildArchiveArgs += "--build_archive_asset"
+}
+
+$BuildWheelArgs = @()
+if ($BuildWheel) {
+    $BuildWheelArgs += "--build_wheel"
+    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
+        $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
+        $BuildWheelArgs += "--nightly_build"
+    }
 }
 
 switch ($Mode) {
@@ -262,6 +287,7 @@ else {
     if ($GenerateBuild -or $DoBuild) {
         try {
             python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
             if ($GenerateBuild) {
                 if (-not (Test-Path $BuildVEnv)) {
@@ -274,64 +300,30 @@ else {
                     Assert-Success { python.exe -m pip install uv }
                     Assert-Success { uv.exe pip install -r "$RepoRoot\tools\ci_build\github\windows\python\requirements.txt" --native-tls }
                     Assert-Success -ErrorMessage "Failed to generate build" {
-                        .\build.bat --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
+                        & $BuildBatPath --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
                     }
                 }
             }
 
             if ($DoBuild) {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
-                Assert-Success -ErrorMessage "Failed to build" {
-                    & cmake --build $BuildOutputDir --config $Config
+                Use-PyVenv -PyVenv $BuildVEnv {
+                    Assert-Success -ErrorMessage "Failed to build" {
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs $BuildWheelArgs
+                    }
                 }
 
-                if ($CMakeGenerator -eq "Visual Studio 17 2022") {
+                if ($CMakeGenerator -in @("Visual Studio 17 2022", "Visual Studio 18 2026")) {
                     $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
                 }
 
-                if ($BuildWheel) {
-                    if ($env:ORT_NIGHTLY_BUILD) {
-                        $PyNightlyArg = "--nightly_build"
-                    }
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
-                                python.exe (Join-Path $RepoRoot "setup.py") `
-                                    bdist_wheel `
-                                    --wheel_name_suffix=qcom_internal `
-                                    --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg
-                            }
-                        }
-                    }
-                }
-
                 if ($BuildNuget) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            $BuildBatPath = (Join-Path $RepoRoot "build.bat")
-                            Assert-Success -ErrorMessage "Failed to build nuget" {
-                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
-                            }
-                        }
+                    $DistDir = Join-Path $BinDir "dist"
+                    if (-not (Test-Path $DistDir)) {
+                        New-Item -ItemType Directory -Path $DistDir | Out-Null
                     }
-                }
-                if ($BuildZip) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            $PkgAssetsArgs = @(
-                                "--source", $RepoRoot,
-                                "--build_dir", $BuildDir,
-                                "--config", $Config,
-                                "--verbose"
-                            )
-                            if ($CMakeGenerator -eq "Ninja") {
-                                $PkgAssetsArgs += "--use_ninja"
-                            }
-                            Assert-Success -ErrorMessage "Failed to build zip" {
-                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs
-                            }
-                        }
+                    foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
+                        Copy-Item -Path $Pkg.FullName -Destination $DistDir
                     }
                 }
             }

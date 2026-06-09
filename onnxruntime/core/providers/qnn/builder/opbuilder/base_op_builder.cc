@@ -212,7 +212,7 @@ Ort::Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrappe
     // Insert cast to int32 if input dtype is int64
     if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
       const Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
-      const std::string cast_output_name = utils::GetUniqueName(input_names[i], "_cast_int32");
+      const std::string cast_output_name = utils::UniqueNameGenerator().New(input_names[i], "_cast_int32");
       if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
         Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
         const auto& input_i = node_unit.Inputs()[i];
@@ -296,8 +296,8 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
     }
 
     if (needs_int64_cast) {
-      const std::string cast_node_name = utils::GetUniqueName(node_unit, "_cast_int64");
-      const std::string cast_input_name = utils::GetUniqueName(output_name, "_cast_int64");
+      const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast_int64");
+      const std::string cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast_int64");
       QnnQuantParamsWrapper quant_params = output_info.quant_param.Copy();
       std::vector<uint32_t> cast_output_shape = output_info.shape;
 
@@ -312,8 +312,8 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
       // Store the cast node information for later addition
       cast_node_info_vec.emplace_back(CastNodeInfo{cast_node_name, cast_input_name, output_name});
     } else if (supported_qnn_data_type != output_info.qnn_data_type && is_graph_output && !do_op_validation) {
-      const std::string cast_node_name = utils::GetUniqueName(node_unit, "_cast");
-      const std::string cast_input_name = utils::GetUniqueName(output_name, "_cast");
+      const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast");
+      const std::string cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast");
       std::vector<uint32_t> cast_output_shape = output_info.shape;
       QnnTensorWrapper cast_input_tensorwrapper(cast_input_name,
                                                 QNN_TENSOR_TYPE_NATIVE,
@@ -337,7 +337,7 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
   }
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 qnn_op_type,
                                                 std::move(input_names),
@@ -442,6 +442,56 @@ Ort::Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
   bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
   RETURN_IF(is_cpu_backend && onnx_tensor_data_type != float_elem_type, error_msg.c_str());
 
+  return Ort::Status();
+}
+
+Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
+                                  gsl::span<const uint32_t> input_shape,
+                                  gsl::span<const uint32_t> output_shape,
+                                  std::vector<uint32_t>& filter_size,
+                                  std::vector<uint32_t>& stride,
+                                  std::vector<uint32_t>& dilations,
+                                  std::vector<uint32_t>& pad_amount,
+                                  int32_t& rounding_mode) {
+  const size_t rank = input_shape.size();
+  const size_t spatial_rank = rank - 2;
+
+  {
+    auto raw = node_helper.Get("kernel_shape", std::vector<uint32_t>(spatial_rank, 1));
+    filter_size = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
+  }
+  {
+    auto raw = node_helper.Get("strides", std::vector<uint32_t>(spatial_rank, 1));
+    stride = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
+  }
+  {
+    auto raw = node_helper.Get("dilations", std::vector<uint32_t>(spatial_rank, 1));
+    dilations = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
+  }
+  {
+    auto raw = node_helper.Get("pads", std::vector<uint32_t>(spatial_rank * 2, 0));
+    pad_amount = (raw.size() == 2) ? std::vector<uint32_t>{0, raw[0], 0, raw[1]} : std::move(raw);
+  }
+
+  const auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
+  if (auto_pad != "NOTSET") {
+    for (size_t axis = 0; axis < spatial_rank; ++axis) {
+      if (auto_pad == "SAME_UPPER" || auto_pad == "SAME_LOWER") {
+        const uint32_t total_pads = (output_shape[axis + 1] - 1) * stride[axis] +
+                                    (filter_size[axis] - 1) * dilations[axis] + 1 -
+                                    input_shape[axis + 1];
+        if (auto_pad == "SAME_LOWER") {
+          pad_amount[axis + spatial_rank] = total_pads / 2;
+          pad_amount[axis] = total_pads - pad_amount[axis + spatial_rank];
+        } else {
+          pad_amount[axis] = total_pads / 2;
+          pad_amount[axis + spatial_rank] = total_pads - pad_amount[axis];
+        }
+      }
+    }
+  }
+
+  rounding_mode = node_helper.Get("ceil_mode", rounding_mode);
   return Ort::Status();
 }
 

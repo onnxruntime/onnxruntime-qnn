@@ -130,111 +130,100 @@ class BaseOpBuilder : public IOpBuilder {
 
   static const std::string& GetQnnOpType(const std::string& onnx_op_type) {
     static const std::unordered_map<std::string, std::string> onnx_op_type_to_qnn_op_type = {
-        {"Add", QNN_OP_ELEMENT_WISE_ADD},
-        {"Mul", QNN_OP_ELEMENT_WISE_MULTIPLY},
         {"Abs", QNN_OP_ELEMENT_WISE_ABS},
+        {"Add", QNN_OP_ELEMENT_WISE_ADD},
         {"And", QNN_OP_ELEMENT_WISE_AND},
+        {"ArgMax", QNN_OP_ARGMAX},
+        {"ArgMin", QNN_OP_ARGMIN},
         {"Asin", QNN_OP_ELEMENT_WISE_ASIN},
         {"Atan", QNN_OP_ELEMENT_WISE_ATAN},
-        {"Ceil", QNN_OP_ELEMENT_WISE_CEIL},
-        {"Sign", QNN_OP_ELEMENT_WISE_SIGN},
+        {"AveragePool", QNN_OP_POOL_AVG_2D},
+        {"BatchNormalization", QNN_OP_BATCHNORM},
         {"Cast", QNN_OP_CAST},
+        {"Ceil", QNN_OP_ELEMENT_WISE_CEIL},
         {"Clip", QNN_OP_RELU_MIN_MAX},
+        {"Concat", QNN_OP_CONCAT},
+        {"Conv", QNN_OP_CONV_2D},
+        {"ConvTranspose", QNN_OP_TRANSPOSE_CONV_2D},
         {"Cos", QNN_OP_ELEMENT_WISE_COS},
+        {"CumSum", QNN_OP_CUMULATIVE_SUM},
+        {"DepthToSpace", QNN_OP_DEPTH_TO_SPACE},
+        {"DequantizeLinear", QNN_OP_DEQUANTIZE},
         {"Div", QNN_OP_ELEMENT_WISE_DIVIDE},
+        {"Elu", QNN_OP_ELU},
         {"Equal", QNN_OP_ELEMENT_WISE_EQUAL},
         {"Exp", QNN_OP_ELEMENT_WISE_EXP},
+        {"Expand", QNN_OP_ELEMENT_WISE_MULTIPLY},
+        {"Flatten", QNN_OP_RESHAPE},
         {"Floor", QNN_OP_ELEMENT_WISE_FLOOR},
         {"Gather", QNN_OP_GATHER},
         {"GatherElements", QNN_OP_GATHER_ELEMENTS},
+        {"Gelu", QNN_OP_GELU},
+        {"Gemm", QNN_OP_FULLY_CONNECTED},
+        {"GlobalAveragePool", QNN_OP_POOL_AVG_2D},
+        {"GlobalMaxPool", QNN_OP_POOL_MAX_2D},
         {"Greater", QNN_OP_ELEMENT_WISE_GREATER},
         {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_GREATER_EQUAL},
+        {"GridSample", QNN_OP_GRID_SAMPLE},
+        {"GroupNormalization", QNN_OP_GROUP_NORM},
+        {"HardSigmoid", QNN_OP_ELEMENT_WISE_NEURON},
+        {"HardSwish", QNN_OP_ELEMENT_WISE_NEURON},
+        {"InstanceNormalization", QNN_OP_INSTANCE_NORM},
+        {"LRN", QNN_OP_LRN},
+        {"LSTM", QNN_OP_LSTM},
+        {"LayerNormalization", QNN_OP_LAYER_NORM},
+        {"LeakyRelu", QNN_OP_PRELU},
         {"Less", QNN_OP_ELEMENT_WISE_LESS},
         {"LessOrEqual", QNN_OP_ELEMENT_WISE_LESS_EQUAL},
         {"Log", QNN_OP_ELEMENT_WISE_LOG},
-        {"LSTM", QNN_OP_LSTM},
+        {"LogSoftmax", QNN_OP_LOG_SOFTMAX},
+        {"LpNormalization", QNN_OP_L2_NORM},
+        {"MatMul", QNN_OP_MAT_MUL},
         {"Max", QNN_OP_ELEMENT_WISE_MAXIMUM},
+        {"MaxPool", QNN_OP_POOL_MAX_2D},
         {"Min", QNN_OP_ELEMENT_WISE_MINIMUM},
+        {"Mul", QNN_OP_ELEMENT_WISE_MULTIPLY},
         {"Neg", QNN_OP_ELEMENT_WISE_NEG},
         {"Not", QNN_OP_ELEMENT_WISE_NOT},
+        {"OneHot", QNN_OP_ONE_HOT},
         {"Or", QNN_OP_ELEMENT_WISE_OR},
-        {"Pow", QNN_OP_ELEMENT_WISE_POWER},
         {"PRelu", QNN_OP_PRELU},
-        {"LeakyRelu", QNN_OP_PRELU},
+        {"Pad", QNN_OP_PAD},
+        {"Pow", QNN_OP_ELEMENT_WISE_POWER},
+        {"QuantizeLinear", QNN_OP_QUANTIZE},
+        {"RMSNormalization", QNN_OP_RMS_NORM},
         {"ReduceMax", QNN_OP_REDUCE_MAX},
         {"ReduceMean", QNN_OP_REDUCE_MEAN},
         {"ReduceMin", QNN_OP_REDUCE_MIN},
         {"ReduceProd", QNN_OP_REDUCE_PROD},
         {"ReduceSum", QNN_OP_REDUCE_SUM},
+        {"Relu", QNN_OP_RELU},
+        {"Reshape", QNN_OP_RESHAPE},
+        {"Resize", QNN_OP_RESIZE},
         {"Round", QNN_OP_ELEMENT_WISE_ROUND},
-        {"Where", QNN_OP_ELEMENT_WISE_SELECT},
+        {"ScatterElements", QNN_OP_SCATTER_ELEMENTS},
         {"ScatterND", QNN_OP_SCATTER_ND},
         {"Sigmoid", QNN_OP_SIGMOID},
+        {"Sign", QNN_OP_ELEMENT_WISE_SIGN},
+        {"SimplifiedLayerNormalization", QNN_OP_RMS_NORM},
         {"Sin", QNN_OP_ELEMENT_WISE_SIN},
         {"Slice", QNN_OP_STRIDED_SLICE},
-        {"Split", QNN_OP_SPLIT},
         {"Softmax", QNN_OP_SOFTMAX},
+        {"Softplus", QNN_OP_ELEMENT_WISE_NEURON},
+        {"SpaceToDepth", QNN_OP_SPACE_TO_DEPTH},
+        {"Split", QNN_OP_SPLIT},
         {"Sqrt", QNN_OP_ELEMENT_WISE_SQUARE_ROOT},
+        {"Squeeze", QNN_OP_RESHAPE},
         {"Sub", QNN_OP_ELEMENT_WISE_SUBTRACT},
         {"Sum", QNN_OP_ELEMENT_WISE_ADD},
         {"Tanh", QNN_OP_TANH},
-        {"Transpose", QNN_OP_TRANSPOSE},
-        {"GridSample", QNN_OP_GRID_SAMPLE},
-        {"LpNormalization", QNN_OP_L2_NORM},
-
-        {"DequantizeLinear", QNN_OP_DEQUANTIZE},
-        {"QuantizeLinear", QNN_OP_QUANTIZE},
-
-        {"MatMul", QNN_OP_MAT_MUL},
-
-        {"Elu", QNN_OP_ELU},
-        {"Relu", QNN_OP_RELU},
-        {"Gelu", QNN_OP_GELU},
-
-        {"HardSigmoid", QNN_OP_ELEMENT_WISE_NEURON},
-        {"HardSwish", QNN_OP_HARD_SWISH},
-        {"DepthToSpace", QNN_OP_DEPTH_TO_SPACE},
-        {"SpaceToDepth", QNN_OP_SPACE_TO_DEPTH},
-
-        {"Conv", QNN_OP_CONV_2D},
-        {"ConvTranspose", QNN_OP_TRANSPOSE_CONV_2D},
-
-        {"GlobalAveragePool", QNN_OP_POOL_AVG_2D},
-        {"AveragePool", QNN_OP_POOL_AVG_2D},
-        {"MaxPool", QNN_OP_POOL_MAX_2D},
-        {"GlobalMaxPool", QNN_OP_POOL_MAX_2D},
-
-        {"Reshape", QNN_OP_RESHAPE},
-        {"Resize", QNN_OP_RESIZE},
-        {"Upsample", QNN_OP_RESIZE},
-        {"Flatten", QNN_OP_RESHAPE},
-        {"Squeeze", QNN_OP_RESHAPE},
-        {"Unsqueeze", QNN_OP_RESHAPE},
-
-        {"LogSoftmax", QNN_OP_LOG_SOFTMAX},
-        {"Concat", QNN_OP_CONCAT},
-        {"CumSum", QNN_OP_CUMULATIVE_SUM},
-
-        {"Gemm", QNN_OP_FULLY_CONNECTED},
-
-        {"ArgMax", QNN_OP_ARGMAX},
-        {"ArgMin", QNN_OP_ARGMIN},
         {"Tile", QNN_OP_TILE},
         {"TopK", QNN_OP_TOP_K},
-        {"InstanceNormalization", QNN_OP_INSTANCE_NORM},
-        {"BatchNormalization", QNN_OP_BATCHNORM},
-        {"LayerNormalization", QNN_OP_LAYER_NORM},
-        {"RMSNormalization", QNN_OP_RMS_NORM},
-        {"SimplifiedLayerNormalization", QNN_OP_RMS_NORM},
-        {"GroupNormalization", QNN_OP_GROUP_NORM},
-
-        {"LRN", QNN_OP_LRN},
-
-        {"Pad", QNN_OP_PAD},
-
-        {"ScatterElements", QNN_OP_SCATTER_ELEMENTS},
-
-        {"Expand", QNN_OP_ELEMENT_WISE_MULTIPLY}};
+        {"Transpose", QNN_OP_TRANSPOSE},
+        {"Unsqueeze", QNN_OP_RESHAPE},
+        {"Upsample", QNN_OP_RESIZE},
+        {"Where", QNN_OP_ELEMENT_WISE_SELECT},
+        {"Xor", QNN_OP_ELEMENT_WISE_XOR}};
     auto it = onnx_op_type_to_qnn_op_type.find(onnx_op_type);
     if (it == onnx_op_type_to_qnn_op_type.end()) {
       ORT_CXX_API_THROW(("Unable to map given ONNX op type to QNN" + onnx_op_type).c_str(), ORT_EP_FAIL);
@@ -273,10 +262,10 @@ class BaseOpBuilder : public IOpBuilder {
  private:
   static const std::pair<size_t, size_t> GetInputOutputCountQnnRequired(std::string onnx_op_type) {
     static const std::unordered_map<std::string, std::pair<size_t, size_t>> input_output_count_qnn_required = {
-        {"GlobalAveragePool", {0, 1}},
-        {"MaxPool", {0, 1}},
         {"BatchNormalization", {3, 1}},
-        {"LayerNormalization", {0, 1}}};
+        {"GlobalAveragePool", {0, 1}},
+        {"LayerNormalization", {0, 1}},
+        {"MaxPool", {0, 1}}};
 
     auto pos = input_output_count_qnn_required.find(onnx_op_type);
     if (pos == input_output_count_qnn_required.end()) {
@@ -408,6 +397,28 @@ inline Ort::Status ComputePadAndOutputShape(const int64_t in_dim,
   out_dim = qnn::ComputeOutputShape(in_dim, stride, kernel, dilation, pad_head, pad_tail);
   return Ort::Status();
 }
+
+// Resolves the common ONNX pooling attributes (kernel_shape, strides, dilations, pads, auto_pad,
+// ceil_mode) into QNN-friendly arrays. Shared by pool_op_builder and lp_pool_op_builder.
+//
+// - 1D values are expanded to {1, val} 2D form (matches the rank-3-as-rank-4 reshape pattern).
+// - SAME_UPPER / SAME_LOWER auto_pad is converted to explicit pads using the provided output
+//   spatial dims. VALID and NOTSET leave pad_amount unchanged from the read value.
+// - pad_amount is returned in ONNX layout: [begin0, begin1, ..., end0, end1, ...]. Callers must
+//   invoke ReArrangePads(...) before handing it to a QNN op param.
+// - rounding_mode is set from the ceil_mode attribute (caller's input value is used as the
+//   default if the attribute is absent — pass 0 for floor-mode default).
+//
+// input_shape / output_shape must be NHWC / NDHWC layout with matching rank (rank 4 NHWC for 2D
+// pool, rank 5 for 3D); spatial dims are at indices [1 .. rank-2].
+Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
+                                  gsl::span<const uint32_t> input_shape,
+                                  gsl::span<const uint32_t> output_shape,
+                                  std::vector<uint32_t>& filter_size,
+                                  std::vector<uint32_t>& stride,
+                                  std::vector<uint32_t>& dilations,
+                                  std::vector<uint32_t>& pad_amount,
+                                  int32_t& rounding_mode);
 
 constexpr inline int64_t ComputeTotalPad(int64_t in_size,
                                          int64_t stride,

@@ -10,7 +10,9 @@
 #include <utility>
 #include <vector>
 
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -84,17 +86,12 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const OrtNodeUnitIODef& tensor, Q
     RETURN_IF_ERROR(UnpackInitializerData(tensor_info.initializer_tensor, unpacked_tensor));
   }
 
-  Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW;
-  if (true == model_settings_.htp_shared_memory && (IsGraphInput(tensor_name) || IsGraphOutput(tensor_name))) {
-    mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
-  }
   tensor_wrapper = QnnTensorWrapper(tensor_name,
                                     GetTensorType(tensor_name),
                                     tensor_info.qnn_data_type,
                                     std::move(tensor_info.quant_param),
                                     std::move(tensor_info.shape),
-                                    std::move(unpacked_tensor),
-                                    mem_type);
+                                    std::move(unpacked_tensor));
   return Ort::Status();
 }
 
@@ -112,6 +109,15 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const TensorInfo& tensor_info,
   return Ort::Status();
 }
 
+void QnnModelWrapper::SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrapper,
+                                                   const std::string& tensor_name) {
+  Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW;
+  if (true == model_settings_.htp_shared_memory && (IsGraphInput(tensor_name) || IsGraphOutput(tensor_name))) {
+    mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
+  }
+  SetQnnTensorMemType(tensor_wrapper.GetQnnTensor(), mem_type);
+}
+
 bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
   // Keep a copy of tensor name sine it will be moved with the wrapper into model_tensors_map_
   std::string tensor_name = tensor_wrapper.GetName();
@@ -124,6 +130,8 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor exist already: " + tensor_name).c_str());
     return true;
   }
+
+  SetTensorMemTypeFromSettings(tensor_wrapper, tensor_name);
 
   model_tensors_map_.emplace(tensor_name, std::move(tensor_wrapper));
 
@@ -177,7 +185,7 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
         it->second.SetResolvedTensorName(*name);
       }
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
+      auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -204,7 +212,7 @@ bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
     if (!do_op_validation) {
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
+      auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -232,8 +240,19 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
                                        std::move(params));
 
   std::string error_msg;
-  RETURN_IF_NOT(op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg), error_msg.c_str());
+  return ValidateQnnNode(op_config_wrapper, error_msg);
+}
 
+Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
+  bool ok;
+  if (validator_backend_handle_ != nullptr) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
+
+    ok = op_config.QnnGraphOpValidation(qnn_validator_interface_, validator_backend_handle_, error_msg);
+  } else {
+    ok = op_config.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+  }
+  RETURN_IF_NOT(ok, error_msg.c_str());
   return Ort::Status();
 }
 
@@ -341,7 +360,7 @@ bool QnnModelWrapper::ProcessBF16OutputConversion(const std::string& qnn_node_na
     if (IsGraphOutput(output_name) &&
         (tensor_dtype == QNN_DATATYPE_FLOAT_32 || tensor_dtype == QNN_DATATYPE_BFLOAT_16)) {
       // For FP32 graph outputs, insert Cast node to convert BF16 back to FP32
-      std::string bf16_output_name = utils::GetUniqueName(output_name, "_bf16_intermediate");
+      std::string bf16_output_name = utils::UniqueNameGenerator().New(output_name, "_bf16_intermediate");
 
       if (!IsQnnTensorWrapperExist(bf16_output_name)) {
         std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
@@ -481,19 +500,25 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
-    bool rt = op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+    Ort::Status validation_status = ValidateQnnNode(op_config_wrapper, error_msg);
 
-    if (!rt) {
+    if (!validation_status.IsOK()) {
       // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
       // specific validation error (instead of "failed to add node").
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, error_msg.c_str());
     }
-    return rt;
+    return validation_status.IsOK();
   } else {
     // Standard execution - just add the node to the op list
     QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
                          std::move(input_names), std::move(output_names), std::move(param_tensor_names));
     qnn_op_property_list_.push_back(std::move(qnn_op));
+
+    if (op_trace_collector_) {
+      op_trace_collector_->RecordOpMapping(qnn_node_name, qnn_node_type,
+                                           qnn_op_property_list_.back().GetOutputNames());
+    }
+
     return true;
   }
 }
@@ -589,7 +614,7 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
       if (it->second.GetTensorType() != expected_type) {
         continue;
       }
-      if (tensor_created_map_.count(name)) {
+      if (qnn_tensor_id_map_.count(name)) {
         continue;
       }
 
@@ -600,7 +625,7 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
       }
 
       std::string error;
-      if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, io_type, tensor_created_map_, error)) {
+      if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, io_type, qnn_tensor_id_map_, error)) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
                     (std::string("Failed to pre-register ") + io_type + ": " + name + ". " + error).c_str());
         return false;
@@ -679,14 +704,19 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
   return true;
 }
 
-bool QnnModelWrapper::GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape) {
+bool QnnModelWrapper::GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape) {
+  // Don't support dynamic shape.
+  if (!onnx_shape.has_value()) {
+    return false;
+  }
+
   // Set shape to 1 for scalar.
-  if (onnx_shape.size() < 1) {
+  if (onnx_shape->size() < 1) {
     shape.push_back(1);
     return true;
   }
 
-  for (const int64_t& dim : onnx_shape) {
+  for (const int64_t& dim : onnx_shape.value()) {
     if (dim < 0) {
       return false;
     }
@@ -721,6 +751,16 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const OrtValueInfo* zp_tensor,
   };
 
   switch (onnx_data_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2: {  // INT2 zero-points are unpacked as 8-bit values for QNN
+      auto int8_span = ReinterpretAsSpan<const int8_t>(gsl::make_span(initializer_bytes));
+      std::transform(int8_span.begin(), int8_span.end(), std::back_inserter(zero_points),
+                     [](int8_t masked_zp) -> int32_t {
+                       // Undo the lower-2-bit masking applied during unpacking to recover the true signed value.
+                       int8_t zp = Int2x4::SignExtendLower2Bits(std::byte(masked_zp));
+                       return -static_cast<int32_t>(zp);
+                     });
+      break;
+    }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4: {  // INT4 zero-points are unpacked as 8-bit values for QNN
       auto int8_span = ReinterpretAsSpan<const int8_t>(gsl::make_span(initializer_bytes));
       std::transform(int8_span.begin(), int8_span.end(), std::back_inserter(zero_points),
@@ -737,6 +777,7 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const OrtValueInfo* zp_tensor,
       transform_zero_points(ReinterpretAsSpan<const int8_t>(gsl::make_span(initializer_bytes)));
       break;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:  // UINT4 zero-points are unpacked as 8-bit values for QNN
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:  // UINT2 zero-points are unpacked as 8-bit values for QNN
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
       transform_zero_points(ReinterpretAsSpan<const uint8_t>(gsl::make_span(initializer_bytes)));
       break;
@@ -790,8 +831,8 @@ Ort::Status QnnModelWrapper::IsPerChannelQuantized(const OrtNodeUnitIODef& io_de
     axis = io_def.quant_param->axis.value_or(1);  // 1 is default axis for Q/DQ ops.
     if (axis < 0) {
       // Normalize negative axis by adding rank.
-      std::vector<int64_t> tensor_shape = io_def.shape;
-      RETURN_IF_NOT(!tensor_shape.empty(), "NULL tensor shape proto");
+      std::vector<uint32_t> tensor_shape;
+      RETURN_IF_NOT(GetOnnxShape(io_def.shape, tensor_shape), "Cannot get shape");
 
       const auto rank = tensor_shape.size();
       RETURN_IF_NOT(rank > 0, "Per-channel quantized tensor should be of rank > 0");
@@ -879,7 +920,7 @@ Ort::Status QnnModelWrapper::AddReshapeNode(const std::string& input_name, const
   RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensorwrapper)),
                 "QNN EP: Failed to add output tensor for inserted Reshape.");
 
-  RETURN_IF_NOT(CreateQnnNode(utils::GetUniqueName(output_name, QNN_OP_RESHAPE),
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(output_name, QNN_OP_RESHAPE),
                               QNN_OP_PACKAGE_NAME_QTI_AISW,
                               QNN_OP_RESHAPE,
                               {input_name},
@@ -920,9 +961,11 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   // we don't need this right now.
   RETURN_IF(quantize_param.IsPerChannel(),
             "Do not support inserted Transpose nodes with per-channel quantization");
-  // No need to add this for output nodes as it is added as output tensor for previous node
-  if (is_for_input) {
-    Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_APP_WRITE;
+  // During GetCapability, upstream node groups that validate via ValidateQnnNode() do not
+  // populate model_tensors_map_, so the input wrapper may be missing. Register a NATIVE
+  // fallback; AddTensorWrapper is idempotent, so Compose-path registration still wins.
+  if (is_for_input || !IsQnnTensorWrapperExist(input_name)) {
+    Qnn_TensorType_t tensor_type = is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE;
     QnnTensorWrapper input_tensorwrapper(input_name,
                                          tensor_type,
                                          tensor_data_type,
@@ -945,7 +988,7 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
                                         quantize_param.Copy(),
                                         std::move(output_shape_copy));
   RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-  RETURN_IF_NOT(CreateQnnNode(utils::GetUniqueName(output_name, QNN_OP_TRANSPOSE),
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(output_name, QNN_OP_TRANSPOSE),
                               QNN_OP_PACKAGE_NAME_QTI_AISW,
                               QNN_OP_TRANSPOSE,
                               {input_name},
@@ -953,6 +996,35 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
                               {param_tensor_name},
                               do_op_validation),
                 "QNN EP: Failed to create manually inserted Qnn Transpose node.");
+
+  return Ort::Status();
+}
+
+Ort::Status QnnModelWrapper::AddNoopReshapeNode(const std::string& node_name,
+                                                const std::string& input_name,
+                                                const OrtNodeUnitIODef& output,
+                                                bool do_op_validation) {
+  const auto tensor_wrapper_it = model_tensors_map_.find(input_name);
+  // Since no-op node is usually identified during op builder's ProcessAttributesAndOutputs, input should already
+  // processed and added.
+  RETURN_IF(tensor_wrapper_it == model_tensors_map_.end(), "Input tensor wrapper not exist for no-op node.");
+  const QnnTensorWrapper& input_tensor_wrapper = tensor_wrapper_it->second;
+
+  QnnTensorWrapper output_tensor_wrapper;
+  RETURN_IF_ERROR(MakeTensorWrapper(output, output_tensor_wrapper));
+  RETURN_IF(input_tensor_wrapper.GetTensorDims() != output_tensor_wrapper.GetTensorDims(),
+            "Expecting identical shapes for no-op input/output.");
+  std::string output_name = output_tensor_wrapper.GetName();
+  RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add no-op output tensor.");
+
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(node_name),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW,
+                              QNN_OP_RESHAPE,
+                              {input_name},
+                              {output_name},
+                              {},
+                              do_op_validation),
+                "Failed to add no-op node.");
 
   return Ort::Status();
 }
@@ -982,7 +1054,7 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
 
 Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializer,
                                                    std::vector<uint8_t>& unpacked_tensor,
-                                                   const bool unpack_4_bit_to_8_bit) const {
+                                                   const bool unpack_sub_byte_to_8_bit) const {
   const ORTCHAR_T* model_path = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
   RETURN_IF_ERROR(utils::UnpackInitializerData(api_ptrs_.ort_api,
@@ -997,16 +1069,24 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
   ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
 
-  // If this is an int4,
-  // If unpack_4_bit_to_8_bit is true, we need to unpack it because QNN HTP treats int4 as a full int8.
-  if (unpack_4_bit_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
+  // If unpack_sub_byte_to_8_bit is true, unpack 2-bit/4-bit elements to one byte each because
+  // QNN HTP treats sub-byte int2/int4 as a full int8.
+  if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
     std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
     const size_t num_int4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
     RETURN_IF_ERROR(utils::UnpackInt4ToInt8<true>(num_int4_elems, unpacked_tensor));
-  } else if (unpack_4_bit_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4) {
+  } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4) {
     std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
     const size_t num_uint4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
     RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_uint4_elems, unpacked_tensor));
+  } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
+    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
+    const size_t num_int2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<true>(num_int2_elems, unpacked_tensor));
+  } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2) {
+    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
+    const size_t num_uint2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<false>(num_uint2_elems, unpacked_tensor));
   }
 
   return Ort::Status();

@@ -26,70 +26,121 @@ on:
       # Cross-compiling from X64 to ARM64 is faster with our runners, but cannot produce a wheel.
       windows_arm64_runner_arch:
         type: string
-        default: "ARM64"
+        default: X64
       target_py_vsn:
         default: "3.12"
         type: string
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
 
+  archive-testdata:
+    uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
+    secrets: inherit
+
   build-and-test-linux-x86_64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: x86_64
+      testdata_archive_artifact_name: testdata-tarbz2
       # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
 
   build-linux-aarch64-oe-gcc11_2:
-      if: ${{ inputs.do_all }}
-      uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-      secrets: inherit
-      with:
-        nightly_build: ${{ inputs.nightly_build }}
-        target_os: linux
-        target_arch: aarch64_oe_gcc11_2
-        target_py_vsn: None
-        upload_test_archive: true
-        upload_wheel: false
-        run_tests: false
-
-  test-linux-aarch64-oe-gcc11_2:
-   if: ${{ inputs.do_all }}
-   needs: [build-linux-aarch64-oe-gcc11_2]
-   uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
-   secrets: inherit
-   with:
-     target_os: linux
-     target_arch: aarch64_oe_gcc11_2
-
-  build-and-test-windows-arm64:
-    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
-      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
-      target_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
-      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: None
+      upload_test_archive: true
+      upload_wheel: false
+      run_tests: false
+
+  test-linux-aarch64-oe-gcc11_2:
+    # Downstream tests need the Artifactory upload from build-linux-aarch64-oe-gcc11_2; skip on fork PRs.
+    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
+    needs: [build-linux-aarch64-oe-gcc11_2]
+    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+    secrets: inherit
+    with:
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
+      testdata_archive_artifact_name: testdata-tarbz2
+
+  build-and-test-linux-x86_64-ubuntu-22-04:
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: x86_64_ubuntu_22_04
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      run_tests: true
+      test_wheel: false
+      upload_test_archive: true
+      upload_wheel: true
+
+  build-and-test-linux-arm64:
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_manylinux_2_34
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      upload_test_archive: true
+      upload_wheel: true
+      test_wheel: false  # Fails because the HTP is not discovered
+      run_tests: true
+      build_test_same_runner: false
       test_runner_arch: arm64
+
+  build-and-test-windows-arm64:
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      target_arch: arm64
+      testdata_archive_artifact_name: testdata-zip
+      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
+      test_runner_arch: arm64
+      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
+      upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
+      build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
+      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      nightly_build: ${{ inputs.nightly_build }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64ec
+      testdata_archive_artifact_name: testdata-zip
       upload_wheel: true
       test_wheel: true
       target_py_vsn: ${{ inputs.target_py_vsn }}
@@ -98,18 +149,20 @@ jobs:
 
   build-and-test-windows-x86_64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
+      testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ inputs.target_py_vsn }}
 
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -119,28 +172,42 @@ jobs:
 
   build-android-aarch64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
+
+      # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build still validates the change.
+      - name: Setup JFrog CLI
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Build Android
         run: |
           python3 qcom/build_and_test.py archive_ort_android_aarch64
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Test Archive to Artifactory
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
+        uses: ./.github/actions/upload-ci-artifact
         with:
-          name: ORT android aarch64 pynone Tests
-          path: |
-            ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
+          name: "android-aarch64-pyNone-tests"
+          src_pattern: onnxruntime-tests-android-aarch64.zip
 
- # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
-  test-android:
-    if: ${{ inputs.do_all }}
+  test-android-aarch64:
+    # Downstream tests need the Artifactory upload from build-android-aarch64; skip on fork PRs.
+    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
       target_os: android
       target_arch: aarch64
+      testdata_archive_artifact_name: testdata-zip

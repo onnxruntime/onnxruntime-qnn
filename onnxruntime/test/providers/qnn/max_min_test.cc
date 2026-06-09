@@ -7,7 +7,6 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -24,7 +23,7 @@ static void RunCPUMinOrMaxOpTest(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>(op_type, input_defs, {}, {}, kOnnxDomain),
+  RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -42,8 +41,8 @@ static void RunQDQMinOrMaxOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, input_defs, {}, {}, kOnnxDomain),     // baseline float32 model
-                       BuildQDQOpTestCase<QType>(op_type, input_defs, {}, {}, kOnnxDomain),  // QDQ model
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),     // baseline float32 model
+                       BuildQDQOpTestCase<QType>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),  // QDQ model
                        provider_options,
                        opset,
                        expected_ep_assignment);

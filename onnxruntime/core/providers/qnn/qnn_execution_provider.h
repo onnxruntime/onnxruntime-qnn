@@ -16,21 +16,25 @@
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn/qnn_node_compute_info_base.h"
+#include "core/providers/qnn/genie/genie_api_loader.h"
+#include "core/providers/qnn/genie/genie_node.h"
+#include "core/providers/qnn/genie/genie_node_compute_info.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
 
-// Forward declaration for QnnBackendManager
+// Forward declaration for QnnBackendManager, GenieBackendManager
 namespace qnn {
 class QnnBackendManager;
-}
+class GenieBackendManager;
+}  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
@@ -44,12 +48,19 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                     size_t num_devices,
                                                     const char* compatibility_info,
                                                     OrtCompiledModelCompatibility* model_compatibility) noexcept;
+  OrtStatus* GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* hw,
+                                                     OrtDeviceEpIncompatibilityDetails* details) noexcept;
+
+  friend struct GenieNodeComputeInfo;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
   static OrtStatus* ORT_API_CALL GetCapabilityImpl(OrtEp* this_ptr,
                                                    const OrtGraph* graph,
                                                    OrtEpGraphSupportInfo* graph_support_info) noexcept;
+  static OrtStatus* ORT_API_CALL GetGenieCapability(OrtEp* this_ptr,
+                                                    const OrtGraph* graph,
+                                                    OrtEpGraphSupportInfo* graph_support_info);
   static OrtStatus* ORT_API_CALL CompileImpl(_In_ OrtEp* this_ptr,
                                              _In_ const OrtGraph** graphs,
                                              _In_ const OrtNode** fused_nodes,
@@ -83,7 +94,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
-                               std::vector<const OrtNode*>& supported_nodes) const;
+                               std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
@@ -91,6 +103,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                  const OrtNode** fused_nodes,
                                  size_t count,
                                  OrtNodeComputeInfo** node_compute_infos);
+
+  OrtStatus* CompileDlcContextModel(OrtEp* this_ptr,
+                                    const OrtGraph** graphs,
+                                    const OrtNode** fused_nodes,
+                                    size_t count,
+                                    OrtNodeComputeInfo** node_compute_infos);
 
   OrtStatus* CreateEPContextNodes(const OrtGraph* graph,
                                   const OrtNode** fused_nodes,
@@ -103,6 +121,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
                                                  const Ort::Logger& logger);
 
+  // Framework op trace helpers. trace_ is populated incrementally during
+  // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
+  // function finalizes summary fields and writes the JSON file.
+  void CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph);
+
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
@@ -113,7 +136,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
     return GetProviderOptionPrefix(name_) + key;
   }
 
-  struct QnnNodeComputeInfo : OrtNodeComputeInfo {
+  struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
     static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
@@ -125,6 +148,14 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
     QnnEp& ep;
   };
+
+  typedef struct GraphFinalizationInfo {
+    std::string model_name;
+    std::unique_ptr<qnn::QnnModel> model;
+    Ort::Status result;
+    size_t graph_idx;
+
+  } GraphFinalizationInfo_t;
 
   // Will return true if any power config options need to be updated
   bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
@@ -145,7 +176,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
-  bool enable_vtcm_backup_buffer_sharing_ = false;
+  int htp_share_resource_optimization_ = -1;
   std::string context_node_name_prefix_ = "";
   std::string context_cache_path_cfg_ = "";
   const OrtSessionOptions& session_options_;
@@ -153,8 +184,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
+  bool prepare_only_ = false;
   bool enable_spill_fill_buffer_ = false;
+  bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
+  uint8_t num_graph_prepare_threads_ = 8;
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif
 
@@ -175,9 +209,20 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
   int32_t vtcm_size_in_mb_ = 0;
   bool enable_HTP_FP16_precision_ = true;
+  bool disable_htp_monolithic_lstm_ = false;
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
+
+  // === Framework op trace ===
+  bool enable_framework_op_trace_ = false;
+  std::string framework_op_trace_dir_;
+  // Accumulates the trace state for this session: unsupported nodes are pushed
+  // by GetSupportedNodes, per-subgraph mappings are pushed by CompileImpl, and
+  // CollectAndWriteFrameworkOpTrace finalizes/serializes.
+  qnn::FrameworkOpTrace trace_;
+
+  bool enable_htp_extended_udma_mode_ = false;
 
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.
   // This is potentially shared with HtpSharedMemoryAllocator which may be returned by CreatePreferredAllocators().
@@ -194,6 +239,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::unordered_map<std::string, std::string> tensor_name_overrides_;
   // ONNX graph I/O names in declaration order: {input_names, output_names}.
   mutable std::optional<std::pair<std::vector<std::string>, std::vector<std::string>>> onnx_graph_io_names_;
+
+  // Genie pathway-specific variables
+  std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
+  mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
+  GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
+  mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
 };
 
 }  // namespace onnxruntime

@@ -13,19 +13,19 @@
 namespace onnxruntime::qnn {
 
 QnnContextMemHandleManager::QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                                                       Qnn_ContextHandle_t context,
-                                                       const Ort::Logger& logger)
-    : qnn_interface_{qnn_interface},
-      context_{context},
-      logger_{logger} {
+                                                       Qnn_ContextHandle_t context)
+    : qnn_interface_{qnn_interface}, context_{context} {
 }
 
 QnnContextMemHandleManager::~QnnContextMemHandleManager() {
   Clear();
 }
 
-Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_address, const Qnn_Tensor_t& qnn_tensor,
-                                                      Qnn_MemHandle_t& qnn_mem_handle, bool& did_register) {
+Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_address,
+                                                      const Qnn_Tensor_t& qnn_tensor,
+                                                      Qnn_MemHandle_t& qnn_mem_handle,
+                                                      bool& did_register,
+                                                      const Ort::Logger& logger) {
   const auto qnn_tensor_rank = GetQnnTensorRank(qnn_tensor);
   auto* const qnn_tensor_dims = GetQnnTensorDims(qnn_tensor);
   const auto qnn_tensor_data_type = GetQnnTensorDataType(qnn_tensor);
@@ -78,7 +78,7 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
          << ", offset: " << shared_memory_info.offset
          << ", fd: " << shared_memory_info.fd
          << ")";
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
 
     Qnn_MemHandle_t raw_mem_handle{};
     const auto register_result = qnn_interface_.memRegister(context_, &mem_descriptor, 1, &raw_mem_handle);
@@ -89,10 +89,10 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
 
     std::ostringstream oss2;
     oss2 << "Registered QNN mem handle. mem_handle: " << raw_mem_handle;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss2.str().c_str());
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss2.str().c_str());
 
-    // NOTE: Must use the default ORT logger inside this lambda. Don't capture this->logger_ because it may be deleted
-    // by the time we need to unregister all memory handles. This happens when this->logger_ is a session logger:
+    // NOTE: Must use the default ORT logger inside this lambda. Don't capture logger because it may be deleted
+    // by the time we need to unregister all memory handles. This happens when logger is a session logger:
     //   ~InferenceSession() -> ~Logger() -> ~QnnExecutionProvider() -> ~QnnBackendManager() ->
     //   ~QnnContextMemHandleManager() -> unregister_mem_handle() segfault
     const auto unregister_mem_handle = [&qnn_interface = this->qnn_interface_](Qnn_MemHandle_t raw_mem_handle) {

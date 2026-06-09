@@ -3,8 +3,10 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -40,8 +42,6 @@ class SimpleOpBuilder : public BaseOpBuilder {
 
   static constexpr std::array<std::string_view, 3> gridsample_supported_modes = {"bilinear", "nearest", "linear"};
   static constexpr std::array<std::string_view, 3> gridsample_supported_padding_modes = {"zeros", "border", "reflection"};
-  static constexpr std::array<std::string_view, 3> scatternd_supported_reduction = {"none", "add", "mul"};
-  static constexpr std::array<std::string_view, 4> scatterelements_supported_reduction = {"none", "add", "mul", "max"};
 };
 
 Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
@@ -57,11 +57,12 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
                   ("GridSample does not support padding_mode " + padding_mode).c_str());
   }
 
-  // To DO: Remove once QNN CPU supports ScatterND
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
-  if (op_type == "ScatterND") {
+
+  // TODO: Remove once QNN HTP PRelu bug is fixed
+  if (op_type == "PRelu") {
     RETURN_IF(qnn_backend_type == QnnBackendType::CPU,
-              "QNN EP does not support ScatterND op on CPU backend. Falling back to ORT CPU.");
+              "QNN EP does not support PRelu op on CPU backend. Falling back to ORT CPU.");
   }
 
   // ONNX's Min, Max, and Sum operators accept a variable number of inputs (i.e., variadic).
@@ -84,13 +85,24 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone DQ op with per-channel quantization");
+    // Per-channel standalone DQ is allowed only if the input is a compile-time constant;
+    const bool is_input_const = qnn_model_wrapper.IsEffectivelyConstantInput(node_unit.Inputs()[0].name);
+    RETURN_IF(is_per_chan_quant && !is_input_const,
+              "QNN EP does not support a standalone DQ op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
-      // Map internal (quantized) tensor name to original name in ONNX
-      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Inputs()[0].name,
-                                              /*external=*/node_unit.Outputs()[0].name);
+      // Only register the override for the first DQ node that consumes this graph output.
+      // If another DQ node already maps to the same external name, skip registration so
+      // that the second output becomes a separate APP_READ tensor instead of creating
+      // two APP_READ tensors with the same external name (which reduces the composed
+      // QNN graph's input count and causes a null slot in qnn_tensor_infos at runtime).
+      if (!qnn_model_wrapper.IsExternalOverrideTarget(node_unit.Outputs()[0].name)) {
+        // The tensor name override is used to align the output name of DLC produced by IRBackend
+        // with the output name of original onnx graph for better consistency.
+        qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Inputs()[0].name,
+                                                /*external=*/node_unit.Outputs()[0].name);
+      }
       return MAKE_EP_FAIL("QNN EP is configured to not take DQ nodes that generate a graph output.");
     }
   }
@@ -99,31 +111,33 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Outputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone Q op with per-channel quantization");
+    // Per-channel standalone Q is allowed only if the input is a compile-time constant;
+    const bool is_input_const = qnn_model_wrapper.IsEffectivelyConstantInput(node_unit.Inputs()[0].name);
+    RETURN_IF(is_per_chan_quant && !is_input_const,
+              "QNN EP does not support a standalone Q op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
-      // Map internal (quantized) tensor name to original name in ONNX
-      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Outputs()[0].name,
-                                              /*external=*/node_unit.Inputs()[0].name);
+      // Only register the override for the first Q node that consumes this graph input.
+      // If another Q node already maps to the same external name, skip registration so
+      // that the second input becomes a separate APP_WRITE tensor instead of creating
+      // two APP_WRITE tensors with the same external name (which reduces the composed
+      // QNN graph's input count and causes a null slot in qnn_tensor_infos at runtime).
+      if (!qnn_model_wrapper.IsExternalOverrideTarget(node_unit.Inputs()[0].name)) {
+        // The tensor name override is used to align the input name of DLC produced by IRBackend
+        // with the input name of original onnx graph for better consistency.
+        qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Outputs()[0].name,
+                                                /*external=*/node_unit.Inputs()[0].name);
+      }
       return MAKE_EP_FAIL("QNN EP is configured to not take Q nodes that consume a graph input.");
     }
   }
 
-  // QNN ScatterND doesn't support MAX, MIN reduction
-  if (op_type == "ScatterND") {
-    OrtNodeAttrHelper node_helper(node_unit);
-    std::string reduction = node_helper.Get("reduction", "none");
-    RETURN_IF_NOT(utils::ArrayHasString(scatternd_supported_reduction, reduction),
-                  ("ScatterND does not support reduction " + reduction).c_str());
-  }
-
-  // QNN ScatterElements doesn't support MIN reduction
-  if (op_type == "ScatterElements") {
-    OrtNodeAttrHelper node_helper(node_unit);
-    std::string reduction = node_helper.Get("reduction", "none");
-    RETURN_IF_NOT(utils::ArrayHasString(scatterelements_supported_reduction, reduction),
-                  ("ScatterElements does not support reduction " + reduction).c_str());
+  if (op_type == "Softplus" && qnn_backend_type != QnnBackendType::CPU) {
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    RETURN_IF(input_info.shape.size() > 4,
+              "QNN EP does not support Softplus with input rank > 4.");
   }
 
   return Ort::Status();
@@ -219,9 +233,9 @@ Ort::Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
     // QNN requires alpha is fp16 when input is fp16
     if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_16) {
-      tensor_data.alpha_fp16 = MLFloat16(tensor_data.alpha).val;
+      tensor_data.alpha_fp16 = Ort::Float16_t(tensor_data.alpha).val;
       qnn_data_type = QNN_DATATYPE_FLOAT_16;
-      unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(MLFloat16));
+      unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(Ort::Float16_t));
     } else {
       unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(float));
     }
@@ -279,58 +293,6 @@ Ort::Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Process Reduction attribute of ScatterND op
-Ort::Status ProcessScatterNDReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
-                                               const OrtNodeUnit& node_unit,
-                                               std::vector<std::string>& param_tensor_names) {
-  OrtNodeAttrHelper node_helper(node_unit);
-  std::string reduction = node_helper.Get("reduction", "none");
-  Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
-  reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  if ("none" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_NONE;
-  } else if ("add" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_ADD;
-  } else if ("mul" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_MUL;
-  } else {
-    return MAKE_EP_FAIL("ScatterND support only reduction:{none, add, mul}.");
-  }
-  QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(), QNN_OP_SCATTER_ND_PARAM_REDUCTION,
-                                  reduction_qnn_scalar);
-  param_tensor_names.push_back(reduction_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
-
-  return Ort::Status();
-}
-
-// Process Reduction attribute of ScatterElements op
-Ort::Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
-                                      const OrtNodeUnit& node_unit,
-                                      std::vector<std::string>& param_tensor_names) {
-  OrtNodeAttrHelper node_helper(node_unit);
-  std::string reduction = node_helper.Get("reduction", "none");
-  Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
-  reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  if ("none" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_NONE;
-  } else if ("add" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_ADD;
-  } else if ("mul" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MUL;
-  } else if ("max" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MAX;
-  } else {
-    return MAKE_EP_FAIL("ScatterElements support only reduction:{none, add, mul, max}.");
-  }
-  QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(), QNN_OP_SCATTER_ELEMENTS_PARAM_REDUCTION,
-                                  reduction_qnn_scalar);
-  param_tensor_names.push_back(reduction_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
-
-  return Ort::Status();
-}
-
 Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                          const OrtNodeUnit& node_unit,
                                                          std::vector<std::string>&& input_names,
@@ -369,6 +331,14 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 #endif
   }
 
+  // Emit a STATIC tensor instead of an APP_WRITE input for standalone Q/DQ on constant inputs.
+  if (CanFoldConstantQdq(qnn_model_wrapper, node_unit)) {
+    Ort::Status fold_status = TryFoldConstantQDQ(qnn_model_wrapper, node_unit);
+    if (fold_status.IsOK()) {
+      return Ort::Status();
+    }
+  }
+
   std::vector<std::string> param_tensor_names;
   // Add attribute
   if (op_type == "LpNormalization") {
@@ -385,7 +355,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   if (op_type == "LeakyRelu") {
-    std::string input_name = utils::GetUniqueName(node_unit.Name(), "_alpha");
+    std::string input_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_alpha");
     RETURN_IF_ERROR(ProcessAlphaAttributeAsInput(qnn_model_wrapper, node_unit, input_name));
     input_names.push_back(input_name);
   }
@@ -393,6 +363,37 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (op_type == "Elu") {
     RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
                                          QNN_OP_ELU_PARAM_ALPHA, param_tensor_names));
+  }
+
+  if (op_type == "Softplus") {
+    // ONNX Softplus has no attributes; set QNN defaults (beta=1, threshold=20).
+    Qnn_Scalar_t beta_scalar = QNN_SCALAR_INIT;
+    beta_scalar.dataType = QNN_DATATYPE_FLOAT_32;
+    beta_scalar.floatValue = 1.0f;
+    QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(),
+                               QNN_OP_ELEMENT_WISE_NEURON_PARAM_BETA, beta_scalar);
+    param_tensor_names.push_back(beta_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
+
+    Qnn_Scalar_t threshold_scalar = QNN_SCALAR_INIT;
+    threshold_scalar.dataType = QNN_DATATYPE_FLOAT_32;
+    threshold_scalar.floatValue = 20.0f;
+    QnnParamWrapper threshold_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_THRESHOLD, threshold_scalar);
+    param_tensor_names.push_back(threshold_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(threshold_param));
+
+    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SOFTPLUS;
+    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+    param_tensor_names.push_back(operation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+  }
+
+  if (op_type == "HardSwish") {
+    AddHardSwishNeuronParams(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), param_tensor_names);
   }
 
   if (op_type == "HardSigmoid") {
@@ -420,28 +421,18 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (op_type == "SpaceToDepth") {
     RETURN_IF_ERROR(ProcessBlockSizeAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
+
+    Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
+    mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mode_qnn_scalar.uint32Value = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
+
+    QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, mode_qnn_scalar);
+    param_tensor_names.push_back(mode_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
   }
 
   if (op_type == "GridSample") {
     RETURN_IF_ERROR(ProcessGridSampleAttributes(qnn_model_wrapper, node_unit, param_tensor_names));
-  }
-
-  if (op_type == "ScatterND") {
-    // Process reduction attribute
-    RETURN_IF_ERROR(ProcessScatterNDReductionAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
-  }
-
-  if (op_type == "ScatterElements") {
-    // Process axis attribute
-    int32_t default_axis = 0;
-    Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, default_axis));
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SCATTER_ELEMENTS_PARAM_AXIS, axis_qnn_scalar);
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
-
-    // Process reduction attribute
-    RETURN_IF_ERROR(ProcessReductionAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
@@ -464,7 +455,7 @@ static bool OverrideQuantParams(const std::string& op_type, Qnn_DataType_t qnn_d
   const int32_t orig_offset = quant_params.offset;
   const float orig_scale = quant_params.scale;
 
-  if (op_type == "Sigmoid") {
+  if (op_type == "Sigmoid" || op_type == "HardSigmoid") {
     switch (qnn_data_type) {
       case QNN_DATATYPE_UFIXED_POINT_16:
         quant_params.offset = 0;
@@ -510,7 +501,7 @@ Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model
   // Override output quantization parameters for uint16 QDQ Sigmoid or Tanh.
   // QNN requires 16-bit QDQ Sigmoid and Tanh to use specific output scale and zero-point values
   // regardless of floating-point range.
-  if (op_type == "Sigmoid" || op_type == "Tanh") {
+  if (op_type == "Sigmoid" || op_type == "Tanh" || op_type == "HardSigmoid") {
     const auto& outputs = node_unit.Outputs();
     RETURN_IF_NOT(output_index < outputs.size(),
                   ("Invalid output index in OverrideOutputQuantParam for op " + op_type).c_str());

@@ -172,10 +172,10 @@ def generate_description(line_list, package_name):
     elif "Microsoft.ML.OnnxRuntime.Training" in package_name:  # This is a Microsoft.ML.OnnxRuntime.Training.* package
         description = (
             "The onnxruntime-training native shared library artifacts are designed to efficiently train and infer "
-            + "a wide range of ONNX models on edge devices, such as client machines, gaming consoles, and other "
-            + "portable devices with a focus on minimizing resource usage and maximizing accuracy."
-            + "See https://github.com/microsoft/onnxruntime-training-examples/tree/master/on_device_training for "
-            + "more details."
+            "a wide range of ONNX models on edge devices, such as client machines, gaming consoles, and other "
+            "portable devices with a focus on minimizing resource usage and maximizing accuracy."
+            "See https://github.com/microsoft/onnxruntime-training-examples/tree/master/on_device_training for "
+            "more details."
         )
     elif "ML.OnnxRuntime" in package_name:  # This is a *.ML.OnnxRuntime.* package
         description = (
@@ -283,7 +283,7 @@ def generate_release_notes(line_list, dependency_sdk_info):
     build_id = get_env_var("BUILD_BUILDID")
     line_list.append(
         "\t"
-        + "Build: https://aiinfra.visualstudio.com/Lotus/_build/results?buildId="
+        "Build: https://github.com/onnxruntime/onnxruntime-qnn/actions/runs/"
         + (build_id if build_id is not None else "")
     )
 
@@ -306,7 +306,7 @@ def generate_metadata(line_list, args):
     generate_description(metadata_list, args.package_name)
     generate_copyright(metadata_list, "\xc2\xa9 " + "Microsoft Corporation. All rights reserved.")
     generate_tags(metadata_list, tags)
-    generate_icon(metadata_list, "ORT_icon_for_light_bg.png")
+    generate_icon(metadata_list, "header.png")
     generate_license(metadata_list)
     generate_project_url(metadata_list, "https://github.com/onnxruntime/onnxruntime-qnn")
     generate_repo_url(metadata_list, "https://github.com/onnxruntime/onnxruntime-qnn.git", args.commit_id)
@@ -356,61 +356,35 @@ def generate_files(line_list, args):
 
     # Process headers
     build_dir = "buildTransitive" if "Gpu" in args.package_name else "build"
-    include_dir = f"{build_dir}\\native\\include"
-
-    # Sub.Gpu packages do not include the onnxruntime headers
-    if args.package_name != "Microsoft.ML.OnnxRuntime.Gpu" and args.package_name != "Microsoft.ML.OnnxRuntime.MIGraphX":
-        files_list.append(
-            "<file src="
-            + '"'
-            + os.path.join(args.sources_path, "include\\onnxruntime\\core\\session\\onnxruntime_*.h")
-            + '" target="'
-            + include_dir
-            + '" />'
-        )
-        files_list.append(
-            "<file src="
-            + '"'
-            + os.path.join(args.sources_path, "include\\onnxruntime\\core\\framework\\provider_options.h")
-            + '" target="'
-            + include_dir
-            + '" />'
-        )
 
     if is_qnn_package:
         files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnCpu.dll") + runtimes + " />")
         files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtp.dll") + runtimes + " />")
         if args.target_architecture != "x64":
+            files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "Genie.dll") + runtimes + " />")
             files_list.append(
                 "<file src=" + '"' + os.path.join(args.native_build_path, "QnnGpu.dll") + runtimes + " />"
             )
             files_list.append(
-                "<file src=" + '"' + os.path.join(args.native_build_path, "QnnSystem.dll") + runtimes + " />"
+                '<file src="' + os.path.join(args.native_build_path, "QnnHtpNetRunExtensions.dll") + runtimes + " />"
             )
             files_list.append(
                 "<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtpPrepare.dll") + runtimes + " />"
             )
+            files_list.append(
+                "<file src=" + '"' + os.path.join(args.native_build_path, "QnnSystem.dll") + runtimes + " />"
+            )
             for htp_arch in [73, 81]:
                 files_list.append(
                     "<file src="
-                    + '"'
-                    + os.path.join(args.native_build_path, f"QnnHtpV{htp_arch}Stub.dll")
-                    + runtimes
-                    + " />"
+                    '"' + os.path.join(args.native_build_path, f"QnnHtpV{htp_arch}Stub.dll") + runtimes + " />"
                 )
                 files_list.append(
                     "<file src="
-                    + '"'
-                    + os.path.join(args.native_build_path, f"libQnnHtpV{htp_arch}Skel.so")
-                    + runtimes
-                    + " />"
+                    '"' + os.path.join(args.native_build_path, f"libQnnHtpV{htp_arch}Skel.so") + runtimes + " />"
                 )
                 files_list.append(
-                    "<file src="
-                    + '"'
-                    + os.path.join(args.native_build_path, f"libqnnhtpv{htp_arch}.cat")
-                    + runtimes
-                    + " />"
+                    '<file src="' + os.path.join(args.native_build_path, f"libqnnhtpv{htp_arch}.cat") + runtimes + " />"
                 )
 
     is_ado_packaging_build = False
@@ -433,7 +407,7 @@ def generate_files(line_list, args):
     if args.execution_provider == "qnn" or (is_qnn_package and not is_ado_packaging_build):
         files_list.append(
             "<file src="
-            + '"'
+            '"'
             + os.path.join(args.native_build_path, nuget_dependencies["qnn_ep_shared_lib"])
             + runtimes_target
             + args.target_architecture
@@ -450,6 +424,16 @@ def generate_files(line_list, args):
                 "src",
                 "Qualcomm.ML.OnnxRuntime.QNN",
                 "bin",
+                args.build_config,
+                "netstandard2.0",
+                "Qualcomm.ML.OnnxRuntime.QNN.dll",
+            )
+            helper_dll_arch_path = os.path.join(
+                args.sources_path,
+                "csharp",
+                "src",
+                "Qualcomm.ML.OnnxRuntime.QNN",
+                "bin",
                 args.target_architecture,
                 args.build_config,
                 "netstandard2.0",
@@ -458,6 +442,8 @@ def generate_files(line_list, args):
 
             if os.path.exists(helper_dll_path):
                 files_list.append("<file src=" + '"' + helper_dll_path + '" target="lib\\netstandard2.0"  />')
+            elif os.path.exists(helper_dll_arch_path):
+                files_list.append("<file src=" + '"' + helper_dll_arch_path + '" target="lib\\netstandard2.0"  />')
 
         # Process props file
         if is_qnn_package:
@@ -516,26 +502,18 @@ def generate_files(line_list, args):
     # Process License, ThirdPartyNotices, Privacy
     files_list.append("<file src=" + '"' + os.path.join(args.sources_path, "LICENSE") + '" target="LICENSE" />')
     files_list.append(
-        "<file src="
-        + '"'
-        + os.path.join(args.sources_path, "ThirdPartyNotices.txt")
-        + '" target="ThirdPartyNotices.txt" />'
+        '<file src="' + os.path.join(args.sources_path, "ThirdPartyNotices.txt") + '" target="ThirdPartyNotices.txt" />'
     )
     files_list.append(
         "<file src=" + '"' + os.path.join(args.sources_path, "docs", "Privacy.md") + '" target="Privacy.md" />'
     )
     files_list.append(
-        "<file src="
-        + '"'
-        + os.path.join(args.sources_path, "ORT_icon_for_light_bg.png")
-        + '" target="ORT_icon_for_light_bg.png" />'
+        '<file src="' + os.path.join(args.sources_path, "docs", "images", "header.png") + '" target="header.png" />'
     )
     if is_qnn_package:
         files_list.append(
             "<file src="
-            + '"'
-            + os.path.join(args.native_build_path, "Qualcomm_LICENSE.pdf")
-            + '" target="Qualcomm_LICENSE.pdf" />'
+            '"' + os.path.join(args.native_build_path, "Qualcomm_LICENSE.pdf") + '" target="Qualcomm_LICENSE.pdf" />'
         )
     files_list.append("</files>")
 

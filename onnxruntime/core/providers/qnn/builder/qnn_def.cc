@@ -250,6 +250,23 @@ uint32_t GetQnnTensorID(const Qnn_Tensor_t& qnn_tensor) {
                     ORT_EP_FAIL);
 }
 
+void SetQnnTensorID(Qnn_Tensor_t& qnn_tensor, uint32_t id) {
+  if (QNN_TENSOR_VERSION_1 == qnn_tensor.version) {
+    qnn_tensor.v1.id = id;
+    return;
+  }
+
+#ifdef QNN_TENSOR_V2_INIT
+  if (QNN_TENSOR_VERSION_2 == qnn_tensor.version) {
+    qnn_tensor.v2.id = id;
+    return;
+  }
+#endif  // QNN_TENSOR_V2_INIT
+
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
+}
+
 Qnn_TensorType_t GetQnnTensorType(const Qnn_Tensor_t& qnn_tensor) {
   if (QNN_TENSOR_VERSION_1 == qnn_tensor.version) {
     return qnn_tensor.v1.type;
@@ -455,10 +472,14 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const std::string& node_name,
                             const std::string& tensor_name,
                             Qnn_Tensor_t& qnn_tensor,
-                            std::unordered_map<std::string, bool>& tensors_created_table,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg) {
-  if (tensors_created_table.find(tensor_name) != tensors_created_table.end()) {
-    error_msg = "Tensor created already: " + tensor_name;
+  auto existing = tensors_created_table.find(tensor_name);
+  if (existing != tensors_created_table.end()) {
+    // Multiple internal tensors may share the same override name (e.g., when a graph input
+    // is consumed by multiple QDQ pairs and offload_graph_io_quantization=1). Copy the
+    // previously assigned QNN tensor ID so subsequent references use the correct tensor.
+    SetQnnTensorID(qnn_tensor, existing->second);
     return true;
   }
 
@@ -505,14 +526,14 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
     return false;
   }
 
-  tensors_created_table.emplace(tensor_name, true);
+  tensors_created_table.emplace(tensor_name, GetQnnTensorID(qnn_tensor));
   return true;
 }
 
 bool QnnParamWrapper::CreateQnnGraphParam(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                           const Qnn_GraphHandle_t& graph,
                                           const std::string& node_name,
-                                          std::unordered_map<std::string, bool>& tensors_created_table,
+                                          std::unordered_map<std::string, uint32_t>& tensors_created_table,
                                           std::string& error_msg) {
   std::stringstream ss;
   switch (qnn_param_.paramType) {
@@ -624,6 +645,29 @@ bool IsCpuBackend(QnnBackendType backend_type) {
 // Is it Qualcomm hardware ?
 bool IsQpuBackend(QnnBackendType backend_type) {
   return IsNpuBackend(backend_type) || IsGpuBackend(backend_type);
+}
+
+std::string QnnBackendTypeToString(QnnBackendType backend_type) {
+  switch (backend_type) {
+    case QnnBackendType::CPU:
+      return "cpu";
+    case QnnBackendType::GPU:
+      return "gpu";
+    case QnnBackendType::DSP:
+      return "dsp";
+    case QnnBackendType::HTP:
+      return "htp";
+    case QnnBackendType::HTP_FP16:
+      return "htp_fp16";
+    case QnnBackendType::SERIALIZER:
+      return "ir";
+  }
+  // Unreachable for well-formed enum values; -Wswitch ensures every enumerator
+  // above is handled. The fallback exists only for defensive runtime safety
+  // (e.g. ill-formed enum value via reinterpret_cast). ORT_THROW is intentionally
+  // not used here because GetStackTrace is a local symbol in libonnxruntime.so
+  // and is not available to plugin EPs at runtime - see common/qnn_safeint.h.
+  return "unknown";
 }
 
 }  // namespace qnn

@@ -44,6 +44,13 @@ function get_cmake_bindir() {
     get_package_bindir cmake_$(get_host_platform)
 }
 
+#
+# Get the directory containing Maven binaries, installing them if necessary.
+#
+function get_maven_bindir() {
+    get_package_bindir maven_$(get_host_platform)
+}
+
 function get_host_platform() {
     case `uname` in
         Darwin)
@@ -69,8 +76,37 @@ function get_java_bindir() {
   fi
 }
 
+#
+# Get the directory containing java 17, installing it if necessary.
+#
+function get_java17_bindir() {
+  get_package_bindir java17_$(get_host_platform)
+}
+
+#
+# Get the root of the java 17 installation, installing it if necessary.
+#
+function get_java17_contentdir() {
+  get_package_contentdir java17_$(get_host_platform)
+}
+
+function get_hexagon_sdk_contentdir() {
+    get_package_contentdir hexagon_linux_x86_64
+}
+
 function get_linux_oe_gcc112_toolchain_root() {
     get_package_contentdir "linux_oe_gcc112_toolchain"
+}
+
+function get_llvm_contentdir() {
+    get_package_contentdir llvm_linux_x86_64
+}
+
+#
+# Get the directory containing lcov/genhtml, installing it if necessary.
+#
+function get_lcov_bindir() {
+    get_package_bindir lcov_$(get_host_platform)
 }
 
 #
@@ -96,20 +132,6 @@ function get_package_contentdir() {
 
     package_manager --install --package="${pkg_name}"
     package_manager --print-content-dir --package="${pkg_name}"
-}
-
-#
-# Get the root of the managed ORT x64 prebuilt installation.
-#
-function get_ort_x64_prebuilt_root() {
-    get_package_contentdir ort_prebuilt_linux_x64
-}
-
-#
-# Get the root of the managed ORT aarch64 prebuilt installation.
-#
-function get_ort_aarch64_prebuilt_root() {
-    get_package_contentdir ort_prebuilt_linux_aarch64
 }
 
 #

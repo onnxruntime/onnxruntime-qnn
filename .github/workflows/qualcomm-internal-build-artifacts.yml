@@ -1,0 +1,268 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Build Artifacts
+
+permissions:
+  contents: read
+  checks: write
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      nightly_build:
+        description: "If true, include a verbose version string in wheel file names."
+        type: boolean
+        default: true
+      version_suffix:
+        description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
+      build_android_aarch64:
+        description: "If true, build for Android"
+        type: boolean
+        default: false
+      build_android_aarch64_aar:
+        description: "If true, build the Android AAR"
+        type: boolean
+        default: false
+      build_linux_aarch64_oe_gcc11_2:
+        description: "If true, build for aarch64 OpenEmbedded Linux using GCC 11.2"
+        type: boolean
+        default: false
+      build_linux_x86_64:
+        description: "If true, build for x86_64 Linux"
+        type: boolean
+        default: true
+      linux_x86_64_target_py_vsns:
+        description: "JSON list of Python versions to build for x86_64 Linux"
+        type: string
+        default: "['3.10','3.12']"
+      linux_target_py_vsns:
+        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
+      windows_target_archs:
+        description: "JSON list of Windows architectures to build"
+        type: string
+        default: "['arm64', 'arm64ec', 'x86_64']"
+      windows_target_py_vsns:
+        description: "JSON list of Python versions to build for Windows"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
+      windows_arm64_build_archive:
+        description: "If true, build an archive with the first ARM64 build."
+        type: boolean
+        default: true
+      build_windows_arm64_debug:
+        description: "If true, build a Windows ARM64 Debug archive."
+        type: boolean
+        default: false
+      build_windows_arm64_relwithdebinfo:
+        description: "If true, build a Windows ARM64 RelWithDebInfo archive."
+        type: boolean
+        default: false
+
+  workflow_dispatch:
+    inputs: *common_inputs
+
+jobs:
+  archive-testdata:
+    uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
+    secrets: inherit
+
+  build-android-aarch64:
+    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      build_runner_os: linux
+      target_os: android
+      target_arch: aarch64
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: None
+      run_tests: false
+      upload_test_archive: true
+      upload_wheel: false
+      build_aar: ${{ inputs.build_android_aarch64_aar }}
+      upload_aar: ${{ inputs.build_android_aarch64_aar }}
+
+  test-android-aarch64:
+    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    needs: [build-android-aarch64]
+    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+    secrets: inherit
+    with:
+      target_os: android
+      target_arch: aarch64
+
+  build-linux-aarch64-manylinux_2_34:
+    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: aarch64_manylinux_2_34
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      run_tests: false
+      # Upload the test archive with the first Python version we encounter
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      # Build Tgz with the first Python version we encounter
+      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+
+  build-linux-aarch64-oe-gcc11_2:
+    if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: None
+      run_tests: false
+      upload_test_archive: true
+      upload_wheel: false
+
+  build-linux-x86_64:
+    if: ${{ inputs.build_linux_x86_64 && toJSON(fromJSON(inputs.linux_x86_64_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_x86_64_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: x86_64
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      run_tests: false
+      # Test archive is python-version independent; upload only with the first matrix entry
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_x86_64_target_py_vsns)[0] }}
+      upload_wheel: true
+
+  build-linux-x86_64-ubuntu-22-04:
+    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: x86_64_ubuntu_22_04
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_wheel: true
+      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+
+  build-windows:
+    if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
+    strategy:
+      matrix:
+        target_arch: ${{ fromJSON(inputs.windows_target_archs) }}
+        target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: ${{ matrix.target_arch }}
+      testdata_archive_artifact_name: testdata-zip
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
+      test_runner_arch: ARM64
+      run_tests: false
+      test_wheel: false
+      # For each arch, upload the test archive with the first Python version we encounter
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      # For each arch, build and upload a PDB archive with the first python version we encounter
+      build_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+
+  build-windows-arm64x:
+    needs: [archive-testdata]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_arch: arm64x
+      testdata_archive_artifact_name: testdata-zip
+      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_runner_arch: ARM64
+      run_tests: false
+      upload_wheel: false
+      build_archive: true
+      upload_archive: true
+      build_nuget: true
+      upload_nuget: true
+      build_pdb_archive: true
+      upload_pdb_archive: true
+
+  setup-debug-matrix:
+    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          items='[]'
+          if [ "${{ inputs.build_windows_arm64_debug }}" = "true" ]; then
+            items=$(jq -nc --argjson a "$items" '$a + [{"build_config":"Debug","suffix":"debug"}]')
+          fi
+          if [ "${{ inputs.build_windows_arm64_relwithdebinfo }}" = "true" ]; then
+            items=$(jq -nc --argjson a "$items" '$a + [{"build_config":"RelWithDebInfo","suffix":"relwithdebinfo"}]')
+          fi
+          echo "matrix={\"include\":$items}" >> "$GITHUB_OUTPUT"
+
+  build-windows-arm64-debug-builds:
+    needs: [archive-testdata, setup-debug-matrix]
+    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    name: build-windows-arm64-${{ matrix.suffix }}
+    strategy:
+      matrix: ${{ fromJSON(needs.setup-debug-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_arch: arm64
+      build_config: ${{ matrix.build_config }}
+      testdata_archive_artifact_name: testdata-zip
+      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_runner_arch: ARM64
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      build_archive: true
+      upload_archive: true
+      upload_wheel: false

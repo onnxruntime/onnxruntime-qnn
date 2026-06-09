@@ -30,15 +30,19 @@ from ep_build.task import (
     ExtractArchiveTask,
     ListTasksTask,
     NoOpTask,
+    RunExecutablesTask,
 )
 from ep_build.tasks.build import (
     AdbTestsTask,
     BuildEpDockerTask,
     BuildEpLinuxTask,
     BuildEpWindowsTask,
+    GenerateCoverageTask,
+    GenerateDiffCoverageTask,
     QdcTestsTask,
+    RunAsanTask,
 )
-from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
+from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_64_TAG, DockerBuildTask
 from ep_build.tasks.python import (
     CreateOrtVenvTask,
     CreateQdcVenvTask,
@@ -153,9 +157,9 @@ Environment variables
     parser.add_argument("--skip", metavar="TASK_RE", type=str, nargs="+", help="List of tasks to skip.")
     parser.add_argument(
         "--target-py-version",
-        choices=["3.10", "3.11", "3.12", "3.13", "None"],
+        choices=["3.10", "3.11", "3.12", "3.13", "3.14", "None"],
         default="3.10" if is_host_linux() else "3.12",
-        help="[Windows only] Build a wheel for this version of Python",
+        help="Build a wheel for this version of Python",
     )
     parser.add_argument(
         "--venv-path",
@@ -167,6 +171,16 @@ Environment variables
         "--build-nuget",
         action="store_true",
         help="Enable building NuGet packages for .NET bindings.",
+    )
+    parser.add_argument(
+        "--build-archive",
+        action="store_true",
+        help="Enable building archive.",
+    )
+    parser.add_argument(
+        "--build-aar",
+        action="store_true",
+        help="Enable building Android AAR package.",
     )
 
     args = parser.parse_args()
@@ -191,6 +205,8 @@ class TaskLibrary:
         qairt_sdk_root: Path | None,
         docker_ccache_root: Path | None,
         build_nuget: bool,
+        build_archive: bool,
+        build_aar: bool,
     ) -> None:
         self.__python_executable = python_executable
         self.__venv_path = venv_path
@@ -201,6 +217,8 @@ class TaskLibrary:
         self.__qairt_sdk_root = qairt_sdk_root
         self.__docker_ccache_root = docker_ccache_root
         self.__build_nuget = build_nuget
+        self.__build_archive = build_archive
+        self.__build_aar = build_aar
 
     @staticmethod
     def to_dot(highlight: list[str] | None = None) -> str:
@@ -229,8 +247,7 @@ class TaskLibrary:
     def _build_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
         """In-container build steps for aarch64-manylinux_2_34. Not to be used outside of Docker."""
         extra_args = [
-            "--no-warnings-as-errors",
-            "--qnn-arch-abi=aarch64-ubuntu-gcc9.4",
+            "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
         ]
 
         env = os.environ.copy()
@@ -253,6 +270,37 @@ class TaskLibrary:
                 "build",
                 extra_args=extra_args,
                 env=env,
+                build_archive=self.__build_archive,
+            )
+        )
+
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        """In-container build steps for x86_64-ubuntu_22_04. Not to be used outside of Docker."""
+        extra_args = []
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-x86_64-ubuntu_22_04"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args if extra_args else None,
+                env=env,
+                build_archive=self.__build_archive,
             )
         )
 
@@ -273,6 +321,7 @@ class TaskLibrary:
                         self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "archive",
+                        extra_args=["--build-java"] if self.__build_aar else None,
                     )
                 )
             else:
@@ -327,6 +376,23 @@ class TaskLibrary:
                     self.__venv_path,
                     "linux",
                     "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04", "create_venv"])
+        def archive_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
                     self.__config,
                     self.__target_py_version,
                     self.__ort_prebuilt_root,
@@ -408,6 +474,52 @@ class TaskLibrary:
                 )
             )
 
+    @public_task("Build the global testdata archive (zip + tar.bz2)")
+    def archive_testdata(self, plan: Plan) -> str:
+        return plan.add_step(
+            RunExecutablesTask(
+                "Building the testdata archive",
+                [
+                    [
+                        str(self.__python_executable),
+                        str(REPO_ROOT / "qcom" / "scripts" / "all" / "archive_testdata.py"),
+                    ]
+                ],
+            )
+        )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with AddressSanitizer and run unit tests under ASan (Linux x86_64, Debug)")
+        @depends(["create_venv"])
+        def asan_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                CompositeTask(
+                    "ASan build and test",
+                    [
+                        BuildEpLinuxTask(
+                            "Building ONNX Runtime for Linux (Debug + ASan)",
+                            self.__venv_path,
+                            "linux",
+                            "x86_64",
+                            "Debug",
+                            None,  # target_py_version: ASan task does not exercise the Python wheel
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            extra_args=["--enable-asan"],
+                        ),
+                        RunAsanTask(
+                            "Running tests under ASan",
+                            self.__venv_path,
+                            build_dir,
+                            config="Debug",
+                        ),
+                    ],
+                )
+            )
+
     @public_task("Build ONNX Runtime for this host's native architecture")
     @depends(
         [
@@ -424,6 +536,9 @@ class TaskLibrary:
         @depends(["create_venv"])
         def build_ort_android_aarch64(self, plan: Plan) -> str:
             if is_host_linux() or is_host_mac():
+                extra_args = ["--no-warnings-as-errors"]
+                if self.__build_aar:
+                    extra_args.append("--build-java")
                 return plan.add_step(
                     BuildEpLinuxTask(
                         "Building ONNX Runtime for Android",
@@ -435,7 +550,8 @@ class TaskLibrary:
                         self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "build",
-                        extra_args=["--no-warnings-as-errors"],
+                        extra_args=extra_args,
+                        build_archive=self.__build_archive,
                     )
                 )
             else:
@@ -452,6 +568,7 @@ class TaskLibrary:
                 self.__target_py_version,
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
+                self.__build_archive,
             ),
         )
 
@@ -471,6 +588,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -502,6 +620,56 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_archive=self.__build_archive,
+                )
+            )
+
+    @task
+    @depends(["docker_build_ubuntu_22_04_x86_64"])
+    def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux x86_64 on Ubuntu 22.04",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
+                docker_tag=UBUNTU_22_04_X86_64_TAG,
+                platform="linux/amd64",
+            ),
+        )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with code coverage and generate HTML report (Linux x86_64, RelWithDebInfo)")
+        @depends(["create_venv"])
+        def coverage_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                CompositeTask(
+                    "Coverage build, test, and report",
+                    [
+                        BuildEpLinuxTask(
+                            "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
+                            self.__venv_path,
+                            "linux",
+                            "x86_64",
+                            "RelWithDebInfo",
+                            self.__target_py_version,
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            extra_args=["--enable-coverage"],
+                        ),
+                        GenerateCoverageTask(
+                            "Generating HTML coverage report",
+                            self.__venv_path,
+                            build_dir,
+                        ),
+                    ],
                 )
             )
 
@@ -522,6 +690,7 @@ class TaskLibrary:
                     "build",
                     False,
                     self.__build_nuget,
+                    self.__build_archive,
                 )
             )
 
@@ -540,6 +709,8 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_nuget=self.__build_nuget,
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -573,6 +744,8 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
+                            build_nuget=self.__build_nuget,
+                            build_archive=self.__build_archive,
                         ),
                     ],
                 )
@@ -605,6 +778,8 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_nuget=self.__build_nuget,
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -616,6 +791,20 @@ class TaskLibrary:
     def create_venv(self, plan: Plan) -> str:
         return plan.add_step(CreateOrtVenvTask(self.__python_executable, self.__venv_path))
 
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with coverage and generate diff coverage report against main (Linux x86_64)")
+        @depends(["coverage_linux_x86_64"])
+        def diff_coverage_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                GenerateDiffCoverageTask(
+                    "Generating diff coverage report (Linux x86_64)",
+                    self.__venv_path,
+                    build_dir,
+                )
+            )
+
     @task
     def docker_build_manylinux_2_34_aarch64(self, plan: Plan) -> str:
         return plan.add_step(
@@ -626,7 +815,26 @@ class TaskLibrary:
                 build_args={
                     "BUILD_UID": str(os.getuid()),
                     "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
+            )
+        )
+
+    @task
+    def docker_build_ubuntu_22_04_x86_64(self, plan: Plan) -> str:
+        return plan.add_step(
+            DockerBuildTask(
+                "Building Ubuntu 22.04 x86_64 Docker image",
+                REPO_ROOT / "qcom" / "scripts" / "linux" / "ubuntu_22_04" / "Dockerfile",
+                UBUNTU_22_04_X86_64_TAG,
+                build_args={
+                    "BUILD_UID": str(os.getuid()),
+                    "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
+                },
+                platform="linux/amd64",
             )
         )
 
@@ -635,40 +843,140 @@ class TaskLibrary:
         @task
         def extract_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
             return plan.add_step(
-                ExtractArchiveTask(
-                    "Extracting ONNX Runtime for Linux",
-                    REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2",
-                    REPO_ROOT,
+                CompositeTask(
+                    None,
+                    [
+                        ExtractArchiveTask(
+                            "Extracting per-arch ONNX Runtime archive",
+                            REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2",
+                            REPO_ROOT,
+                        ),
+                        RunExecutablesTask(
+                            "Extracting global testdata archive",
+                            [
+                                [
+                                    str(self.__python_executable),
+                                    str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                    "--target-platform",
+                                    "linux-aarch64_manylinux_2_34",
+                                    "--archive",
+                                    str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                                ]
+                            ],
+                        ),
+                    ],
                 )
             )
 
     @task
     def extract_ort_linux_x86_64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractArchiveTask(
-                "Extracting ONNX Runtime for Linux",
-                REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64.tar.bz2",
-                REPO_ROOT,
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64.tar.bz2",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "linux-x86_64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                            ]
+                        ],
+                    ),
+                ],
+            )
+        )
+
+    @task
+    def extract_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64_ubuntu_22_04.tar.bz2",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "linux-x86_64_ubuntu_22_04",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                            ]
+                        ],
+                    ),
+                ],
             )
         )
 
     @task
     def extract_ort_windows_arm64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractArchiveTask(
-                "Extracting ONNX Runtime for Windows on ARM64",
-                REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
-                REPO_ROOT,
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "windows-arm64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.zip"),
+                            ]
+                        ],
+                    ),
+                ],
             )
         )
 
     @task
     def extract_ort_windows_x86_64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractArchiveTask(
-                "Extracting ONNX Runtime for Windows on x86_64",
-                REPO_ROOT / "build" / "onnxruntime-tests-windows-x86_64.zip",
-                REPO_ROOT,
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-windows-x86_64.zip",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "windows-x86_64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.zip"),
+                            ]
+                        ],
+                    ),
+                ],
             )
         )
 
@@ -770,10 +1078,61 @@ class TaskLibrary:
                 )
             )
 
+    if is_host_linux() and is_host_x86_64():
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
+        def test_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
+                    self.__config,
+                    None,  # Tests run against the activated host venv; no per-version wheel venv needed.
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                )
+            )
+
+    if is_host_linux() and is_host_arm64():
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34"])
+        def test_ort_linux_aarch64_manylinux_2_34_pygpu(self, plan: Plan) -> str:
+            assert self.__target_py_version is not None
+            return plan.add_step(
+                OrtWheelGpuModelTestTask(
+                    "Running GPU model tests on aarch64",
+                    self.__venv_path,
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                )
+            )
+
+    if is_host_linux() and is_host_arm64():
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34"])
+        def test_ort_linux_aarch64_manylinux_2_34_pysmoke(self, plan: Plan) -> str:
+            assert self.__target_py_version is not None
+            return plan.add_step(
+                OrtWheelSmokeTestTask(
+                    "Smoke testing aarch64 wheel",
+                    self.__venv_path,
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                )
+            )
+
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_android_aarch64"])
+        @depends(["archive_ort_android_aarch64", "archive_testdata"])
         def test_ort_local_android_aarch64(self, plan: Plan) -> str:
             return plan.add_step(
                 AdbTestsTask(
@@ -784,7 +1143,7 @@ class TaskLibrary:
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_linux_aarch64_manylinux_2_34"])
+        @depends(["archive_ort_linux_aarch64_manylinux_2_34", "archive_testdata"])
         def test_ort_local_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
             return plan.add_step(
                 AdbTestsTask(
@@ -798,7 +1157,7 @@ class TaskLibrary:
     if (is_host_linux() and is_host_x86_64()) or is_host_mac():
 
         @task
-        @depends(["archive_ort_linux_aarch64_oe_gcc11_2"])
+        @depends(["archive_ort_linux_aarch64_oe_gcc11_2", "archive_testdata"])
         def test_ort_local_linux_aarch64_oe_gcc11_2(self, plan: Plan) -> str:
             return plan.add_step(
                 AdbTestsTask(
@@ -840,7 +1199,7 @@ class TaskLibrary:
                             REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_oe_gcc11_2.zip",
                         ),
                         QdcTestsTask(
-                            "Testing ONNX Runtime for Android in QDC",
+                            "Testing ONNX Runtime for Qualcomm Linux in QDC",
                             self.__venv_path,
                             ["qualcomm_linux"],
                             extra_args=[
@@ -1092,6 +1451,8 @@ def plan_from_dependencies(
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
+    build_archive: bool,
+    build_aar: bool,
 ) -> Plan:
     """
     Uses a work list algorithm to create a Plan to build the given tasks and their
@@ -1106,6 +1467,8 @@ def plan_from_dependencies(
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
+        build_archive,
+        build_aar,
     )
     plan = Plan()
 
@@ -1158,6 +1521,8 @@ def plan_from_task_list(
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
+    build_archive: bool,
+    build_aar: bool,
 ) -> Plan:
     """
     Planner that just instantiates the given tasks with no attempt made to satisfy dependencies.
@@ -1172,6 +1537,8 @@ def plan_from_task_list(
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
+        build_archive,
+        build_aar,
     )
     plan = Plan()
     for task_name in tasks:
@@ -1208,6 +1575,8 @@ def build_and_test():
             qairt_sdk_root,
             docker_ccache_root,
             args.build_nuget,
+            args.build_archive,
+            args.build_aar,
         )
 
     if args.skip is not None:

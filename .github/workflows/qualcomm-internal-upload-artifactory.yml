@@ -1,0 +1,311 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Publish ONNX Runtime Execution Provider wheel, nuget, archive and maven
+
+permissions:
+  checks: write
+  contents: read
+  id-token: write
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      product_name:
+        description:  |
+          The product name.
+          For Maven format, it should be "onnxruntime-android-qnn".
+          For other formats, it should be "onnxruntime-qnn".
+        type: string
+        default: "onnxruntime-qnn"
+      artifact_format:
+        description: "The format of artifact. Choose one of [wheel, nuget, zip, tgz, maven, all]."
+        type: string
+        default: "wheel"
+      version_from:
+        description: |
+          Source version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+          For Maven artifact, the format should be <version><-SNAPSHOT>.
+        type: string
+        default: "0.1.0test"
+      version_to:
+        description: |
+          Target version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+          For Maven artifact, the format should be <version><-SNAPSHOT>.
+        type: string
+        default: "0.1.0rctest"
+      index_server_from:
+        description: |
+          From which server the artifact is located. Choose one of
+          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public,
+           artifactory-maven-virtual, maven-central]
+        type: string
+        default: "test-users"
+      index_server_to:
+        description: |
+          To which server to store the artifact. Choose one of
+          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public,
+           artifactory-maven-virtual, maven-central,
+           github (zip/tgz only — creates a GitHub Release tagged v<version_to>)]
+        type: string
+        default: "test-users"
+      sign_artifact:
+        description: |
+          Sign the Windows artifacts by replacing the embedded
+          onnxruntime_providers_qnn.dll with the signed copy from the signed-libs
+          bundle in Artifactory. For NuGet packages, also replaces the managed
+          Qualcomm.ML.OnnxRuntime.QNN.dll. Applies to whichever artifact_format
+          is selected (wheel, nuget, zip, or all). Non-Windows artifacts and
+          non-native files pass through unchanged.
+        type: boolean
+        default: false
+
+  workflow_dispatch:
+    inputs: *common_inputs
+
+jobs:
+  check-admin-permission:
+    name: Check if user is admin
+    runs-on: ["self-hosted", "Linux", "X64"]
+    steps:
+      - name: Verify admin permission
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.actor
+              });
+
+              console.log(`User: ${context.actor}`);
+              console.log(`Permission level: ${permission.permission}`);
+
+              if (permission.permission !== 'admin') {
+                core.setFailed(
+                  `Access denied. Only repository administrators can trigger this workflow. Your permission level: ${permission.permission}`
+                );
+              } else {
+                console.log('Admin permission verified');
+              }
+            } catch (error) {
+              core.setFailed(`Failed to check permissions: ${error.message}`);
+            }
+
+  publish-wheel-workflow:
+    if: ${{ inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all' }}
+    name: "Publish artifacts to Artifactory or PyPI"
+    runs-on: [Linux, self-hosted]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Publish
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
+          TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+        run: |
+          source uplevel_venv/bin/activate
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name ${{ inputs.product_name }} \
+            --artifact_format "wheel" \
+            --version_from ${{ inputs.version_from }} \
+            --version_to ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to ${{ inputs.index_server_to }} \
+            ${{ inputs.sign_artifact && '--sign_artifact' || '' }}
+
+  publish-nuget-workflow:
+    if: ${{ inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all' }}
+    name: "Publish artifacts to Artifactory or NuGet"
+    runs-on: [Windows, self-hosted, X64]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Publish
+        shell: powershell
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
+          TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+        run: |
+          py -m venv uplevel_venv
+          .\uplevel_venv\Scripts\activate
+
+          # Install required packages for package_manager.py
+          # Use the Python from the activated virtual environment instead of the system Python.
+          python -m pip install uv
+          uv pip install pip --upgrade
+          uv pip install -r .\qcom\requirements.txt
+
+          . ".\qcom\scripts\upleveling\qnn_ep_uplevel_nuget.ps1" `
+            -ProductName ${{ inputs.product_name }} `
+            -ArtifactFormat "nuget" `
+            -VersionFrom ${{ inputs.version_from }} `
+            -VersionTo ${{ inputs.version_to }} `
+            -IndexServerFrom ${{ inputs.index_server_from }} `
+            -IndexServerTo ${{ inputs.index_server_to }} `
+            -SignArtifact $${{ inputs.sign_artifact }}
+
+  publish-zip-workflow:
+    if: ${{ inputs.artifact_format == 'zip' || inputs.artifact_format == 'all' }}
+    name: "Publish artifacts to Artifactory or GitHub"
+    runs-on: [Linux, self-hosted]
+    needs: check-admin-permission
+    permissions:
+      checks: write
+      contents: write   # required to push the release tag and create the GitHub Release
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Publish
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source uplevel_venv/bin/activate
+
+          # Create temporary .netrc file with credentials
+          # Try /tmp first, then $HOME, then workspace as fallback
+          NETRC_FILE=$(mktemp -p /tmp 2>/dev/null || \
+                       mktemp -p "$HOME" 2>/dev/null || \
+                       mktemp -p "${{ github.workspace }}")
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" << EOF
+          machine artifactory-las.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+
+          # Run the upleveling script with netrc file
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name ${{ inputs.product_name }} \
+            --artifact_format "zip" \
+            --version_from ${{ inputs.version_from }} \
+            --version_to ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to ${{ inputs.index_server_to }} \
+            --netrc_file "$NETRC_FILE" \
+            ${{ inputs.sign_artifact && '--sign_artifact' || '' }}
+
+          # Clean up the temporary .netrc file
+          rm -f "$NETRC_FILE"
+
+  publish-tgz-workflow:
+    if: ${{ inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all' }}
+    name: "Publish TGZ artifacts to Artifactory or GitHub"
+    runs-on: [Linux, self-hosted]
+    needs: check-admin-permission
+    permissions:
+      checks: write
+      contents: write   # required to push the release tag and create the GitHub Release
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Publish
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source uplevel_venv/bin/activate
+
+          # Create temporary .netrc file with credentials
+          # Try /tmp first, then $HOME, then workspace as fallback
+          NETRC_FILE=$(mktemp -p /tmp 2>/dev/null || \
+                       mktemp -p "$HOME" 2>/dev/null || \
+                       mktemp -p "${{ github.workspace }}")
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" << EOF
+          machine artifactory-las.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+
+          # Run the upleveling script with netrc file
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name ${{ inputs.product_name }} \
+            --artifact_format "tgz" \
+            --version_from ${{ inputs.version_from }} \
+            --version_to ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to ${{ inputs.index_server_to }} \
+            --netrc_file "$NETRC_FILE"
+
+          # Clean up the temporary .netrc file
+          rm -f "$NETRC_FILE"
+
+  publish-maven-workflow:
+    if: ${{ inputs.artifact_format == 'maven' || inputs.artifact_format == 'all' }}
+    name: "Publish Maven artifact"
+    runs-on: [Linux, self-hosted, Build]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Set up Java + Maven and import CA
+        uses: ./.github/actions/setup-java-maven
+
+      - name: Publish
+        env:
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+          # Consumed only when inputs.index_server_to == 'maven-central'; harmless otherwise.
+          MAVEN_CENTRAL_BEARER_TOKEN:     ${{ secrets.MAVEN_CENTRAL_BEARER_TOKEN }}
+          MAVEN_CENTRAL_GPG_PRIVATE_KEY:  ${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}
+          MAVEN_CENTRAL_GPG_PASSPHRASE:   ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+        run: |
+          source uplevel_venv/bin/activate
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name    ${{ inputs.product_name }} \
+            --artifact_format maven \
+            --version_from    ${{ inputs.version_from }} \
+            --version_to      ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to   ${{ inputs.index_server_to }}
+
+      - name: Validate APK build
+        env:
+          AAR_MAVEN_COORD: "com.qualcomm.qti:${{ inputs.product_name }}:${{ inputs.version_to }}"
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+        run: ./qcom/scripts/upleveling/maven/validate_apk.sh

@@ -12,6 +12,8 @@ param(
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
 $RepoRoot= (Resolve-Path -Path ("$RootDir\..\..\.."))
 
+. (Join-Path $RootDir "utils.ps1")
+
 if (-not $OnnxModelsRoot) {
     $OnnxModelsRoot = (Join-Path $RootDir (Join-Path "model_tests" "onnx_models"))
 }
@@ -22,12 +24,12 @@ $CTestExe = (Join-Path $RootDir "ctest.exe")
 
 # Single-config generators like Ninja put runners in the parent directory
 # of the rest of the ONNX Runtime build.
-if (Test-Path (Join-Path $RootDir "onnx_test_runner.exe")) {
-    $OnnxTestRunnerExe = (Join-Path $RootDir "onnx_test_runner.exe")
+if (Test-Path (Join-Path $RootDir "onnxruntime_plugin_ep_onnx_test.exe")) {
     $OnnxEpTestRunnerExe = (Join-Path $RootDir "onnxruntime_plugin_ep_onnx_test.exe")
+    $ResultsXmlDir = $RootDir
 } else {
-    $OnnxTestRunnerExe = (Join-Path (Join-Path $RootDir $Config) "onnx_test_runner.exe")
     $OnnxEpTestRunnerExe = (Join-Path (Join-Path $RootDir $Config) "onnxruntime_plugin_ep_onnx_test.exe")
+    $ResultsXmlDir = (Join-Path $RootDir $Config)
 }
 
 $CTestTestFile = (Join-Path $RootDir "CTestTestfile.cmake")
@@ -51,7 +53,7 @@ $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
     Out-File -Encoding ascii $CTestTestFile
 
 # Figure out if HTP is available
-if ((Get-CimInstance Win32_operatingsystem).OSArchitecture -eq "ARM 64-bit Processor") {
+if ((Get-HostArch) -eq "arm64") {
     $QdqBackend = "htp"
 } else {
     $QdqBackend = "cpu"
@@ -140,14 +142,27 @@ $TestModelsViaEpPlugin = {
     )
 
     Write-Host "--=-=-=- Running ONNX model $Suite tests with the ABI-stable EP plugin -=--=-=-"
+
+    $ModelLog = Join-Path $ResultsXmlDir "${Suite}_model_tests.log"
+    $ModelXml = Join-Path $ResultsXmlDir "${Suite}_model_tests.results.xml"
+
+    if (Test-Path $ModelLog) { Remove-Item $ModelLog }
+    if (Test-Path $ModelXml) { Remove-Item -Force $ModelXml }
+
     & $OnnxEpTestRunnerExe `
         -j 1 `
-        -e qnn `
         --plugin_ep_libs "qnn|onnxruntime_providers_qnn.dll" `
         --plugin_eps qnn `
         -i "backend_type|$Backend" `
-        $TestPath | Write-Host
-    if (-not $?) {
+        $TestPath | Tee-Object -FilePath $ModelLog | Write-Host
+    $TestResult = $?
+
+    if (Test-Path $ModelLog) {
+        py "${RepoRoot}\qcom\scripts\all\model_test_log_to_junit_xml.py" `
+            $ModelLog | Out-File -FilePath $ModelXml -Encoding utf8
+    }
+
+    if (-not $TestResult) {
         return $true
     }
     return $false

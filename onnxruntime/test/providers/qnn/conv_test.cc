@@ -5,8 +5,6 @@
 
 #include <optional>
 #include <string>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
@@ -34,46 +32,68 @@ static GetTestModelFn BuildF32ConvTestCase(const std::string& conv_op_type, cons
                                            const std::optional<std::vector<int64_t>>& output_shape = std::nullopt) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
           dilations, group, auto_pad, output_activation, output_shape](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> conv_inputs = {
-        MakeTestInput(builder, input_def),
-        MakeTestInput(builder, weights_def)};
-
+    // inputs
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weights_def);
+    std::vector<std::string> conv_input_names{"input", "weights"};
     if (!bias_def.GetShape().empty()) {
-      conv_inputs.push_back(MakeTestInput(builder, bias_def));
+      MakeTestInput<float>(builder, "bias", bias_def);
+      conv_input_names.push_back("bias");
     }
 
-    auto* conv_output = output_activation.has_value() ? builder.MakeIntermediate() : builder.MakeOutput();
-
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    // attributes (must be provided at node creation)
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
     }
 
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
     }
 
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
     }
 
     if (output_shape.has_value()) {
-      conv_node.AddAttribute("output_shape", output_shape.value());
+      conv_attrs.push_back(builder.MakeIntsAttribute("output_shape", output_shape.value()));
     }
 
+    // Conv -> conv_out (either final output, or feeds activation)
+    const char* conv_out_name = output_activation.has_value() ? "conv_out" : "output";
     if (output_activation.has_value()) {
-      NodeArg* output = builder.MakeOutput();
-      std::vector<NodeArg*> activation_inputs = {conv_output};
-      for (auto val : output_activation->const_inputs) {
-        activation_inputs.push_back(builder.MakeScalarInitializer(val));
+      builder.MakeOutput("output");
+    } else {
+      builder.MakeOutput(conv_out_name);
+    }
+
+    builder.AddNode("Conv",
+                    conv_op_type,
+                    conv_input_names,
+                    {conv_out_name},
+                    kOnnxDomain,
+                    conv_attrs);
+
+    if (output_activation.has_value()) {
+      // conv_out -> activation -> output
+      std::vector<std::string> activation_inputs{"conv_out"};
+      for (size_t i = 0; i < output_activation->const_inputs.size(); ++i) {
+        const std::string name = "act_const_" + std::to_string(i);
+        builder.MakeScalarInitializer<float>(name, output_activation->const_inputs[i]);
+        activation_inputs.push_back(name);
       }
-      builder.AddNode(output_activation->op_type, activation_inputs, {output});
+
+      builder.AddNode("Activation",
+                      output_activation->op_type,
+                      activation_inputs,
+                      {"output"},
+                      kOnnxDomain);
     }
   };
 }
@@ -94,21 +114,21 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
           dilations, group, auto_pad, use_contrib_qdq](ModelTestBuilder& builder,
                                                        std::vector<QuantParams<ActivationQType>>& output_qparams) {
-    std::vector<NodeArg*> conv_inputs;
+    std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
-    auto* input = MakeTestInput(builder, input_def);
+    MakeTestInput<float>(builder, "input", input_def);
     QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
-    auto* input_qdq = AddQDQNodePair<ActivationQType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                      use_contrib_qdq);
-    conv_inputs.push_back(input_qdq);
+    std::string input_qdq = AddQDQNodePair<ActivationQType>(builder, "input_qdq", "input", input_qparams.scale, input_qparams.zero_point,
+                                                            use_contrib_qdq);
+    conv_input_names.push_back(input_qdq);
 
     // weights -> Q/DQ ->
-    auto* weights = MakeTestInput(builder, weights_def);
+    MakeTestInput<float>(builder, "weights", weights_def);
     QuantParams<WeightQType> weights_qparams = GetTestInputQuantParams<WeightQType>(weights_def);
-    auto* weights_qdq = AddQDQNodePair<WeightQType>(builder, weights, weights_qparams.scale,
-                                                    weights_qparams.zero_point, use_contrib_qdq);
-    conv_inputs.push_back(weights_qdq);
+    std::string weights_qdq = AddQDQNodePair<WeightQType>(builder, "weights_qdq", "weights", weights_qparams.scale,
+                                                          weights_qparams.zero_point, use_contrib_qdq);
+    conv_input_names.push_back(weights_qdq);
 
     // bias -> Create bias with MISMATCHED scale to trigger requantization
     if (!bias_def.GetShape().empty()) {
@@ -117,29 +137,35 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
       const float correct_bias_scale = input_qparams.scale * weights_qparams.scale;
       const float wrong_bias_scale = correct_bias_scale * 2.5f;  // Intentionally wrong scale
 
-      conv_inputs.push_back(MakeTestQDQBiasInput(builder, bias_def, wrong_bias_scale, use_contrib_qdq));
+      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, wrong_bias_scale, use_contrib_qdq));
     }
 
-    auto* conv_output = builder.MakeIntermediate();
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
-
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    // Conv attrs (must be provided at node creation)
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
     }
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
     }
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
     }
 
-    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, conv_output, output_qparams[0].scale,
+    builder.AddNode("Conv",
+                    conv_op_type,
+                    conv_input_names,
+                    {"conv_output"},
+                    kOnnxDomain,
+                    conv_attrs);
+
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, "output_qdq", "conv_output", output_qparams[0].scale,
                                                            output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
@@ -162,49 +188,59 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
           dilations, group, auto_pad, use_contrib_qdq,
           weight_quant_axis](ModelTestBuilder& builder,
                              std::vector<QuantParams<ActivationQType>>& output_qparams) {
-    std::vector<NodeArg*> conv_inputs;
+    std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
-    auto* input = MakeTestInput(builder, input_def);
-    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
-    auto* input_qdq = AddQDQNodePair<ActivationQType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                      use_contrib_qdq);
-    conv_inputs.push_back(input_qdq);
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    conv_input_names.push_back(
+        AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale, input_qparams.zero_point,
+                                        use_contrib_qdq));
 
     // Quantized(weights) -> DQ -> (per-channel quantization)
-    ORT_ENFORCE(weights_def.IsInitializer() && weights_def.IsRawData());
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
     std::vector<float> weight_scales;
     std::vector<WeightQType> weight_zero_points;
-    TensorShape weights_shape = weights_def.GetTensorShape();
+
+    auto weights_shape = weights_def.GetShape();
     int64_t pos_weight_quant_axis = weight_quant_axis;
     if (pos_weight_quant_axis < 0) {
-      pos_weight_quant_axis += static_cast<int64_t>(weights_shape.NumDimensions());
+      pos_weight_quant_axis += static_cast<int64_t>(weights_shape.size());
     }
+
     GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zero_points,
                                                    static_cast<size_t>(pos_weight_quant_axis), true);
 
-    std::vector<WeightQType> quantized_weights;
-    size_t num_weight_storage_elems = weights_shape.Size();
+    size_t num_weight_storage_elems = SizeOfShape(weights_shape);
     if constexpr (std::is_same_v<WeightQType, Int4x2> || std::is_same_v<WeightQType, UInt4x2>) {
-      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(weights_shape.Size());
+      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(SizeOfShape(weights_shape));
     }
-    quantized_weights.resize(num_weight_storage_elems);
-    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights, weights_shape,
-                                       weight_scales, weight_zero_points, pos_weight_quant_axis);
 
-    NodeArg* weights_initializer = builder.MakeInitializer<WeightQType>(weights_def.GetShape(), quantized_weights);
-    NodeArg* weights_dq = builder.MakeIntermediate();
-    Node& weights_dq_node = builder.AddDequantizeLinearNode<WeightQType>(weights_initializer, weight_scales,
-                                                                         weight_zero_points, weights_dq,
-                                                                         nullptr, use_contrib_qdq);
-    weights_dq_node.AddAttribute("axis", weight_quant_axis);
-    conv_inputs.push_back(weights_dq);
+    std::vector<WeightQType> quantized_weights(num_weight_storage_elems);
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights,
+                                       weights_def.GetShape(), weight_scales, weight_zero_points,
+                                       pos_weight_quant_axis);
+
+    builder.MakeInitializer<WeightQType>("weights_quant", weights_def.GetShape(), quantized_weights);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> weights_dq_attrs;
+    weights_dq_attrs.push_back(builder.MakeScalarAttribute("axis", weight_quant_axis));
+
+    builder.AddDequantizeLinearNode(
+        "WeightDQ",
+        "weights_quant",
+        weight_scales,
+        weight_zero_points,
+        "weights_dq",
+        weights_dq_attrs,
+        use_contrib_qdq);
+    conv_input_names.push_back("weights_dq");
 
     // Quantized(bias) -> DQ -> (per-channel quantization with WRONG scales)
     if (!bias_def.GetShape().empty()) {
       // Create INTENTIONALLY WRONG bias scales that don't match input_scale * weight_scale[i]
       // This should cause QDQ to fail against CPU, but our requantization should fix it
-      ORT_ENFORCE(bias_def.IsInitializer() && bias_def.IsRawData());
+      QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
       std::vector<float> wrong_bias_scales = weight_scales;
       std::vector<int32_t> bias_zero_points(weight_scales.size(), 0);
 
@@ -215,41 +251,56 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
         wrong_bias_scales[i] = (input_qparams.scale * weight_scales[i]) * wrong_multiplier;
       }
 
-      TensorShape bias_shape = bias_def.GetTensorShape();
-      std::vector<int32_t> quantized_biases(bias_shape.Size());
-      QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases, bias_shape, wrong_bias_scales,
-                                     bias_zero_points, 0);
+      auto bias_shape = bias_def.GetShape();
+      std::vector<int32_t> quantized_biases(SizeOfShape(bias_shape));
+      QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases,
+                                     bias_def.GetShape(), wrong_bias_scales, bias_zero_points,
+                                     0 /* axis */);
 
-      NodeArg* bias_initializer = builder.MakeInitializer<int32_t>(bias_def.GetShape(), quantized_biases);
-      NodeArg* bias_dq = builder.MakeIntermediate();
-      Node& bias_dq_node = builder.AddDequantizeLinearNode<int32_t>(bias_initializer, wrong_bias_scales, bias_zero_points,
-                                                                    bias_dq, nullptr, use_contrib_qdq);
+      builder.MakeInitializer<int32_t>("bias_quant", bias_def.GetShape(), quantized_biases);
+      builder.MakeInitializer<float>("bias_scale", {static_cast<int64_t>(wrong_bias_scales.size())}, wrong_bias_scales);
+      builder.MakeInitializer<int32_t>("bias_zp", {static_cast<int64_t>(bias_zero_points.size())}, bias_zero_points);
 
-      bias_dq_node.AddAttribute("axis", static_cast<int64_t>(0));
-      conv_inputs.push_back(bias_dq);
+      std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
+      bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+
+      builder.AddNode("BiasDQ",
+                      "DequantizeLinear",
+                      {"bias_quant", "bias_scale", "bias_zp"},
+                      {"bias_dq"},
+                      use_contrib_qdq ? kMSDomain : kOnnxDomain,
+                      bias_dq_attrs);
+      conv_input_names.push_back("bias_dq");
     }
 
-    auto* conv_output = builder.MakeIntermediate();
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
-
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    // Conv attrs (must be provided at node creation)
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
     }
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
     }
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
     }
 
-    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, conv_output, output_qparams[0].scale,
-                                                           output_qparams[0].zero_point, use_contrib_qdq);
+    const char* conv_out_name = "Y";
+    builder.AddNode("Conv",
+                    conv_op_type,
+                    conv_input_names,
+                    {conv_out_name},
+                    kOnnxDomain,
+                    conv_attrs);
+
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
+        builder, "qdq_out", conv_out_name, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -299,64 +350,79 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
           dilations, group, auto_pad,
           use_contrib_qdq, output_activation, output_shape](ModelTestBuilder& builder,
                                                             std::vector<QuantParams<ActivationQType>>& output_qparams) {
-    std::vector<NodeArg*> conv_inputs;
+    std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
-    auto* input = MakeTestInput(builder, input_def);
-    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
-    auto* input_qdq = AddQDQNodePair<ActivationQType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                      use_contrib_qdq);
-    conv_inputs.push_back(input_qdq);
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    conv_input_names.push_back(
+        AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale, input_qparams.zero_point,
+                                        use_contrib_qdq));
 
     // weights -> Q/DQ ->
-    auto* weights = MakeTestInput(builder, weights_def);
-    QuantParams<WeightQType> weights_qparams = GetTestInputQuantParams<WeightQType>(weights_def);
-    auto* weights_qdq = AddQDQNodePair<WeightQType>(builder, weights, weights_qparams.scale,
-                                                    weights_qparams.zero_point, use_contrib_qdq);
-    conv_inputs.push_back(weights_qdq);
+    MakeTestInput<float>(builder, "weights", weights_def);
+    const QuantParams<WeightQType> weights_qparams = GetTestInputQuantParams<WeightQType>(weights_def);
+    conv_input_names.push_back(
+        AddQDQNodePair<WeightQType>(builder, "qdq_weights", "weights", weights_qparams.scale, weights_qparams.zero_point,
+                                    use_contrib_qdq));
 
     // bias ->
     if (!bias_def.GetShape().empty()) {
       // Bias requirement taken from python quantization tool: onnx_quantizer.py::quantize_bias_static()
       const float bias_scale = input_qparams.scale * weights_qparams.scale;
-
-      conv_inputs.push_back(MakeTestQDQBiasInput(builder, bias_def, bias_scale, use_contrib_qdq));
+      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale, use_contrib_qdq));
     }
 
-    auto* conv_output = builder.MakeIntermediate();
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
-
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    // Conv attrs (must be provided at node creation)
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
     }
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
     }
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
     }
     if (output_shape.has_value()) {
-      conv_node.AddAttribute("output_shape", output_shape.value());
+      conv_attrs.push_back(builder.MakeIntsAttribute("output_shape", output_shape.value()));
     }
 
-    NodeArg* q_input = conv_output;
+    const char* conv_out_name = output_activation.has_value() ? "conv_out" : "Y";
+    builder.AddNode("Conv",
+                    conv_op_type,
+                    conv_input_names,
+                    {conv_out_name},
+                    kOnnxDomain,
+                    conv_attrs);
+
+    // (optional) activation after Conv
+    std::string q_input_name = conv_out_name;
     if (output_activation.has_value()) {
-      q_input = builder.MakeIntermediate();
-      std::vector<NodeArg*> activation_inputs = {conv_output};
-      for (auto val : output_activation->const_inputs) {
-        activation_inputs.push_back(builder.MakeScalarInitializer(val));
+      std::vector<std::string> activation_inputs{"conv_out"};
+      for (size_t i = 0; i < output_activation->const_inputs.size(); ++i) {
+        const std::string name = "act_const_" + std::to_string(i);
+        builder.MakeScalarInitializer<float>(name, output_activation->const_inputs[i]);
+        activation_inputs.push_back(name);
       }
-      builder.AddNode(output_activation->op_type, activation_inputs, {q_input});
+
+      builder.AddNode("Activation",
+                      output_activation->op_type,
+                      activation_inputs,
+                      {"act_out"},
+                      kOnnxDomain);
+      q_input_name = "act_out";
     }
 
-    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, q_input, output_qparams[0].scale,
-                                                           output_qparams[0].zero_point, use_contrib_qdq);
+    // op_output -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
+        builder, "qdq_out", q_input_name, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -378,101 +444,134 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
           dilations, group, auto_pad, use_contrib_qdq,
           weight_quant_axis, output_activation](ModelTestBuilder& builder,
                                                 std::vector<QuantParams<ActivationQType>>& output_qparams) {
-    std::vector<NodeArg*> conv_inputs;
+    std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
-    auto* input = MakeTestInput(builder, input_def);
-    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
-    auto* input_qdq = AddQDQNodePair<ActivationQType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                      use_contrib_qdq);
-    conv_inputs.push_back(input_qdq);
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    conv_input_names.push_back(
+        AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale, input_qparams.zero_point,
+                                        use_contrib_qdq));
 
     // Quantized(weights) -> DQ ->
-    ORT_ENFORCE(weights_def.IsInitializer() && weights_def.IsRawData());
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
     std::vector<float> weight_scales;
     std::vector<WeightQType> weight_zero_points;
-    TensorShape weights_shape = weights_def.GetTensorShape();
+
+    auto weights_shape = weights_def.GetShape();
     int64_t pos_weight_quant_axis = weight_quant_axis;
     if (pos_weight_quant_axis < 0) {
-      pos_weight_quant_axis += static_cast<int64_t>(weights_shape.NumDimensions());
+      pos_weight_quant_axis += static_cast<int64_t>(weights_shape.size());
     }
+
     GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zero_points,
                                                    static_cast<size_t>(pos_weight_quant_axis), true);
 
-    std::vector<WeightQType> quantized_weights;
-    size_t num_weight_storage_elems = weights_shape.Size();
+    size_t num_weight_storage_elems = SizeOfShape(weights_shape);
     if constexpr (std::is_same_v<WeightQType, Int4x2> || std::is_same_v<WeightQType, UInt4x2>) {
-      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(weights_shape.Size());
+      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(SizeOfShape(weights_shape));
     }
-    quantized_weights.resize(num_weight_storage_elems);
-    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights, weights_shape,
-                                       weight_scales, weight_zero_points, pos_weight_quant_axis);
 
-    NodeArg* weights_initializer = builder.MakeInitializer<WeightQType>(weights_def.GetShape(), quantized_weights);
-    NodeArg* weights_dq = builder.MakeIntermediate();
-    Node& weights_dq_node = builder.AddDequantizeLinearNode<WeightQType>(weights_initializer, weight_scales,
-                                                                         weight_zero_points, weights_dq,
-                                                                         nullptr, use_contrib_qdq);
-    weights_dq_node.AddAttribute("axis", weight_quant_axis);
-    conv_inputs.push_back(weights_dq);
+    std::vector<WeightQType> quantized_weights(num_weight_storage_elems);
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights,
+                                       weights_def.GetShape(), weight_scales, weight_zero_points,
+                                       pos_weight_quant_axis);
+
+    builder.MakeInitializer<WeightQType>("weights_quant", weights_def.GetShape(), quantized_weights);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> weights_dq_attrs;
+    weights_dq_attrs.push_back(builder.MakeScalarAttribute("axis", weight_quant_axis));
+
+    builder.AddDequantizeLinearNode(
+        "WeightDQ",
+        "weights_quant",
+        weight_scales,
+        weight_zero_points,
+        "weights_dq",
+        weights_dq_attrs,
+        use_contrib_qdq);
+    conv_input_names.push_back("weights_dq");
 
     // Quantized(bias) -> DQ ->
     if (!bias_def.GetShape().empty()) {
-      // Bias requirement taken from python quantization tool: onnx_quantizer.py::quantize_bias_static()
-      // bias_scale = input_scale * weight_scale
-      // bias_zero_point = 0
-      ORT_ENFORCE(bias_def.IsInitializer() && bias_def.IsRawData());
-      std::vector<float> bias_scales = weight_scales;
-      std::vector<int32_t> bias_zero_points(weight_scales.size(), 0);
-      for (size_t i = 0; i < bias_scales.size(); i++) {
-        bias_scales[i] *= input_qparams.scale;
+      QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
+
+      // bias_scale = input_scale * weight_scale (per-channel)
+      std::vector<float> bias_scales(weight_scales);
+      for (float& s : bias_scales) {
+        s *= input_qparams.scale;
       }
 
-      TensorShape bias_shape = bias_def.GetTensorShape();
-      std::vector<int32_t> quantized_biases(bias_shape.Size());
-      QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases, bias_shape, bias_scales,
-                                     bias_zero_points, 0);
+      std::vector<int32_t> bias_zero_points(bias_scales.size(), 0);
+      auto bias_shape = bias_def.GetShape();
 
-      NodeArg* bias_initializer = builder.MakeInitializer<int32_t>(bias_def.GetShape(), quantized_biases);
-      NodeArg* bias_dq = builder.MakeIntermediate();
-      Node& bias_dq_node = builder.AddDequantizeLinearNode<int32_t>(bias_initializer, bias_scales, bias_zero_points,
-                                                                    bias_dq, nullptr, use_contrib_qdq);
+      std::vector<int32_t> quantized_biases(SizeOfShape(bias_shape));
+      QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases,
+                                     bias_def.GetShape(), bias_scales, bias_zero_points,
+                                     0 /* axis */);
 
-      bias_dq_node.AddAttribute("axis", static_cast<int64_t>(0));
-      conv_inputs.push_back(bias_dq);
+      builder.MakeInitializer<int32_t>("bias_quant", bias_def.GetShape(), quantized_biases);
+      builder.MakeInitializer<float>("bias_scale", {static_cast<int64_t>(bias_scales.size())}, bias_scales);
+      builder.MakeInitializer<int32_t>("bias_zp", {static_cast<int64_t>(bias_zero_points.size())}, bias_zero_points);
+
+      std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
+      bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+
+      builder.AddNode("BiasDQ",
+                      "DequantizeLinear",
+                      {"bias_quant", "bias_scale", "bias_zp"},
+                      {"bias_dq"},
+                      use_contrib_qdq ? kMSDomain : kOnnxDomain,
+                      bias_dq_attrs);
+      conv_input_names.push_back("bias_dq");
     }
 
-    auto* conv_output = builder.MakeIntermediate();
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
-
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    // Conv attrs (must be provided at node creation)
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
     }
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
     }
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
     }
 
-    NodeArg* q_input = conv_output;
+    const char* conv_out_name = output_activation.has_value() ? "conv_out" : "Y";
+    builder.AddNode("Conv",
+                    conv_op_type,
+                    conv_input_names,
+                    {conv_out_name},
+                    kOnnxDomain,
+                    conv_attrs);
+
+    // (optional) activation after Conv
+    std::string q_input_name = conv_out_name;
     if (output_activation.has_value()) {
-      q_input = builder.MakeIntermediate();
-      std::vector<NodeArg*> activation_inputs = {conv_output};
-      for (auto val : output_activation->const_inputs) {
-        activation_inputs.push_back(builder.MakeScalarInitializer(val));
+      std::vector<std::string> activation_inputs{"conv_out"};
+      for (size_t i = 0; i < output_activation->const_inputs.size(); ++i) {
+        const std::string name = "act_const_" + std::to_string(i);
+        builder.MakeScalarInitializer<float>(name, output_activation->const_inputs[i]);
+        activation_inputs.push_back(name);
       }
-      builder.AddNode(output_activation->op_type, activation_inputs, {q_input});
+
+      builder.AddNode("Activation",
+                      output_activation->op_type,
+                      activation_inputs,
+                      {"act_out"},
+                      kOnnxDomain);
+      q_input_name = "act_out";
     }
 
-    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, q_input, output_qparams[0].scale,
-                                                           output_qparams[0].zero_point, use_contrib_qdq);
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
+        builder, "qdq_out", q_input_name, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -835,6 +934,78 @@ TEST_F(QnnCPUBackendTests, ConvTranspose1Df32_DynamicWeights_DefaultBias) {
                 ExpectedEPNodeAssignment::All);
 }
 
+// Builds: weight_q0 (int8 init) -> DQ -> Q -> DQ -> Conv.
+// Used to regression-test chained folding; differing scale0/scale1 exercises real requant
+// on the intermediate STATIC tensor rather than a byte round-trip.
+static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
+    const std::vector<float>& scale0,
+    const std::vector<int8_t>& zp0,
+    const std::vector<float>& scale1,
+    const std::vector<int8_t>& zp1) {
+  return [scale0, zp0, scale1, zp1](ModelTestBuilder& builder) {
+    constexpr int64_t out_ch = 2;
+    constexpr int64_t in_ch = 3;
+    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
+    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
+
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
+
+    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
+    builder.MakeInitializer<float>("scale0", {out_ch}, scale0);
+    builder.MakeInitializer<int8_t>("zp0", {out_ch}, zp0);
+    builder.MakeInitializer<float>("scale1", {out_ch}, scale1);
+    builder.MakeInitializer<int8_t>("zp1", {out_ch}, zp1);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+
+    builder.AddNode("WeightDQ0", "DequantizeLinear", {"weight_q0", "scale0", "zp0"}, {"weight_dq0"},
+                    kOnnxDomain, axis_attrs);
+    builder.AddNode("WeightQ1", "QuantizeLinear", {"weight_dq0", "scale1", "zp1"}, {"weight_q1"},
+                    kOnnxDomain, axis_attrs);
+    builder.AddNode("WeightDQ1", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq1"},
+                    kOnnxDomain, axis_attrs);
+
+    builder.MakeOutput("output");
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+
+    builder.AddNode("Conv", "Conv", {"input", "weight_dq1"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-4f);
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-4f);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // The bug is from a QDQ model, and Conv node gets processed before it's producer Mul node
@@ -853,52 +1024,107 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
 
   auto BuildConvMulGraph = [](ModelTestBuilder& builder) {
     // DQ node for Conv input
-    auto* dq_i_output = builder.MakeIntermediate();
-    auto* conv_dq_input = builder.MakeInitializer<uint8_t>({1, 32, 16, 113}, static_cast<uint8_t>(0),
-                                                           static_cast<uint8_t>(127));
+    builder.MakeInitializer<uint8_t>("conv_q_input", {1, 32, 16, 113}, static_cast<uint8_t>(0), static_cast<uint8_t>(127));
+    builder.AddNode("ConvInputDQ",
+                    "DequantizeLinear",
+                    {"conv_q_input"},
+                    {"dq_i_output"},
+                    kOnnxDomain);
 
     // DQ node for Conv bias
-    auto* dq_bias_output = builder.MakeIntermediate();
-    auto* bias = builder.MakeInitializer<int32_t>({16}, static_cast<int32_t>(0), static_cast<int32_t>(127));
+    builder.MakeInitializer<int32_t>("bias_q", {16}, static_cast<int32_t>(0), static_cast<int32_t>(127));
+    builder.AddNode("BiasDQ",
+                    "DequantizeLinear",
+                    {"bias_q"},
+                    {"dq_bias_output"},
+                    kOnnxDomain);
 
-    // Mul node
-    // DQ nodes for Mul
-    auto* mul_dq1_output = builder.MakeIntermediate();
-    auto* mul_input1 = builder.MakeInput<uint8_t>({16, 32, 1, 1}, static_cast<uint8_t>(0), static_cast<uint8_t>(127));
+    // Mul node: DQ(mul_input1) * DQ(mul_input2)
+    builder.MakeInput<uint8_t>("mul_q_input1", {16, 32, 1, 1}, static_cast<uint8_t>(0), static_cast<uint8_t>(127));
+    builder.MakeInitializer<uint8_t>("mul_q_input2", {16, 1, 1, 1}, static_cast<uint8_t>(0), static_cast<uint8_t>(127));
 
-    auto* mul_dq2_output = builder.MakeIntermediate();
-    auto* mul_input2 = builder.MakeInitializer<uint8_t>({16, 1, 1, 1}, static_cast<uint8_t>(0),
-                                                        static_cast<uint8_t>(127));
-    builder.AddDequantizeLinearNode<uint8_t>(mul_input1, .03f, 0, mul_dq1_output);
-    builder.AddDequantizeLinearNode<uint8_t>(mul_input2, .03f, 0, mul_dq2_output);
+    builder.AddNode("MulInput1DQ",
+                    "DequantizeLinear",
+                    {"mul_q_input1"},
+                    {"mul_dq1_output"},
+                    kOnnxDomain);
 
-    auto* mul_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {mul_dq1_output, mul_dq2_output}, {mul_output});
+    builder.AddNode("MulInput2DQ",
+                    "DequantizeLinear",
+                    {"mul_q_input2"},
+                    {"mul_dq2_output"},
+                    kOnnxDomain);
 
-    auto* mul_dq_output = AddQDQNodePair<uint8_t>(builder, mul_output, .03f, 0);
+    builder.AddNode("Mul",
+                    "Mul",
+                    {"mul_dq1_output", "mul_dq2_output"},
+                    {"mul_output"},
+                    kOnnxDomain);
 
-    builder.AddDequantizeLinearNode<uint8_t>(conv_dq_input, .04f, 0, dq_i_output);
-    builder.AddDequantizeLinearNode<int32_t>(bias, .0012f, 0, dq_bias_output);
+    AddQDQNodePair<uint8_t>(builder, "qdq_mul_out", "mul_output", 0.03f, static_cast<uint8_t>(0));
+
     // Conv node
-    auto* conv_output = builder.MakeIntermediate();
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
 
-    Node& conv_node = builder.AddNode("Conv", {dq_i_output, mul_dq_output, dq_bias_output}, {conv_output});
-    conv_node.AddAttribute("auto_pad", "NOTSET");
-    conv_node.AddAttribute("pads", std::vector<int64_t>{0, 0, 0, 0});
-    conv_node.AddAttribute("strides", std::vector<int64_t>{1, 1});
-    conv_node.AddAttribute("dilations", std::vector<int64_t>{1, 1});
+    builder.AddNode("Conv",
+                    "Conv",
+                    {"dq_i_output", "qdq_mul_out_dq", "dq_bias_output"},
+                    {"conv_output"},
+                    kOnnxDomain,
+                    conv_attrs);
 
-    auto* q_output = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<uint8_t>(conv_output, .039f, 0, q_output);
+    // Conv output -> Q
+    builder.AddNode("ConvOutputQ",
+                    "QuantizeLinear",
+                    {"conv_output"},
+                    {"q_output"},
+                    kOnnxDomain);
 
-    auto* dq_output = builder.MakeOutput();
-    builder.AddDequantizeLinearNode<uint8_t>(q_output, .039f, 0, dq_output);
+    // Q -> DQ -> graph output
+    builder.AddNode("ConvOutputDQ",
+                    "DequantizeLinear",
+                    {"q_output"},
+                    {"output"},
+                    kOnnxDomain);
+    builder.MakeOutput("output");
   };
 
   RunQnnModelTest(BuildConvMulGraph,
                   provider_options,
                   13,
                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-3f);
+}
+
+TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-3f);
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
@@ -938,11 +1164,11 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
                                               input_def,
@@ -966,11 +1192,11 @@ TEST_F(QnnHTPBackendTests, ConvU16S4S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, Int4x2>("Conv",
                                                input_def,
@@ -1029,10 +1255,10 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel_BiasRequantization) {
   TestInputDef<float> input_def({1, 2, 4, 4}, false, -10.0f, 10.0f);
   std::vector<int64_t> weight_shape = {3, 2, 2, 2};
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   std::vector<int64_t> bias_shape = {3};
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   TestQDQModelAccuracy(BuildF32ConvTestCase("Conv",
                                             input_def,
@@ -1068,9 +1294,9 @@ TEST_F(QnnHTPBackendTests, ConvU16S4_PerChannel_NoBias) {
   std::vector<int64_t> weight_shape = {3, 2, 2, 2};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, Int4x2>("Conv",
                                                input_def,
@@ -1095,9 +1321,9 @@ TEST_F(QnnHTPBackendTests, ConvU16U8_PerTensor_NoBias) {
   std::vector<int64_t> weight_shape = {3, 2, 2, 2};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
 
   RunHTPConvOpTest<uint16_t, uint8_t>("Conv",
                                       input_def,
@@ -1122,9 +1348,9 @@ TEST_F(QnnHTPBackendTests, ConvU16U16_PerTensor_NoBias) {
   std::vector<int64_t> weight_shape = {3, 2, 2, 2};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
 
   RunHTPConvOpTest<uint16_t, uint16_t>("Conv",
                                        input_def,
@@ -1144,9 +1370,9 @@ TEST_F(QnnHTPBackendTests, ConvU16U16_PerTensor_NoBias) {
 TEST_F(QnnHTPBackendTests, ConvU16S4_PerChannel_NoBias_LargeINT4Weight) {
   std::vector<int64_t> input_shape = {1, 3072, 1, 512};
   std::vector<int64_t> weight_shape = {9216, 3072, 1, 1};
-  std::vector<float> input_data(TensorShape(input_shape).Size(), 0.1f);
+  std::vector<float> input_data(SizeOfShape(input_shape), 0.1f);
   input_data[0] = 0.2f;
-  std::vector<float> weight_data(TensorShape(weight_shape).Size(), -0.1f);
+  std::vector<float> weight_data(SizeOfShape(weight_shape), -0.1f);
   for (size_t c = 0; c < static_cast<size_t>(weight_shape[0]); c++) {
     size_t i = c * 3072;
     weight_data[i] = 0.1f;
@@ -1178,11 +1404,11 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_ReluClipFusion) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   // DQs -> Conv (w/ bias) -> Relu -> Q
   OutputActivationInfo relu_info = {"Relu", {}};
@@ -1253,6 +1479,98 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_ReluClipFusion) {
                                       clip_info_2);
 }
 
+// Redundant Clip between Conv and Q in a QDQ model should be accepted on HTP.
+TEST_F(QnnHTPBackendTests, ConvU8U8S32_RedundantClipQDQ) {
+  std::vector<int64_t> input_shape = {1, 2, 4, 4};
+  std::vector<int64_t> weight_shape = {3, 2, 2, 2};
+  std::vector<int64_t> bias_shape = {3};
+
+  TestInputDef<float> input_def(input_shape, false,
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true,
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true,
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  OutputActivationInfo clip_info = {"Clip", {-2.0f, 2.0f}};
+  auto f32_fn = BuildF32ConvTestCase("Conv",
+                                     input_def,
+                                     weight_def,
+                                     bias_def,
+                                     {1, 1},        // Strides
+                                     {0, 0, 0, 0},  // Pads
+                                     {1, 1},        // Dilations
+                                     1,             // default group
+                                     "NOTSET",
+                                     clip_info);
+
+  auto qdq_fn = [input_def, weight_def, bias_def](ModelTestBuilder& builder,
+                                                  std::vector<QuantParams<uint8_t>>& output_qparams) {
+    std::vector<std::string> conv_inputs;
+
+    // input -> Q/DQ ->
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+    conv_inputs.push_back(AddQDQNodePair<uint8_t>(builder, "input_qdq", "input", input_qparams.scale,
+                                                  input_qparams.zero_point, /*use_contrib_qdq=*/true));
+
+    // weights -> Q/DQ ->
+    MakeTestInput<float>(builder, "weights", weight_def);
+    QuantParams<uint8_t> weights_qparams = GetTestInputQuantParams<uint8_t>(weight_def);
+    conv_inputs.push_back(AddQDQNodePair<uint8_t>(builder, "weights_qdq", "weights", weights_qparams.scale,
+                                                  weights_qparams.zero_point, /*use_contrib_qdq=*/true));
+
+    // bias ->
+    if (!bias_def.GetShape().empty()) {
+      const float bias_scale = input_qparams.scale * weights_qparams.scale;
+      conv_inputs.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale,
+                                                 /*use_contrib_qdq=*/true));
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+
+    const std::string conv_output = "conv_output";
+    builder.AddNode("Conv", "Conv", conv_inputs, {conv_output}, "", conv_attrs);
+
+    // Clip float min/max initializers -> Q -> DQ ->
+    builder.MakeScalarInitializer<float>("clip_min_f", -2.0f);
+    builder.MakeScalarInitializer<float>("clip_max_f", 2.0f);
+    builder.AddQuantizeLinearNode<uint8_t>("clip_min_q", "clip_min_f", input_qparams.scale,
+                                           input_qparams.zero_point, "clip_min_q_out");
+    builder.AddQuantizeLinearNode<uint8_t>("clip_max_q", "clip_max_f", input_qparams.scale,
+                                           input_qparams.zero_point, "clip_max_q_out");
+
+    builder.AddDequantizeLinearNode<uint8_t>("clip_min_dq", "clip_min_q_out", input_qparams.scale,
+                                             input_qparams.zero_point, "clip_min_dq_out");
+    builder.AddDequantizeLinearNode<uint8_t>("clip_max_dq", "clip_max_q_out", input_qparams.scale,
+                                             input_qparams.zero_point, "clip_max_dq_out");
+
+    // Clip ->
+    const std::string clip_output = "clip_output";
+    builder.AddNode("Clip", "Clip", {conv_output, "clip_min_dq_out", "clip_max_dq_out"}, {clip_output});
+
+    // Q -> output
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "output_qdq", clip_output, output_qparams[0].scale,
+                                                   output_qparams[0].zero_point, /*use_contrib_qdq=*/true);
+  };
+
+  TestQDQModelAccuracy<uint8_t>(f32_fn,
+                                qdq_fn,
+                                provider_options,
+                                13,  // opset
+                                ExpectedEPNodeAssignment::All,
+                                QDQTolerance());
+}
+
 // Test fusion of DQs -> Conv -> Relu/Clip -> Q.
 // User per-channel quantization.
 TEST_F(QnnHTPBackendTests, ConvS8S8S32_PerChannel_ReluClipFusion) {
@@ -1261,11 +1579,11 @@ TEST_F(QnnHTPBackendTests, ConvS8S8S32_PerChannel_ReluClipFusion) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   // DQs -> Conv (w/ bias) -> Relu -> Q
   OutputActivationInfo relu_info = {"Relu", {}};
@@ -1311,11 +1629,11 @@ TEST_F(QnnHTPBackendTests, ConvU16S4S32_PerChannel_NegativeWeightQuantAxis) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, Int4x2>("Conv",
                                               input_def,
@@ -1345,18 +1663,18 @@ TEST_F(QnnHTPBackendTests, ConvU16S4S32_PerChannel_AccuracyIssue) {
   std::vector<int64_t> bias_shape = {3};
 
   // Wrote out input data explicitly for easier reproduction.
-  // std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size());
+  // std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape));)
   std::vector<float> input_data = {-10.000f, -9.355f, -8.710f, -8.065f, -7.419f, -6.774f, -6.129f, -5.484f, -4.839f,
                                    -4.194f, -3.548f, -2.903f, -2.258f, -1.613f, -0.968f, -0.323f, 0.323f, 0.968f,
                                    1.613f, 2.258f, 2.903f, 3.548f, 4.194f, 4.839f, 5.484f, 6.129f, 6.774f,
                                    7.419f, 8.065f, 8.710f, 9.355f, 10.000f};
 
-  // std::vector<float> weight_data = GetFloatDataInRange(-1.0f, 1.0f, TensorShape(weight_shape).Size());
+  // std::vector<float> weight_data = GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape));
   std::vector<float> weight_data = {-1.000f, -0.913f, -0.826f, -0.739f, -0.652f, -0.565f, -0.478f, -0.391f, -0.304f,
                                     -0.217f, -0.130f, -0.043f, 0.043f, 0.130f, 0.217f, 0.304f, 0.391f, 0.478f,
                                     0.565f, 0.652f, 0.739f, 0.826f, 0.913f, 1.000f};
 
-  // std::vector<float> bias_data = GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size());
+  // std::vector<float> bias_data = GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape));
   std::vector<float> bias_data = {-1.000f, 0.000f, 1.000f};
 
   TestInputDef<float> input_def(input_shape, false, input_data);
@@ -1386,11 +1704,11 @@ TEST_F(QnnHTPBackendTests, Conv_PerChannel_UnsupportedAxis) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
                                               input_def,
@@ -1423,11 +1741,11 @@ TEST_F(QnnHTPBackendTests, Conv3D_U8S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
                                               input_def,
@@ -1452,11 +1770,11 @@ TEST_F(QnnHTPBackendTests, ConvDepthwiseU8S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {2};             // (M)
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
                                               input_def,
@@ -1489,11 +1807,11 @@ TEST_F(QnnHTPBackendTests, Conv3D_U8S8S32_PerChannel2) {
   std::vector<int64_t> bias_shape = {2};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
                                               input_def,
@@ -1517,11 +1835,11 @@ TEST_F(QnnHTPBackendTests, ConvTransposeU8S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("ConvTranspose",
                                               input_def,
@@ -1545,11 +1863,11 @@ TEST_F(QnnHTPBackendTests, ConvTranspose_PerChannel_UnsupportedAxis) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("ConvTranspose",
                                               input_def,
@@ -1575,11 +1893,11 @@ TEST_F(QnnHTPBackendTests, ConvTranspose3D_U8S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("ConvTranspose",
                                               input_def,
@@ -1604,11 +1922,11 @@ TEST_F(QnnHTPBackendTests, ConvU16S16S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int16_t>("Conv",
                                                 input_def,
@@ -1633,11 +1951,11 @@ TEST_F(QnnHTPBackendTests, ConvU16S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int8_t>("Conv",
                                                input_def,
@@ -1654,7 +1972,173 @@ TEST_F(QnnHTPBackendTests, ConvU16S8S32_PerChannel) {
                                                13);   // opset
 }
 
-// Conv3D per-channel
+// Helper: Builds QDQ Conv model with fused activation (Relu or Clip) between Conv and output Q.
+// Pattern: DQ(input) + DQ(weight) + float_bias -> Conv -> Relu/Clip -> Q(forced encoding) -> DQ
+// Uses a forced output encoding with zp > 0 (encoding allows negatives) to trigger the
+// non-fusion path. Without the fix, HTP won't clamp and the test fails.
+template <typename ActivationQType, typename WeightQType>
+static GetTestQDQModelFn<ActivationQType> BuildQDQConvWithFusedActivationTestCase(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    const std::string& activation_type,
+    float forced_output_scale,
+    ActivationQType forced_output_zp,
+    float clip_min = 0.0f,
+    float clip_max = 6.0f) {
+  return [input_def, weights_def, bias_def, activation_type, forced_output_scale, forced_output_zp,
+          clip_min, clip_max](
+             ModelTestBuilder& builder,
+             std::vector<QuantParams<ActivationQType>>& output_qparams) {
+    (void)output_qparams;
+
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    std::string input_dq = AddQDQNodePair<ActivationQType>(builder, "input_qdq", "input",
+                                                           input_qparams.scale, input_qparams.zero_point, true);
+
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zps;
+    GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zps, 0, true);
+    std::vector<WeightQType> quantized_weights(SizeOfShape(weights_def.GetShape()));
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights,
+                                       weights_def.GetShape(), weight_scales, weight_zps, 0);
+    builder.MakeInitializer<WeightQType>("weights_quant", weights_def.GetShape(), quantized_weights);
+    std::vector<ONNX_NAMESPACE::AttributeProto> w_dq_attrs;
+    w_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+    builder.AddDequantizeLinearNode("WeightDQ", "weights_quant", weight_scales, weight_zps,
+                                    "weights_dq", w_dq_attrs, true);
+
+    builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+
+    builder.AddNode("Conv", "Conv", {input_dq, "weights_dq", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+
+    if (activation_type == "Relu") {
+      builder.AddNode("Relu", "Relu", {"conv_out"}, {"act_out"});
+    } else {
+      builder.MakeScalarInitializer<float>("clip_min", clip_min);
+      builder.MakeScalarInitializer<float>("clip_max", clip_max);
+      builder.AddNode("Clip", "Clip", {"conv_out", "clip_min", "clip_max"}, {"act_out"});
+    }
+
+    // Use FORCED output encoding (not auto-calibrated) to guarantee encoding_min < activation_min
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, "output_qdq", "act_out",
+                                                           forced_output_scale, forced_output_zp, true);
+  };
+}
+
+// Test 1: Conv+Relu where output encoding min < 0 (Relu's activation_min).
+TEST_F(QnnHTPBackendTests, ConvReluFusion_EncodingMinBelowZero) {
+  std::vector<int64_t> input_shape = {1, 128, 4, 4};
+  std::vector<int64_t> weight_shape = {64, 128, 1, 1};
+  std::vector<int64_t> bias_shape = {64};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 40.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-3.0f, 10.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.AddNode("Relu", "Relu", {"conv_out"}, {"relu_out"});
+    builder.MakeOutput("relu_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.000196, zp=14601 → encoding_min = 0.000196*(0-14601) = -2.86 < 0
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Relu",
+      0.000196270834f, static_cast<uint16_t>(14601));
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Test 2: Conv+Clip where output encoding min < clip_min.
+TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMinBelowClipMin) {
+  std::vector<int64_t> input_shape = {1, 64, 4, 4};
+  std::vector<int64_t> weight_shape = {32, 64, 1, 1};
+  std::vector<int64_t> bias_shape = {32};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(-5.0f, 40.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-5.0f, 5.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.MakeScalarInitializer<float>("clip_min_val", -1.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"conv_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.0003, zp=20000 → encoding_min = 0.0003*(0-20000) = -6.0 < clip_min(-1)
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Clip",
+      0.0003f, static_cast<uint16_t>(20000),
+      -1.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Test 3: Conv+Clip where output encoding max > clip_max.
+TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMaxAboveClipMax) {
+  std::vector<int64_t> input_shape = {1, 64, 4, 4};
+  std::vector<int64_t> weight_shape = {32, 64, 1, 1};
+  std::vector<int64_t> bias_shape = {32};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 50.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(0.0f, 8.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.MakeScalarInitializer<float>("clip_min_val", 0.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"conv_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.0002, zp=0 → encoding_max = 0.0002*65535 = 13.1 > clip_max(6)
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Clip",
+      0.0002f, static_cast<uint16_t>(0),
+      0.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Conv3D per-channel (known issue)
 // \QNN\HTP\HTP\src\hexagon\prepare\graph_prepare.cc:203:ERROR:could not create op: q::QNN_Conv3d_w_scale
 // \QNN\HTP\HTP\src\hexagon\prepare\graph_prepare.cc:1187:ERROR:Op 0x1a preparation failed with err:-1
 // QnnDsp <E> "Conv" generated: could not create op
@@ -1670,11 +2154,11 @@ TEST_F(QnnHTPBackendTests, Conv3D_U16S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int8_t>("Conv",
                                                input_def,
@@ -1698,11 +2182,11 @@ TEST_F(QnnHTPBackendTests, ConvTransposeU16S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int8_t>("ConvTranspose",
                                                input_def,
@@ -1727,11 +2211,11 @@ TEST_F(QnnHTPBackendTests, ConvTranspose3D_U16S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {3};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int8_t>("ConvTranspose",
                                                input_def,
@@ -1756,11 +2240,11 @@ TEST_F(QnnHTPBackendTests, ConvDepthwiseU16S8S32_PerChannel) {
   std::vector<int64_t> bias_shape = {2};             // (M)
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int8_t>("Conv",
                                                input_def,
@@ -1793,11 +2277,11 @@ TEST_F(QnnHTPBackendTests, Conv3D_U16S8S32_PerChannel2) {
   std::vector<int64_t> bias_shape = {2};
 
   TestInputDef<float> input_def(input_shape, false,
-                                GetFloatDataInRange(-10.0f, 10.0f, TensorShape(input_shape).Size()));
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
-                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
-                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
 
   RunHTPConvOpPerChannelTest<uint16_t, int8_t>("Conv",
                                                input_def,
@@ -2566,6 +3050,401 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_LargeInput_Dilations_Pads) {
                                      "NOTSET",                                                  // auto_pad
                                      ExpectedEPNodeAssignment::All);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block-Quantized Conv (BQ Phase 1)
+//
+// ONNX graph pattern:
+//   input → Q(u16) → DQ → Conv ← DQ(Int4, block_size, axis=0) → Q(u16) → DQ
+//
+// The weight DQ node uses a rank-2 float scale tensor [OC, num_blocks] where
+// num_blocks = IC / block_size. QNN EP maps this to the BW_FLOAT_BLOCK kernel
+// (FP16 activation) with an INT16→FP16 Convert before Conv and FP16→INT16
+// Convert after Conv.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// Builds the ONNX QDQ graph for a BQ (block-quantized weight) 2D Conv.
+//   - activation: uint16 per-tensor symmetric Q/DQ
+//   - weight: INT4 or INT8 initializer + DQ with block_size attribute and rank-4
+//             float scale [OC, IC/block_size, 1, 1] (axis=1, IC is the blocked dimension)
+//   - output: uint16 per-tensor symmetric Q/DQ
+//
+// weight_bits: 4 for INT4/UINT4 (default), 8 for INT8/UINT8, 2 for INT2.
+// block_size constraints: must be a multiple of 8 (4-bit), 4 (8-bit), or 16 (2-bit) per HTP.
+// weight_is_unsigned: true → use UINT weight type (UINT4 or UINT8); tests the
+//   unsigned→signed conversion path in conv_op_builder.cc (TransformUnsignedToSignedFixedPoint).
+// bias_per_channel: when include_bias is true, true → per-channel bias scale ([OC] values,
+//   axis=0); false → per-tensor bias scale (scalar). Exercises both bias dequant paths.
+GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
+                                     const std::vector<int64_t>& weight_shape,
+                                     int64_t block_size,
+                                     bool include_bias = false,
+                                     int weight_bits = 4,
+                                     bool weight_is_unsigned = false,
+                                     bool bias_per_channel = false) {
+  return [input_shape, weight_shape, block_size, include_bias, weight_bits,
+          weight_is_unsigned, bias_per_channel](ModelTestBuilder& builder) -> void {
+    const int64_t OC = weight_shape[0];
+    const int64_t IC = weight_shape[1];
+    const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
+    const int64_t kW = weight_shape.size() >= 4 ? weight_shape[3] : 1;
+    const int64_t num_blocks = IC / block_size;  // caller ensures IC % block_size == 0
+
+    // ── Activation: float → Q(uint16) → DQ ──────────────────────────────────
+    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // uint16 symmetric per-tensor: scale = 2/65534, zp = 32767 (~[-1, 1])
+    const float act_scale = 2.0f / 65534.0f;
+    const uint16_t act_zp = 32767;
+    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
+    builder.AddNode("act_ql", "QuantizeLinear",
+                    {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
+    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
+    builder.AddNode("act_dql", "DequantizeLinear",
+                    {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
+
+    // ── Weight initializer + DQ(block_size, axis=1) ──────────────────────────
+    // Scale rank == weight rank per ONNX opset 21: [OC, IC/block_size, 1, 1].
+    const std::vector<int64_t> scale_shape{OC, num_blocks, 1, 1};
+    builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
+
+    const size_t num_elems = static_cast<size_t>(OC * IC * kH * kW);
+    if (weight_bits == 4 && !weight_is_unsigned) {
+      // INT4 weight in range [-3, 3] (symmetric).
+      std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
+      }
+      builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 4 && weight_is_unsigned) {
+      // UINT4 weight in range [0, 14] (asymmetric-like; symmetric around 7 with zp omitted).
+      std::vector<UInt4x2> weight_data(UInt4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<uint8_t>(i % 15));
+      }
+      builder.MakeInitializer<UInt4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && !weight_is_unsigned) {
+      // INT2 weight in range [-1, 1] (symmetric, 4 elements per byte).
+      std::vector<Int2x4> weight_data(Int2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<int8_t>((i % 3) - 1));
+      }
+      builder.MakeInitializer<Int2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && weight_is_unsigned) {
+      // UINT2 weight in range [0, 3] (full unsigned 2-bit range, 4 elements per byte).
+      std::vector<UInt2x4> weight_data(UInt2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<uint8_t>(i % 4));
+      }
+      builder.MakeInitializer<UInt2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_is_unsigned) {
+      // UINT8 weight in range [0, 126] (symmetric around 63 with zp omitted).
+      std::vector<uint8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<uint8_t>(i % 127);
+      }
+      builder.MakeInitializer<uint8_t>("weight_quant", weight_shape, weight_data);
+    } else {
+      // INT8 weight in range [-63, 63] (symmetric).
+      std::vector<int8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<int8_t>((i % 127) - 63);
+      }
+      builder.MakeInitializer<int8_t>("weight_quant", weight_shape, weight_data);
+    }
+
+    // DQ with block_size; omit zero_point (symmetric). axis=1: IC is the blocked dimension.
+    builder.AddNode("weight_dql", "DequantizeLinear",
+                    {"weight_quant", "weight_scale"},
+                    {"weight_dql_out"}, "",
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(1)),
+                     builder.MakeScalarAttribute("block_size", block_size)});
+
+    // ── Conv ─────────────────────────────────────────────────────────────────
+    std::vector<std::string> conv_inputs{"act_dql_out", "weight_dql_out"};
+    if (include_bias) {
+      // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
+      // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
+      if (bias_per_channel) {
+        // Per-channel bias: distinct quantized value and scale per output channel (DQ axis=0).
+        // Non-zero quant values ensure the per-channel scale indexing is actually exercised.
+        // Omit zero_point (symmetric): ORT per-axis DQ requires zp be null or 1D of size OC.
+        std::vector<int32_t> bias_quant(static_cast<size_t>(OC));
+        std::vector<float> bias_scales(static_cast<size_t>(OC));
+        for (size_t i = 0; i < bias_quant.size(); ++i) {
+          bias_quant[i] = static_cast<int32_t>(i) - static_cast<int32_t>(OC) / 2;
+          bias_scales[i] = act_scale * (0.02f + 0.01f * static_cast<float>(i));
+        }
+        builder.Make1DInitializer<int32_t>("bias_quant", bias_quant);
+        builder.Make1DInitializer<float>("bias_scale", bias_scales);
+        builder.AddNode("bias_dql", "DequantizeLinear",
+                        {"bias_quant", "bias_scale"}, {"bias_dql_out"}, "",
+                        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+      } else {
+        const float bias_scale = act_scale * 0.03f;
+        builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
+        builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
+        builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(OC), 0));
+        builder.AddNode("bias_dql", "DequantizeLinear",
+                        {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+      }
+      conv_inputs.push_back("bias_dql_out");
+    }
+    builder.AddNode("conv", "Conv",
+                    conv_inputs, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeStringAttribute("auto_pad", "NOTSET"),
+                     builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}),
+                     builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0})});
+
+    // ── Output: Conv → Q(uint16) → DQ → graph output ─────────────────────────
+    const float out_scale = 2.0f / 65534.0f;
+    const uint16_t out_zp = 32767;
+    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
+    builder.AddNode("out_ql", "QuantizeLinear",
+                    {"conv_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
+    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
+    builder.MakeOutput("output");
+    builder.AddNode("out_dql", "DequantizeLinear",
+                    {"out_ql_out", "out_dql_scale", "out_ql_zp"}, {"output"});
+  };
+}
+
+ProviderOptions GetBQConvProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On the x86_64 Linux HTP simulator, specify SM8850 to enable BW_FLOAT_BLOCK support.
+  // On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// 1x1 Conv, INT4 weight, block_size=8, uint16 activation, no bias.
+// in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), out: u16
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with bias. Exercises the INT32→FP16 bias dequantization path.
+// in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), bias: int32 DQ, out: u16
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with per-channel quantized bias (DQ axis=0, [OC] scales).
+// Exercises the per-channel branch of the INT32→FP16 bias dequantization.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBiasPerChannel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with larger IC and more blocks per channel.
+// weight: int4 (IC=32, block_size=8, 4 blocks/OC), scale=[8,4,1,1]
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{8, 32, 1, 1},
+                                      /*block_size=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// Regression: existing per-channel INT4 Conv (no block_size) continues to work.
+// Reuses RunHTPConvOpPerChannelTest to confirm the BQ detection does not interfere.
+TEST_F(QnnHTPBackendTests, ConvBQ_ExistingPerChannel_Unaffected) {
+  // This duplicates ConvU16S4S32_PerChannel to act as a regression guard.
+  RunHTPConvOpPerChannelTest<uint16_t, Int4x2>(
+      "Conv",
+      TestInputDef<float>({1, 2, 4, 4}, false,
+                          GetFloatDataInRange(0.0f, 1.0f, SizeOfShape({1, 2, 4, 4}))),
+      TestInputDef<float>({3, 2, 2, 2}, true,
+                          GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape({3, 2, 2, 2}))),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3)),
+      0,             // weight quant axis
+      {1, 1},        // strides
+      {0, 0, 0, 0},  // pads
+      {1, 1},        // dilations
+      1,             // group
+      "NOTSET",
+      ExpectedEPNodeAssignment::All,
+      false,  // use_qdq_contrib_ops
+      21);    // opset
+}
+
+// ── BQ Conv bitwidth / block_size variants ───────────────────────────────────
+// INT4, block_size=16: still a valid HTP multiple-of-8 block size.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/4),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/4,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=8: larger block size, still a valid HTP multiple-of-4.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT2, block_size=16: DISABLED. Two independent blockers:
+//   1. ORT CPU backend does not support 2-bit Q/DQ — it rejects tensor(int2) as a
+//      DequantizeLinear input type at model load time (ONNX type check).
+//   2. QAIRT HTP backend does not support 2-bit BQ until QAIRT 2.47.
+// Re-enable once both are available (with verify_outputs=false until the CPU DQ
+// kernel supports int2 for accuracy comparison).
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16Int2_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/0.0f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// UINT2, block_size=16: DISABLED. Same blockers as ConvBQ_U16Int2_1x1_BlockSize16 —
+// ORT CPU backend does not support 2-bit Q/DQ, and QAIRT HTP backend does not
+// support 2-bit BQ until QAIRT 2.47.
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16UInt2_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/0.0f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// UINT4 weight, block_size=8: exercises TransformUnsignedToSignedFixedPoint for 4-bit.
+// in0: u16, weight: uint4 (scale=[4,2,1,1], block_size=8), out: u16
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT4 weight with bias: verifies unsigned weight path works with the FP16 bias dequantization.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT8 weight, block_size=4: exercises TransformUnsignedToSignedFixedPoint for 8-bit.
+// block_size=4 is the minimum valid HTP multiple for 8-bit block quantization.
+// Tolerance 2e-2f: UINT8 weights [0,126] produce larger FP16 intermediate values than INT4/INT8,
+// leading to slightly larger rounding differences between CPU (FP32) and QNN (FP16).
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/4,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-2f);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)

@@ -49,8 +49,8 @@ if parse_arg_remove_boolean(sys.argv, "--nightly_build"):
     nightly_build = True
 
 wheel_name_suffix = parse_arg_remove_string(sys.argv, "--wheel_name_suffix=")
+version_suffix = parse_arg_remove_string(sys.argv, "--version_suffix=")
 
-is_qnn = True
 package_name = "onnxruntime-qnn"
 qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
 
@@ -65,21 +65,22 @@ qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
 # manylinux2014_ppc64le
 # manylinux2014_s390x
 manylinux_tags = [
-    "manylinux1_x86_64",
     "manylinux1_i686",
-    "manylinux2010_x86_64",
+    "manylinux1_x86_64",
     "manylinux2010_i686",
-    "manylinux2014_x86_64",
-    "manylinux2014_i686",
+    "manylinux2010_x86_64",
     "manylinux2014_aarch64",
     "manylinux2014_armv7l",
+    "manylinux2014_i686",
     "manylinux2014_ppc64",
     "manylinux2014_ppc64le",
     "manylinux2014_s390x",
-    "manylinux_2_28_x86_64",
+    "manylinux2014_x86_64",
     "manylinux_2_28_aarch64",
-    "manylinux_2_34_x86_64",
+    "manylinux_2_28_x86_64",
     "manylinux_2_34_aarch64",
+    "manylinux_2_34_x86_64",
+    "manylinux_2_35_x86_64",
 ]
 is_manylinux = environ.get("AUDITWHEEL_PLAT", None) in manylinux_tags
 
@@ -99,16 +100,19 @@ try:
 
         def finalize_options(self):
             _bdist_wheel.finalize_options(self)
-            if not is_manylinux:
-                self.root_is_pure = False
+            # Insist that this wheel contains more than Python source
+            self.root_is_pure = False
 
         def run(self):
+            qnn_dependencies = ["libcdsprpc.so"]
             _bdist_wheel.run(self)
-            if is_manylinux and not disable_auditwheel_repair and not is_qnn:
+            if is_manylinux and not disable_auditwheel_repair:
                 assert self.dist_dir is not None
                 file = glob(path.join(self.dist_dir, "*linux*.whl"))[0]
                 logger.info("repairing %s for manylinux1", file)
                 auditwheel_cmd = ["auditwheel", "-v", "repair", "-w", self.dist_dir, file]
+                for dep in qnn_dependencies:
+                    auditwheel_cmd.extend(["--exclude", dep])
                 logger.info("Running %s", " ".join([shlex.quote(arg) for arg in auditwheel_cmd]))
                 try:
                     subprocess.run(auditwheel_cmd, check=True, stdout=subprocess.PIPE)
@@ -146,16 +150,27 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     # QNN
     qnn_deps = [
         "libGenie.so",
+        "libHtpPrepare.so",
         "libQnnCpu.so",
         "libQnnGpu.so",
         "libQnnHtp.so",
+        "libQnnHtpNetRunExtensions.so",
         "libQnnHtpPrepare.so",
         "libQnnHtpV68Skel.so",
         "libQnnHtpV68Stub.so",
+        "libQnnHtpV69Skel.so",
+        "libQnnHtpV69Stub.so",
+        "libQnnHtpV73Skel.so",
+        "libQnnHtpV73Stub.so",
+        "libQnnHtpV75Skel.so",
+        "libQnnHtpV75Stub.so",
+        "libQnnHtpV79Skel.so",
+        "libQnnHtpV79Stub.so",
+        "libQnnHtpV81Skel.so",
+        "libQnnHtpV81Stub.so",
         "libQnnIr.so",
         "libQnnSaver.so",
         "libQnnSystem.so",
-        "libHtpPrepare.so",
     ]
     dl_libs.extend(qnn_deps)
 else:
@@ -164,25 +179,27 @@ else:
     # QNN V68/V73/V81 dependencies
     qnn_deps = [
         "Genie.dll",
+        "HtpPrepare.dll",
         "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",
+        "QnnHtpNetRunExtensions.dll",
+        "QnnHtpPrepare.dll",
+        "QnnHtpV68Stub.dll",
+        "QnnHtpV73Stub.dll",
+        "QnnHtpV81Stub.dll",
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
-        "QnnHtpPrepare.dll",
-        "QnnHtpV81Stub.dll",
-        "libQnnHtpV81Skel.so",
-        "libqnnhtpv81.cat",
-        "QnnHtpV73Stub.dll",
-        "libQnnHtpV73Skel.so",
-        "libqnnhtpv73.cat",
-        "QnnHtpV68Stub.dll",
         "libQnnHtpV68Skel.so",
+        "libQnnHtpV73Skel.so",
+        "libQnnHtpV81Skel.so",
+        "libqnnhtpv73.cat",
+        "libqnnhtpv81.cat",
     ]
     libs.extend(qnn_deps)
 
-if is_manylinux:
+if is_manylinux or platform.system() == "Linux":
     data = list(dl_libs)
 else:
     data = list(libs)
@@ -206,7 +223,6 @@ with open(README, encoding="utf-8") as fdesc:
 data_files = []
 requirements_file = "requirements.txt"
 
-local_version = None
 disable_auditwheel_repair = parse_arg_remove_boolean(sys.argv, "--disable_auditwheel_repair")
 
 classifiers = [
@@ -285,8 +301,8 @@ if nightly_build:
 
     version_number = version_number + ".dev" + build_suffix
 
-if local_version:
-    version_number = version_number + local_version
+elif not nightly_build and version_suffix:
+    version_number += "." + version_suffix
 
 if wheel_name_suffix:
     package_name = f"{package_name}-{wheel_name_suffix}"
@@ -327,19 +343,19 @@ setup(
     description="ONNX Runtime QNN is an onnxruntime execution provider optimized for Qualcomm AI accelerators",
     long_description=long_description,
     long_description_content_type="text/x-rst",
-    author="Microsoft Corporation",
-    author_email="onnxruntime@microsoft.com",
+    author="Qualcomm Technologies, Inc.",
+    author_email="onnxruntime-qnn@qti.qualcomm.com",
     cmdclass=cmd_classes,
     license="MIT License",
     packages=packages,
     ext_modules=ext_modules,
     package_data=package_data,
-    url="https://onnxruntime.ai",
+    url="https://github.com/onnxruntime/onnxruntime-qnn/blob/main/docs/execution_providers/QNN-ExecutionProvider.md",
     download_url="https://github.com/onnxruntime/onnxruntime-qnn/tags",
     data_files=data_files,
     install_requires=install_requires,
     extras_require=extras_require,
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     keywords="onnx machine learning qnn qualcomm",
     classifiers=classifiers,
 )

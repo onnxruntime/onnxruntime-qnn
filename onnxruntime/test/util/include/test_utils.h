@@ -12,18 +12,19 @@
 #include <vector>
 
 #include <gsl/gsl>
-#include "core/framework/execution_provider.h"
-#include "core/framework/framework_common.h"
-#include "core/framework/ort_value.h"
-#include "core/providers/cpu/cpu_execution_provider.h"
-#include "core/session/onnxruntime_c_api.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "test/util/include/inference_session_wrapper.h"
+#include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
+#include <onnx/onnx_pb.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace onnxruntime {
-class Graph;
-struct SessionOptions;
-
 namespace test {
 
 // If set to All: verify the entire graph is taken by ep
@@ -43,21 +44,22 @@ struct EPVerificationParams {
   // Set this only if this is necessary
   float fp32_abs_err = 1e-5f;
 
-  // optional graph verification function
-  const std::function<void(const Graph&)>* graph_verifier{nullptr};
+  // optional graph verification function (uses public ORT Session API)
+  const std::function<void(const Ort::Session&)>* graph_verifier{nullptr};
 };
 
 // Verify equality of two output tensors.
 void VerifyOutput(const std::string& output_name,
-                  const Tensor& expected_tensor,
-                  const Tensor& tensor,
+                  const Ort::Value& expected_value,
+                  const Ort::Value& actual_value,
                   float fp32_abs_err);
 
-// Return number of nodes in the Graph and any subgraphs that are assigned to the specified execution provider
-int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
+size_t CountNodes(const Ort::Session& current_session);
+
+size_t CountAssignedNodes(const Ort::Session& current_session, const std::string& ep_type);
 
 // Verify the assignment of nodes to the EP specified by `provider_type`.
-void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,
+void VerifyEPNodeAssignment(const Ort::Session& current_session, const std::string& provider_type,
                             ExpectedEPNodeAssignment assignment);
 
 using ModelPathOrBytes = std::variant<std::basic_string_view<ORTCHAR_T>,
@@ -67,77 +69,50 @@ using ModelPathOrBytes = std::variant<std::basic_string_view<ORTCHAR_T>,
 // is enabled.
 // session_options_updater can be used to update the SessionOptions the inference session is created with.
 void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
-                               std::string_view log_id,
-                               std::unique_ptr<IExecutionProvider> execution_provider,
-                               const NameMLValMap& feeds,
-                               const EPVerificationParams& params = EPVerificationParams(),
-                               const std::function<void(SessionOptions&)>& session_options_updater = {},
-                               bool verify_outputs = true);
-
-void RunWithEP(OrtSessionWrapper* ort_session,
-               const Ort::RunOptions& ort_ro,
-               const NameMLValMap& feeds,
-               std::vector<OrtValue>& output_vals);
-
-void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                Ort::SessionOptions& ort_so,
                                const std::string& provider_type,
                                std::string_view log_id,
-                               const NameMLValMap& feeds,
+                               const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params = EPVerificationParams(),
-                               bool verify_outputs = true);
+                               bool verify_outputs = true,
+                               Ort::CustomOpDomain* custom_op_domain = nullptr);
 
-// Tests model loading only.
-// This can be used to test EPs in builds where only loading (and not running) of a model is supported.
-// Calls `check_graph` on the graph of the loaded model.
-void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
-                   std::unique_ptr<IExecutionProvider> execution_provider,
-                   const std::function<void(const Graph&)>& check_graph);
+void RunWithEP(Ort::Session& ort_session,
+               const Ort::RunOptions& ort_ro,
+               const std::unordered_map<std::string, Ort::Value>& feeds,
+               std::vector<Ort::Value>& output_vals);
 
-// Tests model loading only.
-// The check graph function verifies the expected EP node assignment.
-inline void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
-                          std::unique_ptr<IExecutionProvider> execution_provider,
-                          ExpectedEPNodeAssignment expected_node_assignment) {
-  auto check_node_assignment =
-      [provider_type = execution_provider->Type(), expected_node_assignment](const Graph& graph) {
-        VerifyEPNodeAssignment(graph, provider_type, expected_node_assignment);
-      };
-  TestModelLoad(model_path_or_bytes, std::move(execution_provider), check_node_assignment);
-}
+// QNN-EP COPY START
+// Below are ONNX Attributes utilities copied from MS onnxruntime\core\graph\node_attr_utils.h directly.
+// keep these signatures in sync with DECLARE_MAKE_ATTRIBUTE_FNS below
+/** Creates an AttributeProto with the specified name and value. */
+ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, int64_t value);
+/** Creates an AttributeProto with the specified name and values. */
+ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const int64_t> values);
 
-// Check equality of two shapes. Can successfully complete only if rank are equal and all dimensions are equal.
-// The way we define dimension equality is that:
-// 1. if both dimensions are symbolic, they are equal if their names are equal.
-// 2. if both dimensions are not symbolic, they are equal if their values are equal.
-// 3. if one dimension is symbolic and the other is not, they are not equal.
-void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
-                        const ONNX_NAMESPACE::TensorShapeProto* shape2);
+#define DECLARE_MAKE_ATTRIBUTE_FNS(type)                                           \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value); \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const type> values)
 
-// Create OrtValue on CPU copying from provided inputs.
-template <typename T>
-OrtValue CreateInputOrtValueOnCPU(gsl::span<const int64_t> dims, gsl::span<const T> value,
-                                  AllocatorPtr alloc = nullptr) {
-  static CPUExecutionProviderInfo info;
-  static CPUExecutionProvider cpu_provider(info);
-  static AllocatorPtr cpu_allocator = cpu_provider.CreatePreferredAllocators()[0];
+DECLARE_MAKE_ATTRIBUTE_FNS(float);
+DECLARE_MAKE_ATTRIBUTE_FNS(std::string);
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TensorProto);
+#if !defined(DISABLE_SPARSE_TENSORS)
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::SparseTensorProto);
+#endif
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TypeProto);
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::GraphProto);
 
-  TensorShape shape(dims);
-  assert(shape.Size() == static_cast<int64_t>(value.size()));
-  auto element_type = DataTypeImpl::GetType<T>();
-  auto allocator = alloc ? alloc : cpu_allocator;
-  auto p_tensor = std::make_unique<Tensor>(element_type, shape, allocator);
+#undef DECLARE_MAKE_ATTRIBUTE_FNS
+// QNN-EP COPY END
 
-  if (value.size() > 0 && !alloc) {  // using CPU allocator
-    memcpy(p_tensor->MutableDataRaw(), value.data(), p_tensor->SizeInBytes());
-  }
-
-  OrtValue ort_value;
-  ort_value.Init(p_tensor.release(),
-                 DataTypeImpl::GetType<Tensor>(),
-                 DataTypeImpl::GetType<Tensor>()->GetDeleteFunc());
-  return ort_value;
-}
+// QNN_ASSERT macro that imitates ORT_ENFORCE pattern
+#define QNN_ASSERT(condition)                                             \
+  do {                                                                    \
+    if (!(condition)) {                                                   \
+      ORT_CXX_API_THROW(#condition, OrtErrorCode::ORT_RUNTIME_EXCEPTION); \
+    }                                                                     \
+  } while (false)
 
 }  // namespace test
 }  // namespace onnxruntime

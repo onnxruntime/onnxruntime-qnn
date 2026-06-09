@@ -5,11 +5,18 @@
 #include "command_args_parser.h"
 
 // onnxruntime dependencies
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 // onnx dependencies
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
 #include "onnx/onnx_pb.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include <algorithm>
 #include <fstream>
 
@@ -94,14 +101,11 @@ static PluginEpLibraryRegistrationHandle RegisterPluginEpLibrary(Ort::Env& env,
       return;
     }
 
-    ORT_TRY {
+    try {
       env.UnregisterExecutionProviderLibrary(registration_name.c_str());
-    }
-    ORT_CATCH(const Ort::Exception& e) {
-      ORT_HANDLE_EXCEPTION([&]() {
-        std::cerr << "Failed to unregister EP library with name '" << registration_name << "': "
-                  << e.what() << std::endl;
-      });
+    } catch (const Ort::Exception& e) {
+      std::cerr << "Failed to unregister EP library with name '" << registration_name << "': "
+                << e.what() << std::endl;
     }
   };
 
@@ -115,7 +119,7 @@ static bool SetPluginEpSessionOptions(Ort::Env& env, Ort::SessionOptions& sessio
                                       const qnnctxgen::PluginEpConfig& config,
                                       PluginEpLibraryRegistrationHandle& plugin_ep_library_registration_handle) {
   auto lib_registration_handle = RegisterPluginEpLibrary(env, config.ep_library_registration_name,
-                                                         ToPathString(config.ep_library_path));
+                                                         qnnctxgen::ToPathString(config.ep_library_path));
 
   std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
   std::vector<Ort::ConstEpDevice> selected_ep_devices{};
@@ -164,7 +168,7 @@ int real_main(int argc, char* argv[]) {
                                       : ORT_LOGGING_LEVEL_ERROR;
   Ort::Env env(logging_level, "ep_weight_sharing");
 
-  ORT_TRY {
+  try {
     PluginEpLibraryRegistrationHandle plugin_ep_library_registration_handle{};
     Ort::SessionOptions so;
     so.SetLogId("ep_weight_sharing_ctx_gen_session_logger");
@@ -197,7 +201,7 @@ int real_main(int argc, char* argv[]) {
     }
 
     for (auto model_path : test_config.model_file_paths) {
-      std::cout << "Model file path: " << ToUTF8String(model_path) << std::endl;
+      std::cout << "Model file path: " << qnnctxgen::ToUTF8String(model_path) << std::endl;
     }
 
     // Generate context cache model files with QNN context binary files
@@ -208,23 +212,23 @@ int real_main(int argc, char* argv[]) {
       if (const auto& plugin_ep_config = test_config.machine_config.plugin_ep_config; plugin_ep_config.has_value()) {
         if (!SetPluginEpSessionOptions(env, so, *plugin_ep_config, plugin_ep_library_registration_handle)) {
           std::cerr << "ERROR: Failed to initialize session for plugin EP "
-                    << test_config.machine_config.plugin_ep_config->ep_library_path << std::endl;
+                    << qnnctxgen::ToUTF8String(test_config.machine_config.plugin_ep_config->ep_library_path) << std::endl;
           return 1;
         }
-      } else if (provider_name_ == onnxruntime::kQnnExecutionProvider) {
+      } else if (provider_name_ == "QNNExecutionProvider") {
 #ifdef USE_QNN
         so.AppendExecutionProvider("QNN", provider_options);
 #else
-        ORT_THROW("QNN is not supported in this build\n");
+        throw std::runtime_error("QNN is not supported in this build\n");
 #endif
       } else if (!provider_name_.empty()) {
-        ORT_THROW("This execution provider is not included in this tool.\n");
+        throw std::runtime_error("This execution provider is not included in this tool.\n");
       }
 
       size_t total_file_count = test_config.model_file_paths.size();
       for (size_t i = 0; i < total_file_count; ++i) {
         auto model_path = test_config.model_file_paths[i];
-        std::cout << "Generating context cache model for: " << ToUTF8String(model_path) << std::endl;
+        std::cout << "Generating context cache model for: " << qnnctxgen::ToUTF8String(model_path) << std::endl;
         if (i == total_file_count - 1) {
           so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
         }
@@ -259,8 +263,7 @@ int real_main(int argc, char* argv[]) {
 
       UpdateEpContextModel(ep_ctx_files, max_size);
     }
-  }
-  ORT_CATCH(const Ort::Exception& e) {
+  } catch (const Ort::Exception& e) {
     std::cerr << "Failed to generate context cache file: " << e.what();
     return -1;
   }
@@ -275,14 +278,11 @@ int wmain(int argc, wchar_t* argv[]) {
 int main(int argc, char* argv[]) {
 #endif
   int retval = -1;
-  ORT_TRY {
+  try {
     retval = real_main(argc, argv);
-  }
-  ORT_CATCH(const std::exception& ex) {
-    ORT_HANDLE_EXCEPTION([&]() {
-      fprintf(stderr, "%s\n", ex.what());
-      retval = -1;
-    });
+  } catch (const std::exception& ex) {
+    fprintf(stderr, "%s\n", ex.what());
+    retval = -1;
   }
 
   ::google::protobuf::ShutdownProtobufLibrary();

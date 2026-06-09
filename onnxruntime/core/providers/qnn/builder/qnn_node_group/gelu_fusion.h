@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -17,7 +18,9 @@ class QnnModelWrapper;
 
 /// <summary>
 /// Represents a fusion of the Gelu pattern expanded into ONNX operators.
-/// This fusion handles two patterns:
+/// This fusion handles three pattern variants categorized by Erf's child node type:
+///
+/// ErfAdd Patterns (Erf -> Add):
 ///   Pattern 1:
 ///                +-------Mul(0.5)---------------------+
 ///                |                                    |
@@ -32,13 +35,32 @@ class QnnModelWrapper;
 ///             [root] --> Div -----> Erf  --> Add --> Mul -->Mul ==>
 ///                       (B=1.4142...)        (1)            (0.5)
 ///
-/// Both patterns are translated into a QNN Gelu operator.
+/// ErfMul Pattern (Erf -> Mul):
+///   Pattern 3:
+///                +-------------------------------------------+
+///                |                                           |
+///                |                                           v
+///             [root] --> Div -----> Erf --> Mul --> Add --> Mul ==>
+///                       (B=1.4142...)      (0.5)   (0.5)
+///
+/// All patterns are translated into a QNN Gelu operator.
 /// The contained NodeUnits can be of type SingleNode or QDQGroup (with Q-DQ nodes).
 /// The second inputs to Div, Add, and Mul Node Units should be constant.
 /// </summary>
 class GeluFusion : public IQnnNodeGroup {
  public:
-  GeluFusion(std::vector<const OrtNodeUnit*>&& node_units, const OrtNodeUnit* target_node_unit);
+  /// <param name="node_units">All NodeUnits in the GELU pattern (Div/Mul, Erf, Add, Mul, etc.)</param>
+  /// <param name="target_node_unit">The Erf NodeUnit (used as the primary node for this fusion)</param>
+  /// <param name="validation_root_input">GELU pattern root input for QNN validation (quantized if outer DQ exists, else float)</param>
+  /// <param name="validation_final_output">GELU pattern final output for QNN validation (quantized if outer Q exists, else float)</param>
+  /// <param name="gelu_root_input">Root input to fused Gelu operator (float, from DQ output or pattern root)</param>
+  /// <param name="gelu_final_output">Final output from fused Gelu operator (float, before Q input or pattern end)</param>
+  GeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
+             const OrtNodeUnit* target_node_unit,
+             OrtNodeUnitIODef validation_root_input,
+             OrtNodeUnitIODef validation_final_output,
+             OrtNodeUnitIODef gelu_root_input,
+             OrtNodeUnitIODef gelu_final_output);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(GeluFusion);
 
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
@@ -67,6 +89,10 @@ class GeluFusion : public IQnnNodeGroup {
  private:
   std::vector<const OrtNodeUnit*> node_units_;
   const OrtNodeUnit* target_node_unit_;
+  OrtNodeUnitIODef validation_root_input_;
+  OrtNodeUnitIODef validation_final_output_;
+  OrtNodeUnitIODef gelu_root_input_;
+  OrtNodeUnitIODef gelu_final_output_;
 };
 
 }  // namespace qnn

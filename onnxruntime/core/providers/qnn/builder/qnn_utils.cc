@@ -22,6 +22,37 @@ namespace onnxruntime {
 namespace qnn {
 namespace utils {
 
+void UniqueNameGeneratorImpl::Reset() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  counter_.clear();
+}
+
+std::string UniqueNameGeneratorImpl::New(std::string_view base, std::string_view suffix) {
+  std::string name(base);
+  if (!suffix.empty()) {
+    name.append(suffix);
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  int& count = counter_[name];
+  if (count++ > 0) {
+    name.append("_").append(std::to_string(count));
+  }
+  return name;
+}
+
+std::string UniqueNameGeneratorImpl::New(const OrtNodeUnit& node_unit, std::string_view suffix) {
+  const std::string base = node_unit.Name();
+  if (base.empty()) {
+    return New(node_unit.OpType() + std::to_string(node_unit.Index()), suffix);
+  }
+  return New(base, suffix);
+}
+
+UniqueNameGeneratorImpl& UniqueNameGenerator() {
+  static UniqueNameGeneratorImpl instance;
+  return instance;
+}
+
 size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
   const static std::unordered_map<Qnn_DataType_t, size_t> data_type_to_size = {
       {QNN_DATATYPE_INT_8, 1},
@@ -34,6 +65,7 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
       {QNN_DATATYPE_UINT_64, 8},
       {QNN_DATATYPE_FLOAT_16, 2},
       {QNN_DATATYPE_FLOAT_32, 4},
+      {QNN_DATATYPE_FLOAT_64, 8},
       {QNN_DATATYPE_BFLOAT_16, 2},
       {QNN_DATATYPE_BOOL_8, 1},
       {QNN_DATATYPE_SFIXED_POINT_4, sizeof(Int4x2)},
@@ -55,6 +87,8 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
 
 size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
   const static std::unordered_map<ONNXTensorElementDataType, size_t> elem_type_to_size = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, sizeof(Int2x4)},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, sizeof(UInt2x4)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, sizeof(Int4x2)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, sizeof(UInt4x2)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, sizeof(int8_t)},
@@ -72,6 +106,32 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
 
   auto pos = elem_type_to_size.find(elem_type);
   if (pos == elem_type_to_size.end()) {
+    ORT_CXX_API_THROW("Unknown element type " + std::to_string(elem_type), ORT_EP_FAIL);
+  }
+  return pos->second;
+}
+
+std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
+  const static std::unordered_map<ONNXTensorElementDataType, std::string_view> elem_type_to_name = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, "int2_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, "uint2_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, "int4_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, "uint4_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, "int8_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, "int16_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, "int32_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, "int64_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, "uint8_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, "uint16_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, "uint32_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, "uint64_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, "float16"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, "float32"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, "double"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, "bool"}};
+
+  auto pos = elem_type_to_name.find(elem_type);
+  if (pos == elem_type_to_name.end()) {
     ORT_CXX_API_THROW("Unknown element type " + std::to_string(elem_type), ORT_EP_FAIL);
   }
   return pos->second;
@@ -143,6 +203,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar) {
     case QNN_DATATYPE_FLOAT_32:
       out << scalar.floatValue;
       break;
+    case QNN_DATATYPE_FLOAT_64:
+      out << scalar.doubleValue;
+      break;
     case QNN_DATATYPE_SFIXED_POINT_8:
     case QNN_DATATYPE_SFIXED_POINT_16:
     case QNN_DATATYPE_SFIXED_POINT_32:
@@ -191,6 +254,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type) {
       break;
     case QNN_DATATYPE_FLOAT_32:
       out << "QNN_DATATYPE_FLOAT_32";
+      break;
+    case QNN_DATATYPE_FLOAT_64:
+      out << "QNN_DATATYPE_FLOAT_64";
       break;
     case QNN_DATATYPE_SFIXED_POINT_8:
       out << "QNN_DATATYPE_SFIXED_POINT_8";
@@ -495,13 +561,13 @@ static inline uint32_t FillJSONArrayFromRawData(nlohmann::json* json_array, cons
 }
 
 template <>
-inline uint32_t FillJSONArrayFromRawData<MLFloat16>(nlohmann::json* json_array, const void* ptr, uint32_t num_elems) {
-  gsl::span<const MLFloat16> elems{reinterpret_cast<const MLFloat16*>(ptr), static_cast<size_t>(num_elems)};
+inline uint32_t FillJSONArrayFromRawData<Ort::Float16_t>(nlohmann::json* json_array, const void* ptr, uint32_t num_elems) {
+  gsl::span<const Ort::Float16_t> elems{reinterpret_cast<const Ort::Float16_t*>(ptr), static_cast<size_t>(num_elems)};
   for (auto elem : elems) {
     json_array->push_back(elem.ToFloat());
   }
 
-  return num_elems * sizeof(MLFloat16);
+  return num_elems * sizeof(Ort::Float16_t);
 }
 
 // Fills json array with typed elements from the raw source buffer.
@@ -528,7 +594,7 @@ static uint32_t AppendQnnElemsToJSONArray(nlohmann::json* json_array, const void
     case QNN_DATATYPE_FLOAT_32:
       return FillJSONArrayFromRawData<float>(json_array, data, num_elems);
     case QNN_DATATYPE_FLOAT_16:
-      return FillJSONArrayFromRawData<MLFloat16>(json_array, data, num_elems);
+      return FillJSONArrayFromRawData<Ort::Float16_t>(json_array, data, num_elems);
     default:
       return 0;  // Do not append anything for unsupported types.
   }
@@ -780,35 +846,6 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
   return Ort::Status();
 }
 
-std::string GetUniqueName(const std::string& base, std::string_view suffix) {
-  std::string name = base;
-  if (!suffix.empty()) {
-    name += suffix;
-  }
-  {
-    static std::unordered_map<std::string, int> counter;
-    static std::mutex counter_mutex;
-    std::lock_guard<std::mutex> lock(counter_mutex);
-
-    int& count = counter[name];
-    if (count++ > 0) {
-      return name + "_" + std::to_string(count);
-    }
-  }
-  return name;
-}
-
-std::string GetUniqueName(const OrtNodeUnit& node_unit, std::string_view suffix) {
-  // Preserve node name when exist. Otherwise, use op type with index
-  std::string base;
-  if (!node_unit.Name().empty()) {
-    base = node_unit.Name();
-  } else {
-    base = node_unit.OpType() + std::to_string(node_unit.Index());
-  }
-  return GetUniqueName(base, suffix);
-}
-
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized) {
@@ -823,22 +860,26 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, QNN_DATATYPE_UINT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, QNN_DATATYPE_FLOAT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, QNN_DATATYPE_FLOAT_32},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, QNN_DATATYPE_FLOAT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
 
   const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type_quantized = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_SFIXED_POINT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, QNN_DATATYPE_SFIXED_POINT_32},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, QNN_DATATYPE_INT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, QNN_DATATYPE_UFIXED_POINT_8},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, QNN_DATATYPE_UFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, QNN_DATATYPE_UFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, QNN_DATATYPE_UFIXED_POINT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, QNN_DATATYPE_UFIXED_POINT_32},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, QNN_DATATYPE_UINT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, QNN_DATATYPE_FLOAT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, QNN_DATATYPE_FLOAT_32},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, QNN_DATATYPE_FLOAT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
 
@@ -901,10 +942,18 @@ Ort::Status GetQuantParams(float rmin,
 
   double scale_dbl = (rmax_dbl - rmin_dbl) / (qmax - qmin);
   double initial_zero_point = 0.0;
-  if (symmetric) {
+  if (!symmetric) {
+    // Asymmetric
+    initial_zero_point = qmin - (rmin_dbl / scale_dbl);
+  } else if ((qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32 ||
+              qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ||
+              qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
+              qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4)) {
+    // Signed symmetric
     initial_zero_point = std::round(rmin_dbl + rmax_dbl) / 2;
   } else {
-    initial_zero_point = qmin - (rmin_dbl / scale_dbl);
+    // Unsigned symmetric
+    initial_zero_point = std::round(qmax + qmin) / 2;
   }
   zero_point = static_cast<int32_t>(RoundHalfToEven(static_cast<float>(Saturate(qmax, qmin, initial_zero_point))));
   zero_point = -zero_point;  // Negate to match QNN quantization definition.
@@ -1222,7 +1271,7 @@ std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_
   if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
@@ -1234,7 +1283,7 @@ std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interfac
     });
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 // Calculate strides for a given shape without using TensorShape
@@ -1512,7 +1561,7 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                                                 QnnQuantParamsWrapper(scale, offset),
                                                 std::move(output_shape_copy));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(convert_output_tensorwrapper)), "Failed to add tensor.");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(convert_output_name, QNN_OP_CONVERT),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(UniqueNameGenerator().New(convert_output_name, QNN_OP_CONVERT),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_CONVERT,
                                                 {convert_input_name},
@@ -1651,8 +1700,8 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
     CASE_UNPACK(UINT16, uint16_t, int32_data_size);
     CASE_UNPACK(UINT32, uint32_t, uint64_data_size);
     CASE_UNPACK(UINT64, uint64_t, uint64_data_size);
-    CASE_UNPACK(FLOAT16, onnxruntime::MLFloat16, int32_data_size);
-    CASE_UNPACK(BFLOAT16, onnxruntime::BFloat16, int32_data_size);
+    CASE_UNPACK(FLOAT16, Ort::Float16_t, int32_data_size);
+    CASE_UNPACK(BFLOAT16, Ort::BFloat16_t, int32_data_size);
 #if !defined(DISABLE_FLOAT8_TYPES)
     // Refer to core/session/onnxruntime_cxx_api.h.
     CASE_UNPACK(FLOAT8E4M3FN, uint8_t, int32_data_size);
@@ -1662,9 +1711,15 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
 #endif
     CASE_UNPACK_INT4(INT4, Int4x2, int32_data_size);
     CASE_UNPACK_INT4(UINT4, UInt4x2, int32_data_size);
+    CASE_UNPACK_INT2(INT2, Int2x4, int32_data_size);
+    CASE_UNPACK_INT2(UINT2, UInt2x4, int32_data_size);
     default:
       return MAKE_EP_FAIL(("Unsupported type: " + std::to_string(onnx_data_type)).c_str());
   }
+}
+
+std::string PtrToString(const void* const ptr) {
+  return (std::ostringstream() << ptr).str();
 }
 
 }  // namespace utils
