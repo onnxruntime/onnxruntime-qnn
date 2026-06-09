@@ -24,8 +24,8 @@ foreach ($file in $nugetFiles) {
     $version = $fileBasename -replace "^Qualcomm\.ML\.OnnxRuntime\.QNN\.", ""
     Write-Host "${fileBasename}: $version"
 
-    $sourceName = "re-artifactory-nuget-test-project-$version"
-    $sourceUrl = "https://re-artifactory.qualcomm.com/artifactory/api/nuget/aisw-nuget-test-project/onnxruntime-qnn/$version"
+    $sourceName = "artifactory-nuget-test-project-$version"
+    $sourceUrl = "https://artifactory-las.qualcomm.com/artifactory/api/nuget/aisw-test-project-nuget-virtual/onnxruntime-qnn/$version"
 
     # Use PackageSourceCredentials environment variables for secure authentication
     # NuGet automatically reads credentials from environment variables in the format:

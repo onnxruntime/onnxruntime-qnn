@@ -41,10 +41,10 @@ INI_FILE = os.path.join(SCRIPT_DIR, "config.ini")
 
 # Artifact format mappings
 ARTIFACTORY_PREFIXES = {
-    "wheel": "re-artifactory-pypi",
-    "nuget": "re-artifactory-nuget",
-    "zip": "re-artifactory-zip",
-    "tgz": "re-artifactory-zip",
+    "wheel": "artifactory-pypi",
+    "nuget": "artifactory-nuget",
+    "zip": "artifactory-zip",
+    "tgz": "artifactory-zip",
 }
 
 ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
@@ -684,7 +684,7 @@ class NugetUpleveler(ArtifactUpleveler):
 
     def _add_nuget_source(self, username: str, password: str, source_url: str, server: str, version: str) -> str:
         """Add a single NuGet source using PackageSourceCredentials environment variables."""
-        if "re-artifactory-nuget-" in server:
+        if "artifactory-nuget-" in server:
             source_name = f"{server}-{version}"
             actual_source_url = source_url
         elif server == "testnuget":
