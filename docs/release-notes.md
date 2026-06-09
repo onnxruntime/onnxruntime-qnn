@@ -53,7 +53,6 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 ## New Fusions
 
 - **Gelu Pattern 3** — New `Erf*0.5 + 0.5` decomposition variant; fixes models previously not fused. ([#236](https://github.com/onnxruntime/onnxruntime-qnn/pull/236))
-- **Reshape → Gemm → Reshape [→ Reshape]** — Folds into a single QNN FullyConnected op; up to 44x improvement on attention models. ([#232](https://github.com/onnxruntime/onnxruntime-qnn/pull/232))
 - **DynamicQuantizeLinear + MatMulInteger** — Fuses `DQL → MatMulInteger → Cast → Mul → [Add]` into a float QNN MatMul. ([#367](https://github.com/onnxruntime/onnxruntime-qnn/pull/367))
 - **DynamicQuantizeLinear + ConvInteger** — Fuses `DQL → ConvInteger → Cast → Mul → [Add]` into a float QNN Conv2d. ([#364](https://github.com/onnxruntime/onnxruntime-qnn/pull/364))
 - **Transpose → Reshape → Transpose** — Collapses into a single reshape when the transposes cancel out. ([#200](https://github.com/onnxruntime/onnxruntime-qnn/pull/200))
@@ -68,7 +67,6 @@ For the full list of supported fusions, see [Supported Operator Fusions](executi
 - MatMul accuracy regression from unnecessary uint16 → uint8 Convert; now only inserted for asymmetric → symmetric uint16. ([#300](https://github.com/onnxruntime/onnxruntime-qnn/pull/300))
 - Softmax `axis ≠ rank-1` falling back to CPU due to missing upstream tensor wrappers at validation time. ([#304](https://github.com/onnxruntime/onnxruntime-qnn/pull/304))
 - ScatterND/ScatterElements silent CPU fallback for negative or INT_64 indices. ([#311](https://github.com/onnxruntime/onnxruntime-qnn/pull/311), [#317](https://github.com/onnxruntime/onnxruntime-qnn/pull/317))
-- ReshapeGemmFusion incorrectly passing rank-5 tensors to QNN FullyConnected. ([#377](https://github.com/onnxruntime/onnxruntime-qnn/pull/377))
 - Build failure on Ubuntu 24.04 / GCC 13 due to false-positive `-Wmaybe-uninitialized`. ([#387](https://github.com/onnxruntime/onnxruntime-qnn/pull/387))
 - QNN EP failure on devices where DXCore cannot discover the NPU. ([#12](https://github.com/onnxruntime/onnxruntime-qnn/pull/12))
 - ORT Core version floor raised to `>= 1.24.2`, preventing accidental downgrade. ([#448](https://github.com/onnxruntime/onnxruntime-qnn/pull/448))

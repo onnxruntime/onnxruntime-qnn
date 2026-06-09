@@ -482,7 +482,6 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Collapsed into a single reshape when the original dims appear in natural order (no axis reordering). |
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
-| `Reshape → Gemm [→ Reshape [→ Reshape]]` | `QNN_OP_FULLY_CONNECTED` | 2-, 3-, and 4-node variants. Constant non-quantized weight `[K, N]`. transA=0, transB=0, α=1.0, β=1.0. |
 
 ### Miscellaneous fusions
 
