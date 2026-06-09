@@ -288,8 +288,7 @@ class QnnModelWrapper {
 
       ORT_RETURN_IF_ERROR(UnpackInitializerData(*scale_tensor_proto, scales));
     } else {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Scale ONNX data type `", typeid(T).name(),
-                             "` is not supported for unpacking.");
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Scale ONNX data type is not supported for unpacking.");
     }
     return Status::OK();
   }

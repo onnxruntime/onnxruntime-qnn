@@ -7,6 +7,11 @@
     add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=1)
   endif()
 
+  if(onnxruntime_QNN_CONVERGENCE_BUILD)
+    add_compile_definitions(QNN_CONVERGENCE_BUILD=1)
+    message(STATUS "QNN EP: Convergence build — IR backend only")
+  endif()
+
   file(GLOB_RECURSE
        onnxruntime_providers_qnn_ep_srcs CONFIGURE_DEPENDS
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.h"

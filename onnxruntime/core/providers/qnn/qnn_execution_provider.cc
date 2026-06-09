@@ -9,6 +9,8 @@
 #include <thread>
 #include <unordered_set>
 
+#include "IR/QnnIrGraph.h"
+
 #include "core/common/string_utils.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -1059,8 +1061,11 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
     return result;
   }
 
-  if ((context_cache_enabled_ || is_qnn_ctx_model) && !IsQpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
-    LOGS(logger, ERROR) << "Qnn context cache only works for HTP/DSP/GPU backend.";
+  const bool has_ir_serializer = (qnn_backend_manager_->GetQnnSerializerConfig() != nullptr);
+  if ((context_cache_enabled_ || is_qnn_ctx_model) &&
+      !IsQpuBackend(qnn_backend_manager_->GetQnnBackendType()) &&
+      !has_ir_serializer) {
+    LOGS(logger, ERROR) << "Qnn context cache only works for HTP/DSP/GPU/IR backend.";
     return result;
   }
 
@@ -1264,15 +1269,24 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
       }
     }
 
+    // Declare outside if-block so pointers remain valid until QnnGraph_create
+    QnnIrGraph_CustomConfig_t skip_config = QNN_IR_GRAPH_CUSTOM_CONFIG_INIT;
+    QnnGraph_Config_t skip_graph_config = QNN_GRAPH_CONFIG_INIT;
+
     qnn::QnnSerializerConfig* qnn_serializer_config = qnn_backend_manager_->GetQnnSerializerConfig();
     if (qnn_serializer_config) {
-      // We don't bother reserving here to keep the API simpler. Also note that if we're here,
-      // we're likely debugging and not waiting for inference.
-      qnn_serializer_config->SetGraphName(fused_node.Name());
-      const QnnGraph_Config_t** serializer_configs = qnn_serializer_config->Configure();
-      if (serializer_configs) {
-        for (const QnnGraph_Config_t** config = serializer_configs; *config; ++config) {
-          all_graph_configs.push_back(*config);
+      if (context_cache_enabled_) {
+        skip_config.option = QNN_IR_GRAPH_CONFIG_OPTION_SKIP_SERIALIZATION;
+        skip_graph_config.option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+        skip_graph_config.customConfig = &skip_config;
+        all_graph_configs.push_back(&skip_graph_config);
+      } else {
+        qnn_serializer_config->SetGraphName(fused_node.Name());
+        const QnnGraph_Config_t** serializer_configs = qnn_serializer_config->Configure();
+        if (serializer_configs) {
+          for (const QnnGraph_Config_t** config = serializer_configs; *config; ++config) {
+            all_graph_configs.push_back(*config);
+          }
         }
       }
     }
