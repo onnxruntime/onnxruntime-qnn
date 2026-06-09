@@ -71,7 +71,7 @@ function Set-NuGetCredentials {
             }
         }
     } else {
-        $source_name = "re-artifactory-nuget-$server-$version"
+        $source_name = "artifactory-nuget-$server-$version"
     }
 
     # Sanitize source name for environment variable

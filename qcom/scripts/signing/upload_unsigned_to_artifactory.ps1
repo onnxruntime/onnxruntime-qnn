@@ -31,7 +31,7 @@ $repoRoot = git rev-parse --show-toplevel
 Write-Host "Uploading $Filename"
 
 $caCertPath = Join-Path $repoRoot "qcom/scripts/upleveling/certs/artifactory-ca.pem"
-$uploadUrl = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/$Version/unsigned_libs/$Filename"
+$uploadUrl = "https://artifactory-las.qualcomm.com/artifactory/aisw-zip-testproj-generic-virtual/onnxruntime-qnn/$Version/unsigned_libs/$Filename"
 
 curl.exe -T "$ZipFile" --fail `
     --cacert "$caCertPath" `

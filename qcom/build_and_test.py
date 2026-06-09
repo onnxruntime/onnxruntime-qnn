@@ -40,8 +40,9 @@ from ep_build.tasks.build import (
     GenerateCoverageTask,
     GenerateDiffCoverageTask,
     QdcTestsTask,
+    RunAsanTask,
 )
-from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
+from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_64_TAG, DockerBuildTask
 from ep_build.tasks.python import (
     CreateOrtVenvTask,
     CreateQdcVenvTask,
@@ -158,7 +159,7 @@ Environment variables
         "--target-py-version",
         choices=["3.10", "3.11", "3.12", "3.13", "3.14", "None"],
         default="3.10" if is_host_linux() else "3.12",
-        help="[Windows only] Build a wheel for this version of Python",
+        help="Build a wheel for this version of Python",
     )
     parser.add_argument(
         "--venv-path",
@@ -273,6 +274,36 @@ class TaskLibrary:
             )
         )
 
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        """In-container build steps for x86_64-ubuntu_22_04. Not to be used outside of Docker."""
+        extra_args = []
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-x86_64-ubuntu_22_04"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args if extra_args else None,
+                env=env,
+                build_archive=self.__build_archive,
+            )
+        )
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -345,6 +376,23 @@ class TaskLibrary:
                     self.__venv_path,
                     "linux",
                     "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04", "create_venv"])
+        def archive_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
                     self.__config,
                     self.__target_py_version,
                     self.__ort_prebuilt_root,
@@ -439,6 +487,38 @@ class TaskLibrary:
                 ],
             )
         )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with AddressSanitizer and run unit tests under ASan (Linux x86_64, Debug)")
+        @depends(["create_venv"])
+        def asan_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                CompositeTask(
+                    "ASan build and test",
+                    [
+                        BuildEpLinuxTask(
+                            "Building ONNX Runtime for Linux (Debug + ASan)",
+                            self.__venv_path,
+                            "linux",
+                            "x86_64",
+                            "Debug",
+                            None,  # target_py_version: ASan task does not exercise the Python wheel
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            extra_args=["--enable-asan"],
+                        ),
+                        RunAsanTask(
+                            "Running tests under ASan",
+                            self.__venv_path,
+                            build_dir,
+                            config="Debug",
+                        ),
+                    ],
+                )
+            )
 
     @public_task("Build ONNX Runtime for this host's native architecture")
     @depends(
@@ -543,6 +623,24 @@ class TaskLibrary:
                     build_archive=self.__build_archive,
                 )
             )
+
+    @task
+    @depends(["docker_build_ubuntu_22_04_x86_64"])
+    def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux x86_64 on Ubuntu 22.04",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
+                docker_tag=UBUNTU_22_04_X86_64_TAG,
+                platform="linux/amd64",
+            ),
+        )
 
     if is_host_linux() and is_host_x86_64():
 
@@ -723,6 +821,23 @@ class TaskLibrary:
             )
         )
 
+    @task
+    def docker_build_ubuntu_22_04_x86_64(self, plan: Plan) -> str:
+        return plan.add_step(
+            DockerBuildTask(
+                "Building Ubuntu 22.04 x86_64 Docker image",
+                REPO_ROOT / "qcom" / "scripts" / "linux" / "ubuntu_22_04" / "Dockerfile",
+                UBUNTU_22_04_X86_64_TAG,
+                build_args={
+                    "BUILD_UID": str(os.getuid()),
+                    "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
+                },
+                platform="linux/amd64",
+            )
+        )
+
     if is_host_linux() and is_host_arm64():
 
         @task
@@ -772,6 +887,34 @@ class TaskLibrary:
                                 str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
                                 "--target-platform",
                                 "linux-x86_64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                            ]
+                        ],
+                    ),
+                ],
+            )
+        )
+
+    @task
+    def extract_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64_ubuntu_22_04.tar.bz2",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "linux-x86_64_ubuntu_22_04",
                                 "--archive",
                                 str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
                             ]
@@ -929,6 +1072,25 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                )
+            )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
+        def test_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
+                    self.__config,
+                    None,  # Tests run against the activated host venv; no per-version wheel venv needed.
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",

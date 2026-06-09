@@ -1972,7 +1972,173 @@ TEST_F(QnnHTPBackendTests, ConvU16S8S32_PerChannel) {
                                                13);   // opset
 }
 
-// Conv3D per-channel
+// Helper: Builds QDQ Conv model with fused activation (Relu or Clip) between Conv and output Q.
+// Pattern: DQ(input) + DQ(weight) + float_bias -> Conv -> Relu/Clip -> Q(forced encoding) -> DQ
+// Uses a forced output encoding with zp > 0 (encoding allows negatives) to trigger the
+// non-fusion path. Without the fix, HTP won't clamp and the test fails.
+template <typename ActivationQType, typename WeightQType>
+static GetTestQDQModelFn<ActivationQType> BuildQDQConvWithFusedActivationTestCase(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    const std::string& activation_type,
+    float forced_output_scale,
+    ActivationQType forced_output_zp,
+    float clip_min = 0.0f,
+    float clip_max = 6.0f) {
+  return [input_def, weights_def, bias_def, activation_type, forced_output_scale, forced_output_zp,
+          clip_min, clip_max](
+             ModelTestBuilder& builder,
+             std::vector<QuantParams<ActivationQType>>& output_qparams) {
+    (void)output_qparams;
+
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    std::string input_dq = AddQDQNodePair<ActivationQType>(builder, "input_qdq", "input",
+                                                           input_qparams.scale, input_qparams.zero_point, true);
+
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zps;
+    GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zps, 0, true);
+    std::vector<WeightQType> quantized_weights(SizeOfShape(weights_def.GetShape()));
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights,
+                                       weights_def.GetShape(), weight_scales, weight_zps, 0);
+    builder.MakeInitializer<WeightQType>("weights_quant", weights_def.GetShape(), quantized_weights);
+    std::vector<ONNX_NAMESPACE::AttributeProto> w_dq_attrs;
+    w_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+    builder.AddDequantizeLinearNode("WeightDQ", "weights_quant", weight_scales, weight_zps,
+                                    "weights_dq", w_dq_attrs, true);
+
+    builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+
+    builder.AddNode("Conv", "Conv", {input_dq, "weights_dq", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+
+    if (activation_type == "Relu") {
+      builder.AddNode("Relu", "Relu", {"conv_out"}, {"act_out"});
+    } else {
+      builder.MakeScalarInitializer<float>("clip_min", clip_min);
+      builder.MakeScalarInitializer<float>("clip_max", clip_max);
+      builder.AddNode("Clip", "Clip", {"conv_out", "clip_min", "clip_max"}, {"act_out"});
+    }
+
+    // Use FORCED output encoding (not auto-calibrated) to guarantee encoding_min < activation_min
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, "output_qdq", "act_out",
+                                                           forced_output_scale, forced_output_zp, true);
+  };
+}
+
+// Test 1: Conv+Relu where output encoding min < 0 (Relu's activation_min).
+TEST_F(QnnHTPBackendTests, ConvReluFusion_EncodingMinBelowZero) {
+  std::vector<int64_t> input_shape = {1, 128, 4, 4};
+  std::vector<int64_t> weight_shape = {64, 128, 1, 1};
+  std::vector<int64_t> bias_shape = {64};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 40.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-3.0f, 10.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.AddNode("Relu", "Relu", {"conv_out"}, {"relu_out"});
+    builder.MakeOutput("relu_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.000196, zp=14601 → encoding_min = 0.000196*(0-14601) = -2.86 < 0
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Relu",
+      0.000196270834f, static_cast<uint16_t>(14601));
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Test 2: Conv+Clip where output encoding min < clip_min.
+TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMinBelowClipMin) {
+  std::vector<int64_t> input_shape = {1, 64, 4, 4};
+  std::vector<int64_t> weight_shape = {32, 64, 1, 1};
+  std::vector<int64_t> bias_shape = {32};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(-5.0f, 40.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-5.0f, 5.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.MakeScalarInitializer<float>("clip_min_val", -1.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"conv_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.0003, zp=20000 → encoding_min = 0.0003*(0-20000) = -6.0 < clip_min(-1)
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Clip",
+      0.0003f, static_cast<uint16_t>(20000),
+      -1.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Test 3: Conv+Clip where output encoding max > clip_max.
+TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMaxAboveClipMax) {
+  std::vector<int64_t> input_shape = {1, 64, 4, 4};
+  std::vector<int64_t> weight_shape = {32, 64, 1, 1};
+  std::vector<int64_t> bias_shape = {32};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 50.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(0.0f, 8.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.MakeScalarInitializer<float>("clip_min_val", 0.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"conv_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.0002, zp=0 → encoding_max = 0.0002*65535 = 13.1 > clip_max(6)
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Clip",
+      0.0002f, static_cast<uint16_t>(0),
+      0.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Conv3D per-channel (known issue)
 // \QNN\HTP\HTP\src\hexagon\prepare\graph_prepare.cc:203:ERROR:could not create op: q::QNN_Conv3d_w_scale
 // \QNN\HTP\HTP\src\hexagon\prepare\graph_prepare.cc:1187:ERROR:Op 0x1a preparation failed with err:-1
 // QnnDsp <E> "Conv" generated: could not create op
@@ -2884,6 +3050,401 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_LargeInput_Dilations_Pads) {
                                      "NOTSET",                                                  // auto_pad
                                      ExpectedEPNodeAssignment::All);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block-Quantized Conv (BQ Phase 1)
+//
+// ONNX graph pattern:
+//   input → Q(u16) → DQ → Conv ← DQ(Int4, block_size, axis=0) → Q(u16) → DQ
+//
+// The weight DQ node uses a rank-2 float scale tensor [OC, num_blocks] where
+// num_blocks = IC / block_size. QNN EP maps this to the BW_FLOAT_BLOCK kernel
+// (FP16 activation) with an INT16→FP16 Convert before Conv and FP16→INT16
+// Convert after Conv.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// Builds the ONNX QDQ graph for a BQ (block-quantized weight) 2D Conv.
+//   - activation: uint16 per-tensor symmetric Q/DQ
+//   - weight: INT4 or INT8 initializer + DQ with block_size attribute and rank-4
+//             float scale [OC, IC/block_size, 1, 1] (axis=1, IC is the blocked dimension)
+//   - output: uint16 per-tensor symmetric Q/DQ
+//
+// weight_bits: 4 for INT4/UINT4 (default), 8 for INT8/UINT8, 2 for INT2.
+// block_size constraints: must be a multiple of 8 (4-bit), 4 (8-bit), or 16 (2-bit) per HTP.
+// weight_is_unsigned: true → use UINT weight type (UINT4 or UINT8); tests the
+//   unsigned→signed conversion path in conv_op_builder.cc (TransformUnsignedToSignedFixedPoint).
+// bias_per_channel: when include_bias is true, true → per-channel bias scale ([OC] values,
+//   axis=0); false → per-tensor bias scale (scalar). Exercises both bias dequant paths.
+GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
+                                     const std::vector<int64_t>& weight_shape,
+                                     int64_t block_size,
+                                     bool include_bias = false,
+                                     int weight_bits = 4,
+                                     bool weight_is_unsigned = false,
+                                     bool bias_per_channel = false) {
+  return [input_shape, weight_shape, block_size, include_bias, weight_bits,
+          weight_is_unsigned, bias_per_channel](ModelTestBuilder& builder) -> void {
+    const int64_t OC = weight_shape[0];
+    const int64_t IC = weight_shape[1];
+    const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
+    const int64_t kW = weight_shape.size() >= 4 ? weight_shape[3] : 1;
+    const int64_t num_blocks = IC / block_size;  // caller ensures IC % block_size == 0
+
+    // ── Activation: float → Q(uint16) → DQ ──────────────────────────────────
+    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // uint16 symmetric per-tensor: scale = 2/65534, zp = 32767 (~[-1, 1])
+    const float act_scale = 2.0f / 65534.0f;
+    const uint16_t act_zp = 32767;
+    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
+    builder.AddNode("act_ql", "QuantizeLinear",
+                    {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
+    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
+    builder.AddNode("act_dql", "DequantizeLinear",
+                    {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
+
+    // ── Weight initializer + DQ(block_size, axis=1) ──────────────────────────
+    // Scale rank == weight rank per ONNX opset 21: [OC, IC/block_size, 1, 1].
+    const std::vector<int64_t> scale_shape{OC, num_blocks, 1, 1};
+    builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
+
+    const size_t num_elems = static_cast<size_t>(OC * IC * kH * kW);
+    if (weight_bits == 4 && !weight_is_unsigned) {
+      // INT4 weight in range [-3, 3] (symmetric).
+      std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
+      }
+      builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 4 && weight_is_unsigned) {
+      // UINT4 weight in range [0, 14] (asymmetric-like; symmetric around 7 with zp omitted).
+      std::vector<UInt4x2> weight_data(UInt4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<uint8_t>(i % 15));
+      }
+      builder.MakeInitializer<UInt4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && !weight_is_unsigned) {
+      // INT2 weight in range [-1, 1] (symmetric, 4 elements per byte).
+      std::vector<Int2x4> weight_data(Int2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<int8_t>((i % 3) - 1));
+      }
+      builder.MakeInitializer<Int2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && weight_is_unsigned) {
+      // UINT2 weight in range [0, 3] (full unsigned 2-bit range, 4 elements per byte).
+      std::vector<UInt2x4> weight_data(UInt2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<uint8_t>(i % 4));
+      }
+      builder.MakeInitializer<UInt2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_is_unsigned) {
+      // UINT8 weight in range [0, 126] (symmetric around 63 with zp omitted).
+      std::vector<uint8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<uint8_t>(i % 127);
+      }
+      builder.MakeInitializer<uint8_t>("weight_quant", weight_shape, weight_data);
+    } else {
+      // INT8 weight in range [-63, 63] (symmetric).
+      std::vector<int8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<int8_t>((i % 127) - 63);
+      }
+      builder.MakeInitializer<int8_t>("weight_quant", weight_shape, weight_data);
+    }
+
+    // DQ with block_size; omit zero_point (symmetric). axis=1: IC is the blocked dimension.
+    builder.AddNode("weight_dql", "DequantizeLinear",
+                    {"weight_quant", "weight_scale"},
+                    {"weight_dql_out"}, "",
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(1)),
+                     builder.MakeScalarAttribute("block_size", block_size)});
+
+    // ── Conv ─────────────────────────────────────────────────────────────────
+    std::vector<std::string> conv_inputs{"act_dql_out", "weight_dql_out"};
+    if (include_bias) {
+      // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
+      // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
+      if (bias_per_channel) {
+        // Per-channel bias: distinct quantized value and scale per output channel (DQ axis=0).
+        // Non-zero quant values ensure the per-channel scale indexing is actually exercised.
+        // Omit zero_point (symmetric): ORT per-axis DQ requires zp be null or 1D of size OC.
+        std::vector<int32_t> bias_quant(static_cast<size_t>(OC));
+        std::vector<float> bias_scales(static_cast<size_t>(OC));
+        for (size_t i = 0; i < bias_quant.size(); ++i) {
+          bias_quant[i] = static_cast<int32_t>(i) - static_cast<int32_t>(OC) / 2;
+          bias_scales[i] = act_scale * (0.02f + 0.01f * static_cast<float>(i));
+        }
+        builder.Make1DInitializer<int32_t>("bias_quant", bias_quant);
+        builder.Make1DInitializer<float>("bias_scale", bias_scales);
+        builder.AddNode("bias_dql", "DequantizeLinear",
+                        {"bias_quant", "bias_scale"}, {"bias_dql_out"}, "",
+                        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+      } else {
+        const float bias_scale = act_scale * 0.03f;
+        builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
+        builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
+        builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(OC), 0));
+        builder.AddNode("bias_dql", "DequantizeLinear",
+                        {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+      }
+      conv_inputs.push_back("bias_dql_out");
+    }
+    builder.AddNode("conv", "Conv",
+                    conv_inputs, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeStringAttribute("auto_pad", "NOTSET"),
+                     builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}),
+                     builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0})});
+
+    // ── Output: Conv → Q(uint16) → DQ → graph output ─────────────────────────
+    const float out_scale = 2.0f / 65534.0f;
+    const uint16_t out_zp = 32767;
+    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
+    builder.AddNode("out_ql", "QuantizeLinear",
+                    {"conv_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
+    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
+    builder.MakeOutput("output");
+    builder.AddNode("out_dql", "DequantizeLinear",
+                    {"out_ql_out", "out_dql_scale", "out_ql_zp"}, {"output"});
+  };
+}
+
+ProviderOptions GetBQConvProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On the x86_64 Linux HTP simulator, specify SM8850 to enable BW_FLOAT_BLOCK support.
+  // On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// 1x1 Conv, INT4 weight, block_size=8, uint16 activation, no bias.
+// in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), out: u16
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with bias. Exercises the INT32→FP16 bias dequantization path.
+// in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), bias: int32 DQ, out: u16
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with per-channel quantized bias (DQ axis=0, [OC] scales).
+// Exercises the per-channel branch of the INT32→FP16 bias dequantization.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBiasPerChannel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// 1x1 Conv with larger IC and more blocks per channel.
+// weight: int4 (IC=32, block_size=8, 4 blocks/OC), scale=[8,4,1,1]
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{8, 32, 1, 1},
+                                      /*block_size=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// Regression: existing per-channel INT4 Conv (no block_size) continues to work.
+// Reuses RunHTPConvOpPerChannelTest to confirm the BQ detection does not interfere.
+TEST_F(QnnHTPBackendTests, ConvBQ_ExistingPerChannel_Unaffected) {
+  // This duplicates ConvU16S4S32_PerChannel to act as a regression guard.
+  RunHTPConvOpPerChannelTest<uint16_t, Int4x2>(
+      "Conv",
+      TestInputDef<float>({1, 2, 4, 4}, false,
+                          GetFloatDataInRange(0.0f, 1.0f, SizeOfShape({1, 2, 4, 4}))),
+      TestInputDef<float>({3, 2, 2, 2}, true,
+                          GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape({3, 2, 2, 2}))),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3)),
+      0,             // weight quant axis
+      {1, 1},        // strides
+      {0, 0, 0, 0},  // pads
+      {1, 1},        // dilations
+      1,             // group
+      "NOTSET",
+      ExpectedEPNodeAssignment::All,
+      false,  // use_qdq_contrib_ops
+      21);    // opset
+}
+
+// ── BQ Conv bitwidth / block_size variants ───────────────────────────────────
+// INT4, block_size=16: still a valid HTP multiple-of-8 block size.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/4),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/4,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=8: larger block size, still a valid HTP multiple-of-4.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT2, block_size=16: DISABLED. Two independent blockers:
+//   1. ORT CPU backend does not support 2-bit Q/DQ — it rejects tensor(int2) as a
+//      DequantizeLinear input type at model load time (ONNX type check).
+//   2. QAIRT HTP backend does not support 2-bit BQ until QAIRT 2.47.
+// Re-enable once both are available (with verify_outputs=false until the CPU DQ
+// kernel supports int2 for accuracy comparison).
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16Int2_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/0.0f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// UINT2, block_size=16: DISABLED. Same blockers as ConvBQ_U16Int2_1x1_BlockSize16 —
+// ORT CPU backend does not support 2-bit Q/DQ, and QAIRT HTP backend does not
+// support 2-bit BQ until QAIRT 2.47.
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16UInt2_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/0.0f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// UINT4 weight, block_size=8: exercises TransformUnsignedToSignedFixedPoint for 4-bit.
+// in0: u16, weight: uint4 (scale=[4,2,1,1], block_size=8), out: u16
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT4 weight with bias: verifies unsigned weight path works with the FP16 bias dequantization.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT8 weight, block_size=4: exercises TransformUnsignedToSignedFixedPoint for 8-bit.
+// block_size=4 is the minimum valid HTP multiple for 8-bit block quantization.
+// Tolerance 2e-2f: UINT8 weights [0,126] produce larger FP16 intermediate values than INT4/INT8,
+// leading to slightly larger rounding differences between CPU (FP32) and QNN (FP16).
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/4,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-2f);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
