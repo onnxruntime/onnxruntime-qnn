@@ -321,6 +321,43 @@ GetTestModelFn BuildIfQDQTestCase(const std::vector<int64_t>& shape,
   };
 }
 
+// Like BuildIfTestCase, but the upstream producer of `x` is Trilu (not in the QNN
+// op factory) instead of Sigmoid. ORT places Trilu on the CPU EP, so the implicit
+// input `x` consumed by both branches must cross a CPU -> QNN partition boundary.
+// Exercises ProcessInputs's manual implicit-input registration on the cross-partition path.
+GetTestModelFn BuildIfCrossPartitionImplicitInputTestCase(const std::vector<int64_t>& shape,
+                                                          const std::string& if_output_name,
+                                                          const std::string& then_output_name,
+                                                          const std::string& else_output_name) {
+  return [=](ModelTestBuilder& builder) {
+    int64_t num_elements = 1;
+    for (auto d : shape) num_elements *= d;
+    std::vector<float> data(static_cast<size_t>(num_elements));
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i + 1);
+
+    builder.MakeInput<float>("x_in", shape, data);
+    builder.AddNode("x_trilu", "Trilu", {"x_in"}, {"x"});
+    builder.MakeInputBool("cond", {1});
+    builder.MakeOutput<float>(if_output_name, shape);
+
+    GraphProto then_g = MakeMulBranchSubgraph(
+        "then_branch", "x", then_output_name, shape, TensorProto::FLOAT, 2.0f, "then_const");
+    GraphProto else_g = MakeMulBranchSubgraph(
+        "else_branch", "x", else_output_name, shape, TensorProto::FLOAT, -1.0f, "else_const");
+
+    builder.AddNode(
+        "if_node",
+        "If",
+        {"cond"},
+        {if_output_name},
+        "",
+        {
+            MakeBranchAttribute("then_branch", std::move(then_g)),
+            MakeBranchAttribute("else_branch", std::move(else_g)),
+        });
+  };
+}
+
 }  // namespace
 
 static void RunIfTest(const GetTestModelFn& model_fn,
@@ -387,6 +424,14 @@ TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_BothBranchesConstant) {
             ExpectedEPNodeAssignment::All);
 }
 
+// Implicit input `x` is produced by Trilu, which QNN EP doesn't support, so it runs
+// on the CPU EP and its output crosses into the QNN partition that owns the If node.
+TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_CrossPartitionImplicitInput) {
+  RunIfTest(BuildIfCrossPartitionImplicitInputTestCase(
+                {2, 2}, "if_out", "then_out", "else_out"),
+            ExpectedEPNodeAssignment::Some);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 //
@@ -416,6 +461,14 @@ TEST_F(QnnHTPBackendTests, If_FP32_as_FP16_BothBranchesConstant) {
   RunIfTest(BuildIfMixedTestCase(/*then_constant=*/true, /*else_constant=*/true, {1, 2, 3}),
             ExpectedEPNodeAssignment::All,
             "htp", 19, 0.008f, true);
+}
+
+// Cross-partition implicit input on HTP: Trilu runs on CPU EP, If runs on QNN HTP.
+TEST_F(QnnHTPBackendTests, If_FP32_as_FP16_CrossPartitionImplicitInput) {
+  RunIfTest(BuildIfCrossPartitionImplicitInputTestCase(
+                {1, 2, 3}, "if_out", "then_out", "else_out"),
+            ExpectedEPNodeAssignment::Some,
+            "htp", 19, 0.008f, /*enable_htp_fp16_precision=*/true);
 }
 
 // HTP QDQ shape: each branch wraps Mul in DQ -> Mul -> Q, matching real quantized models.

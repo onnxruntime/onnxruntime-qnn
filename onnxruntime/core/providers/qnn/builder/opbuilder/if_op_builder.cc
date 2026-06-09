@@ -1,6 +1,8 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -10,6 +12,20 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
+
+// RAII guard for QnnModelWrapper::Push/PopBranchGraphScope.
+class BranchGraphScopeGuard {
+ public:
+  BranchGraphScopeGuard(QnnModelWrapper& qmw, const OrtGraph* branch) : qmw_(qmw) {
+    qmw_.PushBranchGraphScope(branch);
+  }
+  ~BranchGraphScopeGuard() { qmw_.PopBranchGraphScope(); }
+  BranchGraphScopeGuard(const BranchGraphScopeGuard&) = delete;
+  BranchGraphScopeGuard& operator=(const BranchGraphScopeGuard&) = delete;
+
+ private:
+  QnnModelWrapper& qmw_;
+};
 
 // Build a minimal OrtNodeUnitIODef from a plain OrtValueInfo*.
 // Returns non-OK status if the value info cannot be read.
@@ -83,7 +99,7 @@ Ort::Status GetBranchSingleOutput(const OrtApi& ort_api,
 
   const char* name = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(out_vi, &name));
-  out_name = name;
+  out_name = name ? name : "";
 
   const OrtTypeInfo* type_info = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(out_vi, &type_info));
@@ -121,13 +137,12 @@ Ort::Status TranslateBranch(QnnModelWrapper& qmw,
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(branch, nodes.data(), num_nodes));
   }
 
-  qmw.PushBranchGraphScope(branch);
+  BranchGraphScopeGuard scope_guard(qmw, branch);
 
   for (const OrtNode* node : nodes) {
     OrtNodeUnit unit(node, ort_api);
     const auto* builder = qnn::GetOpBuilder(unit.OpType());
     if (builder == nullptr) {
-      qmw.PopBranchGraphScope();
       return MAKE_EP_FAIL(("If branch op `" + unit.OpType() +
                            "` is not supported by QNN EP.")
                               .c_str());
@@ -136,12 +151,10 @@ Ort::Status TranslateBranch(QnnModelWrapper& qmw,
                         ? builder->IsOpSupported(qmw, unit, logger)
                         : builder->AddToModelBuilder(qmw, unit, logger, false);
     if (!s.IsOK()) {
-      qmw.PopBranchGraphScope();
       return s;
     }
   }
 
-  qmw.PopBranchGraphScope();
   return Ort::Status();
 }
 
@@ -161,11 +174,11 @@ Ort::Status EnsureBranchOutputRegistered(QnnModelWrapper& qmw,
   OrtNodeUnitIODef io_def;
   RETURN_IF_ERROR(MakeIODefFromValueInfo(ort_api, output_vi, io_def));
 
-  qmw.PushBranchGraphScope(branch);
   QnnTensorWrapper wrapper;
-  Ort::Status s = qmw.MakeTensorWrapper(io_def, wrapper);
-  qmw.PopBranchGraphScope();
-  if (!s.IsOK()) return s;
+  {
+    BranchGraphScopeGuard scope_guard(qmw, branch);
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(io_def, wrapper));
+  }
   RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(wrapper)),
                 ("Failed to register branch output tensor: " + output_name).c_str());
   return Ort::Status();
@@ -241,6 +254,18 @@ Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
                                                      bool do_op_validation) const {
   const OrtApi& ort_api = qmw.GetOrtApi();
   const OrtNode& if_node = node_unit.GetNode();
+
+  // ONNX If spec: cond is a scalar boolean.
+  RETURN_IF_NOT(!node_unit.Inputs().empty(), "If node missing cond input.");
+  const auto& cond_def = node_unit.Inputs()[0];
+  RETURN_IF_NOT(cond_def.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL,
+                "If cond input must have BOOL dtype.");
+  std::vector<uint32_t> cond_shape;
+  RETURN_IF_NOT(qmw.GetOnnxShape(cond_def.shape, cond_shape), "Cannot get cond shape.");
+  bool cond_is_scalar = cond_shape.empty() ||
+                        std::all_of(cond_shape.begin(), cond_shape.end(),
+                                    [](uint32_t d) { return d == 1u; });
+  RETURN_IF_NOT(cond_is_scalar, "If cond input must be a scalar (single-element) tensor.");
 
   // Retrieve branch graphs.
   const OrtGraph* then_graph = nullptr;
