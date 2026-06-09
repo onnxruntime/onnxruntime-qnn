@@ -20,7 +20,8 @@ template <typename T>
 static void RunRangeOpTest(T start, T limit, T delta,
                            int opset_version,
                            ExpectedEPNodeAssignment expected_ep_assignment,
-                           const std::string& backend_name = "cpu") {
+                           const std::string& backend_name = "cpu",
+                           bool make_dynamic = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -30,8 +31,10 @@ static void RunRangeOpTest(T start, T limit, T delta,
   }
 #endif
 
+  // make_dynamic=true: pass start as a non-initializer to trigger the dynamic-input rejection path.
+  const bool is_init = !make_dynamic;
   std::vector<TestInputDef<T>> scalar_inputs = {
-      TestInputDef<T>({}, /*is_initializer=*/true, {start}),
+      TestInputDef<T>({}, is_init, {start}),
       TestInputDef<T>({}, /*is_initializer=*/true, {limit}),
       TestInputDef<T>({}, /*is_initializer=*/true, {delta}),
   };
@@ -62,6 +65,10 @@ TEST_F(QnnCPUBackendTests, Range_float32_descending) {
   RunRangeOpTest<float>(10.0f, 0.0f, -2.0f, 11, ExpectedEPNodeAssignment::All, "cpu");
 }
 
+TEST_F(QnnCPUBackendTests, Range_float32_empty) {
+  RunRangeOpTest<float>(3.0f, 3.0f, 1.0f, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
 TEST_F(QnnCPUBackendTests, Range_int32_ascending) {
   RunRangeOpTest<int32_t>(0, 8, 1, 11, ExpectedEPNodeAssignment::All, "cpu");
 }
@@ -70,8 +77,27 @@ TEST_F(QnnCPUBackendTests, Range_int32_step) {
   RunRangeOpTest<int32_t>(2, 20, 3, 11, ExpectedEPNodeAssignment::All, "cpu");
 }
 
+TEST_F(QnnCPUBackendTests, Range_int32_negative_delta) {
+  RunRangeOpTest<int32_t>(10, 0, -2, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+TEST_F(QnnCPUBackendTests, Range_int32_empty) {
+  RunRangeOpTest<int32_t>(5, 5, 1, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
 TEST_F(QnnCPUBackendTests, Range_int64_ascending) {
   RunRangeOpTest<int64_t>(0, 16, 1, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+// Dynamic input must be rejected (fallback to CPU EP).
+TEST_F(QnnCPUBackendTests, Range_dynamic_input_rejected) {
+  RunRangeOpTest<float>(0.0f, 5.0f, 1.0f, 11, ExpectedEPNodeAssignment::None, "cpu",
+                        /*make_dynamic=*/true);
+}
+
+// delta == 0 must be rejected.
+TEST_F(QnnCPUBackendTests, Range_delta_zero_rejected) {
+  RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "cpu");
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +118,10 @@ TEST_F(QnnHTPBackendTests, Range_float32_descending) {
   RunRangeOpTest<float>(10.0f, 0.0f, -2.0f, 11, ExpectedEPNodeAssignment::All, "htp");
 }
 
+TEST_F(QnnHTPBackendTests, Range_float32_empty) {
+  RunRangeOpTest<float>(3.0f, 3.0f, 1.0f, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
 TEST_F(QnnHTPBackendTests, Range_int32_ascending) {
   RunRangeOpTest<int32_t>(0, 8, 1, 11, ExpectedEPNodeAssignment::All, "htp");
 }
@@ -100,8 +130,27 @@ TEST_F(QnnHTPBackendTests, Range_int32_step) {
   RunRangeOpTest<int32_t>(2, 20, 3, 11, ExpectedEPNodeAssignment::All, "htp");
 }
 
+TEST_F(QnnHTPBackendTests, Range_int32_negative_delta) {
+  RunRangeOpTest<int32_t>(10, 0, -2, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+TEST_F(QnnHTPBackendTests, Range_int32_empty) {
+  RunRangeOpTest<int32_t>(5, 5, 1, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
 TEST_F(QnnHTPBackendTests, Range_int64_ascending) {
   RunRangeOpTest<int64_t>(0, 16, 1, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+// Dynamic input must be rejected (fallback to CPU EP).
+TEST_F(QnnHTPBackendTests, Range_dynamic_input_rejected) {
+  RunRangeOpTest<float>(0.0f, 5.0f, 1.0f, 11, ExpectedEPNodeAssignment::None, "htp",
+                        /*make_dynamic=*/true);
+}
+
+// delta == 0 must be rejected.
+TEST_F(QnnHTPBackendTests, Range_delta_zero_rejected) {
+  RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "htp");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -62,6 +62,16 @@ class RangeOpBuilder : public BaseOpBuilder {
 
 namespace {
 
+// Returns false when the float element count v is NaN, ±Inf, or exceeds
+// the uint32 range (which is the practical cap for a static tensor).
+inline bool SafeFloatCount(double v, int64_t& out_n) {
+  if (!std::isfinite(v) || v > static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+    return false;
+  }
+  out_n = (v > 0.0) ? static_cast<int64_t>(v) : 0;
+  return true;
+}
+
 template <typename T>
 void ComputeRangeTyped(T start, T limit, T delta, std::vector<uint8_t>& out_bytes, uint32_t& count) {
   int64_t n = 0;
@@ -118,6 +128,13 @@ Ort::Status RangeOpBuilder::ComputeRangeValues(QnnModelWrapper& qnn_model_wrappe
       const float limit = *reinterpret_cast<const float*>(bytes[1].data());
       const float delta = *reinterpret_cast<const float*>(bytes[2].data());
       RETURN_IF_NOT(delta != 0.0f, "Range: delta must be non-zero.");
+      {
+        const double v = std::ceil((static_cast<double>(limit) - static_cast<double>(start)) /
+                                   static_cast<double>(delta));
+        int64_t n = 0;
+        RETURN_IF_NOT(SafeFloatCount(v, n),
+                      "Range: float32 element count is NaN, infinite, or exceeds uint32 range.");
+      }
       ComputeRangeTyped<float>(start, limit, delta, static_bytes_out, count_out);
       static_dtype_out = QNN_DATATYPE_FLOAT_32;
       break;
@@ -161,6 +178,7 @@ Ort::Status RangeOpBuilder::ComputeRangeValues(QnnModelWrapper& qnn_model_wrappe
 Ort::Status RangeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           const Ort::Logger& logger) const {
+  ORT_UNUSED_PARAMETER(logger);
   const auto& inputs = node_unit.Inputs();
   RETURN_IF_NOT(inputs.size() == 3, "Range: expected 3 inputs (start, limit, delta).");
   for (size_t i = 0; i < 3; ++i) {
@@ -168,15 +186,12 @@ Ort::Status RangeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                   "Range: all inputs (start, limit, delta) must be constant initializers. "
                   "Dynamic Range inputs are not supported by QNN EP.");
   }
-  // Reject early on unsupported dtypes by running ComputeRangeValues, which
-  // also validates delta != 0 and int64 overflow.
+  // Validate dtype, delta != 0, int64 range, and float NaN/Inf/overflow.
   Qnn_DataType_t onnx_dtype = QNN_DATATYPE_UNDEFINED;
   Qnn_DataType_t static_dtype = QNN_DATATYPE_UNDEFINED;
   std::vector<uint8_t> bytes;
   uint32_t count = 0;
-  RETURN_IF_ERROR(ComputeRangeValues(qnn_model_wrapper, node_unit,
-                                     onnx_dtype, static_dtype, bytes, count));
-  return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
+  return ComputeRangeValues(qnn_model_wrapper, node_unit, onnx_dtype, static_dtype, bytes, count);
 }
 
 Ort::Status RangeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
