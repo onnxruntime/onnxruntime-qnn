@@ -5,19 +5,17 @@
 
 #include <algorithm>
 #include <cassert>
-#include <charconv>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <optional>
-#include <string_view>
-#include <system_error>
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "QnnCommon.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
 
@@ -471,33 +469,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 
 }  // namespace onnxruntime
 
-namespace {
-// Parse the host ORT version string ("1.X.Y") and return the API version (the
-// minor component). Returns 0 if the string is null, malformed, or major != 1.
-// The "minor == API version" contract is documented for ORT 1.x; rejecting
-// non-1 majors keeps a hypothetical ORT 2.x from being silently misparsed.
-uint32_t ParseRuntimeOrtApiVersion(const char* version_str) {
-  if (version_str == nullptr) {
-    return 0;
-  }
-  std::string_view sv{version_str};
-  const char* end = sv.data() + sv.size();
-
-  int major = 0;
-  auto [p1, ec1] = std::from_chars(sv.data(), end, major);
-  if (ec1 != std::errc{} || p1 == end || *p1 != '.' || major != 1) {
-    return 0;
-  }
-
-  int minor = 0;
-  auto [p2, ec2] = std::from_chars(p1 + 1, end, minor);
-  if (ec2 != std::errc{} || minor < 0) {
-    return 0;
-  }
-  return static_cast<uint32_t>(minor);
-}
-}  // namespace
-
 extern "C" {
 //
 // Public symbols
@@ -512,17 +483,29 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return nullptr;
   }
 
-  // kMinOrtApiVersion must equal the highest \since version of any ORT API
-  // method this EP calls. Below this floor, GetApi() returns a function table
-  // that lacks members the EP would dereference.
+  // kMinOrtApiVersion must be at least the ORT API version that introduced
+  // the newest ORT API method this EP calls. Below this floor, GetApi()
+  // returns a function table missing members the EP would dereference.
   constexpr uint32_t kMinOrtApiVersion = 24;
 
   const char* version_str = ort_api_base->GetVersionString();
-  const uint32_t runtime_api_version = ParseRuntimeOrtApiVersion(version_str);
+  const uint32_t runtime_api_version = onnxruntime::qnn::detail::ParseRuntimeOrtApiVersion(version_str);
+
+  if (runtime_api_version == 0) {
+    const OrtApi* fallback_api = ort_api_base->GetApi(1);
+    if (fallback_api == nullptr) {
+      return nullptr;
+    }
+    char msg[256];
+    std::snprintf(msg, sizeof(msg),
+                  "QNN EP could not parse host ORT version string \"%s\" "
+                  "(expected \"1.X.Y\" with major == 1).",
+                  version_str != nullptr ? version_str : "(null)");
+    return fallback_api->CreateStatus(ORT_FAIL, msg);
+  }
 
   if (runtime_api_version < kMinOrtApiVersion) {
-    const uint32_t fallback_version = runtime_api_version > 0 ? runtime_api_version : 1;
-    const OrtApi* fallback_api = ort_api_base->GetApi(fallback_version);
+    const OrtApi* fallback_api = ort_api_base->GetApi(runtime_api_version);
     if (fallback_api == nullptr) {
       return nullptr;
     }
@@ -531,8 +514,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
                   "QNN EP requires ORT >= 1.%u (API %u). "
                   "Host ORT is %s (API %u).",
                   kMinOrtApiVersion, kMinOrtApiVersion,
-                  version_str != nullptr ? version_str : "unknown",
-                  runtime_api_version);
+                  version_str, runtime_api_version);
     return fallback_api->CreateStatus(ORT_FAIL, msg);
   }
 
