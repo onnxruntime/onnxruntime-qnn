@@ -28,13 +28,17 @@ For instructions on building wheels across different architectures, see the [Bui
 | tgz | — | — | Inference | — | — |
 | Maven | — | — | — | — | Inference |
 
-## New Operators
+## New Operators and Fusions
 
 - NonZero ([#217](https://github.com/onnxruntime/onnxruntime-qnn/pull/217))
 - RandomNormalLike ([#266](https://github.com/onnxruntime/onnxruntime-qnn/pull/266))
 - Identity ([#268](https://github.com/onnxruntime/onnxruntime-qnn/pull/268))
+- **Gelu Pattern 3** — New `Erf*0.5 + 0.5` decomposition variant; fixes models previously not fused. ([#236](https://github.com/onnxruntime/onnxruntime-qnn/pull/236))
+- **DynamicQuantizeLinear + MatMulInteger** — Fuses `DQL → MatMulInteger → Cast → Mul → [Add]` into a float QNN MatMul. ([#367](https://github.com/onnxruntime/onnxruntime-qnn/pull/367))
+- **DynamicQuantizeLinear + ConvInteger** — Fuses `DQL → ConvInteger → Cast → Mul → [Add]` into a float QNN Conv2d. ([#364](https://github.com/onnxruntime/onnxruntime-qnn/pull/364))
+- **Transpose → Reshape → Transpose** — Collapses into a single reshape when the transposes cancel out. ([#200](https://github.com/onnxruntime/onnxruntime-qnn/pull/200))
 
-For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators).
+For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
 
 ## Improvements
 
@@ -45,26 +49,16 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - Rank-5 MatMul inputs are now kept on NPU by flattening input 0 before submission to QNN. ([#342](https://github.com/onnxruntime/onnxruntime-qnn/pull/342))
 - Gemm with `beta=0.0` now maps to QNN FullyConnected without bias instead of falling back to CPU. ([#375](https://github.com/onnxruntime/onnxruntime-qnn/pull/375))
 - RoiAlign now accepts `coordinate_transformation_mode=half_pixel` and `sampling_ratio=0`. ([#389](https://github.com/onnxruntime/onnxruntime-qnn/pull/389))
-- MatMulNBits extended to HTP with 2-bit and 4-bit support (block sizes 32/64), enabling the MSFT 2-bit Phi3 model. ([#288](https://github.com/onnxruntime/onnxruntime-qnn/pull/288))
+- MatMulNBits extended to HTP with 2-bit and 4-bit support (block sizes 32/64).([#288](https://github.com/onnxruntime/onnxruntime-qnn/pull/288))
 - Graph verification in tests migrated to the public `GetEpGraphAssignmentInfo` API. ([#346](https://github.com/onnxruntime/onnxruntime-qnn/pull/346))
 - Conv now supports block-quantized weights on HTP via the `BW_FLOAT_BLOCK` kernel, including int2 support. ([#429](https://github.com/onnxruntime/onnxruntime-qnn/pull/429))
 - Static MSVC runtime linkage enabled for Windows x86_64 builds. ([#432](https://github.com/onnxruntime/onnxruntime-qnn/pull/432))
-
-## New Fusions
-
-- **Gelu Pattern 3** — New `Erf*0.5 + 0.5` decomposition variant; fixes models previously not fused. ([#236](https://github.com/onnxruntime/onnxruntime-qnn/pull/236))
-- **DynamicQuantizeLinear + MatMulInteger** — Fuses `DQL → MatMulInteger → Cast → Mul → [Add]` into a float QNN MatMul. ([#367](https://github.com/onnxruntime/onnxruntime-qnn/pull/367))
-- **DynamicQuantizeLinear + ConvInteger** — Fuses `DQL → ConvInteger → Cast → Mul → [Add]` into a float QNN Conv2d. ([#364](https://github.com/onnxruntime/onnxruntime-qnn/pull/364))
-- **Transpose → Reshape → Transpose** — Collapses into a single reshape when the transposes cancel out. ([#200](https://github.com/onnxruntime/onnxruntime-qnn/pull/200))
-
-For the full list of supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
 
 ## Bug Fixes
 
 - BatchNormalization: incorrect QNN offset handling for `QNN_DATATYPE_UFIXED_POINT_16` scale inputs. ([#135](https://github.com/onnxruntime/onnxruntime-qnn/pull/135))
 - ThresholdedRelu: stale `add → relu → sign → mul` pattern replaced with QAIRT-aligned `Greater → Select`. ([#221](https://github.com/onnxruntime/onnxruntime-qnn/pull/221))
 - Graph composition failure when `offload_graph_io_quantization=1` and a graph input fans out to multiple QDQ pairs. ([#295](https://github.com/onnxruntime/onnxruntime-qnn/pull/295))
-- MatMul accuracy regression from unnecessary uint16 → uint8 Convert; now only inserted for asymmetric → symmetric uint16. ([#300](https://github.com/onnxruntime/onnxruntime-qnn/pull/300))
 - Softmax `axis ≠ rank-1` falling back to CPU due to missing upstream tensor wrappers at validation time. ([#304](https://github.com/onnxruntime/onnxruntime-qnn/pull/304))
 - ScatterND/ScatterElements silent CPU fallback for negative or INT_64 indices. ([#311](https://github.com/onnxruntime/onnxruntime-qnn/pull/311), [#317](https://github.com/onnxruntime/onnxruntime-qnn/pull/317))
 - Build failure on Ubuntu 24.04 / GCC 13 due to false-positive `-Wmaybe-uninitialized`. ([#387](https://github.com/onnxruntime/onnxruntime-qnn/pull/387))

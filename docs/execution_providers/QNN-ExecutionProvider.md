@@ -337,11 +337,13 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Clip|fp16 supported since 1.18.0|
 |ai.onnx:Concat||
 |ai.onnx:Conv|3d supported since 1.18.0|
+|ai.onnx:ConvInteger|Supported exclusively via DynamicQuantizeLinear → ConvInteger fusion pattern|
 |ai.onnx:ConvTranspose|3d supported since 1.18.0|
 |ai.onnx:Cos||
 |ai.onnx:CumSum||
 |ai.onnx:DepthToSpace||
 |ai.onnx:DequantizeLinear||
+|ai.onnx:DynamicQuantizeLinear|Supported exclusively via ConvInteger and MatMulInteger fusion patterns|
 |ai.onnx:Div||
 |ai.onnx:Einsum||
 |ai.onnx:Elu||
@@ -377,6 +379,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:LogSoftmax||
 |ai.onnx:LpNormalization|p == 2|
 |ai.onnx:MatMul|Supported input data types on HTP backend: (uint8, uint8), (uint8, uint16), (uint16, uint8)|
+|ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
 |ai.onnx:MaxPool||
 |ai.onnx:Mean||
@@ -406,6 +409,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Resize||
 |ai.onnx:RoiAlign||
 |ai.onnx:Round||
+|ai.onnx:RotaryEmbedding|HTP backend only|
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
@@ -433,7 +437,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft.MatMulNBits|Supported bits == 4 on GPU backend|
+|com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:QuickGelu||
 |com.microsoft:RotaryEmbedding|HTP backend only|
@@ -451,8 +455,8 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 |---|---|---|
 | `DequantizeLinear → QuantizeLinear` | `QNN_OP_CONVERT` | Eliminates redundant re-quantization between compatible quantization schemes. Scalar scale/zero-point required. |
 | `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
-| `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
-| `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
+| `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | ConvInteger is supported exclusively via this fusion. Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
+| `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | MatMulInteger is supported exclusively via this fusion. Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
 
 ### Low-Power Block Quantization (LPBQ) fusions
 
