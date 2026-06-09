@@ -4,7 +4,6 @@
 #pragma once
 
 #include <memory>
-#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -17,55 +16,31 @@ namespace qnn {
 class QnnModelWrapper;
 
 /// <summary>
-/// Unified fusion class for Reshape-Gemm patterns:
-/// - 2-node: Reshape -> Gemm
-/// - 3-node: Reshape -> Gemm -> Reshape
-/// - 4-node: Reshape -> Gemm -> Reshape -> Reshape
-///
-/// All patterns fuse to QNN FullyConnected (+ optional output Reshape).
+/// Represents a fusion of a Reshape->Gemm sequence to a single Gemm node.
+/// Ideally Reshape->Gemm->Reshape should be fused to a single Gemm node with keep_dims set to True,
+/// but on some devices the OpConfig validation will fail when keep_dims to True (it says expected value is 0),
+/// so we still need to keep the 2nd Reshape node.
 /// </summary>
-class ReshapeGemmFusionGroup : public IQnnNodeGroup {
+class ReshapeGemmFusion : public IQnnNodeGroup {
  public:
-  explicit ReshapeGemmFusionGroup(std::vector<const OrtNodeUnit*> node_units);
-  ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeGemmFusionGroup);
+  ReshapeGemmFusion(const OrtNodeUnit& reshape_node_unit, const OrtNodeUnit& gemm_node_unit);
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeGemmFusion);
 
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
-  std::string_view Type() const override { return "ReshapeGemmFusionGroup"; }
+  std::string_view Type() const override { return "ReshapeGemmFusion"; }
 
-  // 2-node fusion: Reshape -> Gemm
-  static std::unique_ptr<IQnnNodeGroup> TryFusion2(
-      QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
-      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
-      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const Ort::Logger& logger);
-
-  // 3-node fusion: Reshape -> Gemm -> Reshape
-  static std::unique_ptr<IQnnNodeGroup> TryFusion3(
-      QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
-      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
-      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const Ort::Logger& logger);
-
-  // 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
-  static std::unique_ptr<IQnnNodeGroup> TryFusion4(
+  static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
       const Ort::Logger& logger);
 
  private:
-  Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw, const Ort::Logger& logger, bool validate) const;
-
-  std::vector<const OrtNodeUnit*> node_units_;
+  std::array<const OrtNodeUnit*, 2> node_units_;
 };
-
-// Backward-compatible aliases for existing registration code
-using ReshapeGemmFusion = ReshapeGemmFusionGroup;
-using ReshapeGemmReshapeFusion = ReshapeGemmFusionGroup;
-using ReshapeGemmReshapeReshapeFusion = ReshapeGemmFusionGroup;
 
 }  // namespace qnn
 }  // namespace onnxruntime
