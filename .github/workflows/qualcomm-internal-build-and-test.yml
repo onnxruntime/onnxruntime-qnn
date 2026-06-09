@@ -124,8 +124,7 @@ jobs:
       run_tests: false
 
   test-linux-aarch64-oe-gcc11_2:
-    # Downstream tests need the Artifactory upload from build-linux-aarch64-oe-gcc11_2; skip on fork PRs.
-    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
+    if: ${{ inputs.do_all }}
     needs: [build-linux-aarch64-oe-gcc11_2, path-filter]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
@@ -263,8 +262,7 @@ jobs:
           src_pattern: onnxruntime-tests-android-aarch64.zip
 
   test-android-aarch64:
-    # Downstream tests need the Artifactory upload from build-android-aarch64; skip on fork PRs.
-    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
+    if: ${{ inputs.do_all }}
     needs: [build-android-aarch64, path-filter]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit

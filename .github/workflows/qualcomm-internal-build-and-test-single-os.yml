@@ -277,6 +277,7 @@ jobs:
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork == true }}
     needs: [build]
     runs-on: ["self-hosted", "linux", "X64", "Build"]
+    timeout-minutes: 10
     steps:
       - run: echo "Tests skipped on fork PR (no Artifactory access); build validated the change."
         shell: bash
@@ -286,6 +287,7 @@ jobs:
     if: ${{ inputs.test_wheel && github.event.pull_request.head.repo.fork == true }}
     needs: [build]
     runs-on: ["self-hosted", "linux", "X64", "Build"]
+    timeout-minutes: 10
     steps:
       - run: echo "Wheel smoke test skipped on fork PR (no Artifactory access); build validated the change."
         shell: bash
