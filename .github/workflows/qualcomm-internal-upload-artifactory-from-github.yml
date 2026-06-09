@@ -234,7 +234,7 @@ jobs:
           cat > "$NETRC_FILE" <<EOF
           machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
-          password ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
           VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
@@ -246,7 +246,7 @@ jobs:
         if: ${{ !inputs.skip_publish }}
         env:
           TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
+          TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
         run: |
           source uplevel_venv/bin/activate
           twine upload -r artifactory-pypi-test-project \
@@ -295,7 +295,7 @@ jobs:
         shell: powershell
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
         run: |
           $netrcFile = New-TemporaryFile
           @"
@@ -321,7 +321,7 @@ jobs:
         shell: powershell
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
@@ -449,7 +449,7 @@ jobs:
           cat > "$NETRC_FILE" <<EOF
           machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
-          password ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
           VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
@@ -469,7 +469,7 @@ jobs:
           cat > "$NETRC_FILE" << EOF
           machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
-          password ${{ secrets.ARTIFACTORY_NEW_UPLOADER_PASSWORD }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
 
           # Upload Windows ARM64 archive and PDB archive
