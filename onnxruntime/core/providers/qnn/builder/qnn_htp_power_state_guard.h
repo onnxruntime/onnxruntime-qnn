@@ -9,8 +9,9 @@ namespace onnxruntime {
 namespace qnn {
 // RAII guard for HtpPowerConfigManager::SetState.
 //
-// Calls SetState(start_state, ...) on construction and SetState(done_state, ...)
-// on destruction, ensuring the done state is always reached even on early returns.
+// Calls SetState(start_state, ...) when SetPreRunHtpPerfStatus() is invoked and
+// SetState(done_state, ...) on destruction, ensuring the done state is always reached
+// even on early returns.
 //
 // Typical usage (INIT_START / INIT_DONE pair):
 //
@@ -19,7 +20,8 @@ namespace qnn {
 //   power::HtpPerfConfig_t config = ...;  // configured as needed for the operation
 //   HtpPowerStateGuard power_guard(power_manager, valid_power_config_id, power::GraphState::INIT_START, power::GraphState::INIT_DONE,
 //                                  config);
-//   RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
+//   // ... optional setup work ...
+//   RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());  // Sets the pre-run state here
 //   auto status = DoWork(...);
 //   RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());  // optional: capture post-run perf error
 //   return status;
@@ -35,23 +37,29 @@ class HtpPowerStateGuard {
                      const Ort::Logger& logger)
       : power_manager_(power_manager),
         valid_power_config_id_(valid_power_config_id),
+        start_state_(start_state),
         done_state_(done_state),
         config_(config),
         logger_(logger),
+        pre_run_called_(false),
         finalized_(false) {
-    if (power_manager_ && valid_power_config_id_) {
-      start_status_ = power_manager_->SetState(start_state, config_, logger_);
-    }
   }
   ~HtpPowerStateGuard() {
-    if (!finalized_ && power_manager_ && valid_power_config_id_) {
+    if (pre_run_called_ && !finalized_ && power_manager_ && valid_power_config_id_) {
       // Error cannot be propagated from a destructor; silently ignore.
       power_manager_->SetState(done_state_, config_, logger_);
     }
   }
-  // Returns (by move) the status of setting HTP performance before work begins.
-  // Should be checked immediately after construction.
-  Ort::Status SetPreRunHtpPerfStatus() { return std::move(start_status_); }
+  // Sets HTP performance state before work begins and returns the status.
+  // Should be called after construction and before the actual work starts.
+  // This provides flexibility to perform other setup between construction and state setting.
+  Ort::Status SetPreRunHtpPerfStatus() {
+    pre_run_called_ = true;
+    if (power_manager_ && valid_power_config_id_) {
+      return power_manager_->SetState(start_state_, config_, logger_);
+    }
+    return Ort::Status();
+  }
   // Explicitly sets HTP performance after work is done and returns its status.
   // After this call the destructor will not invoke SetState again.
   Ort::Status SetPostRunHtpPerf() {
@@ -67,10 +75,11 @@ class HtpPowerStateGuard {
  private:
   power::HtpPowerConfigManager* power_manager_;
   bool valid_power_config_id_;
+  power::GraphState start_state_;
   power::GraphState done_state_;
   power::HtpPerfConfig_t config_;
   const Ort::Logger& logger_;
-  Ort::Status start_status_;
+  bool pre_run_called_;
   bool finalized_;
 };
 }  // namespace qnn
