@@ -1,6 +1,6 @@
 # ONNX Runtime QNN Execution Provider v2.3.0
 
-**ONNX Runtime Compatibility:** >= 1.24.2 (compiled with v1.24.4)<br>
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)<br>
 **QAIRT SDK Compatibility:** 2.47.0
 
 ```
@@ -22,8 +22,8 @@ For instructions on building wheels across different architectures, see the [Bui
 
 | Package | Windows ARM64 | Windows x64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
 |---|---|---|---|---|---|
-| Python Wheel | Inference | AOT compilation + Inference | Inference | AOT compilation + Inference | — |
-| NuGet | Inference ARM64 (ARM64X) | — | — | — | — |
+| Python Wheel | Inference | AOT compilation | Inference | AOT compilation | — |
+| NuGet | Inference | — | — | — | — |
 | ZIP | Inference | — | — | — | — |
 | tgz | — | — | Inference | — | — |
 | Maven | — | — | — | — | Inference |

@@ -24,6 +24,18 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 
 ---
 
+## Platform Support
+
+| Package | Windows ARM64 | Windows x64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|
+| Python Wheel | Inference | AOT compilation | Inference | AOT compilation | — |
+| NuGet | Inference | — | — | — | — |
+| ZIP | Inference | — | — | — | — |
+| tgz | — | — | Inference | — | — |
+| Maven | — | — | — | — | Inference |
+
+---
+
 ## Getting Started with the Plugin QNN EP
 
 The Plugin QNN EP workflow is different from the classic built-in EP. Follow these steps to migrate or get started.

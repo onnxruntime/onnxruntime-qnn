@@ -41,15 +41,13 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 |----------------|-------------------|----------------------|
 | v2.3.0         | v2.47.0           | v1.24.4              |
 
-> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.4.zip).
+> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
-  - **Note**: The NuGet package only supports Windows ARM64 platform (versions <= 2.2.0)
-  - **Note**: From version 2.3.0+, the NuGet package supports Windows ARM64 (ARM64X)
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
@@ -58,7 +56,7 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- Linux ARM64 archives (`.tgz`)
+- Linux ARM64 archive (`.tgz`)
   - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
 - Maven package (Android)
   - **Note**: The Maven package supports Android ARM64
@@ -195,8 +193,8 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 |`"offload_graph_io_quantization"`|Description|
 |---|---|
-|'0'|Default. Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
-|'1'|Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
+|'0'|Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
+|'1'|Default. Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|

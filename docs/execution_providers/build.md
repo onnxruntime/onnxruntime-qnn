@@ -123,10 +123,16 @@ python qcom/build_and_test.py build_ort_windows_x86_64
 python qcom/build_and_test.py build
 ```
 
-#### Build for x86-64 Linux
+#### Build for x86-64 Linux on Docker
 
 ```bash
 python qcom/build_and_test.py build_ort_linux_x86_64_ubuntu_22_04
+```
+
+#### Build for x86-64 Linux outside Docker
+
+```bash
+python qcom/build_and_test.py build_ort_linux_x86_64
 ```
 
 #### Build for ARM64 Linux
@@ -186,8 +192,11 @@ python qcom/build_and_test.py test_ort_windows_arm64ec
 # Test on host
 python qcom/build_and_test.py test
 
-# Test x86-64 build
+# Test x86-64 build inside docker
 python qcom/build_and_test.py test_ort_linux_x86_64_ubuntu_22_04
+
+# Test x86-64 build outside docker
+python qcom/build_and_test.py test_ort_linux_x86_64
 
 # Test ARM64 build
 python qcom/build_and_test.py test_ort_linux_aarch64_manylinux_2_34
@@ -257,6 +266,7 @@ Located in `build/Release/Release/dist/` (Windows) or `build/Release/dist/` (Lin
 * Windows ARM64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_arm64.whl`
 * Windows x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_amd64.whl`
 * Linux x86-64 (Preview): `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_35_x86_64.whl`
+* Linux x86-64 (built outside the docker container): `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-linux_x86_64_x86_64.whl`
 * Linux AArch64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_34_aarch64.whl`
 
 #### NuGet Packages
