@@ -38,16 +38,11 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBa
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
 
-// The QNN CPU backend is a reference/debug path that is no longer advertised by default: announcing a
-// CPU OrtHardwareDevice causes GetEpDevices() to return a (QNN, CPU) entry on every host, so
-// SetEpPolicy(PREFER_CPU) routes the host CPU to QNN EP, which then fails for almost every real workload.
-// The CPU backend code is kept intact and can be re-enabled at runtime by setting the
-// ORT_QNN_ENABLE_CPU_BACKEND environment variable (used by the unit-test harness, which relies on the
-// advertised CPU device as the attach point for HTP/GPU emulation on non-Qualcomm hosts).
+// QNN CPU is not advertised by default; set ORT_QNN_ENABLE_CPU_BACKEND to re-enable it (used by tests).
 static bool QnnCpuBackendEnabled() {
   static const bool enabled = []() {
 #if defined(_WIN32)
-    // std::getenv triggers C4996 (fatal under -WX) on MSVC; use the secure CRT variant instead.
+    // std::getenv is a fatal C4996 under -WX on MSVC.
     char* value = nullptr;
     size_t value_size = 0;
     const bool found = _dupenv_s(&value, &value_size, "ORT_QNN_ENABLE_CPU_BACKEND") == 0 && value != nullptr;
@@ -444,8 +439,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   auto device_type = factory->ort_api.HardwareDevice_Type(hw);
   auto vendor_id = factory->ort_api.HardwareDevice_VendorId(hw);
 
-  // QNN EP supports NPU/GPU devices with Qualcomm vendor ID, plus general CPU devices only when the
-  // QNN CPU backend is explicitly enabled (see QnnCpuBackendEnabled).
+  // QNN EP supports NPU/GPU devices with Qualcomm vendor ID, plus CPU only when the QNN CPU backend is enabled.
   const bool is_cpu = device_type == OrtHardwareDeviceType_CPU;
   auto supported_backend_types_it = kSupportedBackendTypes.find(device_type);
   const bool type_unsupported = supported_backend_types_it == kSupportedBackendTypes.end() ||
