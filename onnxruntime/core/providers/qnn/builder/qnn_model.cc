@@ -308,7 +308,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   // Collect framework op trace after graph composition
   if (trace_collector) {
-    qnn::OpTraceLookup per_graph_lookup;
+    OpTraceLookup per_graph_lookup;
     trace_collector->Finalize(graph_name, qnn_model_wrapper, *context.op_trace_output, per_graph_lookup);
     // Hand the per-graph lookup off to the backend manager, which holds the
     // session-wide lookup that ExtractBackendProfilingInfo reads from.

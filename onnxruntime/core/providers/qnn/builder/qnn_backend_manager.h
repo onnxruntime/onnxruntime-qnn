@@ -236,7 +236,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status ResetQnnLogLevel(std::optional<OrtLoggingLevel> ort_log_level = std::nullopt);
 
-  Ort::Status ExtractBackendProfilingInfo(qnn::profile::ProfilingInfo& profiling_info);
+  Ort::Status ExtractBackendProfilingInfo(profile::ProfilingInfo& profiling_info);
 
   // Framework op tracing: profiling enrichment lookup, shared across all
   // QnnModels in this session. Populated by:
@@ -245,13 +245,14 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   //   - AOT path:  CompileContextModel() loads the sidecar JSON via
   //                SetOpTraceLookup() before any context binary is loaded.
   // Self-attached to the local ProfilingInfo inside ExtractBackendProfilingInfo
-  // when HasNodeLevelProfiling() is true and op tracing is enabled.
-  void SetOpTraceLookup(qnn::OpTraceLookup lookup) { op_trace_lookup_ = std::move(lookup); }
+  // when profiling is at DETAILED/OPTRACE level (per-NODE events) and op
+  // tracing is enabled.
+  void SetOpTraceLookup(OpTraceLookup lookup) { op_trace_lookup_ = std::move(lookup); }
   // Merges `other` into the session-wide lookup. On key collision the entry
   // from `other` wins (last-write-wins), matching the operator[] semantics
   // already used by OpTraceCollector::Finalize and LoadTraceLookupFromFile
   // when they populate a lookup. `other` is consumed.
-  void MergeOpTraceLookup(qnn::OpTraceLookup&& other) {
+  void MergeOpTraceLookup(OpTraceLookup&& other) {
     for (auto& kv : other) {
       op_trace_lookup_[kv.first] = std::move(kv.second);
     }
@@ -321,14 +322,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
-
-  // Returns true when profiling is at DETAILED or OPTRACE level, meaning per-node
-  // (QNN_PROFILE_EVENTTYPE_NODE) events are generated. Used to gate ONNX source
-  // annotation in the profiling CSV.
-  bool HasNodeLevelProfiling() const {
-    return profiling_level_merge_ == ProfilingLevel::DETAILED ||
-           profiling_level_merge_ == ProfilingLevel::OPTRACE;
-  }
 
   bool IsBackendSetup() { return backend_setup_completed_; }
   bool FileMappingIsEnabled() {
@@ -670,14 +663,20 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   ProfilingLevel profiling_level_;
   ProfilingLevel profiling_level_merge_;
   const std::string profiling_file_path_;
-  // Framework op trace -> profiling enrichment lookup. See accessor comments
-  // for population rules.
-  qnn::OpTraceLookup op_trace_lookup_;
-  // True when framework op tracing is active for the session. Fixed at
-  // construction, so the profiling CSV's `ONNX Source Ops` column is present
-  // for every graph's events and its header matches all NODE rows.
-  const bool enable_framework_op_trace_ = false;
   bool system_lib_loaded_ = false;
+
+  // ----------------------------------------------------------------------
+  // Framework op tracing (profiling CSV enrichment).
+  //
+  // Session-scoped state used to annotate the profiling CSV's `ONNX Source Ops`
+  // column. Read by ExtractBackendProfilingInfo() via &op_trace_lookup_.
+  //   - enable_framework_op_trace_: fixed at construction so the CSV header
+  //     and per-NODE rows agree across every graph's events.
+  //   - op_trace_lookup_: populated by SetOpTraceLookup (AOT sidecar) /
+  //     MergeOpTraceLookup (JIT, per-graph). See those accessor comments.
+  // ----------------------------------------------------------------------
+  const bool enable_framework_op_trace_ = false;
+  OpTraceLookup op_trace_lookup_;
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool profiling_enabled_ = false;

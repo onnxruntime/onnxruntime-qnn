@@ -1675,7 +1675,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_ReshapeEinsumReshape) {
 //
 // Design notes:
 // - The ONNX Source Ops field only appears in the CSV when profiling_level is
-//   DETAILED or OPTRACE (HasNodeLevelProfiling() == true) AND tracing is on.
+//   DETAILED or OPTRACE (per-NODE events emitted) AND tracing is on.
 // - At BASIC level profiling, no QNN_PROFILE_EVENTTYPE_NODE events are emitted,
 //   so annotation would always be empty — the field is suppressed entirely.
 // - CSV header is written once when the file is first created; its field count
@@ -1867,7 +1867,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_With_Trace_NodeRo
   std::string header = ReadCsvHeader(csv_path);
   ASSERT_EQ(CountCsvColumns(header), 8u) << "Expected 8 columns: " << header;
 
-  // DETAILED profiling emits per-NODE events (HasNodeLevelProfiling() is true),
+  // DETAILED profiling emits per-NODE events,
   // and every NODE row carries an ONNX source annotation. Assert the NODE count
   // is non-zero first, then that the rows are annotated.
   size_t node_row_count = CountCsvRowsByMessage(csv_path, ",NODE,");
@@ -1907,7 +1907,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_OpTrace_With_Trace) {
 
   ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
 
-  // optrace triggers HasNodeLevelProfiling() == true, same as detailed.
+  // optrace triggers per-NODE events to be emitted, same as detailed.
   std::string header = ReadCsvHeader(csv_path);
   EXPECT_FALSE(header.empty()) << "CSV header is empty";
   EXPECT_EQ(CountCsvColumns(header), 8u)
@@ -1915,7 +1915,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_OpTrace_With_Trace) {
   EXPECT_NE(header.find("ONNX Source Ops"), std::string::npos)
       << "ONNX Source Ops column missing from header: " << header;
 
-  // OPTRACE profiling emits per-NODE events (HasNodeLevelProfiling() is true),
+  // OPTRACE profiling emits per-NODE events,
   // and every NODE row carries an ONNX source annotation.
   size_t node_row_count = CountCsvRowsByMessage(csv_path, ",NODE,");
   ASSERT_GT(node_row_count, 0u)
