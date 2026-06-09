@@ -27,7 +27,6 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5_to_rank4.h"
-#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank4.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
