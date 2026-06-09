@@ -41,7 +41,7 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 |----------------|-------------------|----------------------|
 | v2.3.0         | v2.47.0           | v1.24.4              |
 
-> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
