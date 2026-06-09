@@ -122,10 +122,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
                                                  const Ort::Logger& logger);
 
-#if defined(_WIN32)
-  bool IsDx12SharedAllocatorSupported() const;
-#endif
-
   // Framework op trace helpers. trace_ is populated incrementally during
   // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
   // function finalizes summary fields and writes the JSON file.

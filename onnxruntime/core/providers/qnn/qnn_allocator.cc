@@ -361,8 +361,8 @@ void* ORT_API_CALL Dx12SharedMemoryAllocator::AllocImpl(struct OrtAllocator* thi
                  ORT_LOGGING_LEVEL_INFO,
                  "\nMaking DX12 allocation:"
                  "\n  resource   = %p"
-                 "\n  offset     = %lu"
-                 "\n  total_size = %lu"
+                 "\n  offset     = %llu"
+                 "\n  total_size = %llu"
                  "\n  mapped_ptr = %p\n",
                  allocation_record.dx12_info.resource,
                  allocation_record.dx12_info.offset,
