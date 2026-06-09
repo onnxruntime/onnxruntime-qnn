@@ -27,6 +27,24 @@
 namespace onnxruntime {
 namespace test {
 
+// QNN EP no longer advertises the CPU backend by default (so SetEpPolicy(PREFER_CPU) does not route
+// to QNN EP on production hosts). The unit tests still depend on the advertised CPU OrtHardwareDevice:
+// CPU backend tests run on it directly, and on Linux / Windows-x64 the HTP/GPU tests use it as the
+// attach point for backend emulation. Opt the test process back in by setting the env var that QNN
+// EP's factory reads (QnnCpuBackendEnabled in qnn_provider_factory.cc). This runs before main(), so
+// the variable is guaranteed to be set before the first GetEpDevices() / RegisterExecutionProviderLibrary
+// call, regardless of test execution order.
+namespace {
+[[maybe_unused]] const bool g_enable_qnn_cpu_backend_for_tests = []() {
+#if defined(_WIN32)
+  _putenv_s("ORT_QNN_ENABLE_CPU_BACKEND", "1");
+#else
+  setenv("ORT_QNN_ENABLE_CPU_BACKEND", "1", /*overwrite*/ 1);
+#endif
+  return true;
+}();
+}  // namespace
+
 // Self-contained dynamic library loading functions to avoid using internal ORT APIs
 namespace {
 
