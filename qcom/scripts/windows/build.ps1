@@ -333,7 +333,10 @@ else {
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
             # very cheap to regenerate.
-            Remove-Item -Recurse -Force (Join-Path $RepoRoot "mirror")
+            $mirrorDir = Join-Path $RepoRoot "mirror"
+            if (Test-Path $mirrorDir) {
+                Remove-Item -Recurse -Force $mirrorDir
+            }
         }
     }
 
