@@ -75,9 +75,9 @@ get_arch() {
         fi
         if echo "$lower" | grep -qE "linux"; then
             if echo "$lower" | grep -qE "ubuntu"; then
-                echo ""; return  # skip ubuntu variant
+                echo "linux-x86_64"; return
             fi
-            echo "linux-x86_64"; return
+            echo ""; return  # skip generic linux variant
         fi
         echo ""; return
     fi
