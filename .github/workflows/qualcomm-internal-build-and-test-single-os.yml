@@ -196,7 +196,7 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build/in-runner tests still validate the change.
+      # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
       - name: Setup JFrog CLI
         if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
@@ -279,7 +279,7 @@ jobs:
     runs-on: ["self-hosted", "linux", "X64", "Build"]
     timeout-minutes: 10
     steps:
-      - run: echo "Tests skipped on fork PR (no Artifactory access); build validated the change."
+      - run: echo "Cross-runner tests skipped on fork PRs (need Artifactory secrets); change is still compiled, x86_64 jobs run unit tests, full suite runs post-merge on main."
         shell: bash
 
   test-wheel-fork-stub:
@@ -289,7 +289,7 @@ jobs:
     runs-on: ["self-hosted", "linux", "X64", "Build"]
     timeout-minutes: 10
     steps:
-      - run: echo "Wheel smoke test skipped on fork PR (no Artifactory access); build validated the change."
+      - run: echo "Wheel smoke test skipped on fork PRs (downloads wheel from Artifactory, needs secrets); wheel is still built, full suite runs post-merge on main."
         shell: bash
 
   test:

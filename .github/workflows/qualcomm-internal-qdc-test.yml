@@ -58,7 +58,7 @@ jobs:
     runs-on: ["self-hosted", "linux", "X64", "Build"]
     timeout-minutes: 10
     steps:
-      - run: echo "QDC tests skipped on fork PR (no Artifactory/QDC access); build validated the change."
+      - run: echo "QDC device tests skipped on fork PRs (need hardware + Artifactory secrets); change is still compiled, full device suite runs post-merge on main."
         shell: bash
 
   test:
