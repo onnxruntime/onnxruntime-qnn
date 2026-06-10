@@ -241,6 +241,11 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
                                                   bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
 
+  // transA=1 means the ONNX activation is [K, M]; QNN FullyConnected needs [M, K], so we insert a
+  // Transpose after the FP16 dequantize.
+  OrtNodeAttrHelper node_helper(node_unit);
+  const int64_t trans_a = node_helper.Get("transA", static_cast<int64_t>(0));
+
   // Determine weight shape and K, N dimensions.
   // transB=0: B=[K,N], blocked on axis 0; transB=1: B=[N,K], blocked on axis 1.
   TensorInfo weight_info = {};
@@ -257,12 +262,13 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
                                    : static_cast<int64_t>(weight_info.shape[1]);
 
   //
-  // Input A (activation): dequantize INT16→FP16 if needed. Stays 2-D [M, K].
-  // QNN HTP BQ FullyConnected accepts 2-D activation with a 2-D BW_FLOAT_BLOCK weight.
+  // Input A (activation): dequantize INT16→FP16 if needed, then transpose to [M, K] if transA=1.
+  // QNN HTP BQ FullyConnected accepts a 2-D [M, K] activation with a 2-D BW_FLOAT_BLOCK weight.
   //
   TensorInfo act_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], act_info));
-  RETURN_IF_NOT(act_info.shape.size() == 2, "QNN EP: BQ Gemm activation must be rank-2 [M, K]");
+  RETURN_IF_NOT(act_info.shape.size() == 2,
+                "QNN EP: BQ Gemm activation must be rank-2 ([M, K], or [K, M] when transA=1)");
 
   // Add activation to QNN graph (handles graph-input / already-added cases).
   if (!qnn_model_wrapper.IsQnnTensorWrapperExist(inputs[0].name)) {
@@ -294,6 +300,19 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
                       {act_name}, {fp16_name}, {}, do_op_validation),
                   "Failed to add INT16→FP16 Dequantize node for BQ Gemm activation.");
     input_names[0] = fp16_name;
+
+    // transA=1: the FP16 activation is [K, M]; transpose to [M, K] for QNN FullyConnected.
+    if (trans_a != 0) {
+      RETURN_IF_NOT(act_shape_2d.size() == 2, "QNN EP: BQ Gemm transA=1 requires a rank-2 activation");
+      const std::vector<uint32_t> transposed_shape = {act_shape_2d[1], act_shape_2d[0]};
+      const std::string transposed_name = utils::UniqueNameGenerator().New(fp16_name, "_transpose");
+      RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), fp16_name, transposed_name,
+                                                         act_shape_2d, /*transpose_perm=*/{1u, 0u},
+                                                         transposed_shape, QNN_DATATYPE_FLOAT_16,
+                                                         QnnQuantParamsWrapper(), do_op_validation,
+                                                         /*is_for_input=*/false, /*is_for_output=*/false));
+      input_names[0] = transposed_name;
+    }
   }
 
   //
@@ -427,6 +446,17 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
     std::vector<float> bias_scales;
     if (inputs[2].quant_param.has_value() && inputs[2].quant_param->scale != nullptr) {
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scales));
+    }
+    // The dequantization below assumes a symmetric (zero-point == 0) bias, which is the convention
+    // for INT32 QDQ bias (bias_scale = input_scale * weight_scale, zp = 0). A non-zero zero-point
+    // would require subtracting it before scaling; reject it rather than silently mis-dequantizing.
+    if (inputs[2].quant_param.has_value() && inputs[2].quant_param->zero_point != nullptr) {
+      std::vector<int32_t> bias_zps;
+      ONNXTensorElementDataType bias_zp_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(inputs[2].quant_param->zero_point, bias_zps, bias_zp_type));
+      for (const int32_t zp : bias_zps) {
+        RETURN_IF(zp != 0, "QNN EP: BQ Gemm bias must use zero-point 0 (symmetric); non-zero is not supported");
+      }
     }
     RETURN_IF_NOT(raw_bias_bytes.size() == static_cast<size_t>(N) * sizeof(int32_t),
                   "QNN EP: BQ Gemm INT32 bias size mismatch");

@@ -604,13 +604,17 @@ namespace {
 //   - output: Gemm → Q(uint16) → DQ → graph output, shape [M, N].
 GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
                                      int64_t trans_b = 0, bool include_bias = false,
-                                     int weight_bits = 4, bool weight_is_unsigned = false) {
+                                     int weight_bits = 4, bool weight_is_unsigned = false,
+                                     int64_t trans_a = 0) {
   return [M, K, N, block_size, trans_b, include_bias, weight_bits,
-          weight_is_unsigned](ModelTestBuilder& builder) -> void {
+          weight_is_unsigned, trans_a](ModelTestBuilder& builder) -> void {
     const int64_t num_blocks = K / block_size;  // caller ensures K % block_size == 0
 
     // ── Activation A: float → Q(uint16) → DQ ─────────────────────────────────
-    auto input_def = TestInputDef<float>({M, K}, false, -1.0f, 1.0f);
+    // transA=0: A=[M,K]; transA=1: A=[K,M].
+    const std::vector<int64_t> act_shape = trans_a == 0 ? std::vector<int64_t>{M, K}
+                                                        : std::vector<int64_t>{K, M};
+    auto input_def = TestInputDef<float>(act_shape, false, -1.0f, 1.0f);
     MakeTestInput<float>(builder, "input", input_def);
     const float act_scale = 2.0f / 65534.0f;
     const uint16_t act_zp = 32767;
@@ -653,6 +657,9 @@ GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t bl
     std::vector<std::string> gemm_inputs = {act_dql_out, "weight_dql_out"};
     std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
     gemm_attrs.push_back(builder.MakeScalarAttribute("transB", trans_b));
+    if (trans_a != 0) {
+      gemm_attrs.push_back(builder.MakeScalarAttribute("transA", trans_a));
+    }
     if (include_bias) {
       // INT32-quantized bias (per-tensor scale). Matches Conv BQ bias pattern.
       const float bias_scale = act_scale * 0.03f;
@@ -695,6 +702,24 @@ TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_NoBias) {
 TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB1_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// transA=1: ONNX activation is [K, M]; QNN EP inserts a Transpose to [M, K] before the FC.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransA1_TransB0) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1),
+                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// transA=1 with transB=1: both A and B transposed.
+TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransA1_TransB1) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1),
                   GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
 }
 
