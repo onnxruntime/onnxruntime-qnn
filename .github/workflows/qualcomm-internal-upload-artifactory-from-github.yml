@@ -454,18 +454,15 @@ jobs:
       # Download test archives to prepare test package
       # ----------------------------------------------
 
-      - name: Download ARM64 manylinux_2_34 Linux Tests from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tests
 
-      
-      # This will be enabled once we start shipping x86_64 Linux wheels
-
-      # - name: Download x86_64 Linux Tests from Artifactory
-      #   uses: ./.github/actions/download-ci-artifact
-      #   with:
-      #     name: linux-x86_64-py3.10-tests
+      - name: Download Linux x86_64 Ubuntu 22.04 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tests
 
       - name: Download ARM64 Windows Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -508,7 +505,6 @@ jobs:
             "${{ github.workspace }}/build" \
             "$VERSION"
 
-      - name: Publish
       - name: Publish Zip
         if: ${{ !inputs.skip_publish }}
         run: |
