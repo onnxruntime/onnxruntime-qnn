@@ -2890,7 +2890,7 @@ bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
     supported = false;
   }
 
-  if (supported &&  !InitializeQnnLog().IsOK()) {
+  if (supported && !InitializeQnnLog().IsOK()) {
     supported = false;
   }
 
