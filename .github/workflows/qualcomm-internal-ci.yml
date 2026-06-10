@@ -12,6 +12,7 @@ on:
   push:
     branches: [main, rel-*, rel/**/*]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, rel-*, rel/**/*]
   merge_group:
     types: [checks_requested]
@@ -28,17 +29,21 @@ concurrency:
 jobs:
   build-and-test-all:
     name: Build & Test
+    # Draft PRs don't auto-trigger CI: push to a draft runs nothing. CI fires when the PR is
+    # marked ready-for-review, or on manual workflow_dispatch. Drafts can't merge, so skipping
+    # their (required) checks blocks nothing. Non-PR events (push/merge_group/dispatch) always run.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
       do_all: true
 
   coverage:
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
     secrets: inherit
 
   asan:
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit

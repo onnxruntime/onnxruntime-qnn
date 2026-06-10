@@ -10,6 +10,14 @@ permissions:
 on:
   workflow_call:
     inputs:
+      has_code_changes:
+        description: |
+          If false, the job runs checkout only and skips ALL heavy work (submodule init,
+          Artifactory downloads, the QDC device test), reporting success so the required status
+          check stays green on PRs that don't touch code and no QDC device slot is consumed.
+          Defaults to true so release callers and direct workflow_dispatch are unaffected.
+        default: true
+        type: boolean
       target_os:
         default: android
         type: string
@@ -52,10 +60,13 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
+        # Submodules omitted here; initialized below only when a heavy QDC run is needed.
+      - name: Initialize submodules
+        if: ${{ inputs.has_code_changes }}
+        run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -65,17 +76,19 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Download Tests from Artifactory
+        if: ${{ inputs.has_code_changes }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-pyNone-tests"
 
       - name: Download testdata from Artifactory
-        if: ${{ inputs.testdata_archive_artifact_name != '' }}
+        if: ${{ inputs.has_code_changes && inputs.testdata_archive_artifact_name != '' }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: ${{ inputs.testdata_archive_artifact_name }}
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} pynone
+        if: ${{ inputs.has_code_changes }}
         env:
           QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
         # Use exec so that workflow cancel signals are sent directly to build_and_test.py, which will then
@@ -87,14 +100,14 @@ jobs:
           test_ort_qdc_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Cleanup QDC Runner tmp files
-        if: always()
+        if: ${{ always() && inputs.has_code_changes }}
         run: |
           echo "Cleaning $TMPDIR/QdcRunner-*"
           rm -fr $TMPDIR/QdcRunner-*
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
-        if: always() # always run even if the previous step fails
+        if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-pynone-test-results
           group_reports: false
@@ -105,7 +118,7 @@ jobs:
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
 
       - uses: actions/upload-artifact@v7
-        if: always() # always run even if the previous step fails
+        if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} pynone Test Results
           path: |

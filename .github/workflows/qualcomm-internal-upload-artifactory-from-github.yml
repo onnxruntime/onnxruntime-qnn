@@ -19,8 +19,8 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
-      linux_aarch64_manylinux_2_34_target_py_vsns:
-        description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
+      linux_target_py_vsns:
+        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
         type: string
         default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
@@ -50,13 +50,13 @@ jobs:
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: false
       build_linux_x86_64: false
-      linux_aarch64_manylinux_2_34_target_py_vsns: ${{ inputs.linux_aarch64_manylinux_2_34_target_py_vsns }}
+      linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
       windows_arm64_build_archive: true
 
   upload-wheel-workflow:
-    name: "Upload python wheel artifacts to Artifactory"
+    name: "Upload Python Wheel artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -72,101 +72,115 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # Download Python wheels from Artifactory
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.12-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.13 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.13-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.14-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-wheels
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.12-wheels
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.13-wheels
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.14-wheels
+
+      - name: Download Windows ARM64 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-wheels
 
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.11-wheels
-
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.11-wheels
-
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.12-wheels
 
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.12-wheels
-
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.12-wheels
-
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.13 from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.13-wheels
 
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.13-wheels
-
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.13-wheels
-
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.14-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64EC Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-wheels
+
+      - name: Download Windows ARM64EC Python 3.12 from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.12-wheels
+
+      - name: Download Windows ARM64EC Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.13-wheels
+
+      - name: Download Windows ARM64EC Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64ec-py3.14-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Windows x86_64 Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-wheels
+
+      - name: Download Windows x86_64 Python 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.12-wheels
+
+      - name: Download Windows x86_64 Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.13-wheels
+
+      - name: Download Windows x86_64 Python 3.14 from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.14-wheels
 
-      - name: Consolidate Wheels
+      - name: Consolidate Python Wheels
         run: |
           mkdir "${{ github.workspace }}/build/dist"
+          mkdir "${{ github.workspace }}/build/dist/arm64ec"
+          mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
-
-      - name: Consolidate Wheels
-        run: |
-          mkdir "${{ github.workspace }}/build/dist/arm64ec"
+          cp "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist/"*.whl "${{ github.workspace }}/build/dist/arm64ec"
-
-      - name: Consolidate Wheels
-        run: |
-          mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist/x64"
 
       - name: Install Dependencies
@@ -189,12 +203,12 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD wheels in build/dist/
+          # After merge: 4 Linux Aarch64 manylinux_2_34 + 4 Linux x86_64 Ubuntu 22.04 + 4 Windows ARM64 + 4 merged AMD wheels in build/dist/
           count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
           echo "Found $count wheel(s) in build/dist"
-          [ "$count" -eq 12 ] || { echo "ERROR: Expected 12 wheels in build/dist, found $count"; exit 1; }
+          [ "$count" -eq 16 ] || { echo "ERROR: Expected 16 wheels in build/dist, found $count"; exit 1; }
 
-      - name: Check Wheels
+      - name: Check Python Wheels
         run: |
           source uplevel_venv/bin/activate
           twine check ${{ github.workspace }}/build/dist/*.whl
@@ -211,7 +225,7 @@ jobs:
           NETRC_FILE=$(mktemp -p /tmp)
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" <<EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -221,20 +235,20 @@ jobs:
             "wheels.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
-      - name: Publish
+      - name: Publish Wheels
         if: ${{ !inputs.skip_publish }}
         env:
           TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
         run: |
           source uplevel_venv/bin/activate
-          twine upload -r re-artifactory-pypi-test-project \
+          twine upload -r artifactory-pypi-test-project \
             --cert ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
             --config-file ./qcom/scripts/upleveling/.pypirc \
             ${{ github.workspace }}/build/dist/*.whl
 
   upload-nuget-workflow:
-    name: "Upload nuget artifacts to Artifactory"
+    name: "Upload Nuget artifacts to Artifactory"
     runs-on: [Windows, self-hosted, Build, X64]
     needs: [build-artifacts]
 
@@ -278,7 +292,7 @@ jobs:
         run: |
           $netrcFile = New-TemporaryFile
           @"
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login $env:ARTIFACTORY_USERNAME
           password $env:ARTIFACTORY_PASSWORD
           "@ | Set-Content -Path $netrcFile
@@ -295,7 +309,7 @@ jobs:
 
           Remove-Item -Path $netrcFile -Force
 
-      - name: Publish
+      - name: Publish NuGet
         if: ${{ !inputs.skip_publish }}
         shell: powershell
         env:
@@ -315,7 +329,7 @@ jobs:
             -InputDir "${{ github.workspace }}\build\windows-arm64x\Release"
 
   upload-zip-workflow:
-    name: "Upload zip artifacts to Artifactory"
+    name: "Upload Zip artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -331,6 +345,16 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
+      - name: Download Linux Aarch64 manylinux_2_34 TGZ from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tgz
+
+      - name: Download Linux x86_64 Ubuntu 22.04 TGZ from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tgz
+
       - name: Download Windows ARM64 Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -340,11 +364,6 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64x-py3.11-zip
-
-      - name: Download Linux aarch64 manylinux_2_34 TGZ from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-aarch64_manylinux_2_34-py3.11-tgz
 
       - name: Download Windows ARM64 PDB Archive from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -401,7 +420,7 @@ jobs:
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
           echo "Found $count TGZ archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
+          [ "$count" -eq 2 ] || { echo "ERROR: Expected 2 TGZ archive, found $count"; exit 1; }
 
       - name: Prepare Windows ARM64 Zip lib for signing
         run: |
@@ -421,7 +440,7 @@ jobs:
           NETRC_FILE=$(mktemp -p /tmp)
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" <<EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -431,7 +450,7 @@ jobs:
             "zip.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
-      - name: Publish
+      - name: Publish Zip
         if: ${{ !inputs.skip_publish }}
         run: |
           # Create temporary .netrc file with credentials
@@ -441,7 +460,7 @@ jobs:
                        mktemp -p "${{ github.workspace }}")
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" << EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -459,6 +478,11 @@ jobs:
           # Upload Linux aarch64 manylinux_2_34 zip
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux x86_64 ubuntu 22.04 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
             "$NETRC_FILE"
 
           # Upload Windows ARM64EC PDB archive
