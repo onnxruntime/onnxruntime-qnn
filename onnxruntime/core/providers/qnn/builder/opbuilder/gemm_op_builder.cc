@@ -40,10 +40,9 @@ uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
 // Detects a block-quantized Gemm weight B, accounting for transB.
 // For transB=0: B is [K, N], scale is [K/block_size, N], blocked on axis 0.
 // For transB=1: B is [N, K], scale is [N, K/block_size], blocked on axis 1.
-// Both cases: K is the contraction axis (blocked axis). Returns true and sets
-// num_blocks = number of blocks along K, block_size = K / num_blocks.
+// Both cases: K is the contraction axis (blocked axis). Returns true if blocked weight detected.
 bool IsBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& weight,
-                    int64_t trans_b, int64_t& num_blocks, int64_t& block_size) {
+                    int64_t trans_b) {
   if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return false;
   }
@@ -64,11 +63,10 @@ bool IsBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitI
   if (scale_shape[blocked_axis] >= static_cast<int64_t>(weight_shape[blocked_axis])) {
     return false;
   }
-  num_blocks = scale_shape[blocked_axis];
+  const int64_t num_blocks = scale_shape[blocked_axis];
   if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[blocked_axis]) % num_blocks != 0) {
     return false;
   }
-  block_size = static_cast<int64_t>(weight_shape[blocked_axis]) / num_blocks;
   return true;
 }
 
@@ -149,12 +147,9 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
 
   // Block-quantized weight: translate to QNN FullyConnected with BW_FLOAT_BLOCK weight.
-  {
-    int64_t num_blocks = 0, block_size = 0;
-    if (IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b, num_blocks, block_size)) {
-      return ProcessInputsForBQGemm(qnn_model_wrapper, node_unit, trans_b, beta, logger, input_names,
-                                    do_op_validation);
-    }
+  if (IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b)) {
+    return ProcessInputsForBQGemm(qnn_model_wrapper, node_unit, trans_b, beta, logger, input_names,
+                                  do_op_validation);
   }
 
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
@@ -463,29 +458,26 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   auto beta = node_helper.Get("beta", (float)1.0);
+  const int64_t trans_b_out = node_helper.Get("transB", static_cast<int64_t>(0));
 
-  // Detect BQ (BW_FLOAT_BLOCK) Gemm from the weight tensor's encoding.
+  // Detect BQ (BW_FLOAT_BLOCK) Gemm using IsBQGemmWeight, consistent with ProcessInputs detection.
   // BQ Gemm→FC: activation stays 2-D, weight is 2-D [N,K] with BW_FLOAT_BLOCK.
   // FC outputs FP16 → re-quantize to INT16.
-  if (input_names.size() >= 2 &&
-      qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
-      qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsBlockQuantized()) {
+  if (IsBQGemmWeight(qnn_model_wrapper, node_unit.Inputs()[1], trans_b_out)) {
     const std::string& org_output_name = node_unit.Outputs()[0].name;
     TensorInfo output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
     const std::vector<uint32_t>& output_shape = output_info.shape;  // [M, N]
     RETURN_IF_NOT(output_shape.size() == 2, "QNN EP: BQ Gemm output must be rank-2 [M, N]");
+    RETURN_IF_NOT(output_info.quant_param.IsQuantized(),
+                  "QNN EP: BQ Gemm output must be INT16-quantized; float output is not yet supported");
 
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
-    Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    const Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    // FullyConnected → 2-D FP16 output.
-    // When output is quantized: reuse the original QL node's input name for the FP16 tensor,
-    // keeping the QNN graph aligned with the ONNX graph naming.
-    // When output is unquantized (float): output directly to org_output_name.
-    const std::string fc_fp16_out = output_info.quant_param.IsQuantized()
-                                        ? Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName()
-                                        : org_output_name;
+    // FullyConnected → 2-D FP16 intermediate tensor. Reuse the original QL node's input name
+    // to keep the QNN graph aligned with the ONNX graph naming.
+    const std::string fc_fp16_out = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName();
     QnnTensorWrapper fc_fp16_wrapper(fc_fp16_out, QNN_TENSOR_TYPE_NATIVE,
                                      QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
                                      std::vector<uint32_t>(output_shape));
@@ -497,19 +489,16 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                   {}, do_op_validation),
                   "Failed to add BQ FullyConnected node.");
 
-    if (output_info.quant_param.IsQuantized()) {
-      // FP16 → INT16 quantized output.
-      QnnTensorWrapper int16_out_wrapper(org_output_name, out_tensor_type, output_info.qnn_data_type,
-                                         output_info.quant_param.Copy(), std::vector<uint32_t>(output_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                    "Failed to add INT16 BQ Gemm output tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::UniqueNameGenerator().New(org_output_name, "_fp16_quantize"),
-                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                        {fc_fp16_out}, {org_output_name}, {}, do_op_validation),
-                    "Failed to add FP16→INT16 Quantize node for BQ Gemm output.");
-    }
-    // Unquantized (float) output: the FC node already outputs to org_output_name.
+    // FP16 → INT16 quantized output.
+    QnnTensorWrapper int16_out_wrapper(org_output_name, out_tensor_type, output_info.qnn_data_type,
+                                       output_info.quant_param.Copy(), std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
+                  "Failed to add INT16 BQ Gemm output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(org_output_name, "_fp16_quantize"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
+                      {fc_fp16_out}, {org_output_name}, {}, do_op_validation),
+                  "Failed to add FP16→INT16 Quantize node for BQ Gemm output.");
     return Ort::Status();
   }
 
