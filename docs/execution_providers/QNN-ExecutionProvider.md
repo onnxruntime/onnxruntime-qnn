@@ -481,7 +481,6 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Transpose → Reshape → Transpose → Reshape → Transpose` | `QNN_OP_CHANNEL_SHUFFLE` | 5-node pattern. Head and tail transposes must cancel; middle transpose permutes only the channel dimension. |
 | `[Transpose →] Reshape(4D→6D) → Transpose(DCR/CRD) → Reshape(6D→4D) [→ Transpose]` | `QNN_OP_SPACE_TO_DEPTH` | Matches both NCHW and NHWC layout variants and both DCR and CRD modes. Static dimensions required. |
 | `Reshape(4D→6D) → Einsum(transpose-equivalent) → Reshape(6D→4D)` | `QNN_OP_DEPTH_TO_SPACE + QNN_OP_TRANSPOSE` | Matches Einsum used as a rank-6 permutation with perm `[0,5,1,3,2,4]` (DCR DepthToSpace). |
-| `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Collapsed into a single reshape when the original dims appear in natural order (no axis reordering). |
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
 

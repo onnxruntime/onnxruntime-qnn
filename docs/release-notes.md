@@ -36,7 +36,6 @@ For instructions on building wheels across different architectures, see the [Bui
 - **Gelu Pattern 3** — New `Erf*0.5 + 0.5` decomposition variant; fixes models previously not fused. ([#236](https://github.com/onnxruntime/onnxruntime-qnn/pull/236))
 - **DynamicQuantizeLinear + MatMulInteger** — Fuses `DQL → MatMulInteger → Cast → Mul → [Add]` into a float QNN MatMul. ([#367](https://github.com/onnxruntime/onnxruntime-qnn/pull/367))
 - **DynamicQuantizeLinear + ConvInteger** — Fuses `DQL → ConvInteger → Cast → Mul → [Add]` into a float QNN Conv2d. ([#364](https://github.com/onnxruntime/onnxruntime-qnn/pull/364))
-- **Transpose → Reshape → Transpose** — Collapses into a single reshape when the transposes cancel out. ([#200](https://github.com/onnxruntime/onnxruntime-qnn/pull/200))
 
 For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
 
