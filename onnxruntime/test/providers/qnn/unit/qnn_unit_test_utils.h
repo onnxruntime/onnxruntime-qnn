@@ -7,9 +7,8 @@
 // QNN EP is built as a SHARED library). The test binary must link against
 // onnxruntime_providers_qnn so EP-internal symbols are accessible.
 //
-// OrtGraph is provided via GetTestOrtGraph() (defined in qnn_mock_ort_graph.cc).
-// The mock lives in a separate TU that includes abi_graph_types.h without EP
-// headers, avoiding macro/symbol conflicts with ort_api.h.
+// QnnModelWrapper is constructed with ort_graph=nullptr; tests stub the
+// OrtApi entry points needed for the path under test (see CreateWrapper).
 
 #pragma once
 
@@ -96,23 +95,32 @@ struct QnnModelWrapperTestContext {
   }
 };
 
-// Context for tests that need a real QNN CPU backend (e.g., ValidateQnnNode).
-// Loads libQnnCpu.so at construction time via dlopen and creates a live backend handle.
+// Context for tests that need a real QNN HTP backend (e.g., ValidateQnnNode).
+// Loads libQnnHtp.so at construction time via dlopen and creates a live backend handle.
 // Use IsValid() before calling — if the library cannot be loaded the context is a no-op
 // and GTest tests should call GTEST_SKIP() rather than FAIL().
 //
+// Note: this helper only produces a Qnn_BackendHandle_t. It does NOT create a QNN
+// context/session (no contextCreate call) and does NOT create a graph. The validation
+// path (backendValidateOpConfig) only needs the backend handle, so a session is
+// unnecessary for the current set of unit tests. Tests that need a real QNN
+// context/session, graph, or graph execution must add their own helper.
+//
+// On Linux x86-64 (the unit-test host), libQnnHtp.so loads successfully and supports
+// graph-validation calls. Graph execution requires HTP hardware and is not exercised here.
+//
 // Usage:
-//   QnnRealCpuBackendContext backend;
-//   if (!backend.IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
+//   QnnRealHtpBackendContext backend;
+//   if (!backend.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
 //   ctx.qnn_interface  = backend.qnn_interface;
 //   ctx.backend_handle = backend.backend_handle;
-struct QnnRealCpuBackendContext {
+struct QnnRealHtpBackendContext {
   QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
   Qnn_BackendHandle_t backend_handle = nullptr;
 
-  QnnRealCpuBackendContext() {
+  QnnRealHtpBackendContext() {
 #ifndef _WIN32
-    lib_handle_ = ::dlopen("libQnnCpu.so", RTLD_NOW | RTLD_GLOBAL);
+    lib_handle_ = ::dlopen("libQnnHtp.so", RTLD_NOW | RTLD_GLOBAL);
     if (!lib_handle_) return;
 
     using GetProvidersFn = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
@@ -135,7 +143,7 @@ struct QnnRealCpuBackendContext {
 #endif
   }
 
-  ~QnnRealCpuBackendContext() {
+  ~QnnRealHtpBackendContext() {
 #ifndef _WIN32
     if (initialized_ && qnn_interface.backendFree) {
       qnn_interface.backendFree(backend_handle);
@@ -147,8 +155,8 @@ struct QnnRealCpuBackendContext {
   bool IsValid() const { return initialized_; }
 
   // Non-copyable / non-movable — holds raw lib handle and backend handle.
-  QnnRealCpuBackendContext(const QnnRealCpuBackendContext&) = delete;
-  QnnRealCpuBackendContext& operator=(const QnnRealCpuBackendContext&) = delete;
+  QnnRealHtpBackendContext(const QnnRealHtpBackendContext&) = delete;
+  QnnRealHtpBackendContext& operator=(const QnnRealHtpBackendContext&) = delete;
 
  private:
   void* lib_handle_ = nullptr;

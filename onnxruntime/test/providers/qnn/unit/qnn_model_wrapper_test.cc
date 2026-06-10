@@ -1329,29 +1329,33 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
   EXPECT_FALSE(ok);
 }
 
-// ── ValidateQnnNode with real QNN CPU backend ─────────────────────
+// ── ValidateQnnNode with real QNN HTP backend ─────────────────────
 //
-// These tests dlopen libQnnCpu.so and create a real Qnn_BackendHandle_t so that
+// These tests dlopen libQnnHtp.so and create a real Qnn_BackendHandle_t so that
 // QnnGraphOpValidation / backendValidateOpConfig exercises the actual SDK path.
+// On Linux x86-64 (the unit-test host), HTP supports validation but not graph
+// execution — these tests intentionally exercise only the validation path.
 // They are skipped automatically when the library is unavailable.
 
-// ValidateQnnNode succeeds for a valid Relu op on the CPU backend.
+// ValidateQnnNode succeeds for a valid Relu op on the HTP backend.
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (success path).
-TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_CpuBackend_Relu_Succeeds) {
-  QnnRealCpuBackendContext backend;
-  if (!backend.IsValid()) GTEST_SKIP() << "Could not load libQnnCpu.so or create CPU backend";
+// Uses UFIXED_POINT_8 with per-tensor quant params — the representative HTP production path.
+TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
+  QnnRealHtpBackendContext backend;
+  if (!backend.IsValid()) GTEST_SKIP() << "Could not load libQnnHtp.so or create HTP backend";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
   ctx.backend_handle = backend.backend_handle;
   ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::CPU);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  // Build input/output Qnn_Tensor_t via QnnTensorWrapper (keeps name pointer alive).
-  QnnTensorWrapper input_tw("relu_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                            QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 4});
-  QnnTensorWrapper output_tw("relu_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                             QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 4});
+  // HTP validator requires quantized tensors for Relu — float32 is rejected at validation.
+  QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  QnnTensorWrapper input_tw("relu_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
+                            quant.Copy(), std::vector<uint32_t>{1, 4});
+  QnnTensorWrapper output_tw("relu_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
+                             quant.Copy(), std::vector<uint32_t>{1, 4});
 
   std::vector<Qnn_Tensor_t> inputs = {input_tw.GetQnnTensor()};
   std::vector<Qnn_Tensor_t> outputs = {output_tw.GetQnnTensor()};
@@ -1365,23 +1369,23 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_CpuBackend_Relu_Succeeds) {
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
 }
 
-// ValidateQnnNode fails for an unrecognised op type on the CPU backend.
+// ValidateQnnNode fails for an unrecognised op type on the HTP backend.
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (failure path).
-TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_CpuBackend_InvalidOpType_Fails) {
-  QnnRealCpuBackendContext backend;
-  if (!backend.IsValid()) GTEST_SKIP() << "Could not load libQnnCpu.so or create CPU backend";
+TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
+  QnnRealHtpBackendContext backend;
+  if (!backend.IsValid()) GTEST_SKIP() << "Could not load libQnnHtp.so or create HTP backend";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
   ctx.backend_handle = backend.backend_handle;
   ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::CPU);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  std::vector<uint32_t> shape{1, 4};
-  QnnTensorWrapper input_tw("in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                            QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 4});
-  QnnTensorWrapper output_tw("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                             QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 4});
+  QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  QnnTensorWrapper input_tw("in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
+                            quant.Copy(), std::vector<uint32_t>{1, 4});
+  QnnTensorWrapper output_tw("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
+                             quant.Copy(), std::vector<uint32_t>{1, 4});
 
   std::vector<Qnn_Tensor_t> inputs = {input_tw.GetQnnTensor()};
   std::vector<Qnn_Tensor_t> outputs = {output_tw.GetQnnTensor()};
