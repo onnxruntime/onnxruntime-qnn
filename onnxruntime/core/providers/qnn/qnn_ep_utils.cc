@@ -1185,20 +1185,26 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
     return false;
   }
 
-  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, num_dq_nodes)) {
+  // No output Q means BN produces a float output and runs in float, so allow the empty-Q group.
+  const bool has_float_output = q_nodes.empty();
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, num_dq_nodes,
+                     /*is_empty_q_nodes_allowed=*/true)) {
     return false;
   }
 
   auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
   auto dt_scale = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
-  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
 
-  if (!dt_input.has_value() || !dt_scale.has_value() || !dt_output.has_value()) {
+  if (!dt_input.has_value() || !dt_scale.has_value()) {
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
-    return false;
+  // The input/output dtype match only applies when the output is quantized.
+  if (!has_float_output) {
+    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+    if (!dt_output.has_value() || dt_input.value() != dt_output.value()) {
+      return false;
+    }
   }
 
   // INT8 is 3 in ONNX_NAMESPACE::TensorProto_DataType
