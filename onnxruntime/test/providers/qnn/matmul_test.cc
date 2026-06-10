@@ -224,6 +224,108 @@ static void RunQDQPerChannelMatMulOpTest(
                        provider_options, opset, expected_ep_assignment, tolerance);
 }
 
+/// Returns a function that creates a graph with a block-quantized (BQ) weight MatMul operator.
+template <typename Input0QType, typename WeightQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQBlockQuantMatMulTestCase(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    int64_t block_size,
+    int64_t weight_quant_axis,
+    bool use_contrib_qdq = false) {
+  return [input_def, weights_def, block_size, weight_quant_axis, use_contrib_qdq](
+             ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
+
+    // input -> Q/DQ -> input_qdq
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<Input0QType> input_qparams = GetTestInputQuantParams<Input0QType>(input_def);
+    const std::string input_qdq = AddQDQNodePair<Input0QType>(
+        builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
+
+    // Compute per-block quantization parameters (symmetric)
+    const auto& weight_shape = weights_def.GetShape();
+    int64_t pos_weight_quant_axis = weight_quant_axis;
+    if (pos_weight_quant_axis < 0) {
+      pos_weight_quant_axis += static_cast<int64_t>(weight_shape.size());
+    }
+
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zero_points;
+    GetTestInputQuantParamsBlockQuant<WeightQType>(weights_def, weight_scales, weight_zero_points,
+                                                   block_size, pos_weight_quant_axis, true);
+
+    // Quantize weight data with per-block params
+    const size_t num_weight_elems = SizeOfShape(weight_shape);
+    size_t num_weight_storage_elems = num_weight_elems;
+    if constexpr (std::is_same_v<WeightQType, Int4x2> || std::is_same_v<WeightQType, UInt4x2>) {
+      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(num_weight_elems);
+    }
+    std::vector<WeightQType> quantized_weights(num_weight_storage_elems);
+    QuantizeValuesBlockQuant<float, WeightQType>(
+        weights_def.GetRawData(), quantized_weights, weight_shape,
+        weight_scales, weight_zero_points, block_size, pos_weight_quant_axis);
+
+    builder.MakeInitializer<WeightQType>("weights", weight_shape, quantized_weights);
+
+    // Compute 2D scale shape: [num_blocks, non_axis_dim] for axis=0
+    //                          [non_axis_dim, num_blocks] for axis=1
+    const int64_t axis_dim = weight_shape[static_cast<size_t>(pos_weight_quant_axis)];
+    const int64_t non_axis_dim = weight_shape[static_cast<size_t>(1 - pos_weight_quant_axis)];
+    const int64_t num_blocks = (axis_dim + block_size - 1) / block_size;
+    const std::vector<int64_t> scale_shape = (pos_weight_quant_axis == 0)
+                                                 ? std::vector<int64_t>{num_blocks, non_axis_dim}
+                                                 : std::vector<int64_t>{non_axis_dim, num_blocks};
+
+    builder.MakeInitializer<float>("weights_scale", scale_shape, weight_scales);
+    builder.MakeInitializer<WeightQType>("weights_zp", scale_shape, weight_zero_points);
+
+    // weights -> DQ -> weights_dq (with block_size and axis attributes)
+    builder.AddNode("weights_dq", "DequantizeLinear",
+                    {"weights", "weights_scale", "weights_zp"},
+                    {"weights_dq"},
+                    "",
+                    {builder.MakeScalarAttribute("axis", weight_quant_axis),
+                     builder.MakeScalarAttribute("block_size", block_size)});
+
+    // MatMul(input_qdq, weights_dq) -> Y
+    builder.AddNode("MatMul", "MatMul", {input_qdq, "weights_dq"}, {"Y"}, kOnnxDomain);
+
+    // Y -> Q -> DQ -> (graph output)
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point,
+                                                       use_contrib_qdq);
+  };
+}
+
+template <typename InputQType, typename WeightQType, typename OutputQType>
+static void RunQDQBlockQuantMatMulOpTest(
+    const std::vector<int64_t>& shape_input,
+    const std::vector<int64_t>& shape_weight,
+    int64_t block_size,
+    int64_t weight_quant_axis,
+    QDQTolerance tolerance = QDQTolerance(),
+    ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
+    int opset = 21,
+    bool use_contrib_qdq = false) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  const size_t num_input_elems = static_cast<size_t>(
+      std::accumulate(shape_input.begin(), shape_input.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
+  const size_t num_weight_elems = static_cast<size_t>(
+      std::accumulate(shape_weight.begin(), shape_weight.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
+
+  TestInputDef<float> input_def(shape_input, false, GetFloatDataInRange(-0.1f, 0.1f, num_input_elems));
+  TestInputDef<float> weight_def(shape_weight, true, GetFloatDataInRange(-0.1f, 0.1f, num_weight_elems));
+
+  TestQDQModelAccuracy(
+      BuildMatMulOpTestCase(input_def, weight_def),
+      BuildQDQBlockQuantMatMulTestCase<InputQType, WeightQType, OutputQType>(
+          input_def, weight_def, block_size, weight_quant_axis, use_contrib_qdq),
+      provider_options, opset, expected_ep_assignment, tolerance);
+}
+
 //
 // CPU tests:
 //
@@ -666,6 +768,21 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+#if defined(__linux__)
+
+// Tests MatMul with ONNX block-quantized (BQ) weight using the BQ -> QNN LPBQ conversion path.
+// Currently BQ -> LPBQ conversion is only supported on Linux. It will be later enabled for windows as well.
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
+  RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
+  RunQDQBlockQuantMatMulOpTest<int16_t, Int4x2, int16_t>({4, 128}, {128, 64}, 32, 0, QDQTolerance(0.05f));
+  RunQDQBlockQuantMatMulOpTest<int16_t, Int4x2, int16_t>({4, 128}, {128, 64}, 64, 0, QDQTolerance(0.05f));
+  RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
+  RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 3, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
+  RunQDQBlockQuantMatMulOpTest<uint16_t, int8_t, uint16_t>({4, 32}, {32, 16}, 16, 0, QDQTolerance(), ExpectedEPNodeAssignment::None);
+}
+
+#endif // defined(__linux__)
 
 #if defined(_M_ARM64)
 //
