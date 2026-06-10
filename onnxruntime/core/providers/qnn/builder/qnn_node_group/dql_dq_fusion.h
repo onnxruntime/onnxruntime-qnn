@@ -25,7 +25,9 @@ class QnnModelWrapper;
 ///   x (float32) --> DynamicQuantizeLinear --> (y_uint8, y_scale, y_zp)
 ///                   ALL 3 outputs exclusively --> DequantizeLinear --> x_approx (float32)
 ///
-/// Condition: all three DQL outputs must feed exclusively into the same DequantizeLinear, and
+/// Condition: all three DQL outputs must feed exclusively into the same DequantizeLinear
+/// (including y_zp — DQ must not omit zero_point, since DQL's y_zp is dynamic and typically
+/// non-zero; allowing DQ to default to zero_point=0 would break the identity round-trip), and
 /// the DequantizeLinear output must be float32.  This is the "fake-quantize" identity pattern:
 /// the round-trip DQL -> DQ leaves x_approx numerically close to x (quantized then restored to
 /// float), so the entire sub-graph can be bypassed on QNN without meaningful accuracy loss.

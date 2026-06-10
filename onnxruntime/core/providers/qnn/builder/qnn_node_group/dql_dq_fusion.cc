@@ -75,9 +75,10 @@ std::unique_ptr<IQnnNodeGroup> DqlDqFusion::TryFusion(
     return reject("DQL.output[0] is not exclusively consumed by a standalone DequantizeLinear");
   }
 
-  // y_scale must have exactly one consumer and it must be the fused DQ node.
-  // y_zero_point is optional (DQ may omit it); if present it must also belong solely to this DQ.
-  // These checks prevent fusion when a second DQ node shares y_scale or y_zp: in that case the
+  // y_scale and y_zero_point must each have exactly one consumer and it must be the fused DQ node.
+  // y_zero_point must not be absent: DQL's y_zp is dynamic and typically non-zero, so allowing DQ
+  // to omit it (defaulting to zero_point=0) would break the identity round-trip.
+  // These checks also prevent fusion when a second DQ node shares y_scale or y_zp: in that case the
   // second DQ would lose its producer after fusion, corrupting the graph.
   {
     auto has_single_dq_consumer = [&](const Ort::ConstValueInfo& vi) -> bool {
@@ -91,12 +92,18 @@ std::unique_ptr<IQnnNodeGroup> DqlDqFusion::TryFusion(
       return reject("DQL.y_scale is not exclusively consumed by the fused DQ");
     }
 
-    // y_zero_point: 0 consumers is allowed; if present, must belong to the same DQ.
+    // y_zero_point: must be consumed exclusively by the same DQ.
+    // DQL computes a dynamic y_zp (typically non-zero for float32 inputs; e.g. ~128 for
+    // inputs in [-1, 1]).  If DQ omits zero_point it defaults to 0, making
+    // DQ(y, y_scale, 0) != x and breaking the identity round-trip.
     std::vector<Ort::ValueInfoConsumerProducerInfo> zp_consumers = dql_outs[2].GetConsumers();
-    if (!zp_consumers.empty()) {
-      if (zp_consumers.size() != 1 || zp_consumers[0].node == nullptr) {
-        return reject("DQL.y_zero_point has unexpected multiple consumers");
-      }
+    if (zp_consumers.empty()) {
+      return reject("DQL.y_zero_point has no consumers; DQ would use zero_point=0 which breaks the identity round-trip");
+    }
+    if (zp_consumers.size() != 1 || zp_consumers[0].node == nullptr) {
+      return reject("DQL.y_zero_point has unexpected multiple consumers");
+    }
+    {
       const auto it = node_to_node_unit.find(zp_consumers[0].node);
       if (it == node_to_node_unit.end() || it->second != dq) {
         return reject("DQL.y_zero_point consumer is not the fused DQ");
@@ -126,9 +133,13 @@ std::unique_ptr<IQnnNodeGroup> DqlDqFusion::TryFusion(
     return reject("DQ.scale does not match DQL.y_scale");
   }
 
-  // If DQ has a zero_point, it must come from DQL's y_zero_point (output[2]).
-  if (dq_inputs[0].quant_param->zero_point != nullptr &&
-      Ort::ConstValueInfo(dq_inputs[0].quant_param->zero_point).GetName() != dql_outputs[2].name) {
+  // DQ's zero_point must be present and come from DQL's y_zero_point (output[2]).
+  // DQL's y_zp is dynamic and typically non-zero; allowing DQ to omit it (defaulting
+  // to 0) would break the identity round-trip.
+  if (dq_inputs[0].quant_param->zero_point == nullptr) {
+    return reject("DQ is missing zero_point quant_param");
+  }
+  if (Ort::ConstValueInfo(dq_inputs[0].quant_param->zero_point).GetName() != dql_outputs[2].name) {
     return reject("DQ.zero_point does not match DQL.y_zero_point");
   }
 

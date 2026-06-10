@@ -113,6 +113,33 @@ GetTestModelFn BuildDqlDqAddTestCase(const TestInputDef<float>& input_def,
   };
 }
 
+// Builds:
+//   input (float32) --> DynamicQuantizeLinear --> (y, y_scale, y_zp)
+//   DequantizeLinear(y, y_scale) --> dq_out (float32)   [y_zp not consumed]
+//   Relu(dq_out) --> output (float32)
+//
+// DQL.y_zp has zero consumers: DQ omits zero_point and defaults to 0. Because
+// DQL's y_zp is dynamic and typically non-zero (e.g. ~128 for inputs in [-1,1]),
+// DQ(y, y_scale, 0) != x and the round-trip is NOT identity. Fusion must be
+// rejected to avoid silently producing wrong results.
+GetTestModelFn BuildDqlDqNoZpTestCase(const TestInputDef<float>& input_def) {
+  return [input_def](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("dql_dq_no_zp_graph");
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.AddNode("dql", "DynamicQuantizeLinear", {"input"},
+                    {"dql_y", "dql_y_scale", "dql_y_zp"});
+
+    // DQ omits y_zp (zero_point is optional per ONNX spec).
+    // DQL.y_zp has zero consumers after this.
+    builder.AddNode("dq", "DequantizeLinear",
+                    {"dql_y", "dql_y_scale"}, {"dq_out"});
+
+    builder.AddNode("relu", "Relu", {"dq_out"}, {"output"});
+    builder.MakeOutput("output");
+  };
+}
+
 // ---------------------------------------------------------------------------
 // No-fusion model builders
 // ---------------------------------------------------------------------------
@@ -277,6 +304,32 @@ TEST_F(QnnHTPBackendTests, DqlDqFusion_LargeActivation_Correctness) {
   AssertOpInQnnGraph(json_dir, "Relu", /*count=*/1);
   AssertOpInQnnGraph(json_dir, "DynamicQuantizeLinear", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "Dequantize", /*count=*/0);
+}
+
+// DQL.y_zp has zero consumers (DQ omits zero_point, which is optional per ONNX
+// spec). DQL's y_zp is dynamic and typically non-zero, so DQ(y, y_scale, 0) != x:
+// the round-trip is NOT identity and fusion must be rejected.
+TEST_F(QnnHTPBackendTests, DqlDqFusion_NoZeroPoint_NoFusion) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::filesystem::path json_dir = "DqlDqFusion_NoZeroPoint_NoFusion";
+
+  // DQL has no standalone HTP op-builder, so at least some nodes must land on
+  // CPU EP when fusion does not fire.
+  RunFusionTest({json_dir,
+                 BuildDqlDqNoZpTestCase(
+                     TestInputDef<float>({1, 4, 4, 8}, /*is_initializer=*/false,
+                                         -1.0f, 1.0f)),
+                 /*opset_version=*/13,
+                 /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
+                 /*fp32_abs_err=*/1e-2f,
+                 /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                 /*verify_outputs=*/false});  // graph is split across CPU/QNN EP
+
+  if (!HasQnnJsonGraph(json_dir)) return;
+
+  // The identity Transpose emitted by DqlDqFusion must be absent.
+  AssertOpInQnnGraph(json_dir, "Transpose", /*count=*/0);
 }
 
 // ==========================================================================
