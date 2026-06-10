@@ -50,7 +50,6 @@ jobs:
       build_android_aarch64: true
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true
-      build_linux_x86_64: false
       linux_x86_64_target_py_vsns: "['3.10','3.12']"
       linux_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
