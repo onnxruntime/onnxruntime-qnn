@@ -464,6 +464,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
+
+    if (prepare_only_ && !context_cache_enabled_) {
+      throw std::runtime_error(
+          "enable_htp_prepare_only=1 requires ep.context_enable=1. "
+          "prepare_only mode only generates the context model for ahead-of-time compilation.");
+    }
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -1545,13 +1551,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
-
-  if (ep->prepare_only_ && !ep->context_cache_enabled_) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_prepare_only=1 requires ep.context_enable=1. "
-                "Disabling enable_htp_prepare_only since context cache is not enabled.");
-    ep->prepare_only_ = false;
-  }
 
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
