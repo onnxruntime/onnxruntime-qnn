@@ -247,10 +247,8 @@ Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
   const auto& inputs = node_unit.Inputs();
 
   // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight.
-  {
-    if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
-      return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
-    }
+  if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
+    return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
   }
 
   TensorInfo input_info_0{};
@@ -756,7 +754,9 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (is_bq_matmul) {
     // The QNN HTP BQ MatMul runs on 4-D tensors and outputs FP16.
     // Pipeline: MatMul (4-D FP16 [batch,1,M,N]) → Reshape (to ONNX [...,M,N] FP16)
-    //           → Quantize (FP16 → INT16) [only when output is quantized]
+    //           → Quantize (FP16 → INT16)
+    RETURN_IF_NOT(output_info.quant_param.IsQuantized(),
+                  "QNN EP: BQ MatMul output must be INT16-quantized; float output is not yet supported");
     const uint32_t n_dim = op_output_shape.back();
     const uint32_t m_dim = op_output_shape[op_output_shape.size() - 2];
     uint32_t batch = 0;
@@ -776,31 +776,24 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "Failed to add BQ MatMul node.");
 
     // Reshape 4-D FP16 [batch,1,M,N] back to the ONNX FP16 output shape [...,M,N].
-    // Reuses the original QuantizeLinear node's input name when the output is quantized,
-    // keeping the QNN graph aligned with the ONNX graph naming.
-    const std::string matmul_fp16_out = output_info.quant_param.IsQuantized()
-                                            ? Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName()
-                                            : op_output_name;
+    // Reuse the original QuantizeLinear node's input name to keep the QNN graph aligned
+    // with the ONNX graph naming.
+    const std::string matmul_fp16_out = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName();
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(matmul_4d_out, matmul_fp16_out, matmul_out_shape_4d,
                                                      op_output_shape, QNN_DATATYPE_FLOAT_16,
                                                      QnnQuantParamsWrapper(), do_op_validation,
                                                      /*is_for_input=*/false, /*is_for_output=*/false));
 
-    if (output_info.quant_param.IsQuantized()) {
-      // INT16 quantized output tensor consumed by downstream nodes (or the graph output).
-      QnnTensorWrapper int16_out_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                         op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                    "Failed to add INT16 BQ MatMul output tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::UniqueNameGenerator().New(op_output_name, "_fp16_quantize"),
-                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                        {matmul_fp16_out}, {op_output_name}, {}, do_op_validation),
-                    "Failed to add FP16→INT16 Quantize node for BQ MatMul output.");
-    }
-    // Unquantized (float) output: the Reshape above already registered op_output_name as
-    // QNN_TENSOR_TYPE_NATIVE. No further action needed; the caller's reshape_output path
-    // (if applicable) handles promotion to APP_READ.
+    // INT16 quantized output tensor consumed by downstream nodes (or the graph output).
+    QnnTensorWrapper int16_out_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
+                                       op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
+                  "Failed to add INT16 BQ MatMul output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(op_output_name, "_fp16_quantize"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
+                      {matmul_fp16_out}, {op_output_name}, {}, do_op_validation),
+                  "Failed to add FP16→INT16 Quantize node for BQ MatMul output.");
   } else {
     QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
                                               op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
