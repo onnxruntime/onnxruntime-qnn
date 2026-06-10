@@ -117,6 +117,8 @@ def _select_release_entries(release_dir: Path, rules: PerArchAcceptRules, repo_r
 def archive_linux(target_platform: str, config: str = "Release", repo_root: Path = REPO_ROOT) -> None:
     build_root = repo_root / "build"
     archive_path = build_root / f"onnxruntime-tests-{target_platform}.tar.bz2"
+    if config != "Release":
+        archive_path = build_root / f"onnxruntime-tests-{config}-{target_platform}.tar.bz2"
     release_dir = build_root / target_platform / config
     rules = PerArchAcceptRules()
 
@@ -132,6 +134,8 @@ def archive_linux(target_platform: str, config: str = "Release", repo_root: Path
 def archive_windows(target_platform: str, config: str = "Release", repo_root: Path = REPO_ROOT) -> None:
     build_root = repo_root / "build"
     archive_path = build_root / f"onnxruntime-tests-{target_platform}.zip"
+    if config != "Release":
+        archive_path = build_root / f"onnxruntime-tests-{config}-{target_platform}.zip"
     release_dir = build_root / target_platform / config
     rules = PerArchAcceptRules()
 

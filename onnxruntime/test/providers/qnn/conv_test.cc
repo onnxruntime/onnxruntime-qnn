@@ -1972,7 +1972,173 @@ TEST_F(QnnHTPBackendTests, ConvU16S8S32_PerChannel) {
                                                13);   // opset
 }
 
-// Conv3D per-channel
+// Helper: Builds QDQ Conv model with fused activation (Relu or Clip) between Conv and output Q.
+// Pattern: DQ(input) + DQ(weight) + float_bias -> Conv -> Relu/Clip -> Q(forced encoding) -> DQ
+// Uses a forced output encoding with zp > 0 (encoding allows negatives) to trigger the
+// non-fusion path. Without the fix, HTP won't clamp and the test fails.
+template <typename ActivationQType, typename WeightQType>
+static GetTestQDQModelFn<ActivationQType> BuildQDQConvWithFusedActivationTestCase(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    const std::string& activation_type,
+    float forced_output_scale,
+    ActivationQType forced_output_zp,
+    float clip_min = 0.0f,
+    float clip_max = 6.0f) {
+  return [input_def, weights_def, bias_def, activation_type, forced_output_scale, forced_output_zp,
+          clip_min, clip_max](
+             ModelTestBuilder& builder,
+             std::vector<QuantParams<ActivationQType>>& output_qparams) {
+    (void)output_qparams;
+
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    std::string input_dq = AddQDQNodePair<ActivationQType>(builder, "input_qdq", "input",
+                                                           input_qparams.scale, input_qparams.zero_point, true);
+
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zps;
+    GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zps, 0, true);
+    std::vector<WeightQType> quantized_weights(SizeOfShape(weights_def.GetShape()));
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights,
+                                       weights_def.GetShape(), weight_scales, weight_zps, 0);
+    builder.MakeInitializer<WeightQType>("weights_quant", weights_def.GetShape(), quantized_weights);
+    std::vector<ONNX_NAMESPACE::AttributeProto> w_dq_attrs;
+    w_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+    builder.AddDequantizeLinearNode("WeightDQ", "weights_quant", weight_scales, weight_zps,
+                                    "weights_dq", w_dq_attrs, true);
+
+    builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+
+    builder.AddNode("Conv", "Conv", {input_dq, "weights_dq", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+
+    if (activation_type == "Relu") {
+      builder.AddNode("Relu", "Relu", {"conv_out"}, {"act_out"});
+    } else {
+      builder.MakeScalarInitializer<float>("clip_min", clip_min);
+      builder.MakeScalarInitializer<float>("clip_max", clip_max);
+      builder.AddNode("Clip", "Clip", {"conv_out", "clip_min", "clip_max"}, {"act_out"});
+    }
+
+    // Use FORCED output encoding (not auto-calibrated) to guarantee encoding_min < activation_min
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, "output_qdq", "act_out",
+                                                           forced_output_scale, forced_output_zp, true);
+  };
+}
+
+// Test 1: Conv+Relu where output encoding min < 0 (Relu's activation_min).
+TEST_F(QnnHTPBackendTests, ConvReluFusion_EncodingMinBelowZero) {
+  std::vector<int64_t> input_shape = {1, 128, 4, 4};
+  std::vector<int64_t> weight_shape = {64, 128, 1, 1};
+  std::vector<int64_t> bias_shape = {64};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 40.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-3.0f, 10.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.AddNode("Relu", "Relu", {"conv_out"}, {"relu_out"});
+    builder.MakeOutput("relu_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.000196, zp=14601 → encoding_min = 0.000196*(0-14601) = -2.86 < 0
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Relu",
+      0.000196270834f, static_cast<uint16_t>(14601));
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Test 2: Conv+Clip where output encoding min < clip_min.
+TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMinBelowClipMin) {
+  std::vector<int64_t> input_shape = {1, 64, 4, 4};
+  std::vector<int64_t> weight_shape = {32, 64, 1, 1};
+  std::vector<int64_t> bias_shape = {32};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(-5.0f, 40.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-5.0f, 5.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.MakeScalarInitializer<float>("clip_min_val", -1.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"conv_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.0003, zp=20000 → encoding_min = 0.0003*(0-20000) = -6.0 < clip_min(-1)
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Clip",
+      0.0003f, static_cast<uint16_t>(20000),
+      -1.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Test 3: Conv+Clip where output encoding max > clip_max.
+TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMaxAboveClipMax) {
+  std::vector<int64_t> input_shape = {1, 64, 4, 4};
+  std::vector<int64_t> weight_shape = {32, 64, 1, 1};
+  std::vector<int64_t> bias_shape = {32};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 50.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(0.0f, 8.0f, SizeOfShape(bias_shape)));
+
+  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
+                     builder.MakeIntsAttribute("strides", {1, 1}),
+                     builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
+    builder.MakeScalarInitializer<float>("clip_min_val", 0.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"conv_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Force output encoding: scale=0.0002, zp=0 → encoding_max = 0.0002*65535 = 13.1 > clip_max(6)
+  GetTestQDQModelFn<uint16_t> qdq_fn = BuildQDQConvWithFusedActivationTestCase<uint16_t, int8_t>(
+      input_def, weight_def, bias_def, "Clip",
+      0.0002f, static_cast<uint16_t>(0),
+      0.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// Conv3D per-channel (known issue)
 // \QNN\HTP\HTP\src\hexagon\prepare\graph_prepare.cc:203:ERROR:could not create op: q::QNN_Conv3d_w_scale
 // \QNN\HTP\HTP\src\hexagon\prepare\graph_prepare.cc:1187:ERROR:Op 0x1a preparation failed with err:-1
 // QnnDsp <E> "Conv" generated: could not create op

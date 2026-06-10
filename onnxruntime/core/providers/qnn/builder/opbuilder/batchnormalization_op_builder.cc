@@ -489,6 +489,30 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
   }
 }
 
+// Single source of truth for float execution, shared by ProcessInputs (stores params) and
+// ProcessAttributesAndOutputs (emits the op).
+//   - has_float_output: quantized input, no output Q -> float island; BN emits float directly.
+//   - use_float_params: also covers u8/u16 input with per-channel scale, whose fused weight
+//     gamma/sqrt(var+eps) can overflow a single per-tensor requant scale.
+struct BatchNormFloatExecution {
+  bool has_float_output;
+  bool use_float_params;
+};
+
+BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
+                                                   const TensorInfo& scale_info,
+                                                   const TensorInfo& output_info) {
+  const bool is_quantized_op = input_info.quant_param.IsQuantized();
+  const bool has_float_output = is_quantized_op && !output_info.quant_param.IsQuantized();
+  const bool use_float_params =
+      has_float_output ||
+      (is_quantized_op &&
+       (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+        input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
+       scale_info.quant_param.IsPerChannel());
+  return {has_float_output, use_float_params};
+}
+
 }  // namespace
 
 // BatchNorm is sensitive with data layout, no special validation so far
@@ -587,6 +611,11 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
     const bool is_quantized_op = input_info.quant_param.IsQuantized();
 
+    // When BN runs in float, params below are stored as f32 (see GetBatchNormFloatExecution).
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+    const bool use_float_params = GetBatchNormFloatExecution(input_info, scale_info, output_info).use_float_params;
+
     // Check if bias needs conversion (will be done after preprocessing)
     const bool bias_is_float = !bias_info.quant_param.IsQuantized() &&
                                (bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
@@ -649,15 +678,7 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
       bias_info.quant_param = QnnQuantParamsWrapper(1.0f, 0);  // Placeholder, computed in Postprocess
     }
 
-    // Store fused weight/bias as F32 to avoid per-channel quantization overflow
-    // BN fused_weight = gamma/sqrt(var+eps) can have extreme dynamic range across channels,
-    // which overflows when requantized to a single per-tensor U8/S32 scale
-    // Only needed when scale input is per-channel (per-tensor doesn't have this issue)
-    const bool use_float_params = is_quantized_op &&
-                                  (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
-                                   input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
-                                  scale_info.quant_param.IsPerChannel();
-
+    // use_float_params stores the fused weight/bias as F32.
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(scale_name)) {
       std::vector<uint8_t> scale_raw_tensor;
       QnnQuantParamsWrapper scale_quant_param;
@@ -722,10 +743,14 @@ Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
   TensorInfo scale_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], scale_info));
-  const bool use_float_params = input_info.quant_param.IsQuantized() &&
-                                (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
-                                 input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
-                                scale_info.quant_param.IsPerChannel();
+
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+
+  // has_float_output emits BN's float result with no trailing Quantize, feeding downstream float ops.
+  const BatchNormFloatExecution float_exec = GetBatchNormFloatExecution(input_info, scale_info, output_info);
+  const bool has_float_output = float_exec.has_float_output;
+  const bool use_float_params = float_exec.use_float_params;
 
   if (!use_float_params) {
     RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
@@ -751,11 +776,15 @@ Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   // BN node: all float32
   const auto& outputs = node_unit.Outputs();
   const std::string& orig_output_name = outputs[0].name;
-  const std::string bn_output_name = utils::UniqueNameGenerator().New(orig_output_name, "_bn_f32");
+  bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
 
-  TensorInfo output_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
-  QnnTensorWrapper bn_out_tensor(bn_output_name, QNN_TENSOR_TYPE_NATIVE,
+  // A float output is written directly; otherwise an intermediate feeds the trailing Quantize.
+  const std::string bn_output_name = has_float_output
+                                         ? orig_output_name
+                                         : utils::UniqueNameGenerator().New(orig_output_name, "_bn_f32");
+  Qnn_TensorType_t bn_out_tensor_type = (has_float_output && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ
+                                                                              : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper bn_out_tensor(bn_output_name, bn_out_tensor_type,
                                  QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
                                  std::vector<uint32_t>(output_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bn_out_tensor)), "Failed to add tensor");
@@ -767,8 +796,11 @@ Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
                                                 do_op_validation),
                 "Failed to add Batchnorm node");
 
+  if (has_float_output) {
+    return Ort::Status();  // Output is the float result; downstream ops re-quantize as needed.
+  }
+
   // Insert Quantize (Float_32 -> quantized) after BN
-  bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
   Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper final_out_tensor(orig_output_name, out_tensor_type,
                                     output_info.qnn_data_type, std::move(output_info.quant_param),
@@ -818,6 +850,13 @@ Ort::Status BatchNormalizationOpBuilder::CheckHtpDataTypes(const std::vector<Qnn
   Qnn_DataType_t scale_dtype = in_dtypes[1];
   Qnn_DataType_t bias_dtype = in_dtypes[2];
   Qnn_DataType_t y_dtype = out_dtypes[0];
+
+  // Quantized input with a float output: the input is dequantized and BN is run in float.
+  const bool x_is_quantized = (x_dtype == QNN_DATATYPE_UFIXED_POINT_8 || x_dtype == QNN_DATATYPE_SFIXED_POINT_8 ||
+                               x_dtype == QNN_DATATYPE_UFIXED_POINT_16 || x_dtype == QNN_DATATYPE_SFIXED_POINT_16);
+  if (x_is_quantized && (y_dtype == QNN_DATATYPE_FLOAT_32 || y_dtype == QNN_DATATYPE_FLOAT_16)) {
+    return Ort::Status();
+  }
 
   // We likely need to re-quantize scale/bias for HTP compatibility, override dtypes before checking.
   // Note: We conservatively assume scale may have negative values during validation.

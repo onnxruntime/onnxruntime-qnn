@@ -77,12 +77,12 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       # We only publish this for AI Hub to use and they only want x86_64 Linux
-      - name: Download x86_64 Linux 3.10 Wheel from Artifactory
+      - name: Download Linux x86_64 Python 3.10 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
 
-      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+      - name: Download Linux x86_64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.12-wheels
@@ -139,112 +139,112 @@ jobs:
       # Download wheels
       # ---------------
 
-      - name: Download x86_64 Linux 3.10 Wheel from Artifactory
+      - name: Download Linux x86_64 Python 3.10 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
 
-      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+      - name: Download Linux x86_64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.12-wheels
 
-      - name: Download aarch64 manylinux_2_34 Linux 3.11 Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-wheels
 
-      - name: Download aarch64 manylinux_2_34 Linux 3.12 Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.12-wheels
 
-      - name: Download aarch64 manylinux_2_34 Linux 3.13 Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.13 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.13-wheels
 
-      - name: Download aarch64 manylinux_2_34 Linux 3.14 Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.14-wheels
 
-      - name: Download x86_64 Ubuntu 22.04 Linux 3.11 Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64_ubuntu_22_04-py3.11-wheels
 
-      - name: Download x86_64 Ubuntu 22.04 Linux 3.12 Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64_ubuntu_22_04-py3.12-wheels
 
-      - name: Download x86_64 Ubuntu 22.04 Linux 3.13 Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.13 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64_ubuntu_22_04-py3.13-wheels
 
-      - name: Download x86_64 Ubuntu 22.04 Linux 3.14 Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64_ubuntu_22_04-py3.14-wheels
 
-      - name: Download arm64 Windows 3.11 Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-wheels
 
-      - name: Download x86_64 Windows 3.11 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.11-wheels
-
-      - name: Download arm64ec Windows 3.11 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.11-wheels
-
-      - name: Download arm64 Windows 3.12 Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.12-wheels
 
-      - name: Download arm64ec Windows 3.12 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.12-wheels
-
-      - name: Download x86_64 Windows 3.12 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.12-wheels
-
-      - name: Download arm64 Windows 3.13 Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.13 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.13-wheels
 
-      - name: Download arm64ec Windows 3.13 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.13-wheels
-
-      - name: Download x86_64 Windows 3.13 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.13-wheels
-
-      - name: Download arm64 Windows 3.14 Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.14-wheels
 
-      - name: Download arm64ec Windows 3.14 Wheel from Artifactory
+      - name: Download Windows ARM64EC Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-wheels
+
+      - name: Download Windows ARM64EC Python 3.12 from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.12-wheels
+
+      - name: Download Windows ARM64EC Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.13-wheels
+
+      - name: Download Windows ARM64EC Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64ec-py3.14-wheels
 
-      - name: Download x86_64 Windows 3.14 Wheel from Artifactory
+      - name: Download Windows x86_64 Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-wheels
+
+      - name: Download Windows x86_64 Python 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.12-wheels
+
+      - name: Download Windows x86_64 Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.13-wheels
+
+      - name: Download Windows x86_64 Python 3.14 from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.14-wheels
@@ -253,42 +253,42 @@ jobs:
       # Download test archives
       # ----------------------
 
-      - name: Download aarch64 manylinux_2_34 Linux Tests from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tests
 
-      - name: Download x86_64 Ubuntu 22.04 Linux Tests from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64_ubuntu_22_04-py3.11-tests
 
-      - name: Download aarch64 Android Tests from Artifactory
+      - name: Download Android Aarch64 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: android-aarch64-pyNone-tests
 
-      - name: Download aarch64 OE GCC 11.2 Linux Tests from Artifactory
+      - name: Download Linux Aarch64 OE GCC 11.2 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_oe_gcc11_2-pyNone-tests
 
-      - name: Download x86_64 Linux Tests from Artifactory
+      - name: Download Linux x86_64 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-tests
 
-      - name: Download arm64 Windows Tests from Artifactory
+      - name: Download Windows ARM64 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-tests
 
-      - name: Download arm64ec Windows Tests from Artifactory
+      - name: Download Windows ARM64EC Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64ec-py3.11-tests
 
-      - name: Download x86_64 Windows Tests from Artifactory
+      - name: Download Windows x86_64 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.11-tests
@@ -321,42 +321,32 @@ jobs:
         with:
           name: android-aarch64-pom
 
-      - name: Download ARM64 (ARM64x) Windows NuGet Package from Artifactory
+      - name: Download Windows ARM64 (ARM64x) NuGet Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64x-py3.11-nuget
 
-      - name: Download ARM64 Windows Zip Package
+      - name: Download Windows ARM64 Zip Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-zip
 
-      - name: Download ARM64 (ARM64x) Windows Zip Package
+      - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64x-py3.11-zip
 
-      - name: Download ARM64 Windows Debug Zip Package from Artifactory
+      - name: Download Windows ARM64 Debug Zip Package from Artifactory
         if: ${{ inputs.build_windows_arm64_debug }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-Debug-zip
 
-      - name: Download ARM64 Windows RelWithDebInfo Zip Package from Artifactory
+      - name: Download Windows ARM64 RelWithDebInfo Zip Package from Artifactory
         if: ${{ inputs.build_windows_arm64_relwithdebinfo }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-RelWithDebInfo-zip
-
-      - name: Download aarch64 manylinux_2_34 Linux TGZ Package from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-aarch64_manylinux_2_34-py3.11-tgz
-
-      - name: Download x86_64 Ubuntu 22.04 Linux TGZ Package from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64_ubuntu_22_04-py3.11-tgz
 
       - name: Download Windows ARM64 PDB Archive from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -373,10 +363,20 @@ jobs:
         with:
           name: windows-x86_64-py3.11-pdb-zip
 
-      - name: Download Windows ARM64 (ARM64x) Windows PDB Archive from Artifactory
+      - name: Download Windows ARM64 (ARM64x) PDB Archive from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64x-py3.11-pdb-zip
+
+      - name: Download Linux Aarch64 manylinux_2_34 TGZ Package from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tgz
+
+      - name: Download Linux x86_64 Ubuntu 22.04 TGZ Package from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tgz
 
       - name: Merge AMD Wheels
         run: |
@@ -398,9 +398,9 @@ jobs:
           find "${{ github.workspace }}/build/windows-arm64ec" -name "*.whl" -delete
           find "${{ github.workspace }}/build/windows-x86_64" -name "*.whl" -delete
 
-      - name: Verify wheel artifacts
+      - name: Verify Wheel artifacts
         run: |
-          # After merge: 2 linux x86_64 (py3.10, py3.12) + 4 linux aarch64 manylinux_2_34 + 4 linux x86_64 ubuntu 22.04 + 4 arm64 + 4 merged AMD = 18 wheels
+          # After merge: 2 Linux x86_64 (py3.10, py3.12) + 4 Linux Aarch64 manylinux_2_34 + 4 Linux x86_64 Ubuntu 22.04 + 4 Windows ARM64 + 4 merged AMD = 18 wheels
           # (arm64ec and x86_64 originals are deleted by the merge step above)
           count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
           echo "Found $count wheel(s)"
