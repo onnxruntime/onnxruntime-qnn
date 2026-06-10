@@ -128,6 +128,7 @@ struct QnnBackendManagerConfig {
   // profiling settings so it is set once at backend-manager construction and
   // remains constant for the manager's lifetime.
   bool enable_framework_op_trace = false;
+  bool skip_backend_op_validation = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -160,6 +161,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         soc_model_(config.soc_model),
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
+        skip_backend_op_validation_(config.skip_backend_op_validation),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
@@ -715,6 +717,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t soc_model_ = QNN_SOC_MODEL_UNKNOWN;
   const std::vector<OpPackage> op_packages_;
   bool skip_qnn_version_check_ = false;
+  // When true, skip wiring up the target-backend validator during DLC dump so that
+  // op validation falls back to the serializer's generic checks (see SetupBackend).
+  bool skip_backend_op_validation_ = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 

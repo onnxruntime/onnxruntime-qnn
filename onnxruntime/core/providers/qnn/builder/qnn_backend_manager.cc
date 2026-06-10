@@ -380,8 +380,13 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
-  // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls.
-  qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls. Leaving it
+  // null when disabled keeps validator interface/handle both null, so ValidateQnnNode() falls back
+  // to the serializer's generic checks -- correct on a device-less host where the target backend
+  // validates against an arch-agnostic op table and over-rejects arch-specific ops.
+  if (!skip_backend_op_validation_) {
+    qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  }
 
   // Load the serializer backend and set it as the activate backend.
   QnnInterface_t* serializer_interface_provider{nullptr};
@@ -1932,7 +1937,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     }
   }
 
-  if (status.IsOK() && qnn_serializer_config_) {
+  if (status.IsOK() && qnn_serializer_config_ && !skip_backend_op_validation_) {
     status = InitializeQnnValidatorLog();
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeQnnValidatorLog succeed.");
@@ -1949,6 +1954,10 @@ Ort::Status QnnBackendManager::SetupBackend(
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateValidatorDevice succeed.");
     }
+  } else if (qnn_serializer_config_ && skip_backend_op_validation_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    "skip_backend_op_validation=1: skipping target-backend op validation; "
+                    "DLC dump will use the serializer's generic op validation.");
   }
 
   if (status.IsOK()) {

@@ -242,6 +242,11 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |---|---|
 |Backend path (string)|Path to the QNN IR backend library. Defaults to 'libQnnIr.so' or 'QnnIr.dll'. Only effective when `dump_qnn_ir_dlc` is enabled.|
 
+|`"skip_backend_op_validation"`|Description|
+|---|---|
+|'0'|Default. The target backend (e.g. HTP) validates each op config during DLC dump.|
+|'1'|Skip target-backend op validation during DLC dump and fall back to the serializer's generic op checks. Intended for device-less hosts (e.g. cloud x86_64 compilation): there the target backend validates against an arch-agnostic op table and over-rejects arch-specific (v73+) ops such as `ScatterElements(reduction=max)`, even though the op is valid on real hardware. Only effective when `dump_qnn_ir_dlc` is enabled. Op lowering still targets the intended backend; only the validation verdict changes.|
+
 |`"skip_qnn_version_check"`|Description|
 |---|---|
 |'0'|Default. Version check enabled.|

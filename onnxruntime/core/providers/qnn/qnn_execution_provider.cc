@@ -1043,6 +1043,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                 false,
                                                 logger_);
 
+  // When dumping to DLC on a device-less host, the target backend validates op configs against an
+  // arch-agnostic op table and over-rejects arch-specific (v73+) ops. This option skips that
+  // validation, falling back to the serializer's generic checks. Default false keeps validation on.
+  static const std::string SKIP_BACKEND_OP_VALIDATION = "skip_backend_op_validation";
+  auto skip_backend_op_validation = ParseBoolOption(ort_api,
+                                                    session_options,
+                                                    FormatEPConfigKey(SKIP_BACKEND_OP_VALIDATION),
+                                                    false,
+                                                    logger_);
+
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
   if (
@@ -1069,7 +1079,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      soc_model,
                                      op_packages,
                                      skip_qnn_version_check,
-                                     enable_framework_op_trace_},
+                                     enable_framework_op_trace_,
+                                     skip_backend_op_validation},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
