@@ -245,6 +245,7 @@ class OrtWheelTestTask(RunInTempDirectoryTask):
             "arm64ec": "x86_64",
             "arm64x": "x86_64",
             "aarch64_manylinux_2_34": "arm64",
+            "x86_64_ubuntu_22_04": "x86_64",
         }
         py_arch = target_arches.get(self.__target_arch, None)
         if py_arch is not None:
@@ -327,8 +328,15 @@ class OrtWheelModelTestTask(OrtWheelTestTask):
             build_root = REPO_ROOT / "build" / f"windows-{self.__target_arch}"
             filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-win_{wheel_pe_arch}.whl"
         elif is_host_linux():
+            wheel_arches: dict[str, str] = {
+                "aarch64_manylinux_2_34": "aarch64",
+                "x86_64_ubuntu_22_04": "x86_64",
+            }
+            wheel_arch = wheel_arches.get(self.__target_arch)
+            if wheel_arch is None:
+                raise ValueError(f"Unknown Linux wheel target arch {self.__target_arch}.")
             build_root = REPO_ROOT / "build" / f"linux-{self.__target_arch}"
-            filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-manylinux*_aarch64.whl"
+            filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-manylinux*_{wheel_arch}.whl"
         else:
             raise ValueError("Unknown OS")
 

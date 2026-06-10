@@ -17,7 +17,7 @@ on:
       target_arch:
         description: |
           The architecture for which to build.
-          [Linux] aarch64_manylinux_2_34, aarch64_oe_gcc11_2, or x86_64.
+          [Linux] aarch64_manylinux_2_34, aarch64_oe_gcc11_2, x86_64, or x86_64_ubuntu_22_04.
           [Windows] arm64, arm64ec, arm64x, or x86_64.
         default: arm64
         type: string
@@ -29,6 +29,10 @@ on:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      build_config:
+        description: "Specify the type of build: Debug, Release, or RelWithDebInfo."
+        default: "Release"
+        type: string
       version_suffix:
         description: "Version suffix. If set, the specified suffix will be appended to the version string."
         type: string
@@ -85,6 +89,12 @@ on:
         description: "If true, upload the PDB archive as a CI artifact."
         default: false
         type: boolean
+      testdata_archive_artifact_name:
+        description: |
+          Artifact name to download as the testdata archive in the test step.
+          Empty disables the download.
+        type: string
+        default: ""
       build_aar:
         description: |
           If true, also build the Android AAR during the Android build.
@@ -105,7 +115,7 @@ env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
 
   # Cross compilation on Windows adds a folder to the build directory.
-  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && 'Release/Release' || 'Release' }}"
+  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config) || inputs.build_config }}"
 
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
@@ -133,22 +143,11 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
-
-      - name: Build Windows ${{ inputs.target_arch }} PDB Archive
-        if: ${{ inputs.build_pdb_archive && inputs.target_os == 'windows' }}
-        run: >
-          python.exe tools/ci_build/pkg_assets.py
-          --source_dir ${{ github.workspace }}
-          --build_dir ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ inputs.target_arch }}
-          --config Release
-          --pdb_only
-          --target_arch ${{ inputs.target_arch }}
-          ${{ env.BUILD_CONFIG_DIR == 'Release' && '--use_ninja' || '' }}
-          ${{ env.ORT_VERSION_SUFFIX != '' && format('--version_suffix {0}', env.ORT_VERSION_SUFFIX) || '' }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
@@ -156,6 +155,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
@@ -213,7 +213,7 @@ jobs:
         if: ${{ inputs.upload_archive }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
 
       - name: Upload AAR to Artifactory
@@ -229,6 +229,18 @@ jobs:
         with:
           name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom"
+
+      - name: Build Windows ${{ inputs.target_arch }} PDB Archive
+        if: ${{ inputs.build_pdb_archive && inputs.target_os == 'windows' }}
+        run: >
+          python.exe tools/ci_build/pkg_assets.py
+          --source_dir ${{ github.workspace }}
+          --build_dir ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ inputs.target_arch }}
+          --config Release
+          --pdb_only
+          --target_arch ${{ inputs.target_arch }}
+          ${{ env.BUILD_CONFIG_DIR == 'Release' && '--use_ninja' || '' }}
+          ${{ env.ORT_VERSION_SUFFIX != '' && format('--version_suffix {0}', env.ORT_VERSION_SUFFIX) || '' }}
 
       - name: Upload PDB Archive to Artifactory
         if: ${{ inputs.upload_pdb_archive && inputs.target_os == 'windows' }}
@@ -264,10 +276,17 @@ jobs:
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
 
+      - name: Download testdata from Artifactory
+        if: ${{ inputs.testdata_archive_artifact_name != '' }}
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: ${{ inputs.testdata_archive_artifact_name }}
+
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          --config ${{ inputs.build_config }}
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
@@ -325,6 +344,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only

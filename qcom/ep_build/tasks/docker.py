@@ -14,6 +14,7 @@ from ..util import DEFAULT_PYTHON_LINUX
 DOCKER_BUILD_USER = "ortqnnep"
 DOCKER_REPO_ROOT = Path("/ort")
 MANYLINUX_2_34_AARCH64_TAG = "ort-manylinux_2_34_aarch64"
+UBUNTU_22_04_X86_64_TAG = "ort-ubuntu_22_04_x86_64"
 
 
 def _argify(arg: str, sep: str, args: Mapping[Any, Any]) -> list[str]:
@@ -27,6 +28,7 @@ class DockerBuildTask(RunExecutablesTask):
         dockerfile: Path,
         image_name: str,
         build_args: Mapping[str, str] | None = None,
+        platform: str = "linux/aarch64",
     ) -> None:
         build_args_list: list[str] = ["--build-arg", f"BUILD_USER={DOCKER_BUILD_USER}"]
         if build_args is not None:
@@ -36,7 +38,7 @@ class DockerBuildTask(RunExecutablesTask):
             group_name,
             [
                 [
-                    "docker", "build", "--platform", "linux/aarch64",
+                    "docker", "build", "--platform", platform,
                     "--file", str(dockerfile), "--tag", image_name,
                     *build_args_list,
                     str(dockerfile.parent),
@@ -56,9 +58,10 @@ class DockerRunTask(RunExecutablesTask):
         volumes: Mapping[Path, Path] | None = None,
         env: Mapping[str, str] | None = None,
         remove: bool = True,
+        platform: str = "linux/aarch64",
     ) -> None:
         def make_cmd() -> list[list[str]]:
-            cmd = ["docker", "run", "--platform", "linux/aarch64", "--user", DOCKER_BUILD_USER]
+            cmd = ["docker", "run", "--platform", platform, "--user", DOCKER_BUILD_USER]
             if working_dir is not None:
                 cmd.extend(["--workdir", str(working_dir)])
             if volumes is not None:
@@ -89,6 +92,7 @@ class DockerBuildAndTestTask(DockerRunTask):
         qairt_sdk_root: Path | None = None,
         ccache_root: Path | None = None,
         build_archive: bool = False,
+        platform: str = "linux/aarch64",
     ) -> None:
         # deferred to avoid circular import
         from ..tools import get_package_dir, get_tools_dir  # noqa:PLC0415
@@ -130,4 +134,5 @@ class DockerBuildAndTestTask(DockerRunTask):
             volumes_with_caches,
             env,
             remove,
+            platform,
         )
