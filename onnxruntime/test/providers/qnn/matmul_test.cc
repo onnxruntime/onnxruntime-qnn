@@ -782,7 +782,7 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, int8_t, uint16_t>({4, 32}, {32, 16}, 16, 0, QDQTolerance(), ExpectedEPNodeAssignment::None);
 }
 
-#endif // defined(__linux__)
+#endif  // defined(__linux__)
 
 #if defined(_M_ARM64)
 //

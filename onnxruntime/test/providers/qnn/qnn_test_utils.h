@@ -656,30 +656,30 @@ static void GetTestInputQuantParamsBlockQuant(
 }
 
 // Specialization for Int4x2/UInt4x2: zero_points are packed
-#define DEF_GET_INPUT_QPARAMS_BLOCK_QUANT_INT4_FUNC(INT4x2_TYPE)                                                  \
-  template <>                                                                                                     \
-  inline void GetTestInputQuantParamsBlockQuant<INT4x2_TYPE>(const TestInputDef<float>& input_def,                \
-                                                             std::vector<float>& scales,                          \
-                                                             std::vector<INT4x2_TYPE>& zero_points,               \
-                                                             int64_t block_size, int64_t axis, bool symmetric) {  \
-    using UnpackedType = typename INT4x2_TYPE::UnpackedType;                                                      \
-    const auto f32_ranges = input_def.GetRangePerBlock(block_size, axis);                                         \
-    const size_t num_ranges = f32_ranges.size();                                                                  \
-                                                                                                                  \
-    scales.resize(num_ranges);                                                                                    \
-    zero_points.resize(INT4x2_TYPE::CalcNumInt4Pairs(num_ranges));                                                \
-                                                                                                                  \
-    for (size_t i = 0; i < num_ranges; i++) {                                                                     \
-      const auto& range = f32_ranges[i];                                                                          \
-      QuantParams<UnpackedType> params = QuantParams<UnpackedType>::Compute(range.first, range.second,            \
-                                                                            INT4x2_TYPE::min_val,                 \
-                                                                            INT4x2_TYPE::max_val, symmetric);     \
-      scales[i] = params.scale;                                                                                   \
-                                                                                                                  \
-      size_t r = i >> 1;                                                                                          \
-      size_t c = i & 0x1;                                                                                         \
-      zero_points[r].SetElem(c, params.zero_point);                                                               \
-    }                                                                                                             \
+#define DEF_GET_INPUT_QPARAMS_BLOCK_QUANT_INT4_FUNC(INT4x2_TYPE)                                                 \
+  template <>                                                                                                    \
+  inline void GetTestInputQuantParamsBlockQuant<INT4x2_TYPE>(const TestInputDef<float>& input_def,               \
+                                                             std::vector<float>& scales,                         \
+                                                             std::vector<INT4x2_TYPE>& zero_points,              \
+                                                             int64_t block_size, int64_t axis, bool symmetric) { \
+    using UnpackedType = typename INT4x2_TYPE::UnpackedType;                                                     \
+    const auto f32_ranges = input_def.GetRangePerBlock(block_size, axis);                                        \
+    const size_t num_ranges = f32_ranges.size();                                                                 \
+                                                                                                                 \
+    scales.resize(num_ranges);                                                                                   \
+    zero_points.resize(INT4x2_TYPE::CalcNumInt4Pairs(num_ranges));                                               \
+                                                                                                                 \
+    for (size_t i = 0; i < num_ranges; i++) {                                                                    \
+      const auto& range = f32_ranges[i];                                                                         \
+      QuantParams<UnpackedType> params = QuantParams<UnpackedType>::Compute(range.first, range.second,           \
+                                                                            INT4x2_TYPE::min_val,                \
+                                                                            INT4x2_TYPE::max_val, symmetric);    \
+      scales[i] = params.scale;                                                                                  \
+                                                                                                                 \
+      size_t r = i >> 1;                                                                                         \
+      size_t c = i & 0x1;                                                                                        \
+      zero_points[r].SetElem(c, params.zero_point);                                                              \
+    }                                                                                                            \
   }
 
 DEF_GET_INPUT_QPARAMS_BLOCK_QUANT_INT4_FUNC(Int4x2)
@@ -766,7 +766,7 @@ inline void QuantizeValuesBlockQuant<float, Int4x2>(
 
       const float q_unclamped = RoundHalfToEven(val / scale) + static_cast<float>(zp);
       const float q_clamped = std::min(static_cast<float>(Int4x2::max_val),
-                                        std::max(static_cast<float>(Int4x2::min_val), q_unclamped));
+                                       std::max(static_cast<float>(Int4x2::min_val), q_unclamped));
       const auto [out_pair_idx, out_elem_idx] = Int4x2::GetTensorElemIndices(elem_idx);
       output[out_pair_idx].SetElem(out_elem_idx, static_cast<int8_t>(q_clamped));
     }
@@ -814,7 +814,7 @@ inline void QuantizeValuesBlockQuant<float, UInt4x2>(
 
       const float q_unclamped = RoundHalfToEven(val / scale) + static_cast<float>(zp);
       const float q_clamped = std::min(static_cast<float>(UInt4x2::max_val),
-                                        std::max(static_cast<float>(UInt4x2::min_val), q_unclamped));
+                                       std::max(static_cast<float>(UInt4x2::min_val), q_unclamped));
       const auto [out_pair_idx, out_elem_idx] = UInt4x2::GetTensorElemIndices(elem_idx);
       output[out_pair_idx].SetElem(out_elem_idx, static_cast<uint8_t>(q_clamped));
     }
