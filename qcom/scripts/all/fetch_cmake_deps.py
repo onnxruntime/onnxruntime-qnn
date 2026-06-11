@@ -25,9 +25,19 @@ def main(deps_dir: Path, mirror_dir: Path) -> None:
 
     logging.info(f"Downloading dependencies into {deps_dir}")
     cached_paths: list[tuple[str, Path]] = []
+    failed: list[str] = []
     for name, url, sha1 in deps:
-        cached_paths.append((url, cache.fetch(name, url, expected_sha1=sha1)))
-        logging.debug(f"{name} --> {cached_paths[-1]}")
+        try:
+            cached_paths.append((url, cache.fetch(name, url, expected_sha1=sha1)))
+            logging.debug(f"{name} --> {cached_paths[-1]}")
+        except Exception as e:
+            logging.warning(f"Failed to fetch {name} ({url}): {e}")
+            failed.append(name)
+
+    if failed:
+        logging.error(
+            f"Could not fetch {len(failed)} dep(s): {', '.join(failed)}. CMake will attempt to download them directly."
+        )
 
     logging.info(f"Making dependencies available in {mirror_dir}")
     if mirror_dir.exists():
