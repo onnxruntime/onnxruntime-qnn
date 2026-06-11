@@ -3099,14 +3099,7 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     // uint16 symmetric per-tensor: scale = 2/65534, zp = 32767 (~[-1, 1])
     const float act_scale = 2.0f / 65534.0f;
     const uint16_t act_zp = 32767;
-    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
-    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
-    builder.AddNode("act_ql", "QuantizeLinear",
-                    {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
-    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
-    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
-    builder.AddNode("act_dql", "DequantizeLinear",
-                    {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
+    const std::string act_dql_out = AddQDQNodePair<uint16_t>(builder, "act", "input", act_scale, act_zp);
 
     // ── Weight initializer + DQ(block_size, axis=1) ──────────────────────────
     // Scale rank == weight rank per ONNX opset 21: [OC, IC/block_size, 1, 1].
@@ -3166,7 +3159,7 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
                      builder.MakeScalarAttribute("block_size", block_size)});
 
     // ── Conv ─────────────────────────────────────────────────────────────────
-    std::vector<std::string> conv_inputs{"act_dql_out", "weight_dql_out"};
+    std::vector<std::string> conv_inputs{act_dql_out, "weight_dql_out"};
     if (include_bias) {
       // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
       // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
@@ -3204,15 +3197,7 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     // ── Output: Conv → Q(uint16) → DQ → graph output ─────────────────────────
     const float out_scale = 2.0f / 65534.0f;
     const uint16_t out_zp = 32767;
-    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
-    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
-    builder.AddNode("out_ql", "QuantizeLinear",
-                    {"conv_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
-    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
-    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
-    builder.MakeOutput("output");
-    builder.AddNode("out_dql", "DequantizeLinear",
-                    {"out_ql_out", "out_dql_scale", "out_ql_zp"}, {"output"});
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "conv_out", out_scale, out_zp);
   };
 }
 
