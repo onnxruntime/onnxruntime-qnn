@@ -200,17 +200,21 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     std::vector<uint8_t> quant_data;
     Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
     const OrtValueInfo* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+    RETURN_IF_NOT(weight_tensor_proto != nullptr,
+                  "GatherBlockQuantized: weights must be a constant initializer");
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_tensor_proto, quant_data, false));
 
     // Transform quantized weights to signed fixed point 4.
     bool needs_uint4_to_int4 = (weight_type == QNN_DATATYPE_UINT_8);
     if (needs_uint4_to_int4) {
-      utils::TransformUnsignedToSignedFixedPoint4(quant_data, num_blocks, block_size);
+      RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(quant_data, 4));
     }
 
     // Unpack scales
     std::vector<uint8_t> uint8_scale;
     const OrtValueInfo* scale_tensor_proto = qnn_model_wrapper.GetConstantTensor(scales_tensor.name);
+    RETURN_IF_NOT(scale_tensor_proto != nullptr,
+                  "GatherBlockQuantized: scales must be a constant initializer");
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_tensor_proto, uint8_scale, false));
 
     const OrtTypeInfo* type_info = nullptr;

@@ -812,33 +812,6 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
 */
 std::string PtrToString(const void* const ptr);
 
-// Re-bias each 4-bit nibble of a packed UInt4x2 buffer by -8 so the values
-// are interpretable as QNN_DATATYPE_SFIXED_POINT_4 in-place.
-// NOTE: This helper assumes bits == 4: it processes 2 nibbles per byte
-// (block_size / 2 bytes per block) and uses zero_point = 8 (= 2^(bits-1)).
-// It must not be used for other bit widths without parameterizing both.
-inline void TransformUnsignedToSignedFixedPoint4(std::vector<uint8_t>& quant_data,
-                                                 int64_t num_blocks,
-                                                 int64_t block_size) {
-  constexpr uint8_t zero_point = 8;
-  for (int64_t block_idx = 0; block_idx < num_blocks; ++block_idx) {
-    for (int64_t val_idx = 0; val_idx < (block_size / 2); ++val_idx) {
-      SafeInt<int64_t> safe_index = block_idx;
-      safe_index *= (block_size / 2);
-      safe_index += val_idx;
-
-      size_t index = gsl::narrow_cast<size_t>(safe_index);
-      uint8_t quant_value_4x2 = quant_data[index];
-
-      int8_t quant_upper_value =
-          gsl::narrow_cast<int8_t>(((quant_value_4x2 >> 4) & 0xF) - zero_point);
-      int8_t quant_lower_value =
-          gsl::narrow_cast<int8_t>(((quant_value_4x2 >> 0) & 0xF) - zero_point);
-
-      quant_data[index] = ((quant_upper_value & 0xF) << 4) | (quant_lower_value & 0xF);
-    }
-  }
-}
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime
