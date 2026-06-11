@@ -450,6 +450,61 @@ jobs:
             "zip.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
+      # ----------------------------------------------
+      # Download test archives to prepare test package
+      # ----------------------------------------------
+
+      - name: Download Linux Aarch64 manylinux_2_34 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tests
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tests
+
+      - name: Download ARM64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-tests
+
+      - name: Download ARM64EC Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-tests
+
+      - name: Download x86_64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-tests
+
+      - name: Collect Test Archives
+        # mv (not cp): archives are only needed as inputs to prepare_test_package.sh below.
+        # Unlike qualcomm-internal-release.yml, this workflow has no step that uploads
+        # the test artifacts individually, so keeping them in build/ serves no purpose.
+        run: |
+          TEST_ARCHIVES_DIR="${{ github.workspace }}/test_archives"
+          if [ -d "$TEST_ARCHIVES_DIR" ]; then
+            echo "Folder already exists: $TEST_ARCHIVES_DIR"
+          else
+            mkdir -p "$TEST_ARCHIVES_DIR"
+          fi
+          find "${{ github.workspace }}/build" -type f -name "onnxruntime-tests-*" \
+            -exec mv {} "$TEST_ARCHIVES_DIR/" \;
+
+      - name: Prepare Test Package Archive
+        run: |
+          if [ -z "${{ inputs.version_suffix }}" ]; then
+            VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
+          else
+            VERSION="${{ inputs.version_suffix }}"
+          fi
+          ./qcom/scripts/all/prepare_test_package.sh \
+            "${{ github.workspace }}/test_archives" \
+            "${{ github.workspace }}/build" \
+            "$VERSION"
+
       - name: Publish Zip
         if: ${{ !inputs.skip_publish }}
         run: |
@@ -493,6 +548,11 @@ jobs:
           # Upload Windows x86_64 PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Test Package Archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/test_package/" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file
