@@ -12,11 +12,43 @@
 namespace onnxruntime {
 namespace qnn {
 
-// GatherBlockQuantized lowers to a QNN Gather over a block-quantized weight
-// tensor. The packed UInt4x2 weights are re-biased to QNN_DATATYPE_SFIXED_POINT_4
-// and paired with per-block float scales (zero offsets, since the QNN GPU
-// backend currently only supports symmetric quantization). This op builder is
-// restricted to the QNN GPU backend.
+/* Op Resolution
+  --> Incoming ONNX Node
+    1. com.microsoft.GatherBlockQuantized
+      Attributes : INT64
+        - bits            : 4 (GPU)
+        - block_size      : power of 2, >= 16 (GPU)
+        - gather_axis     : axis of `data` to gather along (default 0)
+        - quantize_axis   : axis of `data` that is block-quantized (only 1 supported on GPU)
+      Inputs
+        - data        : Init            : uint8 (UInt4x2 packed) : [vocab, hidden * bits / 8]
+        - indices     :                 : int32/int64            : [batch_size, seq_len]
+        - scales      : Init            : fp16/fp32             : [vocab, hidden / block_size]
+        - zero_points : (optional)Init  : uint8                 : [vocab, hidden / block_size * bits / 8]
+                                                                  (not supported on GPU: symmetric quant only)
+      Outputs
+        - Y           :                 : fp16/fp32             : [batch_size, seq_len, hidden]
+  <-- Outgoing QNN Node (GPU)
+    1. Gather
+      Attributes : UINT32
+        - axis            : gather_axis
+      Inputs
+        - Weight      : Static : qint4(BlockEncoding) : [vocab, hidden]
+          - Scales    :        : fp32                 : [vocab * (hidden / block_size)]
+          - Offsets   :        : int32_t (all zero)   : [vocab * (hidden / block_size)]
+        - Indices     :        : int32                : [batch_size, seq_len]
+      Outputs
+        - Output      :        : fp16/fp32            : [batch_size, seq_len, hidden]
+
+  Shape mapping / INT4-packed reinterpretation:
+    The packed UInt4x2 weights (shape [vocab, hidden * bits / 8]) are re-biased
+    by -8 (zero_point = 2^(bits-1)) so each nibble is reinterpretable as
+    QNN_DATATYPE_SFIXED_POINT_4 in place. The QNN weight tensor is then declared
+    with the unpacked element shape [vocab, scales_shape[1] * block_size] (== hidden).
+    Per-block float scales pair with zero offsets, since the QNN GPU backend
+    currently only supports symmetric quantization. This op builder is restricted
+    to the QNN GPU backend.
+*/
 
 class GatherBlockQuantizedOpBuilder : public BaseOpBuilder {
  public:
@@ -26,20 +58,20 @@ class GatherBlockQuantizedOpBuilder : public BaseOpBuilder {
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
-                            const Ort::Logger& logger) const override;
+                            const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
 
  protected:
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
                             std::vector<std::string>& input_names,
-                            bool do_op_validation) const override;
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
                                           const Ort::Logger& logger,
-                                          bool do_op_validation) const override;
+                                          bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
 // ================================================================
@@ -48,20 +80,29 @@ class GatherBlockQuantizedOpBuilder : public BaseOpBuilder {
 Ort::Status GatherBlockQuantizedOpBuilder::IsOpSupported(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& node_unit,
-    const Ort::Logger&) const {
+    const Ort::Logger& logger) const {
   RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
                 "GatherBlockQuantized: GPU backend only");
 
   OrtNodeAttrHelper helper(node_unit);
   const int64_t bits = helper.Get("bits", static_cast<int64_t>(4));
   const int64_t block_size = helper.Get("block_size", static_cast<int64_t>(32));
+  const int64_t quantize_axis = helper.Get("quantize_axis", static_cast<int64_t>(1));
 
   RETURN_IF_NOT(bits == 4,
                 "GatherBlockQuantized: only INT4 (bits == 4) supported");
   RETURN_IF_NOT(block_size >= 16 && ((block_size & (block_size - 1)) == 0),
                 "GatherBlockQuantized: block_size must be power of 2 and >= 16");
+  RETURN_IF_NOT(quantize_axis == 1,
+                "GatherBlockQuantized: only quantize_axis == 1 supported on QNN GPU");
 
   const auto& inputs = node_unit.Inputs();
+
+  // Optional zero_points (4th input) implies asymmetric quantization. The QNN
+  // GPU backend only supports symmetric quantization (offsets forced to 0), so
+  // reject models that supply zero_points rather than produce silent wrong output.
+  RETURN_IF(inputs.size() > 3 && inputs[3].Exists(),
+            "GatherBlockQuantized: zero_points input not supported (symmetric quant only)");
   {
     Qnn_DataType_t weight_datatype;
     const OrtNodeUnitIODef& weight_tensor = inputs[0];
@@ -74,6 +115,8 @@ Ort::Status GatherBlockQuantizedOpBuilder::IsOpSupported(
         qnn_model_wrapper.GetQnnBackendType()));
     RETURN_IF((weight_datatype != QNN_DATATYPE_UINT_8) && (weight_datatype != QNN_DATATYPE_SFIXED_POINT_4),
               "GatherBlockQuantized: weights must be UINT_8 or SFIXED_POINT_4");
+    RETURN_IF_NOT(weights_info.shape.size() == 2,
+                  "GatherBlockQuantized: only rank-2 weights supported");
   }
 
   // Indices datatype is constrained by the ONNX OpDef (int32/int64), so it is
@@ -93,7 +136,17 @@ Ort::Status GatherBlockQuantizedOpBuilder::IsOpSupported(
         qnn_model_wrapper.GetQnnBackendType()));
     RETURN_IF(scale_datatype != QNN_DATATYPE_FLOAT_32 && scale_datatype != QNN_DATATYPE_FLOAT_16,
               "GatherBlockQuantized: scales must be FLOAT32 or FLOAT16");
+    RETURN_IF_NOT(scales_info.shape.size() == 2,
+                  "GatherBlockQuantized: only rank-2 scales supported");
   }
+
+  // Run the input/output processing with do_op_validation=true so the QNN
+  // backend validates the op at partition time. Backend rejections then surface
+  // as partition-time fallbacks instead of compile-time fatals.
+  std::vector<std::string> input_names;
+  RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, true));
+  RETURN_IF_ERROR(ProcessAttributesAndOutputs(qnn_model_wrapper, node_unit, std::move(input_names), logger, true));
+
   return Ort::Status();
 }
 
@@ -192,13 +245,19 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     // quantization, so offsets are forced to 0.
     std::vector<int32_t> int32_offset(num_blocks, 0);
 
-    // Create Quantization Parameter and create Weight Tensor
+    // Create Quantization Parameter and create Weight Tensor.
+    // The packed UInt4x2 bytes (weight_shape[1] bytes/row, 2 int4 nibbles per
+    // byte) must expand to the unpacked element count implied by scales:
+    // scale_shape[1] * block_size.
+    RETURN_IF_NOT(static_cast<int64_t>(weight_shape[1]) * 2 ==
+                      static_cast<int64_t>(scale_shape[1]) * block_size,
+                  "GatherBlockQuantized: weight packed bytes mismatch with scales * block_size");
     QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(float_scale,
                                                                  int32_offset,
                                                                  block_sizes,
                                                                  QNN_DATATYPE_SFIXED_POINT_4);
-    weight_shape[1] = static_cast<uint32_t>(scale_shape[1] * block_size);
-    std::vector<uint32_t> weight_shape_ = {static_cast<uint32_t>(weight_shape[0]), static_cast<uint32_t>(scale_shape[1] * block_size)};
+    std::vector<uint32_t> weight_shape_ = {static_cast<uint32_t>(weight_shape[0]),
+                                           static_cast<uint32_t>(scale_shape[1] * block_size)};
     QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
                                            weight_tensor_type,
                                            QNN_DATATYPE_SFIXED_POINT_4,
@@ -223,7 +282,9 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
 
   const bool indices_is_int64 = (indices_info.qnn_data_type == QNN_DATATYPE_INT_64);
 
-  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(indices_name)) {
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(indices_name)) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + indices_name).c_str());
+  } else {
     if (indices_info.is_initializer && indices_is_int64) {
       // Statically convert int64 indices to int32.
       std::vector<uint8_t> onnx_indices_bytes;
@@ -238,18 +299,18 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
         qnn_indices[i] = static_cast<int32_t>(onnx_indices[i]);
       }
 
-      QnnTensorWrapper wrapper(indices_name,
-                               QNN_TENSOR_TYPE_STATIC,
-                               QNN_DATATYPE_INT_32,
-                               QnnQuantParamsWrapper(),
-                               std::vector<uint32_t>(indices_info.shape),
-                               std::move(qnn_indices_bytes));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(wrapper)),
+      QnnTensorWrapper indices_tensor_wrapper(indices_name,
+                                              QNN_TENSOR_TYPE_STATIC,
+                                              QNN_DATATYPE_INT_32,
+                                              QnnQuantParamsWrapper(),
+                                              std::vector<uint32_t>(indices_info.shape),
+                                              std::move(qnn_indices_bytes));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(indices_tensor_wrapper)),
                     "Failed to add indices tensor");
     } else {
-      QnnTensorWrapper wrapper;
-      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(indices_info, indices_name, wrapper));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(wrapper)),
+      QnnTensorWrapper indices_tensor_wrapper;
+      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(indices_info, indices_name, indices_tensor_wrapper));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(indices_tensor_wrapper)),
                     "Failed to add indices tensor");
     }
   }

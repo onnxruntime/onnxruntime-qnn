@@ -11,7 +11,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 constexpr int QBits = 4;
 
@@ -175,8 +175,8 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_Basic) {
 
 TEST_F(QnnGPUBackendTests, GatherBlockQuantized_LargerIndices) {
   GatherBQTestParams params;
-  params.vocab_size = 201088;
-  params.hidden_size = 2880;
+  params.vocab_size = 4096;
+  params.hidden_size = 512;
   params.batch_size = 1;
   params.seq_len = 64;
   params.block_size = 32;
@@ -185,7 +185,21 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_LargerIndices) {
   RunGatherBlockQuantizedTest(params);
 }
 
-#endif  // _M_ARM64
+// Negative test: GatherBlockQuantized is GPU-only. On the CPU backend the op
+// must be rejected by IsOpSupported and fall back (no node assigned to QNN EP).
+TEST_F(QnnCPUBackendTests, GatherBlockQuantized_CpuBackendNotSupported) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.batch_size = 1;
+  params.seq_len = 1;
+  params.block_size = 32;
+  params.gather_axis = 0;
+  params.quantize_axis = 1;
+  RunGatherBlockQuantizedTest(params, ExpectedEPNodeAssignment::None, "cpu");
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

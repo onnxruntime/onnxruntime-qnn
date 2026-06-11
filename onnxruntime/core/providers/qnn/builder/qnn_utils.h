@@ -144,9 +144,6 @@ class UniqueNameGeneratorImpl {
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
 
-std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMap(QnnBackendType backend_type);
-std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMapQuantize(QnnBackendType backend_type);
-
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized = false,
@@ -817,6 +814,9 @@ std::string PtrToString(const void* const ptr);
 
 // Re-bias each 4-bit nibble of a packed UInt4x2 buffer by -8 so the values
 // are interpretable as QNN_DATATYPE_SFIXED_POINT_4 in-place.
+// NOTE: This helper assumes bits == 4: it processes 2 nibbles per byte
+// (block_size / 2 bytes per block) and uses zero_point = 8 (= 2^(bits-1)).
+// It must not be used for other bit widths without parameterizing both.
 inline void TransformUnsignedToSignedFixedPoint4(std::vector<uint8_t>& quant_data,
                                                  int64_t num_blocks,
                                                  int64_t block_size) {
