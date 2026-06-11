@@ -53,7 +53,6 @@ jobs:
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
-      windows_arm64_build_archive: true
 
   upload-wheel-workflow:
     name: "Upload Python Wheel artifacts to Artifactory"
@@ -360,6 +359,16 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download Windows ARM64EC Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-zip
+
+      - name: Download Windows x86_64 Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-zip
+
       - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -391,6 +400,8 @@ jobs:
           # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
           expected=(
             "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64ec.zip"
+            "onnxruntime-qnn-*-win-x64.zip"
             "onnxruntime-qnn-*-win-arm64x.zip"
             "onnxruntime-qnn-*-win-arm64-pdb.zip"
             "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
@@ -426,6 +437,18 @@ jobs:
         run: |
           ./qcom/scripts/signing/prepare_zip_for_signing.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows ARM64EC Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows x86_64 Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
             "${{ github.workspace }}/build/dist/output"
 
       - name: Prepare Windows ARM64 (ARM64x) Zip lib for signing
@@ -525,29 +548,29 @@ jobs:
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "$NETRC_FILE"
 
-          # Upload Windows ARM64 (ARM64x) archive
-          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
-            "$NETRC_FILE"
-
-          # Upload Linux aarch64 manylinux_2_34 zip
-          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
-            "$NETRC_FILE"
-
-          # Upload Linux x86_64 ubuntu 22.04 zip
-          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
-            "$NETRC_FILE"
-
-          # Upload Windows ARM64EC PDB archive
+          # Upload Windows ARM64EC archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
             "$NETRC_FILE"
 
-          # Upload Windows x86_64 PDB archive
+          # Upload Windows x86_64 archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows ARM64 (ARM64x) archive and PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux Aarch64 manylinux_2_34 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux x86_64 Ubuntu 22.04 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
             "$NETRC_FILE"
 
           # Upload Test Package Archive
