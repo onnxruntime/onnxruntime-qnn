@@ -27,18 +27,6 @@
 namespace onnxruntime {
 namespace test {
 
-// Tests rely on the QNN CPU device being advertised; opt in before any EP registration (pre-main).
-namespace {
-[[maybe_unused]] const bool g_enable_qnn_cpu_backend_for_tests = []() {
-#if defined(_WIN32)
-  _putenv_s("ORT_QNN_ENABLE_CPU_BACKEND", "1");
-#else
-  setenv("ORT_QNN_ENABLE_CPU_BACKEND", "1", /*overwrite*/ 1);
-#endif
-  return true;
-}();
-}  // namespace
-
 // Self-contained dynamic library loading functions to avoid using internal ORT APIs
 namespace {
 
