@@ -262,6 +262,220 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
 //
 // HTP tests:
 //
+
+namespace {
+
+// Builds an ONNX QDQ graph for a MatMul with a block-quantized (BW_FLOAT_BLOCK) weight.
+//   - activation A: float → Q(uint16) → DQ, shape [M, K]
+//   - weight B: INT4/INT8 (or UINT4/UINT8) initializer + DQ with block_size attribute and a rank-2
+//               float scale [K/block_size, N] (axis=0, K is the blocked contraction dimension)
+//   - output:  MatMul → Q(uint16) → DQ → graph output, shape [M, N]
+//
+// weight_bits: 4 for INT4/UINT4 (default), 8 for INT8/UINT8, 2 for INT2/UINT2.
+// block_size must be a multiple of 8 (4-bit), 4 (8-bit), or 16 (2-bit) per HTP.
+// weight_is_unsigned: true → use UINT weight type; exercises the unsigned→signed conversion path.
+GetQDQTestCaseFn BuildBQMatMulTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
+                                       int weight_bits = 4, bool weight_is_unsigned = false,
+                                       std::vector<int64_t> act_shape_override = {},
+                                       std::vector<int64_t> weight_shape_override = {}) {
+  return [M, K, N, block_size, weight_bits, weight_is_unsigned, act_shape_override,
+          weight_shape_override](ModelTestBuilder& builder) -> void {
+    const int64_t num_blocks = K / block_size;  // caller ensures K % block_size == 0
+
+    // ── Activation A: float → Q(uint16) → DQ ─────────────────────────────────
+    const std::vector<int64_t> act_shape = act_shape_override.empty() ? std::vector<int64_t>{M, K}
+                                                                      : act_shape_override;
+    auto input_def = TestInputDef<float>(act_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    const float act_scale = 2.0f / 65534.0f;  // uint16 symmetric per-tensor, ~[-1, 1]
+    const uint16_t act_zp = 32767;
+    const std::string act_dql_out = AddQDQNodePair<uint16_t>(builder, "act", "input", act_scale, act_zp);
+
+    // ── Weight B initializer + DQ(block_size, axis=rank-2) ──────────────────
+    // Scale rank == weight rank per ONNX opset 21.
+    const std::vector<int64_t> weight_shape = weight_shape_override.empty()
+                                                  ? std::vector<int64_t>{K, N}
+                                                  : weight_shape_override;
+    // Build scale shape: same as weight shape with the K-axis (rank-2) replaced by num_blocks.
+    std::vector<int64_t> scale_shape = weight_shape;
+    scale_shape[scale_shape.size() - 2] = num_blocks;
+    const int64_t block_axis = static_cast<int64_t>(weight_shape.size()) - 2;
+    builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
+
+    const size_t num_elems = static_cast<size_t>(K * N);
+    if (weight_bits == 4 && !weight_is_unsigned) {
+      std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
+      }
+      builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 4 && weight_is_unsigned) {
+      std::vector<UInt4x2> weight_data(UInt4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<uint8_t>(i % 15));
+      }
+      builder.MakeInitializer<UInt4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && !weight_is_unsigned) {
+      std::vector<Int2x4> weight_data(Int2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<int8_t>((i % 3) - 1));
+      }
+      builder.MakeInitializer<Int2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && weight_is_unsigned) {
+      std::vector<UInt2x4> weight_data(UInt2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<uint8_t>(i % 4));
+      }
+      builder.MakeInitializer<UInt2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_is_unsigned) {
+      std::vector<uint8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<uint8_t>(i % 127);
+      }
+      builder.MakeInitializer<uint8_t>("weight_quant", weight_shape, weight_data);
+    } else {
+      std::vector<int8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<int8_t>((i % 127) - 63);
+      }
+      builder.MakeInitializer<int8_t>("weight_quant", weight_shape, weight_data);
+    }
+
+    // DQ with block_size; omit zero_point (symmetric). axis=0: K is the blocked dimension.
+    builder.AddNode("weight_dql", "DequantizeLinear",
+                    {"weight_quant", "weight_scale"}, {"weight_dql_out"}, "",
+                    {builder.MakeScalarAttribute("axis", block_axis),
+                     builder.MakeScalarAttribute("block_size", block_size)});
+
+    // ── MatMul ───────────────────────────────────────────────────────────────
+    builder.AddNode("matmul", "MatMul", {act_dql_out, "weight_dql_out"}, {"matmul_out"}, kOnnxDomain);
+
+    // ── Output: MatMul → Q(uint16) → DQ → graph output ───────────────────────
+    const float out_scale = 4.0f / 65534.0f;
+    const uint16_t out_zp = 32767;
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "matmul_out", out_scale, out_zp);
+  };
+}
+
+ProviderOptions GetBQMatMulProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On the x86_64 Linux HTP simulator, specify SM8850 to enable BW_FLOAT_BLOCK support.
+  // On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// INT4 weight, K=16, N=4, block_size=8 (2 blocks/N), uint16 activation, no bias.
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// Larger K with more blocks per output channel. Guards the [num_blocks, N] → [N, num_blocks]
+// scale reordering: a wrong order fails on accuracy, not on QNN validation.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_MultiBlock) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT4, block_size=16: still a valid HTP multiple-of-8 block size.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int8_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4,
+                                        /*weight_bits=*/8),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT4 weight: exercises the unsigned→signed conversion path (TransformUnsignedToSignedFixedPoint).
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16UInt4_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
+                                        /*weight_bits=*/4, /*weight_is_unsigned=*/true),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-2f);
+}
+
+// UINT8 weight: unsigned 8-bit path.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16UInt8_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4,
+                                        /*weight_bits=*/8, /*weight_is_unsigned=*/true),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-2f);
+}
+
+// INT2, block_size=16: DISABLED. Two independent blockers (same as Conv BQ):
+//   1. ORT CPU backend does not support 2-bit Q/DQ (rejects tensor(int2)).
+//   2. QAIRT HTP backend does not support 2-bit BQ until QAIRT 2.47.
+TEST_F(QnnHTPBackendTests, DISABLED_MatMulBQ_U16Int2_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16,
+                                        /*weight_bits=*/2),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-2f);
+}
+
+// Rank-3 activation [1, M, K]: leading dim=1, reshapes to [1, 1, M, K] matching weight [1, 1, K, N].
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank3Activation) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
+                                        /*weight_bits=*/4, /*weight_is_unsigned=*/false,
+                                        /*act_shape_override=*/{1, 2, 16}),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// Rank-3 weight [1, K, N]: leading dim = 1, reshapeable to [1, 1, K, N].
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank3Weight) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
+                                        /*weight_bits=*/4, /*weight_is_unsigned=*/false,
+                                        /*act_shape_override=*/{}, /*weight_shape_override=*/{1, 16, 4}),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// Rank-4 activation [1, 1, M, K]: already in 4-D form, no reshape needed.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank4Activation) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
+                                        /*weight_bits=*/4, /*weight_is_unsigned=*/false,
+                                        /*act_shape_override=*/{1, 1, 2, 16}),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// Rank-4 weight [1, 1, K, N]: already in the [1,1,K,N] form QNN requires.
+TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank4Weight) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
+                                        /*weight_bits=*/4, /*weight_is_unsigned=*/false,
+                                        /*act_shape_override=*/{}, /*weight_shape_override=*/{1, 1, 16, 4}),
+                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
 TEST_F(QnnHTPBackendTests, MatMulOp) {
   // RunMatMulOpTest(shape_0, shape_1, is_initializer_0, is_initializer_1, expected_ep_assignment,
   // opset, f32_abs_err)
