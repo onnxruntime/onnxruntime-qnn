@@ -85,23 +85,23 @@ get_arch() {
 }
 
 WINDOWS_FILES=(
+    "ep_weight_sharing_ctx_gen.exe"
+    "onnxruntime.dll"
     "onnxruntime_perf_test.exe"
     "onnxruntime_plugin_ep_onnx_test.exe"
     "onnxruntime_provider_test.exe"
-    "ep_weight_sharing_ctx_gen.exe"
     "onnxruntime_providers_qnn.dll"
     "onnxruntime_providers_shared.dll"
-    "onnxruntime.dll"
 )
 
 LINUX_FILES=(
+    "ep_weight_sharing_ctx_gen"
+    "libonnxruntime.so"
+    "libonnxruntime_providers_qnn.so"
+    "libonnxruntime_providers_shared.so"
     "onnxruntime_perf_test"
     "onnxruntime_plugin_ep_onnx_test"
     "onnxruntime_provider_test"
-    "ep_weight_sharing_ctx_gen"
-    "libonnxruntime.so"
-    "libonnxruntime_providers_shared.so"
-    "libonnxruntime_providers_qnn.so"
 )
 
 # Collect archives (.zip, .tar, .tar.gz, .tar.bz2, .tgz)
