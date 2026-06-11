@@ -50,10 +50,6 @@ on:
         description: "JSON list of Python versions to build for Windows"
         type: string
         default: "['3.11','3.12','3.13','3.14']"
-      windows_arm64_build_archive:
-        description: "If true, build an archive with the first ARM64 build."
-        type: boolean
-        default: true
       build_windows_arm64_debug:
         description: "If true, build a Windows ARM64 Debug archive."
         type: boolean
@@ -200,8 +196,9 @@ jobs:
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      build_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      upload_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      # For each arch, build a zip archive with the first Python version we encounter
+      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # For each arch, build and upload a PDB archive with the first python version we encounter
       build_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
