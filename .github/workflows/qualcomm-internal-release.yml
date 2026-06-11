@@ -330,7 +330,7 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
-      - name: Download Windows AR64EC Zip Package from Artifactory
+      - name: Download Windows ARM64EC Zip Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64ec-py3.11-zip
