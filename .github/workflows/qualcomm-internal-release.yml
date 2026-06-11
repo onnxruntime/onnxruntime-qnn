@@ -55,7 +55,6 @@ jobs:
       linux_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
-      windows_arm64_build_archive: true
       build_windows_arm64_debug: ${{ inputs.build_windows_arm64_debug }}
       build_windows_arm64_relwithdebinfo: ${{ inputs.build_windows_arm64_relwithdebinfo }}
 
@@ -331,6 +330,16 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download Windows ARM64EC Zip Package from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-zip
+
+      - name: Download Windows x86_64 Zip Package from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-zip
+
       - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -452,6 +461,8 @@ jobs:
             "onnxruntime-tests-windows-x86_64.zip"
             "onnxruntime-testdata.zip"
             "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64ec.zip"
+            "onnxruntime-qnn-*-win-x64.zip"
             "onnxruntime-qnn-*-win-arm64x.zip"
             "onnxruntime-qnn-*-win-arm64-pdb.zip"
             "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
