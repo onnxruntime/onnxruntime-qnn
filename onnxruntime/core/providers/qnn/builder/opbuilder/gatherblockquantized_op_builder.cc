@@ -246,9 +246,10 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     std::vector<int32_t> int32_offset(num_blocks, 0);
 
     // Create Quantization Parameter and create Weight Tensor.
-    // The packed UInt4x2 bytes (weight_shape[1] bytes/row) must expand to the
-    // unpacked element count implied by scales: scale_shape[1] * block_size.
-    RETURN_IF_NOT(static_cast<int64_t>(weight_shape[1]) * 8 ==
+    // The packed UInt4x2 bytes (weight_shape[1] bytes/row, 2 int4 nibbles per
+    // byte) must expand to the unpacked element count implied by scales:
+    // scale_shape[1] * block_size.
+    RETURN_IF_NOT(static_cast<int64_t>(weight_shape[1]) * 2 ==
                       static_cast<int64_t>(scale_shape[1]) * block_size,
                   "GatherBlockQuantized: weight packed bytes mismatch with scales * block_size");
     QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(float_scale,
