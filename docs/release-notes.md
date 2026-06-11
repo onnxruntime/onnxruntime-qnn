@@ -64,7 +64,7 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - QNN EP failure on devices where DXCore cannot discover the NPU. ([#12](https://github.com/onnxruntime/onnxruntime-qnn/pull/12))
 - ORT Core version floor raised to `>= 1.24.2`, preventing accidental downgrade. ([#448](https://github.com/onnxruntime/onnxruntime-qnn/pull/448))
 
-**Full Changelog:** [rel-2.2.0...rel-2.3.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.2.0...rel-2.3.0)
+**Full Changelog:** [rel/ort-qnn-ep/2.2.0...rel-2.3.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel/ort-qnn-ep/2.2.0...rel-2.3.0)
 
 ## Known Issues
 
