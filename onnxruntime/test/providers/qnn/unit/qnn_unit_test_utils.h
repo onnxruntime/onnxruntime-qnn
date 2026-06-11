@@ -60,6 +60,13 @@ struct QnnModelWrapperTestContext {
         validator_backend_handle(nullptr) {
     // Stub initializer-query APIs so that IsConstantInput() safely returns false
     // without dereferencing null function pointers.
+    //
+    // INVARIANT: tests that wholesale reset stub_ort_api MUST re-add these two stubs
+    // before calling CreateWrapper(). Otherwise QnnModelWrapper forwards the null
+    // ort_graph to a zero-initialized function pointer on initializer queries
+    // (FindInitializer / IsConstantInput / GetConstantTensor) and SIGSEGVs.
+    // CreateWrapper() asserts both pointers are non-null at construction time as a
+    // defense against this footgun.
     stub_ort_api.Graph_GetNumInitializers = [](const OrtGraph*, size_t* num) noexcept -> OrtStatus* {
       *num = 0;
       return nullptr;
@@ -79,6 +86,13 @@ struct QnnModelWrapperTestContext {
   std::unique_ptr<qnn::QnnModelWrapper> CreateWrapper(
       const qnn::ModelSettings& settings,
       qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
+    // Fail fast at construction (rather than silently SIGSEGV at first initializer query)
+    // when these stubs were cleared by a test resetting stub_ort_api wholesale.
+    // See the INVARIANT comment in QnnModelWrapperTestContext() above.
+    assert(stub_ort_api.Graph_GetNumInitializers != nullptr &&
+           "Graph_GetNumInitializers stub missing — required when ort_graph is null");
+    assert(stub_ort_api.Graph_GetInitializers != nullptr &&
+           "Graph_GetInitializers stub missing — required when ort_graph is null");
     ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
     return std::make_unique<qnn::QnnModelWrapper>(
         /*ort_graph=*/nullptr,
@@ -155,8 +169,13 @@ struct QnnRealHtpBackendContext {
   bool IsValid() const { return initialized_; }
 
   // Non-copyable / non-movable — holds raw lib handle and backend handle.
+  // (User-declared dtor + deleted copy already make this class non-movable
+  //  implicitly — std::move(x) won't compile. Explicit move-deletes below
+  //  are for self-documentation per Rule of Five.)
   QnnRealHtpBackendContext(const QnnRealHtpBackendContext&) = delete;
   QnnRealHtpBackendContext& operator=(const QnnRealHtpBackendContext&) = delete;
+  QnnRealHtpBackendContext(QnnRealHtpBackendContext&&) = delete;
+  QnnRealHtpBackendContext& operator=(QnnRealHtpBackendContext&&) = delete;
 
  private:
   void* lib_handle_ = nullptr;

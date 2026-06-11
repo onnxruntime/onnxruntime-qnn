@@ -42,6 +42,9 @@
     # Coverage build: build as SHARED library so onnxruntime_provider_test can
     # call EP-internal functions directly via target_link_libraries(). On Linux, SHARED and
     # MODULE both produce .so files; SHARED additionally allows linking at build time.
+    message(WARNING
+            "QNN EP coverage build: using SHARED library + version_script_coverage.lds "
+            "(exports ALL symbols). DO NOT use the resulting binary in production.")
     onnxruntime_add_shared_library(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
   else()
     onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})

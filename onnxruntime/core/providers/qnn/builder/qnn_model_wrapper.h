@@ -93,44 +93,11 @@ class QnnModelWrapper {
                         qnn_interface, backend_handle,
                         qnn_validator_interface, validator_backend_handle,
                         graph_inputs, graph_outputs, qnn_backend_type, model_settings,
-                        tensor_name_overrides, /*op_trace_collector=*/nullptr) {}
+                        tensor_name_overrides,
+                        // Function-level UTs do not exercise op-trace collection.
+                        /*op_trace_collector=*/nullptr) {}
 #endif
 
- private:
-  // Single implementation. The public overloads above delegate here so member
-  // initialization and invariant checks live in one place.
-  QnnModelWrapper(const OrtGraph* ort_graph,
-                  const ApiPtrs& api_ptrs,
-                  const Ort::Logger* logger,
-                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                  const Qnn_BackendHandle_t& backend_handle,
-                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
-                  const Qnn_BackendHandle_t& validator_backend_handle,
-                  const GraphInputOutputInfo& graph_inputs,
-                  const GraphInputOutputInfo& graph_outputs,
-                  QnnBackendType qnn_backend_type,
-                  const ModelSettings& model_settings,
-                  std::unordered_map<std::string, std::string>* tensor_name_overrides,
-                  OpTraceCollector* op_trace_collector = nullptr)
-      : ort_graph_ptr_(ort_graph),
-        logger_ptr_(logger),
-        qnn_interface_(qnn_interface),
-        backend_handle_(backend_handle),
-        qnn_validator_interface_(qnn_validator_interface),
-        validator_backend_handle_(validator_backend_handle),
-        graph_inputs_(graph_inputs),
-        graph_outputs_(graph_outputs),
-        qnn_backend_type_(qnn_backend_type),
-        model_settings_(model_settings),
-        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
-        tensor_name_overrides_(tensor_name_overrides),
-        op_trace_collector_(op_trace_collector) {
-    // Invariant: validator interface and handle must both be set or both be null.
-    assert((validator_backend_handle == nullptr) ==
-           (qnn_validator_interface.backendValidateOpConfig == nullptr));
-  }
-
- public:
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
@@ -417,7 +384,12 @@ class QnnModelWrapper {
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   const OrtGraph& GetOrtGraph() const {
-    assert(ort_graph_ptr_ != nullptr);  // must not be called when constructed with null graph (test-only path)
+    // Defense-in-depth: assert is a no-op under NDEBUG (RelWithDebInfo coverage build),
+    // so throw via the public C++ API macro to fail loudly if a test path reaches here
+    // on a null-graph wrapper. Production code always passes a non-null graph.
+    if (ort_graph_ptr_ == nullptr) {
+      ORT_CXX_API_THROW("GetOrtGraph() called on test-only null-graph wrapper", ORT_FAIL);
+    }
     return *ort_graph_ptr_;
   }
 
@@ -497,6 +469,39 @@ class QnnModelWrapper {
   }
 
  private:
+  // Single implementation. Both public overloads delegate here so member
+  // initialization and the validator invariant check live in one place.
+  QnnModelWrapper(const OrtGraph* ort_graph,
+                  const ApiPtrs& api_ptrs,
+                  const Ort::Logger* logger,
+                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                  const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& validator_backend_handle,
+                  const GraphInputOutputInfo& graph_inputs,
+                  const GraphInputOutputInfo& graph_outputs,
+                  QnnBackendType qnn_backend_type,
+                  const ModelSettings& model_settings,
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides,
+                  OpTraceCollector* op_trace_collector = nullptr)
+      : ort_graph_ptr_(ort_graph),
+        logger_ptr_(logger),
+        qnn_interface_(qnn_interface),
+        backend_handle_(backend_handle),
+        qnn_validator_interface_(qnn_validator_interface),
+        validator_backend_handle_(validator_backend_handle),
+        graph_inputs_(graph_inputs),
+        graph_outputs_(graph_outputs),
+        qnn_backend_type_(qnn_backend_type),
+        model_settings_(model_settings),
+        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
+        tensor_name_overrides_(tensor_name_overrides),
+        op_trace_collector_(op_trace_collector) {
+    // Invariant: validator interface and handle must both be set or both be null.
+    assert((validator_backend_handle == nullptr) ==
+           (qnn_validator_interface.backendValidateOpConfig == nullptr));
+  }
+
   Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
                               std::string& error_msg) const;
 
