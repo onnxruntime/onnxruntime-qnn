@@ -186,8 +186,7 @@ TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M10_N128_K512) {
 }
 #endif  // defined(_M_ARM64)
 
-// TODO: Re-enable below testcases once QAIRT is upleveled to 2.47.
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS16) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS16) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -197,7 +196,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS16) {
   RunMatMulNBitsTest<2>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS16_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS16_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -207,7 +206,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS16_ZP) {
   RunMatMulNBitsTest<2>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS32) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS32) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -217,7 +216,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS32) {
   RunMatMulNBitsTest<2>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS32_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS32_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -227,7 +226,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS32_ZP) {
   RunMatMulNBitsTest<2>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS64) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS64) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -237,7 +236,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS64) {
   RunMatMulNBitsTest<2>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS64_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS64_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -247,7 +246,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B2_BS64_ZP) {
   RunMatMulNBitsTest<2>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS16) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B4_BS16) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -257,7 +256,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS16) {
   RunMatMulNBitsTest<4>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS16_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B4_BS16_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -267,7 +266,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS16_ZP) {
   RunMatMulNBitsTest<4>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS32) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B4_BS32) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -277,7 +276,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS32) {
   RunMatMulNBitsTest<4>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS32_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B4_BS32_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -287,7 +286,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS32_ZP) {
   RunMatMulNBitsTest<4>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS64) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B4_BS64) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -297,7 +296,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS64) {
   RunMatMulNBitsTest<4>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS64_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B4_BS64_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -307,7 +306,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B4_BS64_ZP) {
   RunMatMulNBitsTest<4>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS16) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B8_BS16) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -317,7 +316,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS16) {
   RunMatMulNBitsTest<8>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS16_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B8_BS16_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -327,7 +326,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS16_ZP) {
   RunMatMulNBitsTest<8>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS32) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B8_BS32) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -337,7 +336,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS32) {
   RunMatMulNBitsTest<8>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS32_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B8_BS32_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -347,7 +346,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS32_ZP) {
   RunMatMulNBitsTest<8>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS64) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B8_BS64) {
   TestParams params;
   params.M = 1;
   params.N = 2;
@@ -357,7 +356,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS64) {
   RunMatMulNBitsTest<8>(params, "htp");
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_M1_N2_K64_B8_BS64_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B8_BS64_ZP) {
   TestParams params;
   params.M = 1;
   params.N = 2;

@@ -286,7 +286,9 @@ else {
 
     if ($GenerateBuild -or $DoBuild) {
         try {
-            python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
+                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            }
             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
             if ($GenerateBuild) {
@@ -331,7 +333,10 @@ else {
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
             # very cheap to regenerate.
-            Remove-Item -Recurse -Force (Join-Path $RepoRoot "mirror")
+            $mirrorDir = Join-Path $RepoRoot "mirror"
+            if (Test-Path $mirrorDir) {
+                Remove-Item -Recurse -Force $mirrorDir
+            }
         }
     }
 

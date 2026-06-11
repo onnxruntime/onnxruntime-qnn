@@ -464,6 +464,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
+
+    if (prepare_only_ && !context_cache_enabled_) {
+      throw std::runtime_error(
+          "enable_htp_prepare_only=1 requires ep.context_enable=1. "
+          "prepare_only mode only generates the context model for ahead-of-time compilation.");
+    }
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -730,7 +736,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_HTP_FP16_precision_ = false;
   } else {
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
+                ORT_LOGGING_LEVEL_ERROR,
                 ("Invalid enable_htp_fp16_precision: " +
                  enable_htp_fp16_precision_str +
                  " only 0 or 1 allowed. Set to 0.")
@@ -739,6 +745,29 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
+
+  // HTP monolithic lstm
+  std::string disable_htp_monolithic_lstm_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("disable_htp_monolithic_lstm"),
+                                 "0",
+                                 disable_htp_monolithic_lstm_str);
+  if (disable_htp_monolithic_lstm_str == "1") {
+    disable_htp_monolithic_lstm_ = true;
+  } else if (disable_htp_monolithic_lstm_str == "0") {
+    disable_htp_monolithic_lstm_ = false;
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_ERROR,
+                ("Invalid disable_htp_monolithic_lstm: " +
+                 disable_htp_monolithic_lstm_str +
+                 " only 0 or 1 allowed. Set to 0.")
+                    .c_str());
+  }
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified disable_htp_monolithic_lstm: " + disable_htp_monolithic_lstm_str).c_str());
 
   std::string num_graph_prepare_threads_str;
   GetSessionConfigEntryOrDefault(ort_api,
@@ -1292,6 +1321,16 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_precision_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_precision_config->customConfig = htp_graph_precision_config;
     }
+
+    if (!disable_htp_monolithic_lstm_) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_monolithic_lstm_config = configs_builder.PushCustomConfig();
+      htp_graph_monolithic_lstm_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM;
+      htp_graph_monolithic_lstm_config->monolithicLstm = true;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = htp_graph_monolithic_lstm_config;
+    }
   }
 }
 
@@ -1464,16 +1503,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
-    std::string genie_path = kDefaultGenieBackendPath;
-    std::string backend_path_option;
-    GetSessionConfigEntryOrDefault(ep->ort_api, ep->session_options_,
-                                   ep->FormatEPConfigKey("backend_path"), "",
-                                   backend_path_option);
-    if (!backend_path_option.empty()) {
-      genie_path = backend_path_option;
-    }
     ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{genie_path}, ep->logger_);
+        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
     auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
@@ -1512,13 +1543,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
-
-  if (ep->prepare_only_ && !ep->context_cache_enabled_) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_prepare_only=1 requires ep.context_enable=1. "
-                "Disabling enable_htp_prepare_only since context cache is not enabled.");
-    ep->prepare_only_ = false;
-  }
 
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
