@@ -687,6 +687,232 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8F32) {
                        ExpectedEPNodeAssignment::All);
 }
 
+// Test BatchNorm with low variance channels (U16 input). Channels with small variance produce
+// large fused weights that overflow per-tensor uint8 quantization. Float-promotion path fixes this issue
+TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "Skipped on x86_64 simulator due to flaky behavior";
+#endif
+  constexpr int64_t batch = 1;
+  constexpr int64_t channels = 4;
+  constexpr int64_t H = 2;
+  constexpr int64_t W = 2;
+  // Channels 0,1: normal variance. Channels 2,3: low variance (but not zero)
+  std::vector<float> input_data = {
+      -4.0f, -2.0f, 2.0f, 4.0f,   // ch0: var ~= 10
+      -3.0f, -1.0f, 1.0f, 3.0f,   // ch1: var ~= 5
+      5.0f, 5.1f, 4.9f, 5.0f,     // ch2: var ~= 0.005
+      -2.0f, -1.9f, -2.1f, -2.0f  // ch3: var ~= 0.005
+  };
+
+  std::vector<float> scale_data = {1.0f, 1.5f, 2.0f, 3.0f};
+  std::vector<float> bias_data = {0.0f, 0.5f, 1.0f, -1.0f};
+
+  TestInputDef<float> input_def({batch, channels, H, W}, false, input_data);
+  TestInputDef<float> scale_def({channels}, true, scale_data);
+  TestInputDef<float> bias_def({channels}, true, bias_data);
+
+  RunBatchNormQDQTest<uint16_t, uint8_t>(input_def, scale_def, bias_def,
+                                         ExpectedEPNodeAssignment::All,
+                                         QDQTolerance(0.008f));
+}
+
+// Test BatchNorm with near-zero variance channels (U8 input). When gamma/sqrt(var+eps) produces
+// outlier values, per-tensor uint8 quantization of fused weight overflows. The float-promotion path
+// (Convert U8->F32, BN in F32, Convert F32->U8) avoids this accuracy loss.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U8) {
+  constexpr int64_t batch = 1;
+  constexpr int64_t channels = 4;
+  constexpr int64_t H = 2;
+  constexpr int64_t W = 2;
+  // Channels 0,1: normal variance. Channels 2,3: near-zero variance (constant-ish values).
+  std::vector<float> input_data = {
+      -4.0f, -2.0f, 2.0f, 4.0f,   // ch0: var ~= 10
+      -3.0f, -1.0f, 1.0f, 3.0f,   // ch1: var ~= 5
+      5.0f, 5.0f, 5.0f, 5.0f,     // ch2: var ~= 0 (near-zero)
+      -2.0f, -2.0f, -2.0f, -2.0f  // ch3: var ~= 0 (near-zero)
+  };
+
+  std::vector<float> scale_data = {1.0f, 1.5f, 2.0f, 3.0f};
+  std::vector<float> bias_data = {0.0f, 0.5f, 1.0f, -1.0f};
+
+  TestInputDef<float> input_def({batch, channels, H, W}, false, input_data);
+  TestInputDef<float> scale_def({channels}, true, scale_data);
+  TestInputDef<float> bias_def({channels}, true, bias_data);
+
+  // Need this custom method to test the float promotion logic to fp32. This lambda creates the op's inputs to be in per-channel mode
+  GetTestQDQModelFn<uint8_t> qdq_model_fn = [input_def, scale_def, bias_def](ModelTestBuilder& builder,
+                                                                             std::vector<QuantParams<uint8_t>>& output_qparams) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data_ref = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
+
+    MakeTestInput(builder, "X", input_def);
+    QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+    std::string x_dq_name = AddQDQNodePair<uint8_t>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);
+
+    // Per-channel QDQ for scale (axis=0)
+    MakeTestInput(builder, "scale", scale_def);
+    std::vector<float> scale_scales;
+    std::vector<uint8_t> scale_zps;
+    GetTestInputQuantParamsPerChannel<uint8_t>(scale_def, scale_scales, scale_zps, 0);
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attr = {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))};
+    std::string scale_dq_name = AddQDQNodePair<uint8_t>(builder, "qdq2", "scale", scale_scales, scale_zps, axis_attr, axis_attr);
+
+    std::string bias_dq_name = MakeTestQDQBiasInput(builder, "bias", bias_def, input_qparams.scale * scale_scales[0], true);
+
+    std::vector<float> mean_vals(num_channels);
+    std::vector<float> var_vals(num_channels);
+    ComputeChannelMeanAndVar(input_data_ref, input_shape, mean_vals, var_vals);
+
+    builder.MakeInitializer<float>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<float>("var", {num_channels}, var_vals);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    attributes.push_back(builder.MakeScalarAttribute("momentum", 0.9f));
+    builder.AddNode("bn", "BatchNormalization",
+                    {x_dq_name.c_str(), scale_dq_name.c_str(), bias_dq_name.c_str(), "mean", "var"},
+                    {"Y"}, "", attributes);
+
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "Y",
+                                                   output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+                       qdq_model_fn, provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Builds the float (reference) form of the NASNet reduction-cell pattern:
+//   X -> BatchNormalization -> Relu -> Conv -> Y
+template <typename FLOAT_TYPE>
+static GetTestModelFn BuildBatchNormFloatOutputTestCase(const TestInputDef<FLOAT_TYPE>& input_def,
+                                                        const std::vector<FLOAT_TYPE>& scale_data,
+                                                        const std::vector<FLOAT_TYPE>& bias_data,
+                                                        const std::vector<FLOAT_TYPE>& conv_w_data) {
+  QNN_ASSERT(input_def.IsRawData());
+  return [input_def, scale_data, bias_data, conv_w_data](ModelTestBuilder& builder) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
+
+    std::vector<FLOAT_TYPE> mean_vals(num_channels);
+    std::vector<FLOAT_TYPE> var_vals(num_channels);
+    ComputeChannelMeanAndVar<FLOAT_TYPE>(input_data, input_shape, mean_vals, var_vals);
+
+    MakeTestInput<FLOAT_TYPE>(builder, "X", input_def);
+    builder.MakeInitializer<FLOAT_TYPE>("scale", {num_channels}, scale_data);
+    builder.MakeInitializer<FLOAT_TYPE>("bias", {num_channels}, bias_data);
+    builder.MakeInitializer<FLOAT_TYPE>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<FLOAT_TYPE>("var", {num_channels}, var_vals);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs;
+    bn_attrs.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    builder.AddNode("bn", "BatchNormalization", {"X", "scale", "bias", "mean", "var"}, {"bn_out"}, "", bn_attrs);
+    builder.AddNode("relu", "Relu", {"bn_out"}, {"relu_out"});
+
+    builder.MakeInitializer<FLOAT_TYPE>("conv_w", {num_channels, num_channels, 1, 1}, conv_w_data);
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", std::string("NOTSET")));
+    builder.AddNode("conv", "Conv", {"relu_out", "conv_w"}, {"Y"}, "", conv_attrs);
+    builder.MakeOutput("Y");
+  };
+}
+
+// Builds the QDQ form where BN has DQ on its inputs but no Q on its output, so its result flows in
+// float through the Relu and Conv before the Conv's output Q re-quantizes it.
+//
+//   DQ(x) + DQ(scale) -> BN(float bias/mean/var) -> Relu -> Conv -> Q(graph output)
+template <typename InputQType, typename ScaleQType>
+static GetTestQDQModelFn<InputQType> BuildBatchNormFloatOutputQDQTestCase(
+    const TestInputDef<float>& input_def,
+    const std::vector<float>& scale_data,
+    const std::vector<float>& bias_data,
+    const std::vector<float>& conv_w_data) {
+  QNN_ASSERT(input_def.IsRawData());
+  return [input_def, scale_data, bias_data, conv_w_data](ModelTestBuilder& builder,
+                                                         std::vector<QuantParams<InputQType>>& output_qparams) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
+
+    // Input: float -> Q -> DQ.
+    bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
+    std::string input_dq = AddQDQNodePair<InputQType>(builder, "input_qdq", "input",
+                                                      input_qparams.scale, input_qparams.zero_point);
+
+    // Scale: float_init -> Q -> DQ (per-tensor). Makes scale a DQ output, not a raw initializer,
+    // which is what made the old selector treat it as "dynamic".
+    float scale_abs_max = 0.0f;
+    for (float v : scale_data) scale_abs_max = std::max(scale_abs_max, std::abs(v));
+    if (scale_abs_max == 0.0f) scale_abs_max = 1.0f;
+    float scale_qscale = scale_abs_max / static_cast<float>(std::numeric_limits<ScaleQType>::max());
+    builder.MakeInitializer<float>("scale_init", {num_channels}, scale_data);
+    std::string scale_dq = AddQDQNodePair<ScaleQType>(builder, "scale_qdq", "scale_init",
+                                                      scale_qscale, static_cast<ScaleQType>(0));
+
+    // Float bias/mean/var initializers.
+    builder.MakeInitializer<float>("bias", {num_channels}, bias_data);
+    std::vector<float> mean_vals(num_channels);
+    std::vector<float> var_vals(num_channels);
+    ComputeChannelMeanAndVar(input_data, input_shape, mean_vals, var_vals);
+    builder.MakeInitializer<float>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<float>("var", {num_channels}, var_vals);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs;
+    bn_attrs.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    // BN output "bn_out" has NO Q after it, so it stays float.
+    builder.AddNode("bn", "BatchNormalization",
+                    {input_dq, scale_dq, "bias", "mean", "var"}, {"bn_out"}, "", bn_attrs);
+
+    // Relu and Conv run in float; the graph re-enters quantized space only at the Conv's output Q.
+    builder.AddNode("relu", "Relu", {"bn_out"}, {"relu_out"});
+    builder.MakeInitializer<float>("conv_w", {num_channels, num_channels, 1, 1}, conv_w_data);
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", std::string("NOTSET")));
+    builder.AddNode("conv", "Conv", {"relu_out", "conv_w"}, {"conv_out"}, "", conv_attrs);
+
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "output_qdq", "conv_out",
+                                                      output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// A BatchNormalization with no Q on its output must be captured by QNN (entire graph), not fall back
+// to CPU. Accuracy is compared against the float reference.
+TEST_F(QnnHTPBackendTests, BatchNorm_NoOutputQ) {
+  constexpr int64_t batch = 1;
+  constexpr int64_t channels = 2;
+  constexpr int64_t H = 4;
+  constexpr int64_t W = 4;
+  constexpr int64_t num_elems = batch * channels * H * W;
+
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, num_elems);
+  std::vector<float> scale_data = {1.0f, 2.0f};
+  std::vector<float> bias_data = {1.1f, 2.1f};
+  // 1x1 conv weights keep spatial dims unchanged: shape [out_ch, in_ch, 1, 1].
+  // Use positive weights to avoid fp16 catastrophic cancellation: the float region executes in fp16
+  // on HTP, so a near-zero cancelled output would be precision-dominated.
+  std::vector<float> conv_w_data = {0.5f, 0.25f, 0.25f, 0.5f};
+
+  TestInputDef<float> input_def({batch, channels, H, W}, false, input_data);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildBatchNormFloatOutputTestCase<float>(input_def, scale_data, bias_data, conv_w_data),
+                       BuildBatchNormFloatOutputQDQTestCase<uint8_t, int8_t>(input_def, scale_data, bias_data,
+                                                                             conv_w_data),
+                       provider_options,
+                       21,
+                       ExpectedEPNodeAssignment::All);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

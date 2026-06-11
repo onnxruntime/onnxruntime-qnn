@@ -375,6 +375,34 @@ Ort::Status UnpackInt4ToInt8(size_t num_int4_elems, std::vector<uint8_t>& data_b
   return Ort::Status();
 }
 
+// Re-writes a buffer of packed 2-bit elements to a buffer of unpacked 8-bit elements.
+// QNN requires that 2-bit weights are unpacked to 8-bit (stored in lower 2 bits).
+template <bool Signed>
+Ort::Status UnpackInt2ToInt8(size_t num_int2_elems, std::vector<uint8_t>& data_bytes) {
+  if constexpr (Signed) {  // INT2
+    std::vector<uint8_t> packed_int2_bytes = std::move(data_bytes);
+    data_bytes = std::vector<uint8_t>(num_int2_elems);
+
+    auto dst = gsl::make_span(reinterpret_cast<int8_t*>(data_bytes.data()), data_bytes.size());
+    auto src = gsl::make_span(reinterpret_cast<const Int2x4*>(packed_int2_bytes.data()), packed_int2_bytes.size());
+    RETURN_IF_NOT(Int2x4::Unpack(dst, src), "Failed to unpack Tensor<Int2x4> for QNN");
+
+    // Mask off top 6 bits (keep lower 2 bits), consistent with the INT4 masking workaround for QNN.
+    for (size_t i = 0; i < dst.size(); i++) {
+      dst[i] &= 0x03;  // e.g., -1 (0b11111111) becomes 3 (0b00000011)
+    }
+  } else {  // UINT2
+    std::vector<uint8_t> packed_uint2_bytes = std::move(data_bytes);
+    data_bytes = std::vector<uint8_t>(num_int2_elems);
+
+    auto dst = gsl::make_span(reinterpret_cast<uint8_t*>(data_bytes.data()), data_bytes.size());
+    auto src = gsl::make_span(reinterpret_cast<const UInt2x4*>(packed_uint2_bytes.data()), packed_uint2_bytes.size());
+    RETURN_IF_NOT(UInt2x4::Unpack(dst, src), "Failed to unpack Tensor<UInt2x4> for QNN");
+  }
+
+  return Ort::Status();
+}
+
 // This function exploits bit-manipulation trick to transform from unsigned to signed.
 // Formally, an unsigned value subtracts zero point (i.e.,  1 << (bits - 1)) to become a signed value. This subtraction
 // is essentially "flipping" the most-significant bit, which can be achieved through XOR with the zero point. While
@@ -706,6 +734,58 @@ Ort::Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
     }                                                                                                          \
                                                                                                                \
     /* Resize output buffer and copy data */                                                                   \
+    unpacked_tensor.resize(tensor_byte_size);                                                                  \
+    if (data != nullptr && tensor_byte_size > 0) {                                                             \
+      std::memcpy(unpacked_tensor.data(), data, tensor_byte_size);                                             \
+    }                                                                                                          \
+    return Ort::Status();                                                                                      \
+  }
+
+// Analogous to CASE_UNPACK_INT4 but for 2-bit types (4 elements per byte).
+// Uses CalcNumInt2Quads instead of CalcNumInt4Pairs.
+#define CASE_UNPACK_INT2(TYPE, ELEMENT_TYPE, DATA_SIZE)                                                        \
+  case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_##TYPE: {                                      \
+    const OrtTypeInfo* type_info_##TYPE = nullptr;                                                             \
+    auto status = ort_api.GetValueInfoTypeInfo(initializer, &type_info_##TYPE);                                \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get value info type info");                                               \
+    }                                                                                                          \
+    const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info_##TYPE = nullptr;                              \
+    status = ort_api.CastTypeInfoToTensorInfo(type_info_##TYPE, &tensor_type_and_shape_info_##TYPE);           \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to cast type info to tensor info");                                          \
+    }                                                                                                          \
+    size_t num_dims_##TYPE = 0;                                                                                \
+    status = ort_api.GetDimensionsCount(tensor_type_and_shape_info_##TYPE, &num_dims_##TYPE);                  \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get dimensions count");                                                   \
+    }                                                                                                          \
+    std::vector<int64_t> dims_##TYPE(num_dims_##TYPE);                                                         \
+    status = ort_api.GetDimensions(tensor_type_and_shape_info_##TYPE, dims_##TYPE.data(), dims_##TYPE.size()); \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get dimensions");                                                         \
+    }                                                                                                          \
+                                                                                                               \
+    size_t element_count = 1;                                                                                  \
+    for (size_t i = 0; i < num_dims_##TYPE; ++i) {                                                             \
+      element_count *= static_cast<size_t>(dims_##TYPE[i]);                                                    \
+    }                                                                                                          \
+                                                                                                               \
+    /* Calculate packed element count and tensor byte size for INT2/UINT2 (4 elements per byte) */             \
+    size_t packed_element_count = ELEMENT_TYPE::CalcNumInt2Quads(element_count);                               \
+    size_t tensor_byte_size = packed_element_count * sizeof(ELEMENT_TYPE);                                     \
+                                                                                                               \
+    const OrtValue* initializer_value = nullptr;                                                               \
+    status = ort_api.ValueInfo_GetInitializerValue(initializer, &initializer_value);                           \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get initializer value");                                                  \
+    }                                                                                                          \
+    const void* data = nullptr;                                                                                \
+    status = ort_api.GetTensorData(initializer_value, &data);                                                  \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get tensor data");                                                        \
+    }                                                                                                          \
+                                                                                                               \
     unpacked_tensor.resize(tensor_byte_size);                                                                  \
     if (data != nullptr && tensor_byte_size > 0) {                                                             \
       std::memcpy(unpacked_tensor.data(), data, tensor_byte_size);                                             \

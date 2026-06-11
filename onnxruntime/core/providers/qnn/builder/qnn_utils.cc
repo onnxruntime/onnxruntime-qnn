@@ -87,6 +87,8 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
 
 size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
   const static std::unordered_map<ONNXTensorElementDataType, size_t> elem_type_to_size = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, sizeof(Int2x4)},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, sizeof(UInt2x4)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, sizeof(Int4x2)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, sizeof(UInt4x2)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, sizeof(int8_t)},
@@ -111,6 +113,8 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
 
 std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
   const static std::unordered_map<ONNXTensorElementDataType, std::string_view> elem_type_to_name = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, "int2_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, "uint2_t"},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, "int4_t"},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, "uint4_t"},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, "int8_t"},
@@ -861,12 +865,14 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
   };
 
   const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type_quantized = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_SFIXED_POINT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, QNN_DATATYPE_SFIXED_POINT_32},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, QNN_DATATYPE_INT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, QNN_DATATYPE_UFIXED_POINT_8},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, QNN_DATATYPE_UFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, QNN_DATATYPE_UFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, QNN_DATATYPE_UFIXED_POINT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, QNN_DATATYPE_UFIXED_POINT_32},
@@ -1705,6 +1711,8 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
 #endif
     CASE_UNPACK_INT4(INT4, Int4x2, int32_data_size);
     CASE_UNPACK_INT4(UINT4, UInt4x2, int32_data_size);
+    CASE_UNPACK_INT2(INT2, Int2x4, int32_data_size);
+    CASE_UNPACK_INT2(UINT2, UInt2x4, int32_data_size);
     default:
       return MAKE_EP_FAIL(("Unsupported type: " + std::to_string(onnx_data_type)).c_str());
   }

@@ -22,6 +22,7 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
+class OpTraceCollector;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -49,21 +50,31 @@ class QnnModelWrapper {
                   const Ort::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& validator_backend_handle,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
-                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr)
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
+                  OpTraceCollector* op_trace_collector = nullptr)
       : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
+        qnn_validator_interface_(qnn_validator_interface),
+        validator_backend_handle_(validator_backend_handle),
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
-        tensor_name_overrides_(tensor_name_overrides) {
+        tensor_name_overrides_(tensor_name_overrides),
+        op_trace_collector_(op_trace_collector) {
+    // Invariant: validator interface and handle must both be set or both be null.
+    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
+    assert((validator_backend_handle == nullptr) ==
+           (qnn_validator_interface.backendValidateOpConfig == nullptr));
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -346,11 +357,15 @@ class QnnModelWrapper {
 
   Ort::Status UnpackInitializerData(const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& unpacked_tensor,
-                                    const bool unpack_4_bit_to_8_bit = true) const;
+                                    const bool unpack_sub_byte_to_8_bit = true) const;
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
+
+  const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
+    return model_tensors_map_;
+  }
 
   const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
@@ -424,6 +439,9 @@ class QnnModelWrapper {
   }
 
  private:
+  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
+                              std::string& error_msg) const;
+
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
                                    const std::vector<std::string>& names,
                                    std::vector<Qnn_Tensor_t>& tensor_wrappers,
@@ -479,6 +497,8 @@ class QnnModelWrapper {
   const Ort::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
+  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
+  const Qnn_BackendHandle_t& validator_backend_handle_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`
@@ -505,6 +525,11 @@ class QnnModelWrapper {
 
   // Tensor names produced by compile-time Q/DQ folds; chained across hops.
   std::unordered_set<std::string> folded_constant_tensors_;
+
+  // Non-owning pointer to the trace collector. Lifetime is managed by
+  // QnnModel::ComposeGraph (stack-allocated unique_ptr).
+  // Null when tracing is disabled.
+  OpTraceCollector* op_trace_collector_ = nullptr;
 };  // QnnModelWrapper
 
 template <typename T>

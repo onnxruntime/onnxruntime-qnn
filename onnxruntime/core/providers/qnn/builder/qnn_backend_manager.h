@@ -30,6 +30,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
@@ -106,13 +107,6 @@ class QnnSerializerConfig {
  private:
   std::string backend_path_;
   std::string graph_name_{"graph"};
-};
-
-struct OpPackage {
-  std::string op_type;
-  std::string path;
-  std::string interface;
-  std::string target;
 };
 
 // configuration values for QnnBackendManager creation
@@ -207,6 +201,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const QNN_INTERFACE_VER_TYPE& GetQnnInterface() { return qnn_interface_; }
 
+  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() { return qnn_validator_interface_; }
+
   const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() { return qnn_sys_interface_; }
 
   const Qnn_ContextHandle_t& GetQnnContext(int index = 0) {
@@ -221,6 +217,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   }
 
   const Qnn_BackendHandle_t& GetQnnBackendHandle() { return backend_handle_; }
+
+  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() { return validator_backend_handle_; }
 
   const Qnn_DeviceHandle_t& GetQnnDeviceHandle() { return device_handle_; }
 
@@ -251,6 +249,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const std::string& GetSdkVersion() { return sdk_build_version_; }
 
   QnnHtpDevice_Arch_t GetHtpArch() { return htp_arch_internal_; }
+
+  uint32_t GetSocModel() const { return soc_model_; }
 
   // Get backend library directory by adopting identical logic as in LoadLib.
   std::string GetBackendLibDir() {
@@ -331,13 +331,49 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
  private:
   Ort::Status LoadBackend();
 
+  // Shared implementation for InitializeBackend / InitializeValidatorBackend.
+  Ort::Status InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                      Qnn_LogHandle_t log_handle,
+                                      Qnn_BackendHandle_t& backend_handle,
+                                      bool& initialized_flag,
+                                      const std::string& backend_label);
+
   Ort::Status InitializeBackend();
+
+  Ort::Status InitializeValidatorBackend();
+
+  // Shared implementation for CreateDevice / CreateValidatorDevice.
+  // `allow_hw_device_enumeration` controls whether to honor `device_id_` and pass
+  // platform-info configs to deviceCreate. The validator backend is a host-side shim
+  // with no real hardware to enumerate, so it always passes false.
+  Ort::Status CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                 Qnn_LogHandle_t log_handle,
+                                 Qnn_DeviceHandle_t& device_handle,
+                                 bool& device_created_flag,
+                                 bool allow_hw_device_enumeration);
 
   Ort::Status CreateDevice();
 
+  Ort::Status CreateValidatorDevice();
+
+  // Shared implementation for ReleaseDevice / ReleaseValidatorDevice.
+  Ort::Status ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                  Qnn_DeviceHandle_t& device_handle,
+                                  bool& device_created_flag);
+
   Ort::Status ReleaseDevice();
 
+  Ort::Status ReleaseValidatorDevice();
+
+  // Shared implementation for ShutdownBackend / ShutdownValidatorBackend.
+  Ort::Status ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                    Qnn_BackendHandle_t& backend_handle,
+                                    bool& initialized_flag,
+                                    const std::string& backend_label);
+
   Ort::Status ShutdownBackend();
+
+  Ort::Status ShutdownValidatorBackend();
 
   Ort::Status InitializeProfiling();
 
@@ -366,9 +402,28 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status ReleaseContext();
 
+  // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
+  Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                     Qnn_LogHandle_t& log_handle,
+                                     const std::string& backend_label);
+
   // Creates a corresponding QNN logger with the same log level.
   // NOTE: caller must lock the `logger_recursive_mutex_` before calling this function.
   Ort::Status InitializeQnnLog();
+
+  Ort::Status InitializeQnnValidatorLog();
+
+  // Shared implementation for TerminateQnnLog calls.
+  // Resets log_handle to nullptr before returning, even on failure, so other threads
+  // waiting on logger_recursive_mutex_ can observe the handle is gone.
+  Ort::Status TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                    Qnn_LogHandle_t& log_handle,
+                                    const std::string& backend_label);
+
+  Ort::Status SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                   Qnn_LogHandle_t log_handle,
+                                   QnnLog_Level_t qnn_log_level,
+                                   const std::string& label);
 
   // Terminate logging in the backend
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
@@ -404,7 +459,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       Qnn_Version_t req_version,
                                       T** interface_provider);
 
-  bool IsDevicePropertySupported();
+  bool IsDevicePropertySupported(const QNN_INTERFACE_VER_TYPE& interface);
 
   std::string GetBackendBuildId() {
     char* backend_build_id{nullptr};
@@ -547,13 +602,22 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
+  // Invariant: qnn_validator_interface_ and validator_backend_handle_ are always set together
+  // by LoadQnnSerializerBackend() (serializer flow: QnnIr). Both remain zero/null in all other flows.
+  // QnnModelWrapper::ValidateQnnNode() uses validator_backend_handle_ != nullptr as the sole signal
+  // to route backendValidateOpConfig to the validator interface rather than qnn_interface_.
+  QNN_INTERFACE_VER_TYPE qnn_validator_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
   QNN_SYSTEM_INTERFACE_VER_TYPE qnn_sys_interface_ = QNN_SYSTEM_INTERFACE_VER_TYPE_INIT;
   void* backend_lib_handle_ = nullptr;
+  void* validator_backend_lib_handle_ = nullptr;
   void* system_lib_handle_ = nullptr;
   Qnn_BackendHandle_t backend_handle_ = nullptr;
+  Qnn_BackendHandle_t validator_backend_handle_ = nullptr;
   QnnBackend_Config_t** backend_config_ = nullptr;
   Qnn_LogHandle_t log_handle_ = nullptr;
+  Qnn_LogHandle_t validator_log_handle_ = nullptr;
   Qnn_DeviceHandle_t device_handle_ = nullptr;
+  Qnn_DeviceHandle_t validator_device_handle_ = nullptr;
 
   // Map of Qnn_ContextHandle_t to QnnContextHandleRecord.
   // The QnnContextHandleRecord has ownership of the Qnn_ContextHandle_t.
@@ -579,7 +643,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
 
   bool backend_initialized_ = false;
+  bool validator_backend_initialized_ = false;
   bool device_created_ = false;
+  bool validator_device_created_ = false;
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   int htp_share_resource_optimization_ = -1;
