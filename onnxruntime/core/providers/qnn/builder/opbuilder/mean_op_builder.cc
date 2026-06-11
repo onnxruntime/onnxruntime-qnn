@@ -108,12 +108,12 @@ Ort::Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   std::string div_param_name = div_param.GetParamTensorName();
   RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(div_param)), "Failed to add operation param.");
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_node_name,
-                                               QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                               QNN_OP_ELEMENT_WISE_BINARY,
-                                               {sum_output, divisor_name},
-                                               {output_name},
-                                               {div_param_name},
-                                               do_op_validation),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                {sum_output, divisor_name},
+                                                {output_name},
+                                                {div_param_name},
+                                                do_op_validation),
                 "Failed to create Mean_Div node.");
 
   return Ort::Status();

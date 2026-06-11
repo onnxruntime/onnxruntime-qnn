@@ -165,7 +165,7 @@ Ort::Status ExpandOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   std::vector<std::string> param_tensor_names;
   if (target_op == "And" || target_op == "Expand") {
     uint32_t op_value = (target_op == "And") ? QNN_OP_ELEMENT_WISE_BINARY_OPERATION_AND
-                                              : QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
+                                             : QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
     Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
     op_scalar.dataType = QNN_DATATYPE_UINT_32;
     op_scalar.uint32Value = op_value;
