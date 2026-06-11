@@ -1,6 +1,8 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#include <cmath>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -48,6 +50,9 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
+  RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+                "GroupQueryAttention is only supported with the GPU backend");
+
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();
 
@@ -55,28 +60,12 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   const auto& outputs = node_unit.Outputs();
 
   TensorInfo present_key_tensor_info = {};
-  RETURN_IF_NOT(outputs.size() > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
+  RETURN_IF_NOT(num_outputs > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
   RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
   const auto max_sequence_length = present_key_tensor_info.shape[2];
 
-  if (num_inputs > 3 && inputs[3].Exists()) {
-    TensorInfo past_key_tensor_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[3], past_key_tensor_info));
-    RETURN_IF_NOT(past_key_tensor_info.shape.size() == 4, "Unexpected rank for past_key");
-    RETURN_IF_NOT(past_key_tensor_info.shape[2] == max_sequence_length,
-                  "QNN GroupQueryAttention requires past_key_shape[2] == present_key_shape[2] == max_sequence_length");
-  }
-
-  if (num_inputs > 4 && inputs[4].Exists()) {
-    TensorInfo past_value_tensor_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[4], past_value_tensor_info));
-    RETURN_IF_NOT(past_value_tensor_info.shape.size() == 4, "Unexpected rank for past_value");
-    RETURN_IF_NOT(past_value_tensor_info.shape[2] == max_sequence_length,
-                  "QNN GroupQueryAttention requires past_value_shape[2] == present_value_shape[2] == max_sequence_length");
-  }
-
-  // At time of writing, the com.micorosoft.GroupQueryAttention op def has 14 inputs and 4 outputs.
+  // At time of writing, the com.microsoft.GroupQueryAttention op def has 14 inputs and 4 outputs.
   const size_t max_num_inputs = 14;
   const size_t max_num_outputs = 4;
 
@@ -87,7 +76,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
             ("More than " + std::to_string(max_num_inputs) + " inputs provided, which is unsupported").c_str());
 
   RETURN_IF(num_outputs > 3 && outputs[3].Exists(), "output_qk output is not supported");
-  RETURN_IF(num_outputs > 4,
+  RETURN_IF(num_outputs > max_num_outputs,
             ("More than " + std::to_string(max_num_outputs) + " outputs provided, which is unsupported").c_str());
 
   OrtNodeAttrHelper node_helper(node_unit);
@@ -109,8 +98,14 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   int32_t qk_output = node_helper.Get("qk_output", 0);
   RETURN_IF(qk_output != 0, "qk_output != 0 not supported");
 
-  float smooth_softmax = node_helper.Get("smooth_softmax", 1.0f);
-  RETURN_IF(smooth_softmax != 1.0f, "smooth_softmax != 1 not supported");
+  // note: QNN RotaryEmbedding supports the interleaved attribute, but QNN GroupQueryAttention does not.
+  //       We could support ONNX GQA w/ rotary_interleaved by decomposing it into QNN RotaryEmbeddings (w/ interleaved)
+  //       + QNN GQA.
+  int32_t rotary_interleaved = node_helper.Get("rotary_interleaved", 0);
+  RETURN_IF(rotary_interleaved != 0, "rotary_interleaved != 0 not supported");
+
+  int32_t smooth_softmax = node_helper.Get("smooth_softmax", -1);
+  RETURN_IF(smooth_softmax != -1, "smooth_softmax != -1 not supported");
 
   float softcap = node_helper.Get("softcap", 0.0f);
   RETURN_IF(softcap != 0.0f, "softcap != 0 not supported");
@@ -165,82 +160,84 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
 
   std::vector<std::string> param_names;
 
+  const size_t num_outputs = node_unit.Outputs().size();
+  const auto& outputs = node_unit.Outputs();
+
   // num_heads
   std::optional<int64_t> num_heads = node_helper.GetInt64("num_heads");
+  uint32_t num_heads_u32 = SafeInt<uint32_t>(num_heads.value());
   RETURN_IF_NOT(num_heads.has_value(), "required attribute num_heads not provided");
-  Qnn_Scalar_t num_heads_scalar = QNN_SCALAR_INIT;
-  num_heads_scalar.dataType = QNN_DATATYPE_UINT_32;
-  num_heads_scalar.uint32Value = SafeInt<uint32_t>(num_heads.value());
-
-  QnnParamWrapper num_heads_param_wrapper(node_unit.Index(),
-                                          node_unit.Name(),
-                                          QNN_OP_GROUP_QUERY_ATTENTION_PARAM_NUM_HEADS,
-                                          num_heads_scalar);
-  param_names.emplace_back(num_heads_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(num_heads_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
+                               node_unit.Index(),
+                               node_unit.Name(),
+                               num_heads_u32,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_NUM_HEADS,
+                               param_names));
 
   // kv_num_heads
-  std::optional<int64_t> kv_num_heads = node_helper.GetInt64("kv_num_heads");
+  const std::optional<int64_t> kv_num_heads = node_helper.GetInt64("kv_num_heads");
+  const uint32_t kv_num_heads_u32 = SafeInt<uint32_t>(kv_num_heads.value());
   RETURN_IF_NOT(kv_num_heads.has_value(), "required attribute kv_num_heads not provided");
-  Qnn_Scalar_t kv_num_heads_scalar = QNN_SCALAR_INIT;
-  kv_num_heads_scalar.dataType = QNN_DATATYPE_UINT_32;
-  kv_num_heads_scalar.uint32Value = SafeInt<uint32_t>(kv_num_heads.value());
-
-  QnnParamWrapper kv_num_heads_param_wrapper(node_unit.Index(),
-                                             node_unit.Name(),
-                                             QNN_OP_GROUP_QUERY_ATTENTION_PARAM_KV_NUM_HEADS,
-                                             kv_num_heads_scalar);
-  param_names.emplace_back(kv_num_heads_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(kv_num_heads_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
+                               node_unit.Index(),
+                               node_unit.Name(),
+                               kv_num_heads_u32,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_KV_NUM_HEADS,
+                               param_names));
 
   // do_rotary
-  std::optional<int64_t> do_rotary = node_helper.GetInt64("do_rotary");
-  if (do_rotary.has_value()) {
-    Qnn_Scalar_t do_rotary_scalar = QNN_SCALAR_INIT;
-    do_rotary_scalar.dataType = QNN_DATATYPE_UINT_32;
-    do_rotary_scalar.uint32Value = SafeInt<uint32_t>(do_rotary.value());
-
-    QnnParamWrapper do_rotary_param_wrapper(node_unit.Index(),
-                                            node_unit.Name(),
-                                            QNN_OP_GROUP_QUERY_ATTENTION_PARAM_DO_ROTARY,
-                                            do_rotary_scalar);
-    param_names.emplace_back(do_rotary_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(do_rotary_param_wrapper));
-  }
+  const int64_t do_rotary = node_helper.Get("do_rotary", 0ll);
+  const uint32_t do_rotary_u32 = SafeInt<uint32_t>(do_rotary);
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
+                               node_unit.Index(),
+                               node_unit.Name(),
+                               do_rotary_u32,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_DO_ROTARY,
+                               param_names));
 
   // scale
-  std::optional<float> scale = node_helper.GetFloat("scale");
-  if (scale.has_value()) {
-    Qnn_Scalar_t scale_scalar = QNN_SCALAR_INIT;
-    scale_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    scale_scalar.floatValue = scale.value();
+  RETURN_IF_NOT(num_outputs > 0 && outputs[0].Exists(), "Required output out[0] not provided");
+  TensorInfo output_tensor_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_tensor_info));
+  RETURN_IF_NOT(output_tensor_info.shape.size() == 3, "Unexpected rank for output out[0]");
+  const size_t head_size = output_tensor_info.shape[2] / num_heads.value();
+  RETURN_IF(head_size == 0, "head_size can't be zero!");
 
-    QnnParamWrapper scale_param_wrapper(node_unit.Index(),
-                                        node_unit.Name(),
-                                        QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SCALE,
-                                        scale_scalar);
-    param_names.emplace_back(scale_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(scale_param_wrapper));
-  }
+  const float scale_default = 1.0f / std::sqrtf(static_cast<float>(head_size));
+  const float scale = node_helper.Get("scale", scale_default);
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
+                               node_unit.Index(),
+                               node_unit.Name(),
+                               scale,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SCALE,
+                               param_names));
 
   std::vector<std::string> output_names;
-  const auto& outputs = node_unit.Outputs();
-  for (size_t output_idx = 0; output_idx < outputs.size(); ++output_idx) {
-    const std::string& output_name = outputs[output_idx].name;
-    output_names.push_back(output_name);
+  for (size_t output_idx = 0; output_idx < num_outputs; ++output_idx) {
+    if (outputs[output_idx].Exists()) {
+      const std::string& output_name = outputs[output_idx].name;
+      output_names.push_back(output_name);
 
-    TensorInfo output_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
+      TensorInfo output_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
 
-    bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+      Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    QnnTensorWrapper output_tensorwrapper(output_name,
-                                          tensor_type,
-                                          output_info.qnn_data_type,
-                                          std::move(output_info.quant_param),
-                                          std::move(output_info.shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+      QnnTensorWrapper output_tensorwrapper(output_name,
+                                            tensor_type,
+                                            output_info.qnn_data_type,
+                                            std::move(output_info.quant_param),
+                                            std::move(output_info.shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+    } else {
+      std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
+      output_names.emplace_back(null_tensor_name);
+      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
+                                           QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
+                    ("Failed to add null tensor: " + null_tensor_name).c_str());
+    }
   }
 
   const std::string node_name = utils::UniqueNameGenerator().New(node_unit);
