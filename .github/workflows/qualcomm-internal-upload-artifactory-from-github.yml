@@ -513,7 +513,7 @@ jobs:
             "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
             "$NETRC_FILE"
 
-          # Upload Linux x86_6422.04 Ubuntu 22.04 zip
+          # Upload Linux x86_64 Ubuntu 22.04 zip
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
             "$NETRC_FILE"
