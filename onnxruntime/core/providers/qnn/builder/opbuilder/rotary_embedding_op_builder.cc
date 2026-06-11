@@ -654,13 +654,21 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cos_x1_tensor)),
                   "Failed to add cos_x1 tensor");
 
+    std::string mul_cos_x1_name = utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x1");
+    Qnn_Scalar_t mul_cos_x1_scalar = QNN_SCALAR_INIT;
+    mul_cos_x1_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mul_cos_x1_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
+    QnnParamWrapper mul_cos_x1_param(node_unit.Index(), mul_cos_x1_name,
+                                     QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_cos_x1_scalar);
+    std::string mul_cos_x1_param_name = mul_cos_x1_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_cos_x1_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x1"),
+                      mul_cos_x1_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_MULTIPLY,
+                      QNN_OP_ELEMENT_WISE_BINARY,
                       std::move(mul_input_names),
                       {cos_x1},
-                      {},
+                      {mul_cos_x1_param_name},
                       do_op_validation),
                   "Failed to create Multiply node for cos*x1");
   }
@@ -675,13 +683,21 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sin_x2_tensor)),
                   "Failed to add sin_x2 tensor");
 
+    std::string mul_sin_x2_name = utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x2");
+    Qnn_Scalar_t mul_sin_x2_scalar = QNN_SCALAR_INIT;
+    mul_sin_x2_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mul_sin_x2_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
+    QnnParamWrapper mul_sin_x2_param(node_unit.Index(), mul_sin_x2_name,
+                                     QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_sin_x2_scalar);
+    std::string mul_sin_x2_param_name = mul_sin_x2_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_sin_x2_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x2"),
+                      mul_sin_x2_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_MULTIPLY,
+                      QNN_OP_ELEMENT_WISE_BINARY,
                       std::move(mul_input_names),
                       {sin_x2},
-                      {},
+                      {mul_sin_x2_param_name},
                       do_op_validation),
                   "Failed to create Multiply node for sin*x2");
   }
@@ -696,13 +712,21 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(real_tensor)),
                   "Failed to add real tensor");
 
+    std::string sub_real_name = utils::UniqueNameGenerator().New(node_unit, "_sub_real");
+    Qnn_Scalar_t sub_real_scalar = QNN_SCALAR_INIT;
+    sub_real_scalar.dataType = QNN_DATATYPE_UINT_32;
+    sub_real_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT;
+    QnnParamWrapper sub_real_param(node_unit.Index(), sub_real_name,
+                                   QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, sub_real_scalar);
+    std::string sub_real_param_name = sub_real_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sub_real_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_sub_real"),
+                      sub_real_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_SUBTRACT,
+                      QNN_OP_ELEMENT_WISE_BINARY,
                       std::move(sub_input_names),
                       {real},
-                      {},
+                      {sub_real_param_name},
                       do_op_validation),
                   "Failed to create Subtract node for real");
   }
@@ -717,13 +741,21 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sin_x1_tensor)),
                   "Failed to add sin_x1 tensor");
 
+    std::string mul_sin_x1_name = utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x1");
+    Qnn_Scalar_t mul_sin_x1_scalar = QNN_SCALAR_INIT;
+    mul_sin_x1_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mul_sin_x1_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
+    QnnParamWrapper mul_sin_x1_param(node_unit.Index(), mul_sin_x1_name,
+                                     QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_sin_x1_scalar);
+    std::string mul_sin_x1_param_name = mul_sin_x1_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_sin_x1_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x1"),
+                      mul_sin_x1_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_MULTIPLY,
+                      QNN_OP_ELEMENT_WISE_BINARY,
                       std::move(mul_input_names),
                       {sin_x1},
-                      {},
+                      {mul_sin_x1_param_name},
                       do_op_validation),
                   "Failed to create Multiply node for sin*x1");
   }
@@ -738,13 +770,21 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cos_x2_tensor)),
                   "Failed to add cos_x2 tensor");
 
+    std::string mul_cos_x2_name = utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x2");
+    Qnn_Scalar_t mul_cos_x2_scalar = QNN_SCALAR_INIT;
+    mul_cos_x2_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mul_cos_x2_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
+    QnnParamWrapper mul_cos_x2_param(node_unit.Index(), mul_cos_x2_name,
+                                     QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_cos_x2_scalar);
+    std::string mul_cos_x2_param_name = mul_cos_x2_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_cos_x2_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x2"),
+                      mul_cos_x2_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_MULTIPLY,
+                      QNN_OP_ELEMENT_WISE_BINARY,
                       std::move(mul_input_names),
                       {cos_x2},
-                      {},
+                      {mul_cos_x2_param_name},
                       do_op_validation),
                   "Failed to create Multiply node for cos*x2");
   }
@@ -759,13 +799,21 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(imag_tensor)),
                   "Failed to add imag tensor");
 
+    std::string add_imag_name = utils::UniqueNameGenerator().New(node_unit, "_add_imag");
+    Qnn_Scalar_t add_imag_scalar = QNN_SCALAR_INIT;
+    add_imag_scalar.dataType = QNN_DATATYPE_UINT_32;
+    add_imag_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD;
+    QnnParamWrapper add_imag_param(node_unit.Index(), add_imag_name,
+                                   QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_imag_scalar);
+    std::string add_imag_param_name = add_imag_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(add_imag_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_add_imag"),
+                      add_imag_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_ADD,
+                      QNN_OP_ELEMENT_WISE_BINARY,
                       std::move(add_input_names),
                       {imag},
-                      {},
+                      {add_imag_param_name},
                       do_op_validation),
                   "Failed to create Add node for imag");
   }
