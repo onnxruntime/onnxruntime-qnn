@@ -30,14 +30,6 @@ on:
         description: "If true, build for aarch64 OpenEmbedded Linux using GCC 11.2"
         type: boolean
         default: false
-      build_linux_x86_64:
-        description: "If true, build for x86_64 Linux"
-        type: boolean
-        default: true
-      linux_x86_64_target_py_vsns:
-        description: "JSON list of Python versions to build for x86_64 Linux"
-        type: string
-        default: "['3.10','3.12']"
       linux_target_py_vsns:
         description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
         type: string
