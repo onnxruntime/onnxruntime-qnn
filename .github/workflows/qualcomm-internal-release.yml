@@ -507,6 +507,26 @@ jobs:
             echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
           fi
 
+      - name: Collect Test Archives
+        # cp (not mv): archives must remain in build/ so the Upload Artifacts to QA Artifactory
+        # step below also publishes them individually alongside the combined test_package.zip.
+        run: |
+          TEST_ARCHIVES_DIR="${{ github.workspace }}/test_archives"
+          if [ -d "$TEST_ARCHIVES_DIR" ]; then
+            echo "Folder already exists: $TEST_ARCHIVES_DIR"
+          else
+            mkdir -p "$TEST_ARCHIVES_DIR"
+          fi
+          find "${{ github.workspace }}/build" -type f -name "onnxruntime-tests-*" \
+            -exec cp {} "$TEST_ARCHIVES_DIR/" \;
+
+      - name: Prepare Test Package Archive
+        run: |
+          ./qcom/scripts/all/prepare_test_package.sh \
+            "${{ github.workspace }}/test_archives" \
+            "${{ github.workspace }}/build" \
+            "${{ env.QA_TAG }}"
+
       - name: Upload Artifacts to QA Artifactory
         if: ${{ !inputs.skip_publish_qa }}
         uses: ./.github/actions/upload-qa-artifact
