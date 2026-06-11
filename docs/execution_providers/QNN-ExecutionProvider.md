@@ -437,6 +437,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
+|com.microsoft.GroupQueryAttention|Supported on GPU backend|
 |com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:QuickGelu||
