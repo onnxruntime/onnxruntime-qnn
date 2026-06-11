@@ -44,8 +44,6 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - Added `htp_share_resource_optimization` and `ep.enable_htp_prepare_only` provider options. See [Configuration Options](execution_providers/QNN-ExecutionProvider.md#configuration-options). ([#107](https://github.com/onnxruntime/onnxruntime-qnn/pull/107), [#347](https://github.com/onnxruntime/onnxruntime-qnn/pull/347))
 - Added int32 input support for ScatterElements (QAIRT 2.45+). ([#247](https://github.com/onnxruntime/onnxruntime-qnn/pull/247))
 - GatherND now uses shared index-normalization primitives for consistency with ScatterND/ScatterElements. ([#336](https://github.com/onnxruntime/onnxruntime-qnn/pull/336))
-- QDQ constant folding now handles multi-hop `initializer → DQ → Q → DQ → op` chains, emitting chained weights as STATIC tensors instead of runtime graph inputs. ([#339](https://github.com/onnxruntime/onnxruntime-qnn/pull/339))
-- Rank-5 MatMul inputs are now kept on NPU by flattening input 0 before submission to QNN. ([#342](https://github.com/onnxruntime/onnxruntime-qnn/pull/342))
 - Gemm with `beta=0.0` now maps to QNN FullyConnected without bias instead of falling back to CPU. ([#375](https://github.com/onnxruntime/onnxruntime-qnn/pull/375))
 - RoiAlign now accepts `coordinate_transformation_mode=half_pixel` and `sampling_ratio=0`. ([#389](https://github.com/onnxruntime/onnxruntime-qnn/pull/389))
 - MatMulNBits extended to HTP with 2-bit and 4-bit support (block sizes 32/64).([#288](https://github.com/onnxruntime/onnxruntime-qnn/pull/288))
