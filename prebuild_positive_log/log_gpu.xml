@@ -1,0 +1,64 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<avrf:logfile xmlns:avrf="Application Verifier">
+	<avrf:logSession TimeStarted="2026-06-11 : 14:45:48" PID="44740" Version="2">
+		<avrf:logEntry Time="2026-06-11 : 14:45:49" LayerName="Leak" StopCode="0x900" Severity="Error">
+			<avrf:message>A heap allocation was leaked.</avrf:message>
+			<avrf:parameter1>29ad19f6420 - Address of the leaked allocation. Run !avrf -hp -a &lt;address&gt; to get additional information about the allocation.</avrf:parameter1>
+			<avrf:parameter2>29acb869bd0 - Address to the allocation stack trace. Run dps &lt;address&gt; l0n32 to view the allocation stack.</avrf:parameter2>
+			<avrf:parameter3>29ad176e028 - Address of the owner dll name. Run du &lt;address&gt; to read the dll name.</avrf:parameter3>
+			<avrf:parameter4>7ffcf5150000 - Base of the owner dll. Run .reload &lt;dll_name&gt; = &lt;address&gt; to reload the owner dll. Use &apos;lm&apos; to get more information about the loaded and unloaded modules.</avrf:parameter4>
+			<avrf:stackTrace>
+				<avrf:trace>vfbasics!+7ffcdd86b5a8 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcdd86b274 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcdd869ee4 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!CsrGetProcessId+364 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlEncodePointer+53c8 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlSetUnhandledExceptionFilter+2500 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!LdrUnloadDll+238 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcdd86a2cc ( @ 0)</avrf:trace>
+				<avrf:trace>KERNELBASE!FreeLibrary+28 ( @ 0)</avrf:trace>
+				<avrf:trace>QnnGpu!QnnInterface_getProviders+d3fc ( @ 0)</avrf:trace>
+				<avrf:trace>ucrtbase!initterm_e+130 ( @ 0)</avrf:trace>
+				<avrf:trace>ucrtbase!execute_onexit_table+48 ( @ 0)</avrf:trace>
+				<avrf:trace>QnnGpu!QnnInterface_getProviders+b92a0 ( @ 0)</avrf:trace>
+				<avrf:trace>QnnGpu!QnnInterface_getProviders+b9c50 ( @ 0)</avrf:trace>
+				<avrf:trace>QnnGpu!QnnInterface_getProviders+b9a9c ( @ 0)</avrf:trace>
+				<avrf:trace>QnnGpu!QnnInterface_getProviders+b9dd4 ( @ 0)</avrf:trace>
+				<avrf:trace>QnnGpu!QnnInterface_getProviders+b9e7c ( @ 0)</avrf:trace>
+				<avrf:trace>verifier!VerifierSetRuntimeFlags+5a84 ( @ 0)</avrf:trace>
+				<avrf:trace>vrfcore!VerifierTlsSetValue+72c ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcdd86a4fc ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlEncodeRemotePointer+a8 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlEncodePointer+268 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlEncodePointer+4004 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlEncodePointer+5270 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlSetUnhandledExceptionFilter+2500 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!LdrUnloadDll+254 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcdd86a2cc ( @ 0)</avrf:trace>
+				<avrf:trace>KERNELBASE!FreeLibrary+28 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime_providers_qnn!onnxruntime::qnn::QnnBackendManager::UnloadLib+38 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\core\providers\qnn\builder\qnn_backend_manager.cc @ 2549)</avrf:trace>
+				<avrf:trace>onnxruntime_providers_qnn!onnxruntime::qnn::QnnBackendManager::ReleaseResources+1420 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\core\providers\qnn\builder\qnn_backend_manager.cc @ 2196)</avrf:trace>
+				<avrf:trace>onnxruntime_providers_qnn!onnxruntime::qnn::QnnBackendManager::~QnnBackendManager+28 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\core\providers\qnn\builder\qnn_backend_manager.cc @ 2444)</avrf:trace>
+				<avrf:trace>onnxruntime_providers_qnn!onnxruntime::QnnEp::~QnnEp+328 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\core\providers\qnn\qnn_execution_provider.cc @ 1135)</avrf:trace>
+				<avrf:trace>onnxruntime_providers_qnn!onnxruntime::QnnEpFactory::ReleaseEpImpl+18 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\core\providers\qnn\qnn_provider_factory.cc @ 316)</avrf:trace>
+				<avrf:trace>onnxruntime!onnxruntime::PluginExecutionProvider::`scalar deleting destructor&apos;+14 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime!onnxruntime::InferenceSession::~InferenceSession+640 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\build\windows-arm64\RelWithDebInfo\_deps\ort_core-src\onnxruntime\core\session\inference_session.cc @ 882)</avrf:trace>
+				<avrf:trace>onnxruntime!onnxruntime::InferenceSession::`scalar deleting destructor&apos;+14 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!onnxruntime::test::RunQnnModelTest+ca0 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\providers\qnn\qnn_test_utils.cc @ 351)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!onnxruntime::test::RunAveragePoolOpTest+3f8 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\providers\qnn\averagepool_test.cc @ 29)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!onnxruntime::test::QnnGPUBackendTests_AveragePool_AsGlobal_Test::TestBody+2d0 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\providers\qnn\averagepool_test.cc @ 345)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleSehExceptionsInMethodIfSupported&lt;testing::Test,void&gt;+10 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2657)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleExceptionsInMethodIfSupported&lt;testing::Test,void&gt;+50 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2700)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::Test::Run+88 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2746)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleSehExceptionsInMethodIfSupported&lt;testing::internal::UnitTestImpl,bool&gt;+10 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2657)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleExceptionsInMethodIfSupported&lt;testing::internal::UnitTestImpl,bool&gt;+50 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2700)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::UnitTest::Run+170 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 5594)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!main+d8 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\unittest_main\test_main.cc @ 100)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!__scrt_common_main_seh+11c (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl @ 288)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!mainCRTStartup+14 (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp @ 16)</avrf:trace>
+				<avrf:trace>KERNEL32!BaseThreadInitThunk+40 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlUserThreadStart+44 ( @ 0)</avrf:trace>
+			</avrf:stackTrace>
+		</avrf:logEntry>
+	</avrf:logSession>
+</avrf:logfile>

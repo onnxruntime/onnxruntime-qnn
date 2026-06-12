@@ -1,0 +1,43 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<avrf:logfile xmlns:avrf="Application Verifier">
+	<avrf:logSession TimeStarted="2026-06-11 : 16:57:39" PID="7932" Version="2">
+		<avrf:logEntry Time="2026-06-11 : 16:57:45" LayerName="Leak" StopCode="0x900" Severity="Error">
+			<avrf:message>A heap allocation was leaked.</avrf:message>
+			<avrf:parameter1>204f6292b00 - Address of the leaked allocation. Run !avrf -hp -a &lt;address&gt; to get additional information about the allocation.</avrf:parameter1>
+			<avrf:parameter2>204f0b6c180 - Address to the allocation stack trace. Run dps &lt;address&gt; l0n32 to view the allocation stack.</avrf:parameter2>
+			<avrf:parameter3>204f6268b0e - Address of the owner dll name. Run du &lt;address&gt; to read the dll name.</avrf:parameter3>
+			<avrf:parameter4>7ffc98b40000 - Base of the owner dll. Run .reload &lt;dll_name&gt; = &lt;address&gt; to reload the owner dll. Use &apos;lm&apos; to get more information about the loaded and unloaded modules.</avrf:parameter4>
+			<avrf:stackTrace>
+				<avrf:trace>vfbasics!+7ffcf517b5a8 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcf517b274 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcf5179ee4 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!CsrGetProcessId+364 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlEncodePointer+53c8 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlSetUnhandledExceptionFilter+2500 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!LdrUnloadDll+254 ( @ 0)</avrf:trace>
+				<avrf:trace>vfbasics!+7ffcf517a2cc ( @ 0)</avrf:trace>
+				<avrf:trace>KERNELBASE!FreeLibrary+28 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime!OrtSessionOptionsAppendExecutionProvider_CPU+689fe4 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime!OrtGetApiBase+559ec ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime!+7ffc4fc7924c ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime!+7ffc4fc8ad20 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime!+7ffc4fcc0690 ( @ 0)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!std::_Func_impl_no_alloc&lt;&lt;lambda_f7a9d97aa467fb900db40209f77f90ad&gt;,void,OrtEpDevice const *&gt;::_Do_call+74 (C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.44.35207\include\functional @ 880)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!onnxruntime::test::RunQnnModelTest+d54 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\providers\qnn\qnn_test_utils.cc @ 359)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!onnxruntime::test::RunArgMxxOpTest+3a8 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\providers\qnn\argmax_argmin_test.cc @ 51)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!onnxruntime::test::QnnCPUBackendTests_ArgMaxMin_DefaultAttrs_Test::TestBody+104 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\providers\qnn\argmax_argmin_test.cc @ 82)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleSehExceptionsInMethodIfSupported&lt;testing::Test,void&gt;+10 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2657)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleExceptionsInMethodIfSupported&lt;testing::Test,void&gt;+50 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2700)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::Test::Run+88 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2746)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleSehExceptionsInMethodIfSupported&lt;testing::internal::UnitTestImpl,bool&gt;+10 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2657)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::internal::HandleExceptionsInMethodIfSupported&lt;testing::internal::UnitTestImpl,bool&gt;+50 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 2700)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!testing::UnitTest::Run+170 (X:\build\windows-arm64\RelWithDebInfo\_deps\googletest-src\googletest\src\gtest.cc @ 5594)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!main+d8 (C:\Users\chunghow\onnxruntime-qnn\.claude\worktrees\aisw-184250-appverif\onnxruntime\test\unittest_main\test_main.cc @ 100)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!__scrt_common_main_seh+11c (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl @ 288)</avrf:trace>
+				<avrf:trace>onnxruntime_provider_test!mainCRTStartup+14 (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp @ 16)</avrf:trace>
+				<avrf:trace>KERNEL32!BaseThreadInitThunk+40 ( @ 0)</avrf:trace>
+				<avrf:trace>ntdll!RtlUserThreadStart+44 ( @ 0)</avrf:trace>
+			</avrf:stackTrace>
+		</avrf:logEntry>
+	</avrf:logSession>
+</avrf:logfile>
