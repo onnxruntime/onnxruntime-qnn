@@ -272,8 +272,17 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<Tes
     gemm_inputs.push_back(a_qdq);
     gemm_inputs.push_back(b_qdq);
 
+    // Check if beta=0.0 (bias is ignored)
+    float beta = 1.0f;
+    for (const auto& attr : attrs) {
+      if (attr.name() == "beta") {
+        beta = attr.f();
+        break;
+      }
+    }
+
     // Bias (optional): int32 -> DQ
-    if (num_inputs == 3) {
+    if (num_inputs == 3 && beta != 0.0f) {
       const std::string bias_dq = MakeTestQDQBiasInput(
           builder, "C", input_defs[2], a_qparams.scale * b_qparams.scale, use_contrib_qdq);
       gemm_inputs.push_back(bias_dq);
