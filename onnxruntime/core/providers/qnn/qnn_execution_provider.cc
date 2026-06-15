@@ -34,8 +34,9 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -1634,6 +1635,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
     ep->CreateHtpPowerConfigId();
+
+    ep->WarnIfHnrdPathActive();
   }
 
   // Report error if QNN CPU backend is loaded while CPU fallback is disabled
@@ -2717,6 +2720,33 @@ void QnnEp::CreateHtpPowerConfigId() const {
   } else {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to create HTP power config id.");
   }
+}
+
+void QnnEp::WarnIfHnrdPathActive() {
+  if (hnrd_warning_emitted_) {
+    return;
+  }
+  hnrd_warning_emitted_ = true;
+  const uint32_t htp_arch = static_cast<uint32_t>(qnn_backend_manager_->GetHtpArch());
+  if (htp_arch == static_cast<uint32_t>(QNN_HTP_DEVICE_ARCH_NONE)) {
+    return;
+  }
+  bool hnrd_enabled = false;
+  Ort::Status status = qnn::htp_usr_drv::IsHtpUsrDrvEnabled(
+      qnn_backend_manager_->GetBackendLibDir(), htp_arch, hnrd_enabled);
+  if (!status.IsOK()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("HNRD detection skipped: " + status.GetErrorMessage()).c_str());
+    return;
+  }
+  if (!hnrd_enabled) {
+    return;
+  }
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING,
+              "QNN EP fell back to HTP user-driver (HNRD) path; "
+              "QnnHtpPrepare/Stub/Skel libs missing from backend lib dir.");
 }
 
 QnnEp::QnnNodeComputeInfo::QnnNodeComputeInfo(QnnEp& ep) : ep(ep) {
