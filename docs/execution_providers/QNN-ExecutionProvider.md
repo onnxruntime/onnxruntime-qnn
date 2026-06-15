@@ -389,7 +389,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Where||
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:Gelu||
-|com.microsoft.GroupQueryAttention|Supported on GPU backend|
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft.MatMulNBits|Supported bits == 4 on GPU backend|
 
