@@ -374,6 +374,15 @@ TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset13) {
                        ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset13_NoKeepDims) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 3, 4}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{1},
+                       false,  // keepdims=False exercises the trailing Reshape on the opset-13 path
+                       13,
+                       ExpectedEPNodeAssignment::All);
+}
+
 // Empty axes input -> reduce over all axes (ONNX default when noop_with_empty_axes=0).
 TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_DefaultAllAxes) {
   RunReduceTest<float>("ReduceLogSumExp",

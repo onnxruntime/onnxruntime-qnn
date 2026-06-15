@@ -339,7 +339,8 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
     // Build a separate keep_dims=True param for the inner reduces.
     std::vector<std::string> kd_true_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_inner",
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(),
+                                       utils::UniqueNameGenerator().New(node_unit, "_inner"),
                                        true, QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, kd_true_param_names));
     const std::string kd_true_param_name = kd_true_param_names[0];
 
