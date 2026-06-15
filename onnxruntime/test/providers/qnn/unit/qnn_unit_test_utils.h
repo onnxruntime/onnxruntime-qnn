@@ -14,8 +14,8 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
 
-#include <cassert>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -89,10 +89,16 @@ struct QnnModelWrapperTestContext {
     // Fail fast at construction (rather than silently SIGSEGV at first initializer query)
     // when these stubs were cleared by a test resetting stub_ort_api wholesale.
     // See the INVARIANT comment in QnnModelWrapperTestContext() above.
-    assert(stub_ort_api.Graph_GetNumInitializers != nullptr &&
-           "Graph_GetNumInitializers stub missing — required when ort_graph is null");
-    assert(stub_ort_api.Graph_GetInitializers != nullptr &&
-           "Graph_GetInitializers stub missing — required when ort_graph is null");
+    //
+    // assert() is intentionally NOT used: CMake's RelWithDebInfo (the coverage build's
+    // config) defines NDEBUG, which strips assert() — disabling the guard in precisely
+    // the environment these tests run in. throw fires in every build configuration.
+    if (stub_ort_api.Graph_GetNumInitializers == nullptr ||
+        stub_ort_api.Graph_GetInitializers == nullptr) {
+      throw std::logic_error(
+          "Graph_GetNumInitializers / Graph_GetInitializers stubs missing "
+          "— re-add them after resetting stub_ort_api");
+    }
     ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
     return std::make_unique<qnn::QnnModelWrapper>(
         /*ort_graph=*/nullptr,

@@ -1769,7 +1769,10 @@ TEST(QnnUnit_ModelWrapperTest, AddNoopReshapeNode_ShapeMismatch_ReturnsError) {
 // Covers two previously-uncovered functions that require OrtApi tensor-data stubs.
 
 namespace {
-// Sentinels for opaque ORT types used in unpack stubs.
+// Sentinel lvalues used as non-null opaque-token pointers in unit-test stubs
+// (e.g., reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel)).
+// All stubs receiving these pointers MUST NOT dereference them — they only
+// check for non-null or pass them through to another stub unchanged.
 static int g_type_info_sentinel = 0;
 static int g_shape_info_sentinel = 0;
 static int g_initializer_value_sentinel = 0;

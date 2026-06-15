@@ -11,6 +11,9 @@
  * functions directly via target_link_libraries(), enabling function-level UT
  * coverage without requiring a static library build.
  */
+/* No local: section — intentional. This coverage script exports ALL symbols
+ * (global: *) so the test binary can call any EP-internal function directly.
+ * A local: * entry would be contradictory here. */
 VERS_1.0 {
   global:
     *;
