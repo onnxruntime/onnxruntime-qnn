@@ -247,7 +247,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Self-attached to the local ProfilingInfo inside ExtractBackendProfilingInfo
   // when profiling is at DETAILED/OPTRACE level (per-NODE events) and op
   // tracing is enabled.
-  void SetOpTraceLookup(OpTraceLookup lookup) { op_trace_lookup_ = std::move(lookup); }
+  void SetOpTraceLookup(OpTraceLookup&& lookup) { op_trace_lookup_ = std::move(lookup); }
   // Merges `other` into the session-wide lookup. On key collision the entry
   // from `other` wins (last-write-wins), matching the operator[] semantics
   // already used by OpTraceCollector::Finalize and LoadTraceLookupFromFile
