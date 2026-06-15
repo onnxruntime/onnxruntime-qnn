@@ -172,7 +172,8 @@ Ort::Status ExpandOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     QnnParamWrapper op_param(node_unit.Index(), node_unit.Name(),
                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
     param_tensor_names.push_back(op_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(op_param));
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(op_param)),
+                  "Failed to add operation param");
   }
 
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), std::move(param_tensor_names),
