@@ -179,8 +179,8 @@ constexpr const uint32_t kDisableRpcPolling = 0;
 constexpr const uint32_t kDisableRpcControlLatency = 0;
 constexpr const uint32_t kMaxRpcPolling = 9999;
 
-// performance timer timeout value is in microseconds
-static constexpr uint64_t kDefaultTimerTimeoutUs = 300000;
+// Sustained high performance mode timer timeout duration in microseconds
+constexpr const uint64_t kDefaultTimerTimeoutUs = 300000;
 
 struct OnnxTensorInfo {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxTensorInfo);

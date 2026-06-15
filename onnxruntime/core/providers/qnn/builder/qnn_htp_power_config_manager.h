@@ -87,6 +87,7 @@ class HtpPowerConfigManager {
   void Init(const QNN_INTERFACE_VER_TYPE& qnn_interface) { qnn_interface_ = &qnn_interface; }
 
  private:
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(HtpPowerConfigManager);
   // Sets voltage corner votes for HTP based on the given performance mode
   Ort::Status SetHtpPerformancePowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config,
                                            uint32_t htp_power_config_client_id,
@@ -137,7 +138,7 @@ class HtpPowerConfigManager {
     std::atomic<bool> timer_active_ = false;
   };
   TimerResource timer_resource_;
-  std::atomic<GraphState> graph_state_ = GraphState::NONE;
+  GraphState graph_state_ = GraphState::NONE;
   struct TimerCallbackArg {
     uint32_t power_config_id_;
     HtpPowerConfigManager* instance_;

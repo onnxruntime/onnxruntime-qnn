@@ -63,6 +63,8 @@ class Timer {
   bool TimerInUse();
 
  private:
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(Timer);
+
   std::thread bkg_thread_;
   void BkgTimer();
   std::mutex mtx_;
