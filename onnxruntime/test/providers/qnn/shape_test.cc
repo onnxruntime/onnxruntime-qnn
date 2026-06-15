@@ -29,6 +29,44 @@ static void RunShapeOpTest(TestInputDef<float> input_def,
                   expected_ep_assignment);
 }
 
+// Builds a QDQ model wrapping ONNX Shape. Shape's output is int64 (data-independent), so only
+// the input is quantized -- there is no output Q/DQ node.
+template <typename QType = uint8_t>
+static GetTestQDQModelFn<QType> BuildQDQShapeTestCase(TestInputDef<float> input_def,
+                                                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                      bool use_contrib_qdq = false) {
+  return [input_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
+                                             std::vector<QuantParams<QType>>& output_qparams) {
+    QNN_TEST_UNUSED_PARAMETER(output_qparams);
+    MakeTestInput(builder, "X", input_def);
+    QuantParams<QType> input_qparams = GetTestInputQuantParams<QType>(input_def);
+    std::string x_dq_name = AddQDQNodePair<QType>(builder, "qdq1", "X", input_qparams.scale,
+                                                  input_qparams.zero_point, use_contrib_qdq);
+
+    // DQ -> Shape
+    builder.AddNode("shape_node", "Shape", {x_dq_name.c_str()}, {"Y"}, "", attrs);
+    builder.MakeOutput("Y");
+  };
+}
+
+// Runs a QDQ Shape model on the QNN HTP backend and checks output accuracy vs the CPU EP baseline.
+template <typename QType = uint8_t>
+static void RunQDQShapeOpTest(TestInputDef<float> input_def,
+                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                              ExpectedEPNodeAssignment expected_ep_assignment,
+                              int opset = 15,
+                              bool use_contrib_qdq = false) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>("shape_node", "Shape", {input_def}, {}, attrs),
+                       BuildQDQShapeTestCase<QType>(input_def, attrs, use_contrib_qdq),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
+}
+
 //
 // CPU tests:
 //
@@ -87,7 +125,7 @@ TEST_F(QnnCPUBackendTests, Shape_EmptySlice_Float) {
 // HTP tests:
 //
 
-// Test that Shape with default attributes works on QNN HTP backend.
+// Test that Shape with default attributes works on QNN HTP backend (FP32 input).
 // Shape is a data-independent op (output depends only on input shape, not values),
 // so HTP support may vary by SDK version. The test verifies that when the op is
 // assigned to QNN EP the outputs match the CPU EP baseline.
@@ -104,7 +142,7 @@ TEST_F(QnnHTPBackendTests, Shape_Default_Float_HTP) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// Test that Shape with start=1 and end=3 works on QNN HTP backend.
+// Test that Shape with start=1 and end=3 works on QNN HTP backend (FP32 input).
 // Input: float32 [2, 3, 4, 5]. Expected output: int64 [3, 4].
 TEST_F(QnnHTPBackendTests, Shape_StartEnd_Float_HTP) {
   ProviderOptions provider_options;
@@ -119,6 +157,32 @@ TEST_F(QnnHTPBackendTests, Shape_StartEnd_Float_HTP) {
                   provider_options,
                   15,
                   ExpectedEPNodeAssignment::All);
+}
+
+// QDQ (uint8) Shape with default attributes on HTP. Shape is data-independent so only the
+// input is quantized; output is int64 and passes through unquantized.
+TEST_F(QnnHTPBackendTests, Shape_Default_QDQ_U8_HTP) {
+  RunQDQShapeOpTest<uint8_t>(TestInputDef<float>({3, 4, 5}, false, -10.0f, 10.0f),
+                             {},
+                             ExpectedEPNodeAssignment::All);
+}
+
+// QDQ (uint8) Shape with start=1, end=3 on HTP.
+// Input: uint8-quantized [2, 3, 4, 5]. Expected output: int64 [3, 4].
+TEST_F(QnnHTPBackendTests, Shape_StartEnd_QDQ_U8_HTP) {
+  RunQDQShapeOpTest<uint8_t>(TestInputDef<float>({2, 3, 4, 5}, false, -10.0f, 10.0f),
+                             {test::MakeAttribute("start", static_cast<int64_t>(1)),
+                              test::MakeAttribute("end", static_cast<int64_t>(3))},
+                             ExpectedEPNodeAssignment::All);
+}
+
+// QDQ (uint16) Shape with default attributes on HTP.
+TEST_F(QnnHTPBackendTests, Shape_Default_QDQ_U16_HTP) {
+  RunQDQShapeOpTest<uint16_t>(TestInputDef<float>({3, 4, 5}, false, -10.0f, 10.0f),
+                              {},
+                              ExpectedEPNodeAssignment::All,
+                              15,     // opset
+                              true);  // Use com.microsoft Q/DQ ops (uint16 zero-point not in ONNX opset 15)
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

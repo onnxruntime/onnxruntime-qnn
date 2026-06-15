@@ -14,7 +14,8 @@ namespace qnn {
 // Shape op builder.
 // Maps ONNX Shape -> QNN Shape. ONNX Shape produces an int64 1-D tensor; QNN requires the
 // output to be uint32/int32, so the int64 output is downcast to int32 (BaseOpBuilder::ProcessOutputs
-// inserts a Cast back to int64 when the output is a graph output).
+// inserts a Cast back to int64 when the output is a graph output). For intermediate outputs,
+// the QNN tensor type remains INT_32 and downstream ops consume it directly.
 // The ONNX `start`/`end` attributes are mapped to the QNN `start`/`end` scalar params (uint32).
 class ShapeOpBuilder : public BaseOpBuilder {
  public:
