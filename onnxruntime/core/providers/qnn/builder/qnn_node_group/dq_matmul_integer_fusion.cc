@@ -510,7 +510,7 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
     Qnn_Scalar_t add_scalar = QNN_SCALAR_INIT;
     add_scalar.dataType = QNN_DATATYPE_UINT_32;
     add_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD;
-    QnnParamWrapper add_param(0, add_node_name,
+    QnnParamWrapper add_param(matmul_integer.Index(), add_node_name,
                               QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_scalar);
     std::string add_param_name = add_param.GetParamTensorName();
 
@@ -518,7 +518,8 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
       RETURN_IF_ERROR(qmw.ValidateQnnNode(add_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
                                           QNN_OP_ELEMENT_WISE_BINARY,
                                           {add_lhs_handle.GetQnnTensor(), bias_tensor.GetQnnTensor()},
-                                          {add_out_tensor.GetQnnTensor()}, {add_param_name}));
+                                          {add_out_tensor.GetQnnTensor()},
+                                          {add_param.GetQnnParam()}));
     } else {
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor");
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(add_out_tensor)),
