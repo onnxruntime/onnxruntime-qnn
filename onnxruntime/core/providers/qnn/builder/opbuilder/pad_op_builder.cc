@@ -245,25 +245,24 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   RETURN_IF("reflect" == mode && has_negative, "reflect mode doesn't support negative padding value.");
 
-  Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
-  mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t mode_value = QNN_OP_PAD_SCHEME_CONSTANT;
   if ("constant" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_CONSTANT;
+    mode_value = QNN_OP_PAD_SCHEME_CONSTANT;
   } else if ("reflect" == mode) {
     for (size_t i = 0; i < input_shape.size(); i++) {
       RETURN_IF(pad_amount[i * 2] > input_shape[i] - 1 || pad_amount[(i * 2) + 1] > input_shape[i] - 1,
                 "Pad amount should not be greater than shape(input[0])[i] - 1");
     }
-    mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_MIRROR_REFLECT;
+    mode_value = QNN_OP_PAD_SCHEME_MIRROR_REFLECT;
   } else if ("edge" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_EDGE;
+    mode_value = QNN_OP_PAD_SCHEME_EDGE;
   } else {
     return MAKE_EP_FAIL("Pad mode only support constant.");
   }
 
   std::vector<uint32_t> pad_amount_dim{static_cast<uint32_t>(pad_amount.size() / 2), static_cast<uint32_t>(2)};
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                         mode_qnn_scalar.uint32Value, QNN_OP_PAD_PARAM_SCHEME, param_tensor_names));
+                                         mode_value, QNN_OP_PAD_PARAM_SCHEME, param_tensor_names));
 
   QnnParamWrapper pad_amount_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_PAD_AMOUNT,
                                    std::move(pad_amount_dim), std::vector<uint32_t>(pad_amount));
