@@ -518,15 +518,17 @@ jobs:
 
       - name: Prepare Test Package Archive
         run: |
+          TEST_PACKAGE_VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
           if [ -z "${{ inputs.version_suffix }}" ]; then
             VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
           else
             VERSION="${{ inputs.version_suffix }}"
+            TEST_PACKAGE_VERSION = $TEST_PACKAGE_VERSION-$VERSION"
           fi
           ./qcom/scripts/all/prepare_test_package.sh \
             "${{ github.workspace }}/test_archives" \
             "${{ github.workspace }}/build" \
-            "$VERSION"
+            "$TEST_PACKAGE_VERSION"
 
       - name: Publish Zip
         if: ${{ !inputs.skip_publish }}
