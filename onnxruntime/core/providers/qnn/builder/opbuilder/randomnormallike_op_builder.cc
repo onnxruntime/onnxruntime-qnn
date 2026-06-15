@@ -119,29 +119,13 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
 
   // Extract 'mean' attribute
   float mean = node_helper.Get("mean", 0.0f);
-  Qnn_Scalar_t mean_param = QNN_SCALAR_INIT;
-  mean_param.dataType = QNN_DATATYPE_FLOAT_32;
-  mean_param.floatValue = mean;
-  QnnParamWrapper mean_param_wrapper(node_unit.Index(),
-                                     node_unit.Name(),
-                                     QNN_OP_RANDOM_NORMAL_LIKE_PARAM_MEAN,
-                                     mean_param);
-
-  param_names.push_back(mean_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(mean_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), mean,
+                                      QNN_OP_RANDOM_NORMAL_LIKE_PARAM_MEAN, param_names));
 
   // Extract 'scale' attribute
   float scale = node_helper.Get("scale", 1.0f);
-  Qnn_Scalar_t scale_param = QNN_SCALAR_INIT;
-  scale_param.dataType = QNN_DATATYPE_FLOAT_32;
-  scale_param.floatValue = scale;
-  QnnParamWrapper scale_param_wrapper(node_unit.Index(),
-                                      node_unit.Name(),
-                                      QNN_OP_RANDOM_NORMAL_LIKE_PARAM_SCALE,
-                                      scale_param);
-
-  param_names.push_back(scale_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(scale_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), scale,
+                                      QNN_OP_RANDOM_NORMAL_LIKE_PARAM_SCALE, param_names));
 
   const auto& outputs = node_unit.Outputs();
   const std::string& output_name = outputs[0].name;

@@ -698,18 +698,10 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // optional, but older versions of QNN SDK failed validation if not explicitly provided.
   std::vector<std::string> param_tensor_names;
   if (!use_fully_connected) {
-    Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
-    scalar_param.dataType = QNN_DATATYPE_BOOL_8;
-    scalar_param.bool8Value = 0;
-    QnnParamWrapper transpose_in0_param(node_unit.Index(), node_unit.Name(), QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0,
-                                        scalar_param);
-    param_tensor_names.push_back(transpose_in0_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(transpose_in0_param));
-
-    QnnParamWrapper transpose_in1_param(node_unit.Index(), node_unit.Name(), QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1,
-                                        scalar_param);
-    param_tensor_names.push_back(transpose_in1_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(transpose_in1_param));
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
+                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, param_tensor_names));
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
+                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, param_tensor_names));
   }
 
   const std::string& org_output_name = node_unit.Outputs()[0].name;

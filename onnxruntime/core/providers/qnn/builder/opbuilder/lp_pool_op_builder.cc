@@ -319,13 +319,8 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // honors rounding_mode correctly. rounding_mode was populated by ResolvePoolAttributes from the
   // ONNX ceil_mode attribute.
   if (rounding_mode != 0) {
-    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
-    scalar.dataType = QNN_DATATYPE_UINT_32;
-    scalar.int32Value = rounding_mode;
-    QnnParamWrapper rounding_mode_param(node_unit.Index(), node_unit.Name(), p_round, scalar);
-    pool_param_names.push_back(rounding_mode_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
-                  "Failed to add param rounding_mode.");
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(rounding_mode), p_round, pool_param_names));
   }
   // count_pad_for_edges intentionally left at the QNN default (false). The denominator becomes
   // count_real per window; the per-position scale tensor below compensates.

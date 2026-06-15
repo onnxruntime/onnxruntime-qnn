@@ -262,9 +262,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   }
 
   std::vector<uint32_t> pad_amount_dim{static_cast<uint32_t>(pad_amount.size() / 2), static_cast<uint32_t>(2)};
-  QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_SCHEME, mode_qnn_scalar);
-  param_tensor_names.push_back(mode_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         mode_qnn_scalar.uint32Value, QNN_OP_PAD_PARAM_SCHEME, param_tensor_names));
 
   QnnParamWrapper pad_amount_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_PAD_AMOUNT,
                                    std::move(pad_amount_dim), std::vector<uint32_t>(pad_amount));
@@ -273,15 +272,9 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   if (opset_version < 11 && domain != kMSDomain && node_helper.HasAttr("value")) {
     // Process optional attribute value
-    Qnn_Scalar_t constant_value_qnn_scalar = QNN_SCALAR_INIT;
-    constant_value_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    constant_value_qnn_scalar.floatValue = node_helper.GetFloat("value").value();
-    QnnParamWrapper constant_value_param(node_unit.Index(),
-                                         node_unit.Name(),
-                                         QNN_OP_PAD_PARAM_PAD_CONSTANT_VALUE,
-                                         constant_value_qnn_scalar);
-    param_tensor_names.push_back(constant_value_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(constant_value_param));
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                        node_helper.GetFloat("value").value(),
+                                        QNN_OP_PAD_PARAM_PAD_CONSTANT_VALUE, param_tensor_names));
   } else if ((opset_version >= 11 || domain == kMSDomain) && inputs.size() > 2 && inputs[2].Exists()) {
     TensorInfo input_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], input_info));

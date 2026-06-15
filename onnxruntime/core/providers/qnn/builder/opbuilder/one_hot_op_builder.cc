@@ -324,13 +324,8 @@ Ort::Status OneHotOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
         return MAKE_EP_FAIL("OneHot: unsupported data type for depth input.");
     }
 
-    Qnn_Scalar_t depth_scalar = QNN_SCALAR_INIT;
-    depth_scalar.dataType = QNN_DATATYPE_UINT_32;
-    depth_scalar.uint32Value = depth_val;
-    QnnParamWrapper depth_param(node_unit.Index(), node_unit.Name(),
-                                QNN_OP_ONE_HOT_PARAM_DEPTH, depth_scalar);
-    param_tensor_names.push_back(depth_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(depth_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), depth_val,
+                                           QNN_OP_ONE_HOT_PARAM_DEPTH, param_tensor_names));
   }
 
   // -----------------------------------------------------------------------
@@ -382,13 +377,9 @@ Ort::Status OneHotOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF(onnx_axis < 0 || onnx_axis > rank,
               "OneHot: axis out of valid range [-(rank+1), rank].");
 
-    Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
-    axis_scalar.dataType = QNN_DATATYPE_UINT_32;
-    axis_scalar.uint32Value = static_cast<uint32_t>(onnx_axis);
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(),
-                               QNN_OP_ONE_HOT_PARAM_AXIS, axis_scalar);
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(onnx_axis),
+                                           QNN_OP_ONE_HOT_PARAM_AXIS, param_tensor_names));
   }
 
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,

@@ -220,12 +220,8 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // Handle keepdims param.
   //
   auto onnx_keepdims = node_attr_helper.Get("keepdims", (int32_t)1);
-  Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
-  scalar_param.dataType = QNN_DATATYPE_BOOL_8;
-  scalar_param.bool8Value = static_cast<uint8_t>(onnx_keepdims == 0 ? 0 : 1);
-  QnnParamWrapper keep_dims_param(node_unit.Index(), node_unit.Name(), QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, scalar_param);
-  param_tensor_names.push_back(keep_dims_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(keep_dims_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
+                                     QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, param_tensor_names));
 
   if (node_unit.OpType() == "ReduceL2") {
     // If ReduceL2, QNN doesn't have a single Op for it, we need to add a

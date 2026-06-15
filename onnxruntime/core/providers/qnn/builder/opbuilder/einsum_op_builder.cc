@@ -240,30 +240,24 @@ bool IsEquationReduceSumMulBroadcastX(const Equation& equation) {
  *
  * @param qnn_model_wrapper Pointer to the QnnModelWrapper instance that manages the QNN model.
  * @param node_unit Reference to the OrtNodeUnit representing the ONNX node for which the parameters are being set.
+ * @param param_tensor_names Output vector that the generated parameter tensor names are appended to.
  * @param transpose_in0 Boolean flag indicating whether the 1st input tensor should be transposed (default: false).
  * @param transpose_in1 Boolean flag indicating whether the 2nd input tensor should be transposed (default: false).
- * @return A vector of strings containing the names of the parameter tensors added to the QNN model.
+ * @return Ort::Status indicating success or failure.
  */
-std::vector<std::string> SetMatMulParamTensorNames(
+Ort::Status SetMatMulParamTensorNames(
     onnxruntime::qnn::QnnModelWrapper* qnn_model_wrapper,
     const onnxruntime::OrtNodeUnit& node_unit,
+    std::vector<std::string>& param_tensor_names,
     bool transpose_in0 = false,
     bool transpose_in1 = false) {
-  std::vector<std::string> param_tensor_names;
-  Qnn_Scalar_t scalar_params[2] = {QNN_SCALAR_INIT, QNN_SCALAR_INIT};
-  scalar_params[0].dataType = QNN_DATATYPE_BOOL_8;
-  scalar_params[1].dataType = QNN_DATATYPE_BOOL_8;
-  scalar_params[0].bool8Value = static_cast<uint8_t>(transpose_in0);
-  scalar_params[1].bool8Value = static_cast<uint8_t>(transpose_in1);
-  onnxruntime::qnn::QnnParamWrapper transpose_in0_param(
-      node_unit.Index(), node_unit.Name(), QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, scalar_params[0]);
-  onnxruntime::qnn::QnnParamWrapper transpose_in1_param(
-      node_unit.Index(), node_unit.Name(), QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, scalar_params[1]);
-  param_tensor_names.push_back(transpose_in0_param.GetParamTensorName());
-  param_tensor_names.push_back(transpose_in1_param.GetParamTensorName());
-  qnn_model_wrapper->AddParamWrapper(std::move(transpose_in0_param));
-  qnn_model_wrapper->AddParamWrapper(std::move(transpose_in1_param));
-  return param_tensor_names;
+  RETURN_IF_ERROR(onnxruntime::qnn::AddQnnScalar<bool>(*qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                                       transpose_in0,
+                                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, param_tensor_names));
+  RETURN_IF_ERROR(onnxruntime::qnn::AddQnnScalar<bool>(*qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                                       transpose_in1,
+                                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, param_tensor_names));
+  return Ort::Status();
 }
 
 /**
@@ -322,8 +316,9 @@ Ort::Status CreateMatMulTransposeAll(
       matmul_output_info.quant_param.Copy(), std::vector<uint32_t>(matmul_output_shape));
   RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(matmul_output_wrapper)),
                 (node_unit.OpType() + " failed to add tensor.").c_str());
-  std::vector<std::string> param_tensor_names = SetMatMulParamTensorNames(
-      qnn_model_wrapper, node_unit, /*transpose_in0=*/false, /*transpose_in1=*/false);
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(SetMatMulParamTensorNames(
+      qnn_model_wrapper, node_unit, param_tensor_names, /*transpose_in0=*/false, /*transpose_in1=*/false));
   RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(/*qnn_node_name=*/onnxruntime::qnn::utils::UniqueNameGenerator().New(node_unit, QNN_OP_MAT_MUL),
                                                  /*package_name=*/QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                  /*qnn_node_type=*/QNN_OP_MAT_MUL,
@@ -421,16 +416,8 @@ Ort::Status CreateReduceSumMulBroadcastX(
   RETURN_IF_NOT(qnn_model_wrapper->AddParamWrapper(std::move(param_axes)),
                 "CreateReduceSumMulBroadcastX: failed to add param axes");
 
-  Qnn_Scalar_t keep_dims_scalar = QNN_SCALAR_INIT;
-  keep_dims_scalar.dataType = QNN_DATATYPE_BOOL_8;
-  keep_dims_scalar.bool8Value = SafeInt<uint8_t>(0);
-  onnxruntime::qnn::QnnParamWrapper param_keep_dims(node_unit.Index(),
-                                                    node_unit.Name(),
-                                                    QNN_OP_REDUCE_SUM_PARAM_KEEP_DIMS,
-                                                    keep_dims_scalar);
-  param_tensor_names.push_back(param_keep_dims.GetParamTensorName());
-  RETURN_IF_NOT(qnn_model_wrapper->AddParamWrapper(std::move(param_keep_dims)),
-                "CreateReduceSumMulBroadcastX: failed to add param keep_dims");
+  RETURN_IF_ERROR(onnxruntime::qnn::AddQnnScalar<bool>(*qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
+                                                       QNN_OP_REDUCE_SUM_PARAM_KEEP_DIMS, param_tensor_names));
 
   const std::string out_name = node_unit.Outputs()[0].name;
   Qnn_TensorType_t out_tensor_type = qnn_model_wrapper->IsGraphOutput(out_name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
@@ -544,8 +531,9 @@ Ort::Status EinsumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const std::string equation = node_helper.Get("equation", std::string(""));
   std::optional<Equation> parsed_equation = ParseEquation(equation);
   if (IsEquationMatMul(parsed_equation.value())) {
-    std::vector<std::string> param_tensor_names = SetMatMulParamTensorNames(
-        &qnn_model_wrapper, node_unit, /*transpose_in0=*/false, /*transpose_in1=*/false);
+    std::vector<std::string> param_tensor_names;
+    RETURN_IF_ERROR(SetMatMulParamTensorNames(
+        &qnn_model_wrapper, node_unit, param_tensor_names, /*transpose_in0=*/false, /*transpose_in1=*/false));
     RETURN_IF_ERROR(ProcessOutputs(/*qnn_model_wrapper=*/qnn_model_wrapper,
                                    /*node_unit=*/node_unit,
                                    /*input_names=*/std::move(input_names),
@@ -555,8 +543,9 @@ Ort::Status EinsumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                    /*qnn_op_type=*/QNN_OP_MAT_MUL));
   } else if (IsEquationMatMulTransposeY(parsed_equation.value()) ||
              IsEquationMatMulBroadcastTransposeY(parsed_equation.value())) {
-    std::vector<std::string> param_tensor_names = SetMatMulParamTensorNames(
-        &qnn_model_wrapper, node_unit, /*transpose_in0=*/false, /*transpose_in1=*/true);
+    std::vector<std::string> param_tensor_names;
+    RETURN_IF_ERROR(SetMatMulParamTensorNames(
+        &qnn_model_wrapper, node_unit, param_tensor_names, /*transpose_in0=*/false, /*transpose_in1=*/true));
     RETURN_IF_ERROR(ProcessOutputs(/*qnn_model_wrapper=*/qnn_model_wrapper,
                                    /*node_unit=*/node_unit,
                                    /*input_names=*/std::move(input_names),
