@@ -934,78 +934,6 @@ TEST_F(QnnCPUBackendTests, ConvTranspose1Df32_DynamicWeights_DefaultBias) {
                 ExpectedEPNodeAssignment::All);
 }
 
-// Builds: weight_q0 (int8 init) -> DQ -> Q -> DQ -> Conv.
-// Used to regression-test chained folding; differing scale0/scale1 exercises real requant
-// on the intermediate STATIC tensor rather than a byte round-trip.
-static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
-    const std::vector<float>& scale0,
-    const std::vector<int8_t>& zp0,
-    const std::vector<float>& scale1,
-    const std::vector<int8_t>& zp1) {
-  return [scale0, zp0, scale1, zp1](ModelTestBuilder& builder) {
-    constexpr int64_t out_ch = 2;
-    constexpr int64_t in_ch = 3;
-    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
-    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
-
-    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
-
-    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
-    builder.MakeInitializer<float>("scale0", {out_ch}, scale0);
-    builder.MakeInitializer<int8_t>("zp0", {out_ch}, zp0);
-    builder.MakeInitializer<float>("scale1", {out_ch}, scale1);
-    builder.MakeInitializer<int8_t>("zp1", {out_ch}, zp1);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
-    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-
-    builder.AddNode("WeightDQ0", "DequantizeLinear", {"weight_q0", "scale0", "zp0"}, {"weight_dq0"},
-                    kOnnxDomain, axis_attrs);
-    builder.AddNode("WeightQ1", "QuantizeLinear", {"weight_dq0", "scale1", "zp1"}, {"weight_q1"},
-                    kOnnxDomain, axis_attrs);
-    builder.AddNode("WeightDQ1", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq1"},
-                    kOnnxDomain, axis_attrs);
-
-    builder.MakeOutput("output");
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
-
-    builder.AddNode("Conv", "Conv", {"input", "weight_dq1"}, {"output"}, kOnnxDomain, conv_attrs);
-  };
-}
-
-TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
-                  provider_options,
-                  /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-4f);
-}
-
-TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
-                  provider_options,
-                  /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-4f);
-}
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // The bug is from a QDQ model, and Conv node gets processed before it's producer Mul node
@@ -1097,34 +1025,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
                   provider_options,
                   13,
                   ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
-                  provider_options,
-                  /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-3f);
-}
-
-TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
-                  provider_options,
-                  /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-3f);
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
@@ -1973,9 +1873,10 @@ TEST_F(QnnHTPBackendTests, ConvU16S8S32_PerChannel) {
 }
 
 // Helper: Builds QDQ Conv model with fused activation (Relu or Clip) between Conv and output Q.
-// Pattern: DQ(input) + DQ(weight) + float_bias -> Conv -> Relu/Clip -> Q(forced encoding) -> DQ
+// Pattern: DQ(input) + DQ(weight) + DQ(bias) -> Conv -> Relu/Clip -> Q(forced encoding) -> DQ
 // Uses a forced output encoding with zp > 0 (encoding allows negatives) to trigger the
 // non-fusion path. Without the fix, HTP won't clamp and the test fails.
+// Weights are per-tensor quantized so the model does not depend on per-channel constant Q/DQ folding.
 template <typename ActivationQType, typename WeightQType>
 static GetTestQDQModelFn<ActivationQType> BuildQDQConvWithFusedActivationTestCase(
     const TestInputDef<float>& input_def,
@@ -1991,27 +1892,25 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvWithFusedActivationTestCas
              ModelTestBuilder& builder,
              std::vector<QuantParams<ActivationQType>>& output_qparams) {
     (void)output_qparams;
+    (void)bias_def;
 
     MakeTestInput<float>(builder, "input", input_def);
     QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
     std::string input_dq = AddQDQNodePair<ActivationQType>(builder, "input_qdq", "input",
                                                            input_qparams.scale, input_qparams.zero_point, true);
 
-    std::vector<float> weight_scales;
-    std::vector<WeightQType> weight_zps;
-    GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zps, 0, true);
-    std::vector<WeightQType> quantized_weights(SizeOfShape(weights_def.GetShape()));
-    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights,
-                                       weights_def.GetShape(), weight_scales, weight_zps, 0);
-    builder.MakeInitializer<WeightQType>("weights_quant", weights_def.GetShape(), quantized_weights);
-    std::vector<ONNX_NAMESPACE::AttributeProto> w_dq_attrs;
-    w_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-    builder.AddDequantizeLinearNode("WeightDQ", "weights_quant", weight_scales, weight_zps,
-                                    "weights_dq", w_dq_attrs, true);
+    // Per-tensor (not per-channel) weight QDQ: a standalone per-channel DQ on a
+    // constant is only accepted when constant Q/DQ folding is enabled, which this
+    // test must not depend on. The forced output encoding below is what's under test.
+    MakeTestInput<float>(builder, "weights", weights_def);
+    QuantParams<WeightQType> weights_qparams = GetTestInputQuantParams<WeightQType>(weights_def, true);
+    std::string weights_dq = AddQDQNodePair<WeightQType>(builder, "weights_qdq", "weights",
+                                                         weights_qparams.scale, weights_qparams.zero_point, true);
 
-    builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
-
-    builder.AddNode("Conv", "Conv", {input_dq, "weights_dq", "bias"}, {"conv_out"}, kOnnxDomain,
+    // No bias: a constant bias forces ORT to emit a standalone int32 bias DQ which, without
+    // constant Q/DQ folding, cannot run on HTP and would split the partition. The bias is
+    // irrelevant to the output-encoding clamp behavior under test here.
+    builder.AddNode("Conv", "Conv", {input_dq, weights_dq}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
@@ -2043,8 +1942,7 @@ TEST_F(QnnHTPBackendTests, ConvReluFusion_EncodingMinBelowZero) {
   auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
     MakeTestInput<float>(builder, "weights", weight_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+    builder.AddNode("Conv", "Conv", {"input", "weights"}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
@@ -2077,8 +1975,7 @@ TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMinBelowClipMin) {
   auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
     MakeTestInput<float>(builder, "weights", weight_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+    builder.AddNode("Conv", "Conv", {"input", "weights"}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
@@ -2114,8 +2011,7 @@ TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMaxAboveClipMax) {
   auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
     MakeTestInput<float>(builder, "weights", weight_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+    builder.AddNode("Conv", "Conv", {"input", "weights"}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
