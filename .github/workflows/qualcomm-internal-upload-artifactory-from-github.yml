@@ -232,7 +232,7 @@ jobs:
           NETRC_FILE=$(mktemp -p /tmp)
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" <<EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -249,7 +249,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
         run: |
           source uplevel_venv/bin/activate
-          twine upload -r re-artifactory-pypi-test-project \
+          twine upload -r artifactory-pypi-test-project \
             --cert ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
             --config-file ./qcom/scripts/upleveling/.pypirc \
             ${{ github.workspace }}/build/dist/*.whl
@@ -299,7 +299,7 @@ jobs:
         run: |
           $netrcFile = New-TemporaryFile
           @"
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login $env:ARTIFACTORY_USERNAME
           password $env:ARTIFACTORY_PASSWORD
           "@ | Set-Content -Path $netrcFile
@@ -447,7 +447,7 @@ jobs:
           NETRC_FILE=$(mktemp -p /tmp)
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" <<EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -467,7 +467,7 @@ jobs:
                        mktemp -p "${{ github.workspace }}")
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" << EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
