@@ -95,13 +95,13 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
 // Buffers are CPU-mappable (host accessible) and GPU-readable, enabling zero-copy tensor I/O.
 class Dx12SharedMemoryAllocator : public OrtAllocator {
  public:
-  Dx12SharedMemoryAllocator(const OrtMemoryInfo* mem_info)
+  Dx12SharedMemoryAllocator(const OrtMemoryInfo* mem_info, OrtStatus*& status)
       : memory_info_(mem_info),
         dx12_device_{nullptr},
         logger_(OrtLoggingManager::GetDefaultLogger()) {
     HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&dx12_device_));
     if (FAILED(hr) || dx12_device_ == nullptr) {
-      ORT_CXX_API_THROW("D3D12CreateDevice failed. DX12 allocator will not be available.", ORT_EP_FAIL);
+      status = MAKE_EP_FAIL("D3D12CreateDevice failed. DX12 allocator will not be available.");
     }
 
     Alloc = AllocImpl;

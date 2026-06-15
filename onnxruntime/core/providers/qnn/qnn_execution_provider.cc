@@ -2526,7 +2526,13 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
 
-    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info);
+    OrtStatus* status = nullptr;
+    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, status);
+
+    if (status != nullptr) {
+      return status;
+    }
+
     *allocator = dx12_allocator.release();
   }
 #endif  // _WIN32

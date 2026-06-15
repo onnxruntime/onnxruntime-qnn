@@ -417,8 +417,8 @@ void ORT_API_CALL Dx12SharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_
                  ORT_LOGGING_LEVEL_INFO,
                  "\nFreeing DX12 allocation:"
                  "\n  resource           = %p"
-                 "\n  offset             = %lu"
-                 "\n  total_size         = %lu"
+                 "\n  offset             = %llu"
+                 "\n  total_size         = %llu"
                  "\n  allocation_address = %p\n",
                  allocation_record.dx12_info.resource,
                  allocation_record.dx12_info.offset,

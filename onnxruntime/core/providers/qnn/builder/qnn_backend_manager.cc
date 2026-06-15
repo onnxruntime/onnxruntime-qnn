@@ -509,7 +509,7 @@ Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TY
                                                       Qnn_LogHandle_t& log_handle,
                                                       const std::string& backend_label) {
   if (log_handle) {
-    // Log already intialized
+    // Log already initialized
     return Ort::Status();
   }
 
@@ -2879,6 +2879,7 @@ bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
 
   bool supported = true;
 
+  HRESULT hr = S_OK;
   Microsoft::WRL::ComPtr<ID3D12Device> d3d12_device;
   Microsoft::WRL::ComPtr<ID3D12Resource> d3d12_resource;
   Qnn_ContextHandle_t context = nullptr;
@@ -2902,9 +2903,11 @@ bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
     supported = false;
   }
 
-  HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12_device));
-  if (FAILED(hr) || d3d12_device == nullptr) {
-    supported = false;
+  if (supported) {
+    hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12_device));
+    if (FAILED(hr) || d3d12_device == nullptr) {
+      supported = false;
+    }
   }
 
   if (supported) {
