@@ -126,7 +126,10 @@ void OpTraceCollector::RecordOpMapping(const std::string& qnn_op_name, const std
   op_mappings_.push_back(std::move(mapping));
 }
 
-void OpTraceCollector::Finalize(const std::string& graph_name, const QnnModelWrapper& wrapper, OpTraceInfo& out) {
+void OpTraceCollector::Finalize(const std::string& graph_name,
+                                const QnnModelWrapper& wrapper,
+                                OpTraceInfo& out_info,
+                                OpTraceLookup& out_lookup) {
   // Records the direct ONNX<->QNN tensor correspondence when a tensor was
   // renamed by an op builder (onnx_name != qnn_name).
   //
@@ -183,9 +186,14 @@ void OpTraceCollector::Finalize(const std::string& graph_name, const QnnModelWra
     recorded_tensor_names_.insert(qnn_name);
   }
 
-  out.graph_name = graph_name;
-  out.op_mappings = std::move(op_mappings_);
-  out.tensor_mappings = std::move(tensor_mappings_);
+  out_info.graph_name = graph_name;
+  out_info.op_mappings = std::move(op_mappings_);
+  out_info.tensor_mappings = std::move(tensor_mappings_);
+
+  // Build the dst_name->sources lookup used for profiling enrichment at execute time.
+  for (const auto& mapping : out_info.op_mappings) {
+    out_lookup[mapping.dst_name] = mapping.sources;
+  }
 }
 
 bool WriteTraceToFile(const FrameworkOpTrace& trace,
@@ -235,6 +243,42 @@ bool WriteTraceToFile(const FrameworkOpTrace& trace,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
               ("Framework op trace written to: " + output_path.string()).c_str());
   return true;
+}
+
+bool LoadTraceLookupFromFile(const std::filesystem::path& trace_path,
+                             OpTraceLookup& out_lookup,
+                             const Ort::Logger& logger) {
+  // Parsing lives in the logger-free ParseTraceLookupFromFile (test-safe
+  // translation unit); this wrapper adds the EP logger, turning each load
+  // status into a log line.
+  size_t skipped_entries = 0;
+  switch (ParseTraceLookupFromFile(trace_path, out_lookup, &skipped_entries)) {
+    case TraceLoadStatus::kCannotOpen:
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Cannot open op trace sidecar: " + trace_path.string()).c_str());
+      return false;
+    case TraceLoadStatus::kParseError:
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Failed to parse op trace sidecar JSON: " + trace_path.string()).c_str());
+      return false;
+    case TraceLoadStatus::kMissingSubgraphTraces:
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Op trace sidecar missing required `subgraph_traces` key: " + trace_path.string()).c_str());
+      return false;
+    case TraceLoadStatus::kOk:
+      if (skipped_entries > 0) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    ("Op trace sidecar had " + std::to_string(skipped_entries) +
+                     " malformed op_mappings entries (missing dst_name or sources) "
+                     "that were skipped: " +
+                     trace_path.string())
+                        .c_str());
+      }
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
+                  ("Loaded op trace sidecar for profiling enrichment: " + trace_path.string()).c_str());
+      return true;
+  }
+  return false;  // unreachable; silences -Wreturn-type on some compilers
 }
 
 }  // namespace qnn

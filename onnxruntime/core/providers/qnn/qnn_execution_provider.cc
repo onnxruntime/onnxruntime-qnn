@@ -464,6 +464,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
+
+    if (prepare_only_ && !context_cache_enabled_) {
+      throw std::runtime_error(
+          "enable_htp_prepare_only=1 requires ep.context_enable=1. "
+          "prepare_only mode only generates the context model for ahead-of-time compilation.");
+    }
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -1037,6 +1043,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                 false,
                                                 logger_);
 
+  // When dumping to DLC on a device-less host, the target backend validates op configs against an
+  // arch-agnostic op table and over-rejects arch-specific (v73+) ops. This option skips that
+  // validation, falling back to the serializer's generic checks. Default false keeps validation on.
+  static const std::string SKIP_BACKEND_OP_VALIDATION = "skip_backend_op_validation";
+  auto skip_backend_op_validation = ParseBoolOption(ort_api,
+                                                    session_options,
+                                                    FormatEPConfigKey(SKIP_BACKEND_OP_VALIDATION),
+                                                    false,
+                                                    logger_);
+
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
   if (
@@ -1062,7 +1078,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      htp_arch,
                                      soc_model,
                                      op_packages,
-                                     skip_qnn_version_check},
+                                     skip_qnn_version_check,
+                                     enable_framework_op_trace_,
+                                     skip_backend_op_validation},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
@@ -1497,16 +1515,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
-    std::string genie_path = kDefaultGenieBackendPath;
-    std::string backend_path_option;
-    GetSessionConfigEntryOrDefault(ep->ort_api, ep->session_options_,
-                                   ep->FormatEPConfigKey("backend_path"), "",
-                                   backend_path_option);
-    if (!backend_path_option.empty()) {
-      genie_path = backend_path_option;
-    }
     ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{genie_path}, ep->logger_);
+        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
     auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
@@ -1545,13 +1555,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
-
-  if (ep->prepare_only_ && !ep->context_cache_enabled_) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_prepare_only=1 requires ep.context_enable=1. "
-                "Disabling enable_htp_prepare_only since context cache is not enabled.");
-    ep->prepare_only_ = false;
-  }
 
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
@@ -1889,6 +1892,28 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ort_api);
   std::basic_string<ORTCHAR_T> context_model_path;
   GetContextOnnxModelFilePath(context_cache_path_cfg_, model_path, context_model_path);
+
+  // AOT Phase 2 sidecar discovery for profiling enrichment. Loaded here
+  // (before any context binary is restored) so the lookup is on the backend
+  // manager when the first profile extraction runs, ensuring InitCsvFile()
+  // emits the `ONNX Source Ops` column and every NODE event row is annotated.
+  if (enable_framework_op_trace_) {
+    auto trace_path = qnn::DeriveTracePathFromContextModel(std::filesystem::path(context_model_path));
+    std::error_code ec;
+    if (std::filesystem::exists(trace_path, ec) && !ec) {
+      qnn::OpTraceLookup loaded;
+      if (qnn::LoadTraceLookupFromFile(trace_path, loaded, logger_)) {
+        qnn_backend_manager_->SetOpTraceLookup(std::move(loaded));
+      }
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("No sidecar op trace found at: " + trace_path.string() +
+                   " - the `ONNX Source Ops` profiling CSV column will be present "
+                   "(framework op trace was requested) but every NODE row's annotation "
+                   "will be empty.")
+                      .c_str());
+    }
+  }
 
   for (auto main_context_pos : main_context_pos_list) {
     // Create QNN context from the cached binary, deserialize the QNN graph from the binary
