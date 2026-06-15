@@ -533,10 +533,11 @@ jobs:
 
       - name: Prepare Test Package Archive
         run: |
+          TEST_PACKAGE_VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
           ./qcom/scripts/all/prepare_test_package.sh \
             "${{ github.workspace }}/test_archives" \
             "${{ github.workspace }}/build" \
-            "${{ env.QA_TAG }}"
+            "$TEST_PACKAGE_VERSION"
 
       - name: Upload Artifacts to QA Artifactory
         if: ${{ !inputs.skip_publish_qa }}
