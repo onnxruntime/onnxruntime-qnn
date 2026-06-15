@@ -23,3 +23,11 @@ jobs:
       skip_publish_wheel: false
       build_windows_arm64_debug: true
       build_windows_arm64_relwithdebinfo: true
+
+  coverage:
+    name: Per-File Coverage Tracking
+    uses: ./.github/workflows/qualcomm-internal-coverage.yml
+    secrets: inherit
+    continue-on-error: true
+    with:
+      nightly_coverage: true

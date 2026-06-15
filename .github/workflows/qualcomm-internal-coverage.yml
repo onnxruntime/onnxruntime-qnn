@@ -15,12 +15,20 @@ on:
         description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
         type: string
         default: '3.10'
+      nightly_coverage:
+        description: "Set to true on nightly runs to update the per-file coverage Excel in Artifactory"
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       target_py_vsn:
         description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
         type: string
         default: '3.10'
+      nightly_coverage:
+        description: "Set to true to test the nightly Artifactory upload path"
+        type: boolean
+        default: false
 
 jobs:
   coverage-linux-x86_64:
@@ -42,7 +50,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || \
+             [ "${{ inputs.nightly_coverage }}" = "true" ]; then
             echo "run=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -79,7 +88,7 @@ jobs:
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && !cancelled()
         with:
           name: "coverage-linux-x86_64-${{ github.sha }}"
           retention-days: 3
@@ -90,7 +99,7 @@ jobs:
             ${{ env.COVERAGE_DIR }}/diff-coverage.txt
 
       - name: Show Diff Coverage Summary
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && !cancelled()
         run: |
           txt="${COVERAGE_DIR}/diff-coverage.txt"
           if [ -f "${txt}" ]; then
@@ -99,6 +108,31 @@ jobs:
             cat "${txt}" >> "${GITHUB_STEP_SUMMARY}"
             echo '```' >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      - name: Set up JFrog CLI
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        uses: jfrog/setup-jfrog-cli@v5
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Update per-file coverage Excel
+        # !cancelled(): run even when the coverage step failed due to UT failure.
+        # coverage.xml is still produced by generate_coverage.sh before it propagates the exit code.
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        run: |
+          python3 qcom/build_and_test.py \
+            --target-py-version ${{ inputs.target_py_vsn }} \
+            --only \
+            file_coverage_excel_linux_x86_64
+
+      - name: Upload per-file coverage Excel to Artifactory
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        run: |
+          jf rt upload \
+            "${COVERAGE_DIR}/per_file_coverage.xlsx" \
+            "${{ secrets.BUILD_ARTIFACTORY_REPO }}/qa/nightly-$(date -u +%Y-%m-%d)-${GITHUB_SHA:0:10}/" \
+            --flat=true
 
       - name: Post Diff Coverage to PR
         # TODO: re-enable once the coverage pipeline is stable.
