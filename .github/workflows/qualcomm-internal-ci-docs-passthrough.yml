@@ -1,0 +1,59 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+# Companion to qualcomm-internal-ci.yml. That workflow uses paths-ignore to skip builds on
+# docs-only PRs, but skipping it would leave required status checks "waiting" and block merges.
+# This workflow fires on the complement (when at least one doc file changed) and posts synthetic
+# passing statuses for all 8 required checks so docs-only PRs remain mergeable.
+#
+# If a new required check is added to branch protection, add its name to the checks array below.
+
+name: Qualcomm Internal Docs Passthrough
+
+permissions:
+  checks: write
+  pull-requests: read
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, rel-*, rel/**/*]
+    paths:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+
+jobs:
+  pass-required-checks:
+    name: Pass required checks (docs-only change)
+    # Skip draft PRs — they can't merge anyway, no need to post checks.
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // Post a synthetic passing status for every required check so that docs-only PRs
+            // are not blocked by "Expected — waiting for status" on the main CI workflow,
+            // which paths-ignore suppresses when no code-bearing files are changed.
+            const checks = [
+              'Build & Test / lint',
+              'Build & Test / build-and-test-linux-x86_64 / build-linux-x86_64-py3.10',
+              'Build & Test / build-and-test-windows-x86_64 / build-windows-x86_64-py3.12',
+              'Build & Test / build-and-test-windows-arm64 / build-windows-arm64-pynone',
+              'Build & Test / build-and-test-windows-arm64 / test-windows-arm64-pynone',
+              'Build & Test / build-and-test-windows-arm64ec / build-windows-arm64ec-py3.12',
+              'Build & Test / build-and-test-windows-arm64ec / test-windows-arm64ec-py3.12-wheel-smoke',
+              'Build & Test / test-linux-aarch64-oe-gcc11_2 / test-linux-aarch64_oe_gcc11_2-pynone',
+            ];
+            for (const name of checks) {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name,
+                head_sha: context.payload.pull_request.head.sha,
+                status: 'completed',
+                conclusion: 'success',
+                output: { title: 'Skipped (docs-only change)', summary: '' },
+              });
+            }

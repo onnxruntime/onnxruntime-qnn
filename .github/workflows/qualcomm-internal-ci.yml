@@ -11,9 +11,17 @@ permissions:
 on:
   push:
     branches: [main, rel-*, rel/**/*]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, rel-*, rel/**/*]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
   merge_group:
     types: [checks_requested]
 
