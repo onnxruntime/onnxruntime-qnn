@@ -4,6 +4,7 @@
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 
 #include <filesystem>
+#include <string_view>
 
 #include "core/providers/qnn/qnn_telemetry.h"
 
@@ -116,6 +117,30 @@ void Serializer::LogQnnProfileEventAsTraceLogging(
 }
 #endif
 
+std::string Serializer::LookupOnnxSources(const char* identifier) const {
+  if (!profiling_info_.op_trace_lookup || !identifier) return "";
+  // HTP profiling events may append ":OpId_{N} ({unit})" to the op name
+  // (e.g. "add_node:OpId_17 (cycles)"). Strip that suffix to recover the base
+  // op name used as the lookup key. A string_view does the trimming; the key is
+  // materialized only for the find() call, since the map is keyed by std::string.
+  std::string_view id_view(identifier);
+  auto colon_pos = id_view.find(":OpId_");
+  if (colon_pos != std::string_view::npos) id_view = id_view.substr(0, colon_pos);
+  auto it = profiling_info_.op_trace_lookup->find(std::string(id_view));
+  if (it == profiling_info_.op_trace_lookup->end()) return "";
+  // The column lists the ONNX op names a QNN op was fused from, so only
+  // OP-typed sources are emitted; TENSOR-typed sources are skipped. An entry
+  // with no OP-typed sources produces an empty cell.
+  std::string result;
+  for (const auto& src : it->second) {
+    if (src.type == TraceTargetType::kOp) {
+      if (!result.empty()) result += ';';
+      result += src.name;
+    }
+  }
+  return result;
+}
+
 Ort::Status Serializer::ProcessEvent(const QnnProfile_EventId_t event_id, const std::string& event_level,
                                      const QnnProfile_EventData_t& event_data) {
   const std::string& message = GetEventTypeString(event_data.type);
@@ -132,7 +157,11 @@ Ort::Status Serializer::ProcessEvent(const QnnProfile_EventId_t event_id, const 
              << "BACKEND"
              << ","
              << event_level << ","
-             << (event_data.identifier ? event_data.identifier : "NULL") << "\n";
+             << (event_data.identifier ? event_data.identifier : "NULL");
+    if (profiling_info_.op_trace_lookup) {
+      outfile_ << "," << LookupOnnxSources(event_data.identifier);
+    }
+    outfile_ << "\n";
   }
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   QnnSystemProfile_ProfileEventV1_t* created_event = nullptr;
@@ -180,8 +209,11 @@ Ort::Status Serializer::ProcessExtendedEvent(const QnnProfile_EventId_t event_id
                << "BACKEND"
                << ","
                << event_level << ","
-               << (event_data.v1.identifier ? event_data.v1.identifier : "NULL")
-               << "\n";
+               << (event_data.v1.identifier ? event_data.v1.identifier : "NULL");
+      if (profiling_info_.op_trace_lookup) {
+        outfile_ << "," << LookupOnnxSources(event_data.v1.identifier);
+      }
+      outfile_ << "\n";
     }
   }
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -224,9 +256,15 @@ Ort::Status Serializer::InitCsvFile() {
 
   outfile_.open(output_filepath.c_str(), std::ios_base::app);
   RETURN_IF(!outfile_.is_open(), ("Failed to open profiling file: " + output_filepath).c_str());
-  // If file didn't exist before, write the header
+  // If file didn't exist before, write the header. The header gains the
+  // `ONNX Source Ops` column when a trace lookup is attached, matching the
+  // per-event row layout written by ProcessEvent.
   if (!exists) {
-    outfile_ << "Msg Timestamp,Message,Time,Unit of Measurement,Timing Source,Event Level,Event Identifier\n";
+    if (profiling_info_.op_trace_lookup) {
+      outfile_ << "Msg Timestamp,Message,Time,Unit of Measurement,Timing Source,Event Level,Event Identifier,ONNX Source Ops\n";
+    } else {
+      outfile_ << "Msg Timestamp,Message,Time,Unit of Measurement,Timing Source,Event Level,Event Identifier\n";
+    }
   }
 
   return Ort::Status();

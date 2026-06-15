@@ -2293,6 +2293,17 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::Profili
     profiling_info.num_events = num_events;
 #endif
 
+    // When framework op tracing is enabled, attach the lookup so InitCsvFile()
+    // emits the `ONNX Source Ops` column header and ProcessEvent() annotates each
+    // NODE row with the originating ONNX op names. The lookup is read by pointer
+    // and continues to fill as later graphs compose; only DETAILED/OPTRACE
+    // profiling produces the per-NODE events this column annotates.
+    const bool has_node_level_profiling = profiling_level_merge_ == ProfilingLevel::DETAILED ||
+                                          profiling_level_merge_ == ProfilingLevel::OPTRACE;
+    if (enable_framework_op_trace_ && has_node_level_profiling) {
+      profiling_info.op_trace_lookup = &op_trace_lookup_;
+    }
+
     profile::Serializer profile_writer(profiling_info,
                                        qnn_sys_interface_,
                                        tracelogging_provider_ep_enabled);
