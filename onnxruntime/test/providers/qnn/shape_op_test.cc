@@ -69,6 +69,19 @@ TEST_F(QnnCPUBackendTests, Shape_1D_Float) {
                  ExpectedEPNodeAssignment::All, "cpu", 15);
 }
 
+// Test that an empty shape slice (start == end) is NOT assigned to QNN EP.
+// ONNX defines output_length = max(0, end - start), so start == end is a valid empty slice
+// (length 0). However, QNN's Shape op (QnnOpDef MasterOpDef) requires end in [start + 1, N] and
+// cannot represent a zero-length output, so the op builder rejects it during IsOpSupported() and
+// the node falls back to the CPU EP.
+// Input: float32 [2, 3, 4, 5]. start=2, end=2 -> empty slice.
+TEST_F(QnnCPUBackendTests, Shape_EmptySlice_Float) {
+  RunShapeOpTest(TestInputDef<float>({2, 3, 4, 5}, false, -10.0f, 10.0f),
+                 {test::MakeAttribute("start", static_cast<int64_t>(2)),
+                  test::MakeAttribute("end", static_cast<int64_t>(2))},
+                 ExpectedEPNodeAssignment::None, "cpu", 15);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:

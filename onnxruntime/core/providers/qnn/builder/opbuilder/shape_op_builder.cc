@@ -58,8 +58,9 @@ Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   const int64_t rank = static_cast<int64_t>(input_shape.size());
   RETURN_IF(rank < 1, "QNN Shape requires an input of rank >= 1.");
 
-  // ONNX `start`/`end` attributes (opset >= 15). Negative values index from the end and are
-  // clamped to [0, rank], matching the ONNX Shape spec.
+  // Step 1: Resolve `start`/`end` per the ONNX Shape spec (opset >= 15). The reference op is
+  // `data.shape[start:end]`: negative values count from the end (add rank), then both are clamped
+  // to [0, rank]. The resolved output length is max(0, end - start) (start >= end => empty shape).
   OrtNodeAttrHelper node_helper(node_unit);
   int64_t start = node_helper.Get("start", static_cast<int64_t>(0));
   int64_t end = node_helper.Get("end", rank);
@@ -72,13 +73,19 @@ Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   }
   start = std::min<int64_t>(std::max<int64_t>(start, 0), rank);
   end = std::min<int64_t>(std::max<int64_t>(end, 0), rank);
+  const int64_t output_length = std::max<int64_t>(0, end - start);
 
-  // QNN constraints: start must be in [0, rank] and end must be in [start+1, rank]
-  // (start == rank is valid for an empty slice at the tail end).
-  RETURN_IF_NOT(start >= 0 && start <= rank,
-                "QNN Shape requires the resolved `start` axis to be in range [0, rank].");
-  RETURN_IF_NOT(end >= start + 1 && end <= rank,
-                "QNN Shape requires the resolved `end` axis to be in range [start+1, rank].");
+  // Step 2: Postprocess to match the QNN op definition. Per QnnOpDef (MasterOpDef "Shape"), the
+  // output is a 1-D tensor of shape [M] with M = end - start, and QNN constrains `end` to
+  // [start + 1, N] -- i.e. M >= 1. QNN cannot represent a zero-length output, so the ONNX-valid
+  // empty-slice case (output_length == 0) has no QNN equivalent. Clamping `end` up to `start + 1`
+  // would silently produce a length-1 output and corrupt results, so instead we reject the op here.
+  // Returning an error from IsOpSupported() leaves the node unassigned, and it falls back to CPU EP.
+  RETURN_IF(output_length < 1,
+            "QNN Shape produces a 1-D output of length (end - start) and requires end >= start + 1; "
+            "the ONNX empty-slice case (start >= end) is not supported by QNN and falls back to CPU.");
+  // With output_length >= 1 we have end >= start + 1 and end <= rank, which also implies
+  // start in [0, rank - 1] (QNN's `start` constraint), so no separate start-range check is needed.
 
   std::vector<std::string> param_tensor_names;
 
