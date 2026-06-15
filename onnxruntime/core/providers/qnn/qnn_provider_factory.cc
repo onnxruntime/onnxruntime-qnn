@@ -487,6 +487,8 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // the newest ORT API method this EP calls. Below this floor, GetApi()
   // returns a function table missing members the EP would dereference.
   constexpr uint32_t kMinOrtApiVersion = 24;
+  static_assert(kMinOrtApiVersion <= ORT_API_VERSION,
+                "kMinOrtApiVersion must not exceed ORT_API_VERSION");
 
   const char* version_str = ort_api_base->GetVersionString();
   const uint32_t runtime_api_version = onnxruntime::qnn::detail::ParseRuntimeOrtApiVersion(version_str);

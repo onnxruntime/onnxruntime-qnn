@@ -27,12 +27,12 @@ inline uint32_t ParseRuntimeOrtApiVersion(const char* version_str) {
     return 0;
   }
 
-  int minor = 0;
+  uint32_t minor = 0;
   auto [p2, ec2] = std::from_chars(p1 + 1, end, minor);
-  if (ec2 != std::errc{} || minor < 0) {
+  if (ec2 != std::errc{}) {
     return 0;
   }
-  return static_cast<uint32_t>(minor);
+  return minor;
 }
 
 }  // namespace onnxruntime::qnn::detail
