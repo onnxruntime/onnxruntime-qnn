@@ -201,6 +201,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return context_map_.find(context_handle) != context_map_.end();
   }
 
+  // Returns the mutex that serializes SSR context recovery across models sharing this backend.
+  std::mutex& GetContextRecoveryMutex() { return context_recovery_mutex_; }
+
   // Returns the context priority setting for this backend.
   ContextPriority GetContextPriority() const { return context_priority_; }
 
@@ -702,6 +705,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Note: Using shared_ptr<QnnContextHandleRecord> so that we can refer to it with a weak_ptr from a
   // HtpSharedMemoryAllocator allocation cleanup callback.
   std::unordered_map<Qnn_ContextHandle_t, std::shared_ptr<QnnContextHandleRecord>> context_map_;
+
+  // Serializes the check → release → create → register sequence in RecoverFromSSR().
+  // In weight-sharing scenarios multiple QnnModel instances may detect an SSR event
+  // simultaneously and call RecoverFromSSR() concurrently.  Without this mutex the
+  // first-model-wins check (HasContextHandle) is racy: both models see the stale handle,
+  // both release it (double-free), or one reads a null context mid-recovery.
+  std::mutex context_recovery_mutex_;
 
   // Map of EP Main Context Node names to Qnn_ContextHandle_t
   std::mutex ep_context_handle_map_mutex_;

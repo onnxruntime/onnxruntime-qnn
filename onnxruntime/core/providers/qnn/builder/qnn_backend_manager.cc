@@ -1886,7 +1886,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[0], context));
     // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
     if (!context_bin_filepath.empty()) {
-      qnn_model->SetContextRecoveryInfo(context_bin_filepath, node_name, max_spill_fill_size);
+      qnn_model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
     }
     qnn_models.emplace(node_name, std::move(qnn_model));
   } else {
@@ -1896,7 +1896,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
       std::string graph_name(graphs_info[i].graphInfoV1.graphName);
       // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
       if (!context_bin_filepath.empty()) {
-        qnn_model->SetContextRecoveryInfo(context_bin_filepath, graph_name, max_spill_fill_size);
+        qnn_model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
       }
       qnn_models.emplace(graph_name, std::move(qnn_model));
     }

@@ -484,70 +484,77 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
   Qnn_ContextHandle_t new_context = nullptr;
 
-  if (qnn_backend_manager_->HasContextHandle(old_context)) {
-    // We are the first model to recover from this SSR event.
-    // Free the old (shared) context and create a new one from the binary.
-    qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
+  {
+    // Serialize the check → release → create → register sequence across all models
+    // sharing this QnnBackendManager.  Without this lock, concurrent SSR recovery in
+    // weight-sharing scenarios causes double-free or stale-context reads.
+    std::lock_guard<std::mutex> recovery_lock(qnn_backend_manager_->GetContextRecoveryMutex());
 
-    std::ifstream cache_file(context_bin_filepath_.c_str(), std::ifstream::binary);
-    RETURN_IF(!cache_file || !cache_file.good(),
-              ("SSR recovery: failed to open context file: " + context_bin_filepath_).c_str());
-    cache_file.seekg(0, cache_file.end);
-    const size_t buffer_size = static_cast<size_t>(cache_file.tellg());
-    RETURN_IF(buffer_size == 0, ("SSR recovery: context binary file is empty: " + context_bin_filepath_).c_str());
-    cache_file.seekg(0, cache_file.beg);
-    auto buffer = std::make_unique<char[]>(buffer_size);
-    cache_file.read(buffer.get(), static_cast<std::streamsize>(buffer_size));
-    RETURN_IF(!cache_file, ("SSR recovery: failed to read context binary: " + context_bin_filepath_).c_str());
-    cache_file.close();
+    if (qnn_backend_manager_->HasContextHandle(old_context)) {
+      // We are the first model to recover from this SSR event.
+      // Free the old (shared) context and create a new one from the binary.
+      qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
 
-    const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+      std::ifstream cache_file(context_bin_filepath_.c_str(), std::ifstream::binary);
+      RETURN_IF(!cache_file || !cache_file.good(),
+                ("SSR recovery: failed to open context file: " + context_bin_filepath_).c_str());
+      cache_file.seekg(0, cache_file.end);
+      const size_t buffer_size = static_cast<size_t>(cache_file.tellg());
+      RETURN_IF(buffer_size == 0, ("SSR recovery: context binary file is empty: " + context_bin_filepath_).c_str());
+      cache_file.seekg(0, cache_file.beg);
+      auto buffer = std::make_unique<char[]>(buffer_size);
+      cache_file.read(buffer.get(), static_cast<std::streamsize>(buffer_size));
+      RETURN_IF(!cache_file, ("SSR recovery: failed to read context binary: " + context_bin_filepath_).c_str());
+      cache_file.close();
 
-    // Build context configs: priority + spill fill buffer.
-    QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
-    priority_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
-    priority_config.priority = QNN_PRIORITY_NORMAL;
-    auto ctx_priority = qnn_backend_manager_->GetContextPriority();
-    if (ctx_priority == ContextPriority::LOW)
-      priority_config.priority = QNN_PRIORITY_LOW;
-    else if (ctx_priority == ContextPriority::NORMAL_HIGH)
-      priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
-    else if (ctx_priority == ContextPriority::HIGH)
-      priority_config.priority = QNN_PRIORITY_HIGH;
+      const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+
+      // Build context configs: priority + spill fill buffer.
+      QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
+      priority_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
+      priority_config.priority = QNN_PRIORITY_NORMAL;
+      auto ctx_priority = qnn_backend_manager_->GetContextPriority();
+      if (ctx_priority == ContextPriority::LOW)
+        priority_config.priority = QNN_PRIORITY_LOW;
+      else if (ctx_priority == ContextPriority::NORMAL_HIGH)
+        priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
+      else if (ctx_priority == ContextPriority::HIGH)
+        priority_config.priority = QNN_PRIORITY_HIGH;
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
-    QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
-    QnnHtpContext_CustomConfig_t spill_fill_custom_config;
-    spill_fill_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-    QnnHtpContext_GroupRegistration_t group_info;
-    group_info.firstGroupHandle = 0x0;  // New group (this is the only context after SSR)
-    group_info.maxSpillFillBuffer = max_spill_fill_size_;
-    spill_fill_custom_config.groupRegistration = group_info;
-    spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    spill_fill_config.customConfig = &spill_fill_custom_config;
-    QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size_ > 0 ? &spill_fill_config : nullptr;
+      QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
+      QnnHtpContext_CustomConfig_t spill_fill_custom_config;
+      spill_fill_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+      QnnHtpContext_GroupRegistration_t group_info;
+      group_info.firstGroupHandle = 0x0;  // New group (this is the only context after SSR)
+      group_info.maxSpillFillBuffer = max_spill_fill_size_;
+      spill_fill_custom_config.groupRegistration = group_info;
+      spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+      spill_fill_config.customConfig = &spill_fill_custom_config;
+      QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size_ > 0 ? &spill_fill_config : nullptr;
 #else
-    QnnContext_Config_t* spill_fill_ptr = nullptr;
+      QnnContext_Config_t* spill_fill_ptr = nullptr;
 #endif
 
-    const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
+      const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
 
-    auto rt = qnn_interface.contextCreateFromBinary(
-        qnn_backend_manager_->GetQnnBackendHandle(),
-        qnn_backend_manager_->GetQnnDeviceHandle(),
-        context_configs,
-        static_cast<void*>(buffer.get()),
-        static_cast<Qnn_ContextBinarySize_t>(buffer_size),
-        &new_context,
-        qnn_backend_manager_->GetQnnProfileHandle());
-    RETURN_IF(QNN_SUCCESS != rt,
-              ("SSR recovery: contextCreateFromBinary failed. Error code: " + std::to_string(rt)).c_str());
-    RETURN_IF_ERROR(qnn_backend_manager_->AddQnnContextHandle(new_context));
-  } else {
-    // Another model already recovered and recreated the context from this binary.
-    // Reuse it — it's the only context remaining in context_map_.
-    new_context = qnn_backend_manager_->GetQnnContext(0);
-  }
+      auto rt = qnn_interface.contextCreateFromBinary(
+          qnn_backend_manager_->GetQnnBackendHandle(),
+          qnn_backend_manager_->GetQnnDeviceHandle(),
+          context_configs,
+          static_cast<void*>(buffer.get()),
+          static_cast<Qnn_ContextBinarySize_t>(buffer_size),
+          &new_context,
+          qnn_backend_manager_->GetQnnProfileHandle());
+      RETURN_IF(QNN_SUCCESS != rt,
+                ("SSR recovery: contextCreateFromBinary failed. Error code: " + std::to_string(rt)).c_str());
+      RETURN_IF_ERROR(qnn_backend_manager_->AddQnnContextHandle(new_context));
+    } else {
+      // Another model already recovered and recreated the context from this binary.
+      // Reuse it — it's the only context remaining in context_map_.
+      new_context = qnn_backend_manager_->GetQnnContext(0);
+    }
+  }  // release recovery_lock
 
   // Retrieve our graph from the (new or reused) context.
   const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();

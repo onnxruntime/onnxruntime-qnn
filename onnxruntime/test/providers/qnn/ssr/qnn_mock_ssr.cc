@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 //
 // QnnMockSSR.dll — wraps QnnHtp.dll and injects QNN_COMMON_ERROR_SYSTEM_COMMUNICATION
 // on the FIRST graphExecute call to simulate an NPU Subsystem Restart (SSR).
@@ -30,10 +30,16 @@ auto free_qnn_htp_fn = [](HMODULE m) {
 std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(free_qnn_htp_fn)> qnn_htp(
     LoadLibraryW(L"QnnHtp.dll"), free_qnn_htp_fn);
 
-FARPROC addr = GetProcAddress(qnn_htp.get(), "QnnInterface_getProviders");
-typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
-QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
-auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
+struct StaticInit {
+  StaticInit() {
+    if (!qnn_htp.get()) return;
+    FARPROC addr = GetProcAddress(qnn_htp.get(), "QnnInterface_getProviders");
+    if (!addr) return;
+    typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
+    QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
+    real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
+  }
+} static_init;
 #endif  // defined(_WIN32)
 }  // namespace
 
@@ -54,6 +60,9 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
     call_cnt += 1;
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
+  if (!real_providerList) {
+    return QNN_COMMON_ERROR_GENERAL;
+  }
   return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphExecute(
       graphHandle, inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
 }
@@ -66,16 +75,22 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
                                                        uint32_t* numProviders) {
   static QnnInterface_t mock_interface;
 #if defined(_WIN32)
-  mock_interface.backendId = real_providerList[0]->backendId;
+  if (real_providerList) {
+    mock_interface.backendId = real_providerList[0]->backendId;
+  } else {
+    mock_interface.backendId = 0;
+  }
 #else
   mock_interface.backendId = 0;
 #endif
   mock_interface.providerName = "MockSSR";
 #if defined(_WIN32)
-  mock_interface.apiVersion = real_providerList[0]->apiVersion;
-  mock_interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
-  // Always intercept graphExecute to simulate SSR.
-  mock_interface.QNN_INTERFACE_VER_NAME.graphExecute = QnnGraph_execute;
+  if (real_providerList) {
+    mock_interface.apiVersion = real_providerList[0]->apiVersion;
+    mock_interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
+    // Always intercept graphExecute to simulate SSR.
+    mock_interface.QNN_INTERFACE_VER_NAME.graphExecute = QnnGraph_execute;
+  }
 #endif  // defined(_WIN32)
   static std::vector<const QnnInterface_t*> m_providerPtrs = {&mock_interface};
   *providerList = m_providerPtrs.data();
