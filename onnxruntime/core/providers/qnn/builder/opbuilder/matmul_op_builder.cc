@@ -89,6 +89,10 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[k_axis]) % num_blocks != 0) {
     return false;
   }
+  // Go for BQ FP16 only if LPBQ conversion is set to false
+  if (qnn_model_wrapper.GetModelSettings().convert_bq_to_lpbq) {
+    return false;
+  }
   return true;
 }
 

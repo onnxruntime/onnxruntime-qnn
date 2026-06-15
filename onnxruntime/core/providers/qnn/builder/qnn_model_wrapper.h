@@ -38,6 +38,7 @@ struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
+  bool convert_bq_to_lpbq = true;
 };
 
 class QnnModelWrapper {

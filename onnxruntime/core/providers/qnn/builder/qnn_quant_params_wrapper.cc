@@ -594,75 +594,77 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     params_.axisScaleOffsetEncoding.axis = static_cast<int32_t>(axis);
     params_.axisScaleOffsetEncoding.numScaleOffsets = static_cast<uint32_t>(num_elems);
     params_.axisScaleOffsetEncoding.scaleOffset = data_span.data();
-  } else if (is_block_quant && is_int4_type) {
-    // ONNX block quantization -> QNN LPBQ (BLOCKWISE_EXPANSION) conversion only supported for 4-bit.
+  } else if (is_block_quant) {
+    if (is_int4_type && qnn_model_wrapper.GetModelSettings().convert_bq_to_lpbq) {
+      // ONNX block quantization -> QNN LPBQ (BLOCKWISE_EXPANSION) conversion only supported for 4-bit.
 
-    std::vector<uint32_t> io_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");
-    const int32_t io_rank = static_cast<int32_t>(io_shape.size());
+      std::vector<uint32_t> io_shape;
+      RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");
+      const int32_t io_rank = static_cast<int32_t>(io_shape.size());
 
-    // Get scale tensor shape to determine block/channel dimensions.
-    // Scale tensor may be rank 2 (e.g., MatMul/Gemm) or higher rank (e.g., Conv with rank-4 weights).
-    // Only the first two dimensions (indexed by onnx_axis and 1 - onnx_axis) are used for LPBQ conversion.
-    const std::vector<int64_t> scale_shape =
-        utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
-    RETURN_IF_NOT(scale_shape.size() >= 2,
-                  "Block quantization scale tensors must have at least rank 2 for LPBQ conversion");
-    RETURN_IF_NOT(scale_shape[0] > 0 && scale_shape[1] > 0,
-                  "Block quantization scale tensor dimensions must be positive");
-    RETURN_IF_NOT(scale_shape[0] * scale_shape[1] == static_cast<int64_t>(scales.size()),
-                  "Block quantization scale tensor shape product must equal number of scales");
+      // Get scale tensor shape to determine block/channel dimensions.
+      // Scale tensor may be rank 2 (e.g., MatMul/Gemm) or higher rank (e.g., Conv with rank-4 weights).
+      // Only the first two dimensions (indexed by onnx_axis and 1 - onnx_axis) are used for LPBQ conversion.
+      const std::vector<int64_t> scale_shape =
+          utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
+      RETURN_IF_NOT(scale_shape.size() >= 2,
+                    "Block quantization scale tensors must have at least rank 2 for LPBQ conversion");
+      RETURN_IF_NOT(scale_shape[0] > 0 && scale_shape[1] > 0,
+                    "Block quantization scale tensor dimensions must be positive");
+      RETURN_IF_NOT(scale_shape[0] * scale_shape[1] == static_cast<int64_t>(scales.size()),
+                    "Block quantization scale tensor shape product must equal number of scales");
 
-    // Determine block axis (= ONNX axis attribute).
-    constexpr int64_t DEFAULT_QDQ_AXIS = 1;
-    int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
-    if (axis < 0) axis += io_rank;
-    RETURN_IF_NOT(axis == 0 || axis == 1,
-                  "Only axis 0 or 1 is supported for block quantization LPBQ conversion");
+      // Determine block axis (= ONNX axis attribute).
+      constexpr int64_t DEFAULT_QDQ_AXIS = 1;
+      int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
+      if (axis < 0) axis += io_rank;
+      RETURN_IF_NOT(axis == 0 || axis == 1,
+                    "Only axis 0 or 1 is supported for block quantization LPBQ conversion");
 
-    // Scale shape: [num_blocks_per_channel, num_channels] when axis=0
-    //              [num_channels, num_blocks_per_channel] when axis=1
-    const uint32_t num_blocks_per_channel = static_cast<uint32_t>(scale_shape[axis]);
-    const uint32_t num_channels = static_cast<uint32_t>(scale_shape[1 - axis]);
+      // Scale shape: [num_blocks_per_channel, num_channels] when axis=0
+      //              [num_channels, num_blocks_per_channel] when axis=1
+      const uint32_t num_blocks_per_channel = static_cast<uint32_t>(scale_shape[axis]);
+      const uint32_t num_channels = static_cast<uint32_t>(scale_shape[1 - axis]);
 
-    // LPBQ requires symmetric quantization (all zero-points must be zero).
-    for (const int32_t zp : zero_points) {
-      RETURN_IF_NOT(zp == 0, "LPBQ conversion requires symmetric quantization");
-    }
+      // LPBQ requires symmetric quantization (all zero-points must be zero).
+      for (const int32_t zp : zero_points) {
+        RETURN_IF_NOT(zp == 0, "LPBQ conversion requires symmetric quantization");
+      }
 
-    // The conversion algorithm expects scales in block-major order [num_blocks, num_channels].
-    // If axis=1 the raw tensor is channel-major [num_channels, num_blocks]; transpose it.
-    std::vector<float> bq_scales_bm;
-    if (axis == 0) {
-      bq_scales_bm = std::move(scales);
-    } else {
-      // Transpose [num_channels, num_blocks] -> [num_blocks, num_channels]
-      bq_scales_bm.resize(scales.size());
-      for (uint32_t c = 0; c < num_channels; ++c) {
-        for (uint32_t b = 0; b < num_blocks_per_channel; ++b) {
-          bq_scales_bm[static_cast<size_t>(b) * num_channels + c] =
-              scales[static_cast<size_t>(c) * num_blocks_per_channel + b];
+      // The conversion algorithm expects scales in block-major order [num_blocks, num_channels].
+      // If axis=1 the raw tensor is channel-major [num_channels, num_blocks]; transpose it.
+      std::vector<float> bq_scales_bm;
+      if (axis == 0) {
+        bq_scales_bm = std::move(scales);
+      } else {
+        // Transpose [num_channels, num_blocks] -> [num_blocks, num_channels]
+        bq_scales_bm.resize(scales.size());
+        for (uint32_t c = 0; c < num_channels; ++c) {
+          for (uint32_t b = 0; b < num_blocks_per_channel; ++b) {
+            bq_scales_bm[static_cast<size_t>(b) * num_channels + c] =
+                scales[static_cast<size_t>(c) * num_blocks_per_channel + b];
+          }
         }
       }
+
+      // Apply BQ -> LPBQ algorithm
+      // Use bitwidth=4 for int4 weights and bitwidth=8 for int8 weights.
+      std::vector<float> per_channel_scales;
+      std::vector<uint8_t> per_block_int_scales;
+      std::vector<int32_t> lpbq_offsets;
+      const uint32_t bitwidth = is_int4_type ? 4u : 8u;
+      RETURN_IF_ERROR(utils::ConvertBlockQuantScalesToLpbq(
+          bq_scales_bm, zero_points,
+          num_blocks_per_channel, num_channels, bitwidth,
+          per_channel_scales, per_block_int_scales, lpbq_offsets));
+
+      // QNN LPBQ axis = the non-block axis in the weight tensor.
+      // For ONNX axis=0 (block axis=0): QNN axis=1; for axis=1: QNN axis=0.
+      const int64_t qnn_axis = 1 - axis;
+
+      *this = QnnQuantParamsWrapper(per_channel_scales, per_block_int_scales, lpbq_offsets,
+                                    qnn_axis, ort_quant_params->block_size.value(), is_int4_type);
     }
-
-    // Apply BQ -> LPBQ algorithm
-    // Use bitwidth=4 for int4 weights and bitwidth=8 for int8 weights.
-    std::vector<float> per_channel_scales;
-    std::vector<uint8_t> per_block_int_scales;
-    std::vector<int32_t> lpbq_offsets;
-    const uint32_t bitwidth = is_int4_type ? 4u : 8u;
-    RETURN_IF_ERROR(utils::ConvertBlockQuantScalesToLpbq(
-        bq_scales_bm, zero_points,
-        num_blocks_per_channel, num_channels, bitwidth,
-        per_channel_scales, per_block_int_scales, lpbq_offsets));
-
-    // QNN LPBQ axis = the non-block axis in the weight tensor.
-    // For ONNX axis=0 (block axis=0): QNN axis=1; for axis=1: QNN axis=0.
-    const int64_t qnn_axis = 1 - axis;
-
-    *this = QnnQuantParamsWrapper(per_channel_scales, per_block_int_scales, lpbq_offsets,
-                                  qnn_axis, ort_quant_params->block_size.value(), is_int4_type);
   } else {
     return MAKE_EP_FAIL("Unexpected tensor kind for QuantParamsWrapper::Init()");
   }

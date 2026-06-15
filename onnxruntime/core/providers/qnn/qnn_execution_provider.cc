@@ -909,6 +909,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+  model_settings_.convert_bq_to_lpbq = ParseBoolOption(ort_api,
+                                                       session_options_,
+                                                       FormatEPConfigKey("convert_bq_to_lpbq"),
+                                                       true,
+                                                       logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
