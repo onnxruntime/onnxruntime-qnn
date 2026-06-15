@@ -424,12 +424,11 @@ TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_BothBranchesConstant) {
             ExpectedEPNodeAssignment::All);
 }
 
-// Implicit input `x` is produced by Trilu, which QNN EP doesn't support, so it runs
-// on the CPU EP and its output crosses into the QNN partition that owns the If node.
+// Cross-partition implicit input: QNN EP declines (Trilu on CPU, If's `x` has no QNN producer).
 TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_CrossPartitionImplicitInput) {
   RunIfTest(BuildIfCrossPartitionImplicitInputTestCase(
                 {2, 2}, "if_out", "then_out", "else_out"),
-            ExpectedEPNodeAssignment::Some);
+            ExpectedEPNodeAssignment::None);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -463,11 +462,11 @@ TEST_F(QnnHTPBackendTests, If_FP32_as_FP16_BothBranchesConstant) {
             "htp", 19, 0.008f, true);
 }
 
-// Cross-partition implicit input on HTP: Trilu runs on CPU EP, If runs on QNN HTP.
+// HTP variant of the cross-partition decline check.
 TEST_F(QnnHTPBackendTests, If_FP32_as_FP16_CrossPartitionImplicitInput) {
   RunIfTest(BuildIfCrossPartitionImplicitInputTestCase(
                 {1, 2, 3}, "if_out", "then_out", "else_out"),
-            ExpectedEPNodeAssignment::Some,
+            ExpectedEPNodeAssignment::None,
             "htp", 19, 0.008f, /*enable_htp_fp16_precision=*/true);
 }
 

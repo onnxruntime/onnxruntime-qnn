@@ -238,6 +238,14 @@ Ort::Status IfOpBuilder::ProcessInputs(QnnModelWrapper& qmw,
     if (io_def.name.empty() || qmw.IsQnnTensorWrapperExist(io_def.name)) {
       continue;
     }
+
+    // Implicit input must be a QNN partition input; otherwise it has no producer in the
+    // QNN graph and QnnGraph_addNode rejects the first branch consumer (UNCONNECTED_NODE).
+    RETURN_IF_NOT(qmw.IsGraphInput(io_def.name),
+                  ("If implicit input `" + io_def.name +
+                   "` is produced outside the QNN partition (cross-partition unsupported).")
+                      .c_str());
+
     QnnTensorWrapper tensor_wrapper;
     RETURN_IF_ERROR(qmw.MakeTensorWrapper(io_def, tensor_wrapper));
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(tensor_wrapper)),
