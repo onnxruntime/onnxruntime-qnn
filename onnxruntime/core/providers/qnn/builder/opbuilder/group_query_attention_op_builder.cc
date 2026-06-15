@@ -1,23 +1,14 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+// GQA not available until opset version 2.12.0 (QAIRT 2.48). TODO: Remove this check once the EP uplevels to 2.48.
+#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 #include <cmath>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
-
-// GQA not available until opset version 2.12.0 (QAIRT 2.48). Until the EP upgrades to default to 2.48,
-// manually define the necessary values.
-// TODO: Remove once the EP upgrades to 2.48.
-#if QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11)
-#define QNN_OP_GROUP_QUERY_ATTENTION "GroupQueryAttention"
-#define QNN_OP_GROUP_QUERY_ATTENTION_PARAM_NUM_HEADS "num_heads"
-#define QNN_OP_GROUP_QUERY_ATTENTION_PARAM_KV_NUM_HEADS "kv_num_heads"
-#define QNN_OP_GROUP_QUERY_ATTENTION_PARAM_DO_ROTARY "do_rotary"
-#define QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SCALE "scale"
-#endif  // QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11)
 
 namespace onnxruntime {
 namespace qnn {
@@ -260,3 +251,4 @@ void CreateGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderReg
 
 }  // namespace qnn
 }  // namespace onnxruntime
+#endif  // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
