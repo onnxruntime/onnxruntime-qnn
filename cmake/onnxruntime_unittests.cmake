@@ -389,9 +389,15 @@ block()
   # collected by lcov --directory <build_dir> (recursive search finds them automatically).
   if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
-    # Enable function-level / component-level unit tests that require direct linkage against
-    # EP-internal symbols (available only when the EP is a SHARED library).
-    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_FUNCTION_LEVEL_UT=1)
+    # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
+    # It tracks whether the test binary is link-time bound to the SHARED EP library
+    # (i.e., the cmake conditions above hold), not whether any production source is
+    # under #if. When the macro is off, the test bodies under unit/ compile to empty
+    # translation units, so non-coverage builds do not see undefined references.
+    # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
+    # stabilises, the gate can be widened to other CI build configurations without
+    # touching the test code.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()
 
 endblock()

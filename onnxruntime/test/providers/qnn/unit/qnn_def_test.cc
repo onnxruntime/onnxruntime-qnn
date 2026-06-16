@@ -9,7 +9,7 @@
 
 #include "gtest/gtest.h"
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <cstring>
 #include <unordered_map>
@@ -923,4 +923,4 @@ TEST(QnnUnit_DefTest, QnnBackendTypeToString_AllKnownValues) {
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS

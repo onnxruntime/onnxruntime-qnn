@@ -3,17 +3,22 @@
 //
 // Shared test utilities for QNN EP function-level / component-level unit tests.
 //
-// Requires QNN_EP_FUNCTION_LEVEL_UT (set by cmake when ENABLE_COVERAGE=1 and the
-// QNN EP is built as a SHARED library). The test binary must link against
-// onnxruntime_providers_qnn so EP-internal symbols are accessible.
+// Requires QNN_EP_INTERNAL_SYMBOL_ACCESS (set by cmake when the test binary is
+// link-time bound to the SHARED QNN EP library — currently ENABLE_COVERAGE=1
+// on Linux x86_64). The macro is a build-system gate, not a production-source
+// guard: when it is off, this header and all unit/ test bodies compile to empty
+// translation units, so non-coverage builds see no undefined references.
 //
-// QnnModelWrapper is constructed with ort_graph=nullptr; tests stub the
-// OrtApi entry points needed for the path under test (see CreateWrapper).
+// Class-specific fixtures (e.g. constructing a QnnModelWrapper with a fake
+// graph + null logger) live next to the test file that owns them. This header
+// only collects reusable pieces: MakeNullLogger(), OrtApi stub plumbing, and
+// a real HTP backend handle.
 
 #pragma once
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -59,107 +64,63 @@ inline Ort::Logger MakeNullLogger() {
   return logger;
 }
 
-// Context for constructing a QnnModelWrapper in function-level unit tests.
+// Reusable OrtApi stub tables for function-level unit tests.
 //
-//   ctx.input_info.indices  = {{"input0", 0}};   // declare graph inputs
-//   ctx.output_info.indices = {{"output0", 0}};  // declare graph outputs
-//   auto wrapper = ctx.CreateWrapper(settings);
-struct QnnModelWrapperTestContext {
-  // Mostly zero-init C API structs; a minimal subset of function pointers is
-  // stubbed in the constructor to support the paths exercised by these tests.
+// Holds the three stub structs (OrtApi / OrtEpApi / OrtModelEditorApi) that any
+// code interacting with ORT through ApiPtrs needs. Tests assign individual
+// function-pointer members directly (e.g. ctx.stub_ort_api.GetTensorData = ...).
+//
+// Initializer-query stubs are installed in the constructor so that paths like
+// QnnModelWrapper::IsConstantInput() safely return false on graphs with no
+// initializers — the default fixture for almost every test. Tests that need
+// non-zero initializers replace these two stubs before constructing the wrapper.
+//
+// MakeApiPtrs() returns an ApiPtrs view over the three stub tables AND verifies
+// that the initializer-query stubs are still installed (a test that wholesale
+// resets stub_ort_api must re-add them, otherwise QnnModelWrapper SIGSEGVs at
+// the first initializer query). Throwing std::logic_error fails the test rather
+// than the process; assert() would be stripped by NDEBUG (CMake RelWithDebInfo,
+// the coverage build's config).
+struct OrtApiStubContext {
   OrtApi stub_ort_api{};
   OrtEpApi stub_ep_api{};
   OrtModelEditorApi stub_editor_api{};
 
-  QNN_INTERFACE_VER_TYPE qnn_interface;
-  Qnn_BackendHandle_t backend_handle;
-  QNN_INTERFACE_VER_TYPE qnn_validator_interface;  // null interface — no validator in unit tests
-  Qnn_BackendHandle_t validator_backend_handle;    // must be a stable lvalue: QnnModelWrapper stores it as a const reference
-
-  // Stable lvalues passed to the production QnnModelWrapper constructor.
-  // The constructor stores pointers to these members; they must outlive any
-  // wrapper created by CreateWrapper().
-  //
-  // null_logger_: default-constructed Ort::Logger has a null internal OrtLogger*;
-  //   ORT_CXX_LOG_PTR calls IsNullLogger() before logging, so logging is safely skipped.
-  // fake_graph_sentinel_: an int used as a stable address; stubs receive this pointer
-  //   but never dereference it (same pattern as g_type_info_sentinel etc.).
-  Ort::Logger null_logger_{MakeNullLogger()};
-  int fake_graph_sentinel_{};
-
-  // Book-keeping for which tensors are graph inputs / outputs.
-  qnn::GraphInputOutputInfo input_info;
-  qnn::GraphInputOutputInfo output_info;
-
-  QnnModelWrapperTestContext()
-      : qnn_interface(QNN_INTERFACE_VER_TYPE_INIT),
-        backend_handle(nullptr),
-        qnn_validator_interface(QNN_INTERFACE_VER_TYPE_INIT),
-        validator_backend_handle(nullptr) {
-    // Stub initializer-query APIs so that IsConstantInput() safely returns false
-    // without dereferencing null function pointers.
-    //
-    // INVARIANT: tests that wholesale reset stub_ort_api MUST re-add these two stubs
-    // before calling CreateWrapper(). Otherwise QnnModelWrapper forwards the null
-    // ort_graph to a zero-initialized function pointer on initializer queries
-    // (FindInitializer / IsConstantInput / GetConstantTensor) and SIGSEGVs.
-    // CreateWrapper() asserts both pointers are non-null at construction time as a
-    // defense against this footgun.
+  OrtApiStubContext() {
     stub_ort_api.Graph_GetNumInitializers = [](const OrtGraph*, size_t* num) noexcept -> OrtStatus* {
       *num = 0;
       return nullptr;
     };
     stub_ort_api.Graph_GetInitializers = [](const OrtGraph*, const OrtValueInfo**, size_t count) noexcept -> OrtStatus* {
-      // This stub only supports the empty-initializer case, paired with Graph_GetNumInitializers
-      // above which always reports 0. Tests that need non-zero initializers must replace this
-      // stub before calling CreateWrapper.
-      // Note: ORT_ENFORCE / assert are not used here because this lambda is noexcept — throwing
-      // or calling abort() from a noexcept function terminates the process rather than failing
-      // the test case. The invariant is enforced by the companion stub above.
+      // Pairs with Graph_GetNumInitializers above which always reports 0. Tests
+      // that need non-zero initializers must replace this stub before constructing
+      // a wrapper.
+      // Note: ORT_ENFORCE / assert are not used here because this lambda is noexcept —
+      // throwing or calling abort() from a noexcept function terminates the process
+      // rather than failing the test case. The invariant is enforced by MakeApiPtrs().
       (void)count;
       return nullptr;
     };
   }
 
-  std::unique_ptr<qnn::QnnModelWrapper> CreateWrapper(
-      const qnn::ModelSettings& settings,
-      qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
-    // Fail fast at construction (rather than silently SIGSEGV at first initializer query)
-    // when these stubs were cleared by a test resetting stub_ort_api wholesale.
-    // See the INVARIANT comment in QnnModelWrapperTestContext() above.
-    //
-    // assert() is intentionally NOT used: CMake's RelWithDebInfo (the coverage build's
-    // config) defines NDEBUG, which strips assert() — disabling the guard in precisely
-    // the environment these tests run in. throw fires in every build configuration.
+  ApiPtrs MakeApiPtrs() const {
     if (stub_ort_api.Graph_GetNumInitializers == nullptr ||
         stub_ort_api.Graph_GetInitializers == nullptr) {
       throw std::logic_error(
           "Graph_GetNumInitializers / Graph_GetInitializers stubs missing "
           "— re-add them after resetting stub_ort_api");
     }
-    ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
-    // fake_graph_sentinel_ is a stable int member used as the graph address.
-    // Stubs receive this pointer but never dereference it.
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
-    return std::make_unique<qnn::QnnModelWrapper>(
-        fake_graph,
-        api_ptrs,
-        null_logger_,
-        qnn_interface,
-        backend_handle,
-        qnn_validator_interface,
-        validator_backend_handle,
-        input_info,
-        output_info,
-        backend_type,
-        settings);
+    return ApiPtrs{stub_ort_api, stub_ep_api, stub_editor_api};
   }
 };
 
 // Context for tests that need a real QNN HTP backend (e.g., ValidateQnnNode).
 // Loads libQnnHtp.so at construction time via dlopen and creates a live backend handle.
-// Use IsValid() before calling — if the library cannot be loaded the context is a no-op
-// and GTest tests should call GTEST_SKIP() rather than FAIL().
+//
+// libQnnHtp.so is part of the QAIRT SDK that ships with every supported CI image,
+// so a missing library is a CI configuration error rather than a normal condition.
+// Tests should ASSERT_TRUE(backend.IsValid()) so a missing SDK fails the test
+// loudly instead of silently skipping.
 //
 // Note: this helper only produces a Qnn_BackendHandle_t. It does NOT create a QNN
 // context/session (no contextCreate call) and does NOT create a graph. The validation
@@ -172,7 +133,7 @@ struct QnnModelWrapperTestContext {
 //
 // Usage:
 //   QnnRealHtpBackendContext backend;
-//   if (!backend.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+//   ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available";
 //   ctx.qnn_interface  = backend.qnn_interface;
 //   ctx.backend_handle = backend.backend_handle;
 struct QnnRealHtpBackendContext {
@@ -232,4 +193,4 @@ struct QnnRealHtpBackendContext {
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS

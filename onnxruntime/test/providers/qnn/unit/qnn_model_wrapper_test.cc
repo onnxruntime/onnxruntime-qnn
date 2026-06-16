@@ -3,7 +3,7 @@
 
 #include "gtest/gtest.h"
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -16,6 +16,58 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
+
+// Context for constructing a QnnModelWrapper in function-level unit tests.
+//
+//   QnnModelWrapperTestContext ctx;
+//   ctx.input_info.indices  = {{"input0", 0}};   // declare graph inputs
+//   ctx.output_info.indices = {{"output0", 0}};  // declare graph outputs
+//   auto wrapper = ctx.CreateWrapper(settings);
+//
+// Inherits OrtApiStubContext so tests keep using ctx.stub_ort_api directly
+// (e.g. ctx.stub_ort_api.GetTensorData = MyStub) and pick up the initializer-
+// query stubs + MakeApiPtrs() invariant guard for free.
+struct QnnModelWrapperTestContext : public OrtApiStubContext {
+  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
+  Qnn_BackendHandle_t backend_handle = nullptr;
+
+  // No validator interface in unit tests; validator_backend_handle is held as a
+  // const reference by QnnModelWrapper so it must be a stable lvalue.
+  QNN_INTERFACE_VER_TYPE qnn_validator_interface = QNN_INTERFACE_VER_TYPE_INIT;
+  Qnn_BackendHandle_t validator_backend_handle = nullptr;
+
+  // Stable lvalues passed to QnnModelWrapper. The constructor stores pointers
+  // to these members; they must outlive any wrapper returned by CreateWrapper().
+  //
+  // null_logger_: cached severity FATAL via MakeNullLogger() — see qnn_unit_test_utils.h.
+  // fake_graph_sentinel_: an int used as a stable address; stubs receive this
+  //   pointer but never dereference it (same pattern as g_type_info_sentinel etc.).
+  Ort::Logger null_logger_{MakeNullLogger()};
+  int fake_graph_sentinel_{};
+
+  qnn::GraphInputOutputInfo input_info;
+  qnn::GraphInputOutputInfo output_info;
+
+  std::unique_ptr<qnn::QnnModelWrapper> CreateWrapper(
+      const qnn::ModelSettings& settings,
+      qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
+    ApiPtrs api_ptrs = MakeApiPtrs();
+    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    return std::make_unique<qnn::QnnModelWrapper>(
+        fake_graph,
+        api_ptrs,
+        null_logger_,
+        qnn_interface,
+        backend_handle,
+        qnn_validator_interface,
+        validator_backend_handle,
+        input_info,
+        output_info,
+        backend_type,
+        settings);
+  }
+};
+
 // Construct a wrapper whose tensor_name_overrides pointer is non-null.
 // QnnModelWrapperTestContext::CreateWrapper only exposes the default nullptr;
 // build it directly here to reach the non-null branches.
@@ -23,7 +75,7 @@ std::unique_ptr<qnn::QnnModelWrapper> MakeWrapperWithOverrides(
     QnnModelWrapperTestContext& ctx,
     const qnn::ModelSettings& settings,
     std::unordered_map<std::string, std::string>* overrides) {
-  ApiPtrs api_ptrs{ctx.stub_ort_api, ctx.stub_ep_api, ctx.stub_editor_api};
+  ApiPtrs api_ptrs = ctx.MakeApiPtrs();
   const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
   return std::make_unique<qnn::QnnModelWrapper>(
       fake_graph,
@@ -1336,14 +1388,17 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
 // QnnGraphOpValidation / backendValidateOpConfig exercises the actual SDK path.
 // On Linux x86-64 (the unit-test host), HTP supports validation but not graph
 // execution — these tests intentionally exercise only the validation path.
-// They are skipped automatically when the library is unavailable.
+//
+// libQnnHtp.so is part of the QAIRT SDK that is required to build the EP, so
+// it must be present at test time. A missing library indicates a CI/environment
+// configuration error and fails the test (ASSERT_TRUE) rather than skipping.
 
 // ValidateQnnNode succeeds for a valid Relu op on the HTP backend.
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (success path).
 // Uses UFIXED_POINT_8 with per-tensor quant params — the representative HTP production path.
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   QnnRealHtpBackendContext backend;
-  if (!backend.IsValid()) GTEST_SKIP() << "Could not load libQnnHtp.so or create HTP backend";
+  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1374,7 +1429,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (failure path).
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   QnnRealHtpBackendContext backend;
-  if (!backend.IsValid()) GTEST_SKIP() << "Could not load libQnnHtp.so or create HTP backend";
+  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -2466,4 +2521,4 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_GetTensorTypeIsStatic) {
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS

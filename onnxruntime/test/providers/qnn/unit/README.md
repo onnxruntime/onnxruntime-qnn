@@ -14,9 +14,9 @@ This unit test infrastructure solves the problem by introducing a **coverage bui
 
 1. Rebuilds the EP as a `SHARED` library so the test binary can link against it directly.
 2. Exports all symbols via a permissive version script.
-3. Defines `QNN_EP_FUNCTION_LEVEL_UT=1`, which activates the test code in this directory.
+3. Defines `QNN_EP_INTERNAL_SYMBOL_ACCESS=1`, which activates the test code in this directory.
 
-All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT`, so it compiles to empty translation units in normal (non-coverage) builds and has no impact on production binaries.
+All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS`, so it compiles to empty translation units in normal (non-coverage) builds and has no impact on production binaries.
 
 ## Current test suites
 
@@ -51,7 +51,7 @@ Review standards for new tests in this directory.
 
 **File structure**
 - Add to an existing `*_test.cc` or create a new file following the same pattern (one source file under test → one test file).
-- Wrap everything except `#include "gtest/gtest.h"` in `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT` ... `#endif`. (Keep the gtest include outside the guard so the file always parses; the body becomes an empty TU in non-coverage builds.) Files without this guard will be compiled in non-coverage CI and fail to link against EP-internal symbols.
+- Wrap everything except `#include "gtest/gtest.h"` in `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS` ... `#endif`. (Keep the gtest include outside the guard so the file always parses; the body becomes an empty TU in non-coverage builds.) Files without this guard will be compiled in non-coverage CI and fail to link against EP-internal symbols.
 - Test suite name: `QnnUnit_<Component>Test`. Test name: `<Function>_<Scenario>_<ExpectedResult>` (e.g., `ValidateQnnNode_HtpBackend_Relu_Succeeds`).
 
 **Minimal example**
@@ -64,7 +64,7 @@ A complete file showing the required layout. Use this as a starting template:
 
 #include "gtest/gtest.h"
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/unit/qnn_unit_test_utils.h"
@@ -82,7 +82,7 @@ TEST(QnnUnit_ModelWrapperTest, GetQnnBackendType_ReturnsHTP) {
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 ```
 
 For richer patterns (real backend handle, OrtApi stubs, error paths, override maps), read the existing `qnn_def_test.cc` and `qnn_model_wrapper_test.cc` in this directory.
@@ -140,7 +140,7 @@ New function(s) / behaviour to cover: <describe what the UT must exercise>
 Policy (must follow):
 1. Add the test to onnxruntime/test/providers/qnn/unit/<source_basename>_test.cc.
    Create the file if it does not exist; wrap the entire body in:
-     #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_FUNCTION_LEVEL_UT
+     #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
      ...
      #endif
 2. Test suite: QnnUnit_<Component>Test. Test name: <Func>_<Scenario>_<Expected>.
