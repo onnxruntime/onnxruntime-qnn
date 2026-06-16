@@ -255,11 +255,6 @@ jobs:
         with:
           name: linux-aarch64_oe_gcc11_2-pyNone-tests
 
-      - name: Download Linux x86_64 Tests from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64-py3.10-tests
-
       - name: Download Windows ARM64 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -401,7 +396,6 @@ jobs:
             "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2"
             "onnxruntime-tests-linux-x86_64_ubuntu_22_04.tar.bz2"
             "onnxruntime-tests-linux-aarch64_oe_gcc11_2.tar.bz2"
-            "onnxruntime-tests-linux-x86_64.tar.bz2"
             "onnxruntime-testdata.tar.bz2"
           )
           missing=()

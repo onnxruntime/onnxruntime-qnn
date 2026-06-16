@@ -13,9 +13,6 @@ on:
       do_all:
         type: boolean
         default: true
-      do_linux_x86_64:
-        type: boolean
-        default: false
       do_windows_arm64:
         type: boolean
         default: false
