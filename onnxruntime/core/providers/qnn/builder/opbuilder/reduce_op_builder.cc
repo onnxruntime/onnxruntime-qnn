@@ -245,19 +245,16 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                         std::move(input_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pow2_tensorwrapper)), "AddTensorWrapper failed");
     std::string pow2_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    Qnn_Scalar_t pow2_scalar = QNN_SCALAR_INIT;
-    pow2_scalar.dataType = QNN_DATATYPE_UINT_32;
-    pow2_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    QnnParamWrapper pow2_param(node_unit.Index(), pow2_node_name,
-                               QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, pow2_scalar);
-    std::string pow2_param_name = pow2_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pow2_param)), "Failed to add operation param.");
+    std::vector<std::string> pow2_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), pow2_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, pow2_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(pow2_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   {input_name, input_name},
                                                   {pow2_output_name},
-                                                  {pow2_param_name},
+                                                  std::move(pow2_param_names),
                                                   do_op_validation),
                   "CreateQnnNode failed");
 

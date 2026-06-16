@@ -119,19 +119,16 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                 "Selu: failed to add output tensor.");
 
   std::string gamma_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_gamma_mul");
-  Qnn_Scalar_t gamma_mul_scalar = QNN_SCALAR_INIT;
-  gamma_mul_scalar.dataType = QNN_DATATYPE_UINT_32;
-  gamma_mul_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  QnnParamWrapper gamma_mul_param(node_unit.Index(), gamma_mul_name,
-                                  QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, gamma_mul_scalar);
-  std::string gamma_mul_param_name = gamma_mul_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(gamma_mul_param)), "Failed to add operation param.");
+  std::vector<std::string> gamma_mul_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), gamma_mul_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, gamma_mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(gamma_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {gamma_tensor_name, elu_output_name},
                                                 {output_name},
-                                                {gamma_mul_param_name},
+                                                std::move(gamma_mul_param_names),
                                                 do_op_validation),
                 "Selu: failed to create Multiply node.");
 

@@ -146,19 +146,16 @@ Ort::Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                                 std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(div_output)),
                   "Failed to add Mod - ElementWiseDiv output tensor.");
-    Qnn_Scalar_t div_scalar = QNN_SCALAR_INIT;
-    div_scalar.dataType = QNN_DATATYPE_UINT_32;
-    div_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE;
-    QnnParamWrapper div_param(node_unit.Index(), div_name,
-                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_scalar);
-    std::string div_param_name = div_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(div_param)), "Failed to add operation param.");
+    std::vector<std::string> div_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), div_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   std::move(div_input),
                                                   {div_output_name},
-                                                  {div_param_name},
+                                                  std::move(div_param_names),
                                                   do_op_validation),
                   "Failed to add Mod - ElementWiseDiv node.");
 
@@ -194,19 +191,16 @@ Ort::Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                                 std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mul_output)),
                   "Failed to add Mod - ElementWiseMul output tensor.");
-    Qnn_Scalar_t mul_scalar = QNN_SCALAR_INIT;
-    mul_scalar.dataType = QNN_DATATYPE_UINT_32;
-    mul_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    QnnParamWrapper mul_param(node_unit.Index(), mul_name,
-                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_scalar);
-    std::string mul_param_name = mul_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_param)), "Failed to add operation param.");
+    std::vector<std::string> mul_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), mul_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(mul_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   std::move(mul_input),
                                                   {mul_output_name},
-                                                  {mul_param_name},
+                                                  std::move(mul_param_names),
                                                   do_op_validation),
                   "Failed to add Mod - ElementWiseMul node.");
 
@@ -223,19 +217,16 @@ Ort::Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                                 std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mod_output)),
                   "Failed to add Mod output tensor.");
-    Qnn_Scalar_t sub_scalar = QNN_SCALAR_INIT;
-    sub_scalar.dataType = QNN_DATATYPE_UINT_32;
-    sub_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT;
-    QnnParamWrapper sub_param(node_unit.Index(), sub_name,
-                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, sub_scalar);
-    std::string sub_param_name = sub_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sub_param)), "Failed to add operation param.");
+    std::vector<std::string> sub_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), sub_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, sub_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sub_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   std::move(sub_input),
                                                   {sub_output_name},
-                                                  {sub_param_name},
+                                                  std::move(sub_param_names),
                                                   do_op_validation),
                   "Failed to add Mod - ElementWiseSub node.");
 

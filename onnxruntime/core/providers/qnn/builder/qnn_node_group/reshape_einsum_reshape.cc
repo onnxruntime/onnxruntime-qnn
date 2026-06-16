@@ -139,8 +139,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          einsum_node_unit.Name(),
                                          static_cast<uint32_t>(QNN_OP_DEPTH_TO_SPACE_MODE_DCR),
                                          QNN_OP_DEPTH_TO_SPACE_PARAM_MODE, mode_param_names));
-  RETURN_IF_NOT(mode_param_names.size() == 1, "Failed to add DepthToSpace mode param.");
-  const std::string mode_param_name = mode_param_names[0];
+  const std::string mode_param_name = std::move(mode_param_names.back());
 
   const OrtNodeUnitIODef& einsum_output = einsum_node_unit.Outputs()[0];
   TensorInfo einsum_output_info = {};
