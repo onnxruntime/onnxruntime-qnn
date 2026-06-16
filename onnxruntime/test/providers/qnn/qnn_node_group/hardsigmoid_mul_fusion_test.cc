@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -85,9 +85,7 @@ void RunAndAssertFused(const TestInputDef<float>& input_def, bool hardsigmoid_fi
 // HardSigmoid -> Mul(input, hsig_out): HardSigmoid output is the SECOND Mul input.
 // This is the ordering the original same_root_input check already handled.
 TEST_F(QnnHTPBackendTests, HardSigmoidMulFusion_NormalOrder_Fuses) {
-#if defined(_WIN32)
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
   auto input_def = TestInputDef<float>({1, 2, 2, 4}, false, GetFloatDataInRange(-5.0f, 5.0f, 16));
   RunAndAssertFused(input_def, /*hardsigmoid_first=*/false, "HardSigmoidMulFusion_NormalOrder");
 }
@@ -99,9 +97,7 @@ TEST_F(QnnHTPBackendTests, HardSigmoidMulFusion_NormalOrder_Fuses) {
 // ordering but only assert EP assignment (which passes whether or not fusion occurs),
 // so the missed fusion went undetected. This asserts the fusion actually happens.
 TEST_F(QnnHTPBackendTests, HardSigmoidMulFusion_ReversedOrder_Fuses) {
-#if defined(_WIN32)
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
   auto input_def = TestInputDef<float>({1, 2, 2, 4}, false, GetFloatDataInRange(-5.0f, 5.0f, 16));
   RunAndAssertFused(input_def, /*hardsigmoid_first=*/true, "HardSigmoidMulFusion_ReversedOrder");
 }
