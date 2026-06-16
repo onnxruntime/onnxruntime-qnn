@@ -523,7 +523,7 @@ jobs:
             VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
           else
             VERSION="${{ inputs.version_suffix }}"
-            TEST_PACKAGE_VERSION = $TEST_PACKAGE_VERSION-$VERSION"
+            TEST_PACKAGE_VERSION = $TEST_PACKAGE_VERSION$VERSION"
           fi
           ./qcom/scripts/all/prepare_test_package.sh \
             "${{ github.workspace }}/test_archives" \
