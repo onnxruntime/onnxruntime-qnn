@@ -854,7 +854,8 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   tensor_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(tensor.quant_param.has_value(),
                                         tensor.type,
-                                        tensor_info.qnn_data_type));
+                                        tensor_info.qnn_data_type,
+                                        qnn_backend_type_));
 
   // Fill in shape.
   RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");
