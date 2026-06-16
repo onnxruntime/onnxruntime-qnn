@@ -8,10 +8,17 @@ into a newer ORT API (raising the floor) or removed one (lowering it); either
 way the baseline must be refreshed in the same PR so the bump is visible in
 the diff.
 
-Delegates the heavy lifting to ``qcom/scripts/all/compute_min_ort_api_version.py``
-in ``--check`` mode and emits one lintrunner message on drift. Per-file paths
-are accepted on stdin (lintrunner convention) but are ignored: the check is
-project-wide.
+Delegates to ``qcom/scripts/all/compute_min_ort_api_version.py``. That script's
+exit-code contract is what we route on:
+
+  0  baseline matches  -> emit nothing
+  1  baseline drift    -> emit one ``ort-api-floor-drift`` error
+  2  cannot compute    -> emit one ``ort-api-floor-check-error`` error (distinct
+                          finding name so reviewers can tell an environment
+                          problem from a real baseline-refresh request)
+
+Per-file paths are accepted on stdin (lintrunner convention) but ignored: the
+check is project-wide.
 """
 
 from __future__ import annotations
@@ -30,14 +37,14 @@ SCRIPT = REPO_ROOT / "qcom" / "scripts" / "all" / "compute_min_ort_api_version.p
 BASELINE = REPO_ROOT / "qcom" / "MIN_ORT_API_VERSION.txt"
 
 
-def _msg(description: str, severity: str = "error", path: str | None = None) -> dict:
+def _msg(description: str, name: str, severity: str = "error", path: str | None = None) -> dict:
     return {
         "path": path or os.path.relpath(BASELINE, REPO_ROOT),
         "line": None,
         "char": None,
         "code": LINTER_CODE,
         "severity": severity,
-        "name": "ort-api-floor-drift",
+        "name": name,
         "original": None,
         "replacement": None,
         "description": description,
@@ -50,11 +57,21 @@ def main() -> None:
     parser.parse_args()
 
     if not SCRIPT.is_file():
-        print(json.dumps(_msg(f"compute script missing: {SCRIPT}")), flush=True)
+        print(
+            json.dumps(_msg(f"compute script missing: {SCRIPT}", name="ort-api-floor-check-error")),
+            flush=True,
+        )
         return
 
     proc = subprocess.run(
-        [sys.executable, str(SCRIPT), "--check", "--baseline", str(BASELINE)],
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--check",
+            "--baseline",
+            str(BASELINE),
+            "--fetch-from-deps-txt",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -64,22 +81,15 @@ def main() -> None:
     if proc.returncode == 0:
         return
 
-    # Exit 2 = cannot compute (no ORT headers); not drift. Surface as advice.
-    stderr = (proc.stderr or proc.stdout or f"compute script exited {proc.returncode}").strip()
-    if proc.returncode == 2:
-        print(
-            json.dumps(
-                _msg(
-                    "ORT API floor check skipped: "
-                    + stderr
-                    + " Run a build first, or pass --ort-header-root, so this lint can compute the floor.",
-                    severity="advice",
-                )
-            ),
-            flush=True,
-        )
-        return
-    print(json.dumps(_msg(stderr)), flush=True)
+    description = (proc.stderr or proc.stdout or f"compute script exited {proc.returncode}").strip()
+    if proc.returncode == 1:
+        finding = "ort-api-floor-drift"
+    elif proc.returncode == 2:
+        finding = "ort-api-floor-check-error"
+    else:
+        finding = "ort-api-floor-check-error"
+        description = f"unexpected compute-script exit {proc.returncode}: {description}"
+    print(json.dumps(_msg(description, name=finding)), flush=True)
 
 
 if __name__ == "__main__":

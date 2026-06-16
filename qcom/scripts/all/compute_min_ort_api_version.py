@@ -8,15 +8,29 @@ function-pointer / status-returning declaration, scans QNN EP source for every
 call into one of those, and emits the maximum.
 
 Modes:
-  --write-header PATH  Write a C header defining QNN_EP_MIN_ORT_API_VERSION to
-                       the computed value. Used by CMake at configure time so
-                       the build always picks up the correct floor.
-  --check              Compare the computed value against a baseline file and
-                       exit non-zero on mismatch. Used in lint to make floor
-                       bumps a visible, reviewable PR diff. Pair with
-                       --baseline FILE.
-  --update-baseline    Rewrite the baseline file to match the computed value.
-                       Dev convenience for legitimate floor bumps.
+  --write-header PATH      Write a C header defining QNN_EP_MIN_ORT_API_VERSION
+                           to the computed value. Used by CMake at configure
+                           time so the build always picks up the correct floor.
+  --check                  Compare the computed value against a baseline file
+                           and exit non-zero on mismatch. Used in lint to make
+                           floor bumps a visible, reviewable PR diff. Pair with
+                           --baseline FILE.
+  --update-baseline        Rewrite the baseline file to match the computed
+                           value. Dev convenience for legitimate floor bumps.
+  --fetch-from-deps-txt    If no header root is available (e.g., lint on a
+                           clean checkout with no build tree), download
+                           ort_core from cmake/deps.txt, verify its SHA1, and
+                           use the archive's include/ subtree. Cached.
+
+Exit codes:
+  0  Success: floor printed/written, or --check found baseline matches.
+  1  Drift detected by --check: computed floor disagrees with baseline. The
+     baseline must be refreshed in the same PR so the bump is reviewable.
+  2  Cannot compute or configuration error: missing/unreadable headers,
+     missing --baseline file, SHA1 mismatch on fetch, fetch I/O failure,
+     unknown API form, EP source not found. NOT drift — caller (e.g., the
+     lint adapter) should surface this as an environment problem, not as a
+     baseline-refresh request.
 
 Limitations: scans direct API calls (``ort_api->X``, ``ep_api.X`` etc.). Calls
 through ``Ort::`` C++ wrappers in ``onnxruntime_cxx_api.h`` are not seen here;
@@ -26,10 +40,15 @@ if those become a concern, extend the patterns or wrap them.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import pathlib
 import re
+import shutil
 import sys
+import tempfile
+import urllib.request
+import zipfile
 
 # ---------------------------------------------------------------------------
 # Header parsing: build {api_member: minor_since_version}
@@ -144,6 +163,66 @@ def find_ort_header_root(repo_root: pathlib.Path) -> pathlib.Path | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Fetch ORT headers directly from the cmake/deps.txt pin so lint works on a
+# clean checkout (CI lint runner, no build tree). Cached by SHA1 under a user
+# cache dir; downloaded at most once per pin.
+# ---------------------------------------------------------------------------
+
+
+def parse_deps_txt(deps_path: pathlib.Path, name: str) -> tuple[str, str]:
+    """Return (url, sha1) for `name` from cmake/deps.txt. Raises if missing."""
+    for raw in deps_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split(";")]
+        if len(parts) >= 3 and parts[0] == name:
+            return parts[1], parts[2]
+    raise RuntimeError(f"{name} not found in {deps_path}")
+
+
+def _cache_root() -> pathlib.Path:
+    env = os.environ.get("QNN_EP_LINT_CACHE")
+    if env:
+        return pathlib.Path(env)
+    if sys.platform == "win32":
+        base = pathlib.Path(os.environ.get("LOCALAPPDATA", pathlib.Path.home() / "AppData" / "Local"))
+    else:
+        base = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache"))
+    return base / "qnn-ep-min-ort"
+
+
+def fetch_ort_headers(deps_path: pathlib.Path, cache_root: pathlib.Path | None = None) -> pathlib.Path:
+    """Download and extract the ort_core archive pinned in cmake/deps.txt; return
+    the include/ subtree. Cache keyed by SHA1 so a verified extract is reused
+    across runs. Set QNN_EP_LINT_CACHE to override the cache location."""
+    url, sha1 = parse_deps_txt(deps_path, "ort_core")
+    root = (cache_root or _cache_root()) / f"ort_core-{sha1}"
+    include_dir = root / "include"
+    if include_dir.is_dir():
+        return include_dir
+
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="ort_core-dl-", dir=str(root)) as tmp:
+        tmp_path = pathlib.Path(tmp)
+        archive = tmp_path / "ort_core.zip"
+        with urllib.request.urlopen(url) as resp, open(archive, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        digest = hashlib.sha1(archive.read_bytes()).hexdigest()
+        if digest.lower() != sha1.lower():
+            raise RuntimeError(f"ort_core sha1 mismatch: expected {sha1}, got {digest}")
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(tmp_path)
+        # GitHub source archives extract to <repo>-<sha>/ — find that directory.
+        extracted = next((p for p in tmp_path.iterdir() if p.is_dir() and (p / "include").is_dir()), None)
+        if extracted is None:
+            raise RuntimeError(f"ort_core archive has no include/ subtree at {url}")
+        # Move just the include tree into the stable cache slot.
+        shutil.move(str(extracted / "include"), str(include_dir))
+    return include_dir
+
+
 def write_header(out_path: pathlib.Path, value: int) -> None:
     content = (
         "// AUTOGENERATED by qcom/scripts/all/compute_min_ort_api_version.py.\n"
@@ -185,16 +264,28 @@ def main() -> int:
     parser.add_argument("--update-baseline", action="store_true", help="Rewrite --baseline to match computed value")
     parser.add_argument("--baseline", type=pathlib.Path, help="Baseline file (one integer)")
     parser.add_argument("--print", action="store_true", help="Print computed floor and exit")
+    parser.add_argument(
+        "--fetch-from-deps-txt",
+        action="store_true",
+        help="If no header root is given/found, download ort_core from cmake/deps.txt and use its include/ tree. Caches by SHA1 under $QNN_EP_LINT_CACHE or the platform user cache dir.",
+    )
     args = parser.parse_args()
 
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     ort_header_root = args.ort_header_root or find_ort_header_root(repo_root)
     ep_source_root = args.ep_source_root or (repo_root / "onnxruntime" / "core" / "providers" / "qnn")
 
+    if (ort_header_root is None or not ort_header_root.is_dir()) and args.fetch_from_deps_txt:
+        try:
+            ort_header_root = fetch_ort_headers(repo_root / "cmake" / "deps.txt")
+        except (OSError, RuntimeError) as exc:
+            print(f"error: failed to fetch ort_core headers: {exc}", file=sys.stderr)
+            return 2
+
     if ort_header_root is None or not ort_header_root.is_dir():
         print(
             "error: ORT header root not found. Run a build first so ort_core is fetched, "
-            "or pass --ort-header-root explicitly.",
+            "or pass --ort-header-root explicitly, or re-run with --fetch-from-deps-txt.",
             file=sys.stderr,
         )
         return 2

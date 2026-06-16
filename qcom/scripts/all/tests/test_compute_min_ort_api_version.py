@@ -5,14 +5,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
 from compute_min_ort_api_version import (
     build_since_map,
     compute_floor,
+    fetch_ort_headers,
+    parse_deps_txt,
     scan_ep_source,
 )
 
@@ -187,9 +193,7 @@ ORT_API2_STATUS(OnlyCall, int);
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=False
-    )
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=False)
 
 
 def test_print_emits_floor(tmp_path: Path) -> None:
@@ -204,9 +208,13 @@ def test_update_baseline_then_check_passes(tmp_path: Path) -> None:
     baseline = tmp_path / "MIN_ORT_API_VERSION.txt"
     r = _run(
         [
-            "--ort-header-root", str(headers),
-            "--ep-source-root", str(ep),
-            "--update-baseline", "--baseline", str(baseline),
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--update-baseline",
+            "--baseline",
+            str(baseline),
         ]
     )
     assert r.returncode == 0
@@ -214,9 +222,13 @@ def test_update_baseline_then_check_passes(tmp_path: Path) -> None:
 
     r = _run(
         [
-            "--ort-header-root", str(headers),
-            "--ep-source-root", str(ep),
-            "--check", "--baseline", str(baseline),
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--check",
+            "--baseline",
+            str(baseline),
         ]
     )
     assert r.returncode == 0
@@ -228,9 +240,13 @@ def test_check_detects_drift(tmp_path: Path) -> None:
     baseline.write_text("3\n")
     r = _run(
         [
-            "--ort-header-root", str(headers),
-            "--ep-source-root", str(ep),
-            "--check", "--baseline", str(baseline),
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--check",
+            "--baseline",
+            str(baseline),
         ]
     )
     assert r.returncode == 1
@@ -241,9 +257,13 @@ def test_check_missing_baseline_returns_2(tmp_path: Path) -> None:
     headers, ep = _make_tree(tmp_path, floor_since=4)
     r = _run(
         [
-            "--ort-header-root", str(headers),
-            "--ep-source-root", str(ep),
-            "--check", "--baseline", str(tmp_path / "does-not-exist.txt"),
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--check",
+            "--baseline",
+            str(tmp_path / "does-not-exist.txt"),
         ]
     )
     assert r.returncode == 2
@@ -255,8 +275,10 @@ def test_missing_ort_header_root_returns_2(tmp_path: Path) -> None:
     (ep / "u.cc").write_text("void f() { ort_api->X(1); }")
     r = _run(
         [
-            "--ort-header-root", str(tmp_path / "missing"),
-            "--ep-source-root", str(ep),
+            "--ort-header-root",
+            str(tmp_path / "missing"),
+            "--ep-source-root",
+            str(ep),
             "--print",
         ]
     )
@@ -268,9 +290,12 @@ def test_write_header_writes_define(tmp_path: Path) -> None:
     out = tmp_path / "gen" / "min_api.h"
     r = _run(
         [
-            "--ort-header-root", str(headers),
-            "--ep-source-root", str(ep),
-            "--write-header", str(out),
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--write-header",
+            str(out),
         ]
     )
     assert r.returncode == 0
@@ -282,9 +307,12 @@ def test_write_header_is_idempotent(tmp_path: Path) -> None:
     headers, ep = _make_tree(tmp_path, floor_since=8)
     out = tmp_path / "gen" / "min_api.h"
     args = [
-        "--ort-header-root", str(headers),
-        "--ep-source-root", str(ep),
-        "--write-header", str(out),
+        "--ort-header-root",
+        str(headers),
+        "--ep-source-root",
+        str(ep),
+        "--write-header",
+        str(out),
     ]
     _run(args)
     first_mtime = out.stat().st_mtime_ns
@@ -302,3 +330,271 @@ def test_unknown_call_raises(tmp_path: Path) -> None:
     (ep / "u.cc").write_text("void f() { ort_api->NotInHeaders(1); }")
     with pytest.raises(RuntimeError):
         compute_floor(headers, ep)
+
+
+# ---------------------------------------------------------------------------
+# parse_deps_txt + fetch_ort_headers: header fetch from cmake/deps.txt
+# ---------------------------------------------------------------------------
+
+
+def test_parse_deps_txt_finds_named_dep(tmp_path: Path) -> None:
+    deps = tmp_path / "deps.txt"
+    deps.write_text(
+        "# comment\n"
+        "\n"
+        "ort_core;https://example.invalid/ort_core.zip;abcdef1234567890abcdef1234567890abcdef12\n"
+        "extensions;https://example.invalid/ext.zip;0011223344556677889900112233445566778899\n"
+    )
+    url, sha = parse_deps_txt(deps, "ort_core")
+    assert url == "https://example.invalid/ort_core.zip"
+    assert sha == "abcdef1234567890abcdef1234567890abcdef12"
+
+
+def test_parse_deps_txt_raises_on_missing(tmp_path: Path) -> None:
+    deps = tmp_path / "deps.txt"
+    deps.write_text("other;https://x/y.zip;deadbeef\n")
+    with pytest.raises(RuntimeError):
+        parse_deps_txt(deps, "ort_core")
+
+
+def _build_fake_ort_core_zip(tmp_path: Path) -> tuple[Path, str]:
+    """Build a zip that mimics a GitHub source-archive: top-level dir contains
+    include/onnxruntime/core/session/onnxruntime_c_api.h. Return (zip path, sha1)."""
+    archive_root = tmp_path / "onnxruntime-fakecommit"
+    inc = archive_root / "include" / "onnxruntime" / "core" / "session"
+    inc.mkdir(parents=True)
+    (inc / "onnxruntime_c_api.h").write_text("/** \\since Version 1.7 */\nORT_API2_STATUS(FetchTest, int);\n")
+    zip_path = tmp_path / "ort_core.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for p in archive_root.rglob("*"):
+            zf.write(p, p.relative_to(tmp_path))
+    sha1 = hashlib.sha1(zip_path.read_bytes()).hexdigest()
+    return zip_path, sha1
+
+
+def test_fetch_ort_headers_downloads_verifies_extracts(tmp_path: Path) -> None:
+    zip_path, sha1 = _build_fake_ort_core_zip(tmp_path)
+    deps = tmp_path / "deps.txt"
+    deps.write_text(f"ort_core;{zip_path.as_uri()};{sha1}\n")
+    cache = tmp_path / "cache"
+
+    include_dir = fetch_ort_headers(deps, cache_root=cache)
+    assert include_dir.is_dir()
+    assert (include_dir / "onnxruntime" / "core" / "session" / "onnxruntime_c_api.h").is_file()
+    # Cached under the SHA1 slot.
+    assert include_dir.parent.name == f"ort_core-{sha1}"
+
+
+def test_fetch_ort_headers_is_cached(tmp_path: Path) -> None:
+    zip_path, sha1 = _build_fake_ort_core_zip(tmp_path)
+    deps = tmp_path / "deps.txt"
+    deps.write_text(f"ort_core;{zip_path.as_uri()};{sha1}\n")
+    cache = tmp_path / "cache"
+
+    first = fetch_ort_headers(deps, cache_root=cache)
+    # Drop a sentinel into the include dir; a second fetch must keep it
+    # (i.e., must NOT re-download or wipe the cached tree).
+    sentinel = first / "_sentinel.txt"
+    sentinel.write_text("ok")
+    second = fetch_ort_headers(deps, cache_root=cache)
+    assert second == first
+    assert sentinel.is_file()
+
+
+def test_fetch_ort_headers_rejects_sha1_mismatch(tmp_path: Path) -> None:
+    zip_path, _ = _build_fake_ort_core_zip(tmp_path)
+    deps = tmp_path / "deps.txt"
+    deps.write_text(f"ort_core;{zip_path.as_uri()};{'0' * 40}\n")
+    with pytest.raises(RuntimeError, match="sha1 mismatch"):
+        fetch_ort_headers(deps, cache_root=tmp_path / "cache")
+
+
+def test_main_fetch_from_deps_txt_end_to_end(tmp_path: Path) -> None:
+    """Driver: --fetch-from-deps-txt fetches the archive and computes the floor
+    against EP source the caller supplies."""
+    zip_path, sha1 = _build_fake_ort_core_zip(tmp_path)
+    # Build a synthetic repo layout the script can walk.
+    repo = tmp_path / "repo"
+    (repo / "cmake").mkdir(parents=True)
+    (repo / "cmake" / "deps.txt").write_text(f"ort_core;{zip_path.as_uri()};{sha1}\n")
+    ep = repo / "onnxruntime" / "core" / "providers" / "qnn"
+    ep.mkdir(parents=True)
+    (ep / "use.cc").write_text("void f() { ort_api->FetchTest(1); }")
+
+    # Stage the script into qcom/scripts/all/ under repo so __file__ parents[3]
+    # resolves to `repo`.
+    script_dst_dir = repo / "qcom" / "scripts" / "all"
+    script_dst_dir.mkdir(parents=True)
+    script_dst = script_dst_dir / "compute_min_ort_api_version.py"
+    script_dst.write_text(SCRIPT.read_text())
+
+    env = {
+        **os.environ,
+        "QNN_EP_LINT_CACHE": str(tmp_path / "cache"),
+    }
+    r = subprocess.run(
+        [sys.executable, str(script_dst), "--fetch-from-deps-txt", "--print"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "7"
+
+
+# ---------------------------------------------------------------------------
+# Exit-code contract: this is what the lint adapter routes on.
+# 0 = success, 1 = drift, 2 = cannot compute. Locked down by these tests.
+# ---------------------------------------------------------------------------
+
+
+def test_exit_code_success_is_zero(tmp_path: Path) -> None:
+    headers, ep = _make_tree(tmp_path, floor_since=5)
+    r = _run(["--ort-header-root", str(headers), "--ep-source-root", str(ep), "--print"])
+    assert r.returncode == 0
+
+
+def test_exit_code_drift_is_one(tmp_path: Path) -> None:
+    headers, ep = _make_tree(tmp_path, floor_since=10)
+    baseline = tmp_path / "baseline.txt"
+    baseline.write_text("9\n")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--check",
+            "--baseline",
+            str(baseline),
+        ]
+    )
+    assert r.returncode == 1
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        # baseline file missing
+        ["--check"],
+        # --update-baseline without --baseline
+        ["--update-baseline"],
+        # --check without --baseline
+        # (these all hit the configuration-error path, exit 2)
+    ],
+)
+def test_exit_code_config_error_is_two(tmp_path: Path, extra_args: list[str]) -> None:
+    headers, ep = _make_tree(tmp_path, floor_since=3)
+    r = _run(["--ort-header-root", str(headers), "--ep-source-root", str(ep), *extra_args])
+    assert r.returncode == 2
+
+
+def test_exit_code_unparseable_baseline_is_two(tmp_path: Path) -> None:
+    headers, ep = _make_tree(tmp_path, floor_since=3)
+    baseline = tmp_path / "baseline.txt"
+    baseline.write_text("not-a-number\n")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--check",
+            "--baseline",
+            str(baseline),
+        ]
+    )
+    assert r.returncode == 2
+
+
+def test_exit_code_missing_headers_is_two(tmp_path: Path) -> None:
+    ep = tmp_path / "ep"
+    ep.mkdir()
+    (ep / "u.cc").write_text("void f() { ort_api->X(1); }")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(tmp_path / "missing"),
+            "--ep-source-root",
+            str(ep),
+            "--print",
+        ]
+    )
+    assert r.returncode == 2
+
+
+def test_exit_code_sha1_mismatch_is_two(tmp_path: Path) -> None:
+    """--fetch-from-deps-txt must surface SHA1 mismatch as exit 2, not 1."""
+    zip_path, _real_sha = _build_fake_ort_core_zip(tmp_path)
+    repo = tmp_path / "repo"
+    (repo / "cmake").mkdir(parents=True)
+    # Intentionally wrong sha so the fetch verifier rejects.
+    (repo / "cmake" / "deps.txt").write_text(f"ort_core;{zip_path.as_uri()};{'0' * 40}\n")
+    ep = repo / "onnxruntime" / "core" / "providers" / "qnn"
+    ep.mkdir(parents=True)
+    (ep / "use.cc").write_text("void f() { ort_api->FetchTest(1); }")
+    script_dst_dir = repo / "qcom" / "scripts" / "all"
+    script_dst_dir.mkdir(parents=True)
+    script_dst = script_dst_dir / "compute_min_ort_api_version.py"
+    script_dst.write_text(SCRIPT.read_text())
+
+    env = {**os.environ, "QNN_EP_LINT_CACHE": str(tmp_path / "cache")}
+    r = subprocess.run(
+        [sys.executable, str(script_dst), "--fetch-from-deps-txt", "--print"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert r.returncode == 2, r.stderr
+    assert "sha1 mismatch" in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Adapter routing: drift -> ort-api-floor-drift, env error -> ort-api-floor-check-error
+# ---------------------------------------------------------------------------
+
+
+ADAPTER = Path(__file__).resolve().parents[4] / "qcom" / "linters" / "check_min_ort_api_version.py"
+
+
+def test_adapter_routes_drift_to_floor_drift(tmp_path: Path) -> None:
+    """When the compute script exits 1, the adapter's JSON must name the
+    finding 'ort-api-floor-drift'."""
+    fake = tmp_path / "compute.py"
+    fake.write_text("import sys\nsys.stderr.write('simulated drift\\n')\nsys.exit(1)\n")
+    wrapper = tmp_path / "run_adapter.py"
+    wrapper.write_text(
+        "import pathlib, sys\n"
+        f"sys.path.insert(0, {str(ADAPTER.parent)!r})\n"
+        "import check_min_ort_api_version as a\n"
+        f"a.SCRIPT = pathlib.Path({str(fake)!r})\n"
+        "a.main()\n"
+    )
+    r = subprocess.run([sys.executable, str(wrapper)], capture_output=True, text=True, check=False)
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout.strip())
+    assert payload["name"] == "ort-api-floor-drift"
+    assert "simulated drift" in payload["description"]
+
+
+def test_adapter_routes_env_error_to_check_error(tmp_path: Path) -> None:
+    """When the compute script exits 2, the adapter's JSON must name the
+    finding 'ort-api-floor-check-error' so reviewers can tell it apart
+    from a real baseline-refresh request."""
+    fake = tmp_path / "compute.py"
+    fake.write_text("import sys\nsys.stderr.write('headers missing\\n')\nsys.exit(2)\n")
+    wrapper = tmp_path / "run_adapter.py"
+    wrapper.write_text(
+        "import pathlib, sys\n"
+        f"sys.path.insert(0, {str(ADAPTER.parent)!r})\n"
+        "import check_min_ort_api_version as a\n"
+        f"a.SCRIPT = pathlib.Path({str(fake)!r})\n"
+        "a.main()\n"
+    )
+    r = subprocess.run([sys.executable, str(wrapper)], capture_output=True, text=True, check=False)
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout.strip())
+    assert payload["name"] == "ort-api-floor-check-error"
+    assert "headers missing" in payload["description"]
