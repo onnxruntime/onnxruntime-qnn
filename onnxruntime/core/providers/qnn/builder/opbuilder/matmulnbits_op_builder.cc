@@ -248,6 +248,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
     if (is_gpu_backend) {
       std::vector<uint8_t> per_block_uint8_offset;
       const OrtValueInfo* zero_points_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor.name);
+      RETURN_IF_NOT(zero_points_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zero_points_tensor_proto, per_block_uint8_offset));
 
       // Since zero_points are stored as uint4 and packed to uint8, the value is expected to be 2^(bits-1)
@@ -361,11 +362,13 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       std::vector<uint8_t> quant_data;
       Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
       const OrtValueInfo* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+      RETURN_IF_NOT(weight_tensor_proto != nullptr, "MatMulNBits weight must be a constant initializer.");
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_tensor_proto, quant_data, false));
 
       // 2.2 Block-quantized scales.
       std::vector<uint8_t> per_block_uint8_scale;
       const OrtValueInfo* scale_tensor_proto = qnn_model_wrapper.GetConstantTensor(scales_tensor.name);
+      RETURN_IF_NOT(scale_tensor_proto != nullptr, "MatMulNBits scales must be a constant initializer.");
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_tensor_proto, per_block_uint8_scale));
 
       const size_t elem_byte_size = utils::GetElementSizeByType(scales_tensor.type);

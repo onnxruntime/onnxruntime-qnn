@@ -199,7 +199,7 @@ Ort::Status PoolOpBuilder::AddQnnPoolParamWrappers(const OrtNodeUnit& node_unit,
   if (qnn_pool_params.rounding_mode != 0) {
     Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
     scalar_param.dataType = QNN_DATATYPE_UINT_32;
-    scalar_param.int32Value = qnn_pool_params.rounding_mode;
+    scalar_param.uint32Value = qnn_pool_params.rounding_mode;
     QnnParamWrapper rounding_mode_param(node_unit.Index(),
                                         node_unit.Name(),
                                         qnn_pool_config.param_rounding_mode,
