@@ -90,19 +90,13 @@ Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
 
   std::vector<std::string> param_tensor_names;
 
-  Qnn_Scalar_t start_qnn_scalar = QNN_SCALAR_INIT;
-  start_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  start_qnn_scalar.uint32Value = static_cast<uint32_t>(start);
-  QnnParamWrapper start_param(node_unit.Index(), node_unit.Name(), QNN_OP_SHAPE_PARAM_START, start_qnn_scalar);
-  param_tensor_names.push_back(start_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(start_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         static_cast<uint32_t>(start), QNN_OP_SHAPE_PARAM_START,
+                                         param_tensor_names));
 
-  Qnn_Scalar_t end_qnn_scalar = QNN_SCALAR_INIT;
-  end_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  end_qnn_scalar.uint32Value = static_cast<uint32_t>(end);
-  QnnParamWrapper end_param(node_unit.Index(), node_unit.Name(), QNN_OP_SHAPE_PARAM_END, end_qnn_scalar);
-  param_tensor_names.push_back(end_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(end_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         static_cast<uint32_t>(end), QNN_OP_SHAPE_PARAM_END,
+                                         param_tensor_names));
 
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
                                  std::move(input_names),
