@@ -312,8 +312,7 @@ static void RunLayerNormTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(model_fn,
                   provider_options,
                   17,  // opset
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  {expected_ep_assignment, ElementwiseAbsoluteVerifier{fp32_abs_err}});
 }
 
 TEST_F(QnnHTPBackendTests, LayerNorm_fp_standard_test) {
