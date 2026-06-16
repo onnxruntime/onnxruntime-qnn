@@ -231,7 +231,7 @@ jobs:
           VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
             "${{ github.workspace }}/build/dist/output/unsigned_libs/wheel.zip" \
-            "wheels.zip" "$VERSION" "$NETRC_FILE"
+            "wheel.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
       - name: Publish Wheels
