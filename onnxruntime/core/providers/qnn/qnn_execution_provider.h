@@ -126,6 +126,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // function finalizes summary fields and writes the JSON file.
   void CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph);
 
+  // Emit a one-shot WARNING when the QNN EP is running on the HTP user-driver (HNRD) fallback path.
+  void WarnIfHnrdPathActive();
+
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
@@ -233,6 +236,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::QnnCompatibilityInfo compatibility_info_;
   // Format: <BackendId>:<SDK>:<BackendApi>:<ContextBlob>:<HtpArch>:<IsHtpUsrDrv>.
   std::string compatibility_info_string_ = "";
+
+  // One-shot guard so the HNRD fallback warning emitted by WarnIfHnrdPathActive()
+  // fires at most once per session, even when GetCapability is invoked multiple
+  // times (e.g. initial pass + EPContext re-pass).
+  bool hnrd_warning_emitted_ = false;
 
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).

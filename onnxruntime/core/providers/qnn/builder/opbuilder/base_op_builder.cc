@@ -418,7 +418,7 @@ Ort::Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model
   RETURN_IF_NOT((onnx_axis >= 0 && onnx_axis < rank), "QNN requires axis range [0, rank-1].");
   default_axis_value = onnx_axis;
 
-  bool is_gather_op = (node_unit.OpType() == "Gather");
+  bool is_gather_op = (node_unit.OpType() == "Gather" || node_unit.OpType() == "GatherBlockQuantized");
   if (is_gather_op) {
     axis_qnn_scalar.dataType = QNN_DATATYPE_INT_32;
     axis_qnn_scalar.int32Value = onnx_axis;
