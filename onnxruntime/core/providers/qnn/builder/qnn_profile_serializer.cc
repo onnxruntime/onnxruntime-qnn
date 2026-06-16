@@ -158,7 +158,7 @@ Ort::Status Serializer::ProcessEvent(const QnnProfile_EventId_t event_id, const 
              << ","
              << event_level << ","
              << (event_data.identifier ? event_data.identifier : "NULL");
-    if (profiling_info_.op_trace_lookup) {
+    if (emit_onnx_sources_column_) {
       outfile_ << "," << LookupOnnxSources(event_data.identifier);
     }
     outfile_ << "\n";
@@ -250,6 +250,21 @@ Ort::Status Serializer::InitCsvFile() {
   // Write to CSV in append mode
   std::ifstream infile(output_filepath.c_str());
   bool exists = infile.good();
+
+  // Decide whether rows carry the trailing "ONNX Source Ops" column. By default this follows
+  // whether a trace lookup is attached this session. But when appending to an existing file we
+  // must match that file's header, otherwise rows written now would desync from a header written
+  // by a previous session that had a different trace-enable setting.
+  const bool want_onnx_sources = profiling_info_.op_trace_lookup != nullptr;
+  emit_onnx_sources_column_ = want_onnx_sources;
+  if (exists) {
+    std::string existing_header;
+    if (std::getline(infile, existing_header)) {
+      const bool header_has_onnx_sources =
+          existing_header.find("ONNX Source Ops") != std::string::npos;
+      emit_onnx_sources_column_ = header_has_onnx_sources;
+    }
+  }
   if (infile.is_open()) {
     infile.close();
   }
@@ -260,7 +275,7 @@ Ort::Status Serializer::InitCsvFile() {
   // `ONNX Source Ops` column when a trace lookup is attached, matching the
   // per-event row layout written by ProcessEvent.
   if (!exists) {
-    if (profiling_info_.op_trace_lookup) {
+    if (emit_onnx_sources_column_) {
       outfile_ << "Msg Timestamp,Message,Time,Unit of Measurement,Timing Source,Event Level,Event Identifier,ONNX Source Ops\n";
     } else {
       outfile_ << "Msg Timestamp,Message,Time,Unit of Measurement,Timing Source,Event Level,Event Identifier\n";
