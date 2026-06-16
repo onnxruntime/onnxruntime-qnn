@@ -399,8 +399,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -424,8 +422,14 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  // Validate on QNN before claiming the NodeUnits: a pattern that passes structural checks
+  // but the backend can't compile must fail soft here, otherwise it aborts Compile in Phase 2.
+  auto group = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit});
+  if (!group->CreateOrValidateOnQnn(qnn_model_wrapper, logger, /*validate=*/true).IsOK()) {
+    return nullptr;
+  }
+  return group;
 }
 
 // 3-node fusion: Reshape -> Gemm -> Reshape
@@ -434,8 +438,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -466,8 +468,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto group = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape});
+  if (!group->CreateOrValidateOnQnn(qnn_model_wrapper, logger, /*validate=*/true).IsOK()) {
+    return nullptr;
+  }
+  return group;
 }
 
 // 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
@@ -476,8 +482,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -521,8 +525,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto group = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape1, output_reshape2});
+  if (!group->CreateOrValidateOnQnn(qnn_model_wrapper, logger, /*validate=*/true).IsOK()) {
+    return nullptr;
+  }
+  return group;
 }
 
 }  // namespace qnn

@@ -227,7 +227,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
     QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& einsum_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    const Ort::Logger& /*logger*/) {
+    const Ort::Logger& logger) {
   if (einsum_node_unit.OpType() != "Einsum" || einsum_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
   }
@@ -276,6 +276,14 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
   // Check perm and shape as expected.
   if (perm != std::vector<uint32_t>(kEinsumPerm6.begin(), kEinsumPerm6.end()) ||
       post_reshape_output_shape != RearrangeShape6(pre_reshape_output_shape)) {
+    return nullptr;
+  }
+
+  // Validate on QNN before claiming the NodeUnits: a pattern that passes structural checks
+  // but the backend can't compile must fail soft here, otherwise it aborts Compile in Phase 2.
+  if (!CreateOrValidateOnQnn(qnn_model_wrapper, *pre_reshape_node_unit, einsum_node_unit,
+                             *post_reshape_node_unit, logger, /*validate=*/true)
+           .IsOK()) {
     return nullptr;
   }
 

@@ -321,7 +321,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (rounding_mode != 0) {
     Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
     scalar.dataType = QNN_DATATYPE_UINT_32;
-    scalar.int32Value = rounding_mode;
+    scalar.uint32Value = rounding_mode;
     QnnParamWrapper rounding_mode_param(node_unit.Index(), node_unit.Name(), p_round, scalar);
     pool_param_names.push_back(rounding_mode_param.GetParamTensorName());
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
