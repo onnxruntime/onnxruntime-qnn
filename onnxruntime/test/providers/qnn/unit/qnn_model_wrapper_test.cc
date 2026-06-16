@@ -24,10 +24,11 @@ std::unique_ptr<qnn::QnnModelWrapper> MakeWrapperWithOverrides(
     const qnn::ModelSettings& settings,
     std::unordered_map<std::string, std::string>* overrides) {
   ApiPtrs api_ptrs{ctx.stub_ort_api, ctx.stub_ep_api, ctx.stub_editor_api};
+  const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
   return std::make_unique<qnn::QnnModelWrapper>(
-      /*ort_graph=*/nullptr,
+      fake_graph,
       api_ptrs,
-      /*logger=*/nullptr,
+      ctx.null_logger_,
       ctx.qnn_interface,
       ctx.backend_handle,
       ctx.qnn_validator_interface,

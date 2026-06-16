@@ -23,15 +23,15 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
                                      const QnnGraph_Config_t** graph_configs) {
   if (!graph_name_.empty()) {
     // only one graph is allowed per QnnModel
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
     return false;
   }
   if (context == nullptr) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid Qnn context.");
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid Qnn context.");
     return false;
   }
   if (graph_name.length() == 0) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Empty graph name.");
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Empty graph name.");
     return false;
   }
 
@@ -39,12 +39,12 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to create Qnn graph: " + graph_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to create Qnn graph: " + graph_name).c_str());
       return false;
     }
   }
 
-  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
 
   graph_name_ = graph_name;
   graph_context_ = context;
@@ -122,12 +122,12 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
   // Keep a copy of tensor name sine it will be moved with the wrapper into model_tensors_map_
   std::string tensor_name = tensor_wrapper.GetName();
   if (tensor_name.length() == 0) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid tensor encountered empty name.");
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid tensor encountered empty name.");
     return false;
   }
 
   if (IsQnnTensorWrapperExist(tensor_name) == true) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor exist already: " + tensor_name).c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor exist already: " + tensor_name).c_str());
     return true;
   }
 
@@ -142,7 +142,7 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
   // Keep a copy of tensor name since it will be moved with the wrapper into model_params_map_
   std::string param_tensor_name = param_wrapper.GetParamTensorName();
   if (param_tensor_name.length() == 0) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid parameter encountered empty name.");
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid parameter encountered empty name.");
     return false;
   }
 
@@ -172,7 +172,7 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
   for (const auto& tensor_name : tensor_names) {
     auto it = model_tensors_map_.find(tensor_name);
     if (it == model_tensors_map_.end()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Input name not exist: " + tensor_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Input name not exist: " + tensor_name).c_str());
       return false;
     }
 
@@ -187,10 +187,10 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
       std::string error_string;
       auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
       if (!rt) {
-        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
       }
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor: " + tensor_name + " created. " + error_string).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor: " + tensor_name + " created. " + error_string).c_str());
     }
 
     qnn_tensors.push_back(it->second.GetQnnTensor());
@@ -205,19 +205,19 @@ bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
   for (const auto& param_tensor_name : param_tensor_names) {
     auto it = model_params_map_.find(param_tensor_name);
     if (it == model_params_map_.end()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Parameter name not exist: " + param_tensor_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Parameter name not exist: " + param_tensor_name).c_str());
       return false;
     }
 
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
     if (!do_op_validation) {
       std::string error_string;
       auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
       if (!rt) {
-        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
       }
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor: " + param_tensor_name + " created. " + error_string).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor: " + param_tensor_name + " created. " + error_string).c_str());
     }
 
     qnn_params.push_back(it->second.GetQnnParam());
@@ -246,7 +246,7 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
 Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
   bool ok;
   if (validator_backend_handle_ != nullptr) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
 
     ok = op_config.QnnGraphOpValidation(qnn_validator_interface_, validator_backend_handle_, error_msg);
   } else {
@@ -262,7 +262,7 @@ bool QnnModelWrapper::CreateBF16CastTensor(const std::string& tensor_name,
   QnnTensorWrapper bf16_tensor(tensor_name, tensor_type, QNN_DATATYPE_BFLOAT_16,
                                QnnQuantParamsWrapper(), std::vector<uint32_t>(shape));
   if (!AddTensorWrapper(std::move(bf16_tensor))) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("BF16: Failed to add tensor: " + tensor_name).c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("BF16: Failed to add tensor: " + tensor_name).c_str());
     return false;
   }
   return true;
@@ -279,7 +279,7 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
 
     auto it = model_tensors_map_.find(input_name);
     if (it == model_tensors_map_.end()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("BF16: Input tensor not found: " + input_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("BF16: Input tensor not found: " + input_name).c_str());
       return false;
     }
 
@@ -299,9 +299,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
           return false;
         }
 
-        ORT_CXX_LOG_PTR(logger_ptr_,
-                        ORT_LOGGING_LEVEL_VERBOSE,
-                        ("BF16: Adding Cast op " + input_name + " -> " + cast_output_name).c_str());
+        ORT_CXX_LOG(logger_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("BF16: Adding Cast op " + input_name + " -> " + cast_output_name).c_str());
 
         QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                               std::vector<std::string>{input_name},
@@ -322,9 +322,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
         if (!CreateBF16CastTensor(cast_output_name, shape, QNN_TENSOR_TYPE_NATIVE)) {
           return false;
         }
-        ORT_CXX_LOG_PTR(logger_ptr_,
-                        ORT_LOGGING_LEVEL_VERBOSE,
-                        ("BF16: Adding Cast op for static tensor " + input_name + " -> " + cast_output_name).c_str());
+        ORT_CXX_LOG(logger_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("BF16: Adding Cast op for static tensor " + input_name + " -> " + cast_output_name).c_str());
         QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                               std::vector<std::string>{input_name},
                               std::vector<std::string>{cast_output_name},
@@ -368,9 +368,9 @@ bool QnnModelWrapper::ProcessBF16OutputConversion(const std::string& qnn_node_na
         if (!CreateBF16CastTensor(bf16_output_name, shape, QNN_TENSOR_TYPE_NATIVE)) {
           return false;
         }
-        ORT_CXX_LOG_PTR(logger_ptr_,
-                        ORT_LOGGING_LEVEL_VERBOSE,
-                        ("BF16: Adding Cast op " + bf16_output_name + " -> " + output_name).c_str());
+        ORT_CXX_LOG(logger_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("BF16: Adding Cast op " + bf16_output_name + " -> " + output_name).c_str());
         graph_output_cast_ops.push_back({bf16_output_name, output_name});
       }
       converted_output_names.push_back(bf16_output_name);
@@ -394,9 +394,9 @@ bool QnnModelWrapper::ApplyBF16ConversionForValidation(const std::vector<std::st
   for (const auto& input_name : input_names) {
     auto it = model_tensors_map_.find(input_name);
     if (it == model_tensors_map_.end()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("BF16: Validation failed - input tensor not found: " + input_name).c_str());
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  ("BF16: Validation failed - input tensor not found: " + input_name).c_str());
       return false;
     }
 
@@ -465,11 +465,11 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     std::unique_ptr<BF16ConversionGuard> bf16_guard;
 
     if (IsBF16ConversionEnabled()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "[BF16] Validation with BF16 conversion enabled");
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "[BF16] Validation with BF16 conversion enabled");
       if (!ApplyBF16ConversionForValidation(input_names, output_names, validation_input_names, validation_output_names)) {
-        ORT_CXX_LOG_PTR(logger_ptr_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        ("[BF16] ApplyBF16ConversionForValidation failed for node: " + qnn_node_name).c_str());
+        ORT_CXX_LOG(logger_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("[BF16] ApplyBF16ConversionForValidation failed for node: " + qnn_node_name).c_str());
         return false;
       }
       // Create the guard after successful conversion
@@ -497,7 +497,7 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
 
     std::ostringstream oss;
     oss << op_config_wrapper;
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
     Ort::Status validation_status = ValidateQnnNode(op_config_wrapper, error_msg);
@@ -505,7 +505,7 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     if (!validation_status.IsOK()) {
       // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
       // specific validation error (instead of "failed to add node").
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, error_msg.c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, error_msg.c_str());
     }
     return validation_status.IsOK();
   } else {
@@ -536,47 +536,47 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
     std::vector<std::string> output_names = op_property.GetOutputNames();
     std::vector<std::string> param_tensor_names = op_property.GetParamTensorNames();
 
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("[BF16] Processing node for BF16 conversion: " + qnn_node_name).c_str());
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("[BF16] Processing node for BF16 conversion: " + qnn_node_name).c_str());
 
     std::vector<std::string> converted_input_names;
     std::vector<std::string> converted_output_names;
     std::vector<std::pair<std::string, std::string>> graph_output_cast_ops;
 
     if (!ProcessBF16InputConversion(qnn_node_name, input_names, converted_input_names, input_cast_ops)) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("[BF16] ProcessBF16InputConversion failed for node: " + qnn_node_name).c_str());
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  ("[BF16] ProcessBF16InputConversion failed for node: " + qnn_node_name).c_str());
       return false;
     }
 
     if (!ProcessBF16OutputConversion(qnn_node_name, output_names, converted_output_names, graph_output_cast_ops)) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("[BF16] ProcessBF16OutputConversion failed for node: " + qnn_node_name).c_str());
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  ("[BF16] ProcessBF16OutputConversion failed for node: " + qnn_node_name).c_str());
       return false;
     }
 
     // Add the main node with BF16-converted tensor names
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("[BF16] Adding main node with converted tensors: " + qnn_node_name).c_str());
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("[BF16] Adding main node with converted tensors: " + qnn_node_name).c_str());
     processed_ops.emplace_back(std::move(qnn_node_name), std::move(package_name), std::move(qnn_node_type),
                                std::move(converted_input_names), std::move(converted_output_names),
                                std::move(param_tensor_names));
 
     // Add Cast operations for graph outputs to convert BF16 back to FP32
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("[BF16] Adding " + std::to_string(graph_output_cast_ops.size()) + "output cast operations").c_str());
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("[BF16] Adding " + std::to_string(graph_output_cast_ops.size()) + "output cast operations").c_str());
     for (size_t i = 0; i < graph_output_cast_ops.size(); ++i) {
       const auto& [bf16_name, fp32_name] = graph_output_cast_ops[i];
       std::string cast_node_name = bf16_name;
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_VERBOSE,
-                      ("[BF16] Adding output Cast op: " + cast_node_name + " (" + bf16_name + " -> " + fp32_name + ")")
-                          .c_str());
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("[BF16] Adding output Cast op: " + cast_node_name + " (" + bf16_name + " -> " + fp32_name + ")")
+                      .c_str());
 
       processed_ops.emplace_back(std::move(cast_node_name), QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                                  std::vector<std::string>{bf16_name},
@@ -626,8 +626,8 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
 
       std::string error;
       if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, io_type, qnn_tensor_id_map_, error)) {
-        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
-                        (std::string("Failed to pre-register ") + io_type + ": " + name + ". " + error).c_str());
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                    (std::string("Failed to pre-register ") + io_type + ": " + name + ". " + error).c_str());
         return false;
       }
     }
@@ -639,7 +639,7 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
 }
 
 bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
-  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Compose Qnn Graph.");
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Compose Qnn Graph.");
   if (qnn_op_property_list_.empty()) {
     return false;
   }
@@ -687,12 +687,12 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
 
     std::ostringstream oss;
     oss << op_config_wrapper;
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
     bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_interface_, graph_, error_msg);
     if (!rt) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, error_msg.c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_msg.c_str());
       return false;
     }
 
@@ -878,8 +878,8 @@ Ort::Status QnnModelWrapper::AddCastNode(const std::string& cast_node_name,
                                          std::vector<uint32_t>&& output_shape,
                                          bool do_op_validation) {
   if (IsQnnTensorWrapperExist(output_name)) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Tensor already added, skip it: " + output_name).c_str());
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                ("Tensor already added, skip it: " + output_name).c_str());
     return Ort::Status();
   }
 
@@ -1034,7 +1034,7 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
   for (const auto& tensor_name : tensor_name_list) {
     auto it = model_tensors_map_.find(tensor_name);
     if (it == model_tensors_map_.end()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Model input or output name not exist: " + tensor_name + ". Could cause execution error.").c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Model input or output name not exist: " + tensor_name + ". Could cause execution error.").c_str());
       break;
     }
 
@@ -1056,7 +1056,7 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
                                                    std::vector<uint8_t>& unpacked_tensor,
                                                    const bool unpack_sub_byte_to_8_bit) const {
   const ORTCHAR_T* model_path = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(ort_graph_ptr_, &model_path));
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
   RETURN_IF_ERROR(utils::UnpackInitializerData(api_ptrs_.ort_api,
                                                initializer,
                                                std::filesystem::path(model_path),

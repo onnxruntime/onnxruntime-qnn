@@ -32,6 +32,33 @@
 namespace onnxruntime {
 namespace test {
 
+// MakeNullLogger
+//
+// Constructs an Ort::Logger with logger_=nullptr and cached_severity_level_=
+// ORT_LOGGING_LEVEL_FATAL, so that all ORT_CXX_LOG calls (severity < FATAL)
+// short-circuit on the cached-severity check without dereferencing the null
+// logger pointer. QNN EP never logs at FATAL, so LogMessage is never reached.
+//
+// Background: the public ORT API exposes no way to construct an Ort::Logger
+// without a real OrtLogger* obtained through EP plugin loading. The
+// Logger(const OrtLogger*) constructor calls Logger_GetLoggingSeverityLevel
+// on the pointer, which crashes on nullptr. The Logger(nullptr_t) constructor
+// is a no-op that leaves cached_severity_level_=VERBOSE, which makes every
+// log statement attempt the underlying LogMessage call.
+//
+// This helper uses memcpy to set cached_severity_level_=FATAL after default
+// construction. Well-defined for trivially copyable types per [basic.types] /
+// memcpy semantics.
+inline Ort::Logger MakeNullLogger() {
+  static_assert(sizeof(Ort::Logger) == 2 * sizeof(void*),
+                "Ort::Logger layout changed — update MakeNullLogger()");
+  Ort::Logger logger{std::nullptr_t{}};
+  OrtLoggingLevel fatal = ORT_LOGGING_LEVEL_FATAL;
+  std::memcpy(reinterpret_cast<char*>(&logger) + sizeof(const OrtLogger*),
+              &fatal, sizeof(OrtLoggingLevel));
+  return logger;
+}
+
 // Context for constructing a QnnModelWrapper in function-level unit tests.
 //
 //   ctx.input_info.indices  = {{"input0", 0}};   // declare graph inputs
@@ -48,6 +75,17 @@ struct QnnModelWrapperTestContext {
   Qnn_BackendHandle_t backend_handle;
   QNN_INTERFACE_VER_TYPE qnn_validator_interface;  // null interface — no validator in unit tests
   Qnn_BackendHandle_t validator_backend_handle;    // must be a stable lvalue: QnnModelWrapper stores it as a const reference
+
+  // Stable lvalues passed to the production QnnModelWrapper constructor.
+  // The constructor stores pointers to these members; they must outlive any
+  // wrapper created by CreateWrapper().
+  //
+  // null_logger_: default-constructed Ort::Logger has a null internal OrtLogger*;
+  //   ORT_CXX_LOG_PTR calls IsNullLogger() before logging, so logging is safely skipped.
+  // fake_graph_sentinel_: an int used as a stable address; stubs receive this pointer
+  //   but never dereference it (same pattern as g_type_info_sentinel etc.).
+  Ort::Logger null_logger_{MakeNullLogger()};
+  int fake_graph_sentinel_{};
 
   // Book-keeping for which tensors are graph inputs / outputs.
   qnn::GraphInputOutputInfo input_info;
@@ -100,10 +138,13 @@ struct QnnModelWrapperTestContext {
           "— re-add them after resetting stub_ort_api");
     }
     ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
+    // fake_graph_sentinel_ is a stable int member used as the graph address.
+    // Stubs receive this pointer but never dereference it.
+    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     return std::make_unique<qnn::QnnModelWrapper>(
-        /*ort_graph=*/nullptr,
+        fake_graph,
         api_ptrs,
-        /*logger=*/nullptr,
+        null_logger_,
         qnn_interface,
         backend_handle,
         qnn_validator_interface,
