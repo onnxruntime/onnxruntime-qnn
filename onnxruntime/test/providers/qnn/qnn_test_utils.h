@@ -872,8 +872,7 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
           debug_output_name,
           cpu_f32_outputs[i],
           qnn_qdq_outputs[i],
-          EPVerificationParams{ExpectedEPNodeAssignment::All,  // Node assignment not needed in VerifyOutput, just fill with All
-                               ElementwiseAbsoluteVerifier(1e-4f)});
+          ElementwiseAbsoluteVerifier(1e-4f));
     }
   }
 }

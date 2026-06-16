@@ -65,7 +65,7 @@ struct EPVerificationParams {
 void VerifyOutput(const std::string& output_name,
                   const Ort::Value& expected_value,
                   const Ort::Value& actual_value,
-                  const EPVerificationParams& params);
+                  const TensorVerifier& tensor_verifier);
 
 size_t CountNodes(const Ort::Session& current_session);
 

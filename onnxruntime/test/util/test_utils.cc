@@ -81,7 +81,7 @@ void VerifyFloatOutput(const std::string& output_name,
 void VerifyOutput(const std::string& output_name,
                   const Ort::Value& expected_value,
                   const Ort::Value& actual_value,
-                  const EPVerificationParams& params) {
+                  const TensorVerifier& tensor_verifier) {
   // Get tensor type info
   auto expected_type_info = expected_value.GetTensorTypeAndShapeInfo();
   auto actual_type_info = actual_value.GetTensorTypeAndShapeInfo();
@@ -163,13 +163,13 @@ void VerifyOutput(const std::string& output_name,
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: {
       const float* expected_data = expected_value.GetTensorData<float>();
       const float* actual_data = actual_value.GetTensorData<float>();
-      VerifyFloatOutput(output_name, expected_data, actual_data, element_count, params.tensor_verifier);
+      VerifyFloatOutput(output_name, expected_data, actual_data, element_count, tensor_verifier);
       break;
     }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
       const Ort::Float16_t* expected_data = expected_value.GetTensorData<Ort::Float16_t>();
       const Ort::Float16_t* actual_data = actual_value.GetTensorData<Ort::Float16_t>();
-      VerifyFloatOutput(output_name, expected_data, actual_data, element_count, params.tensor_verifier);
+      VerifyFloatOutput(output_name, expected_data, actual_data, element_count, tensor_verifier);
       break;
     }
     default:
@@ -180,11 +180,11 @@ void VerifyOutput(const std::string& output_name,
 static void VerifyOutputs(const std::vector<std::string>& output_names,
                           const std::vector<Ort::Value>& expected_fetches,
                           const std::vector<Ort::Value>& fetches,
-                          const EPVerificationParams& params) {
+                          const TensorVerifier& tensor_verifier) {
   ASSERT_EQ(expected_fetches.size(), fetches.size());
 
   for (size_t i = 0, end = expected_fetches.size(); i < end; ++i) {
-    VerifyOutput(output_names[i], expected_fetches[i], fetches[i], params);
+    VerifyOutput(output_names[i], expected_fetches[i], fetches[i], tensor_verifier);
   }
 }
 
@@ -337,7 +337,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   RunWithEP(ort_session, ort_run_options, feeds, fetches);
 
   if (verify_outputs) {
-    VerifyOutputs(output_names, expected_fetches, fetches, params);
+    VerifyOutputs(output_names, expected_fetches, fetches, params.tensor_verifier);
   }
 
   if (params.graph_verifier) {
