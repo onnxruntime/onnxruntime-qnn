@@ -31,8 +31,7 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
   RunQnnModelTest(BuildOpTestCase<DataType>("Inverse_node", "Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //

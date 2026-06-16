@@ -119,11 +119,9 @@ static void RunOpTestOnCPU(const std::string& op_type,
   RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  1e-5f,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   true,
-                  nullptr,
                   &v2_domain);
 }
 

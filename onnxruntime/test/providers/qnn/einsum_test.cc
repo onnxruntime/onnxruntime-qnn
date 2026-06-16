@@ -44,8 +44,7 @@ static void RunQnnEinsum(
           /*attrs=*/{test::MakeAttribute(kEinsumEquation, equation)}),
       /*provider_options=*/provider_options,
       /*opset_version=*/12,
-      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-      /*tolerance=*/tolerance);
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 template <typename InputAQType, typename InputBQType>

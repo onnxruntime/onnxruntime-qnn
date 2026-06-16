@@ -272,10 +272,9 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 }
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
-                     int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                     float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
-                     std::function<void(const Ort::Session&)>* ep_graph_checker,
-                     Ort::CustomOpDomain* custom_op_domain) {
+                     int opset_version, const EPVerificationParams& verification_params,
+                     OrtLoggingLevel log_severity,
+                     bool verify_outputs, Ort::CustomOpDomain* custom_op_domain) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -284,10 +283,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     output_dir = QNNTestEnvironment::GetInstance().CreateTestcaseDirs();
   }
 
-  EPVerificationParams verification_params;
-  verification_params.ep_node_assignment = expected_ep_assignment;
-  verification_params.fp32_abs_err = fp32_abs_err;
-  verification_params.graph_verifier = ep_graph_checker;
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 

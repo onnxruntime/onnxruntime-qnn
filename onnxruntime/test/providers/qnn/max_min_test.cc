@@ -26,7 +26,7 @@ static void RunCPUMinOrMaxOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Runs a QDQ Max/Min model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment, and that inference
