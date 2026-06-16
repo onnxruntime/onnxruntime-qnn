@@ -207,7 +207,7 @@ TEST_F(QnnCPUBackendTests, BatchNorm2D_fp32) {
           ),
       provider_options,
       13,
-      ExpectedEPNodeAssignment::All);
+      EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnCPUBackendTests, BatchNorm2D_int8) {
@@ -461,8 +461,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm_FP32_as_FP16) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);  // abs err
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.

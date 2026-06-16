@@ -29,6 +29,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
+// GQA not available until opset version 2.12.0 (QAIRT 2.48). TODO: Remove this check once the EP uplevels to 2.48.
+#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
+  CreateGroupQueryAttentionOpBuilder("GroupQueryAttention", *this);
+#endif  // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
   CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);

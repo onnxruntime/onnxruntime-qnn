@@ -43,7 +43,9 @@ static void RunMatMulOpTest(const std::vector<int64_t>& shape_0,
   RunQnnModelTest(BuildMatMulOpTestCase(
                       TestInputDef<float>(shape_0, is_initializer_0, GetSequentialFloatData(shape_0, 0.01f, 0.02f)),
                       TestInputDef<float>(shape_1, is_initializer_1, GetSequentialFloatData(shape_1, 0.02f, 0.02f))),
-                  provider_options, opset, expected_ep_assignment, f32_abs_err);
+                  provider_options,
+                  opset,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(f32_abs_err)});
 }
 
 // Returns a function that creates a graph with a QDQ MatMul operator.
@@ -377,8 +379,8 @@ ProviderOptions GetBQMatMulProviderOptions() {
 TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Larger K with more blocks per output channel. Guards the [num_blocks, N] → [N, num_blocks]
@@ -386,16 +388,16 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_NoBias) {
 TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_MultiBlock) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT4, block_size=16: still a valid HTP multiple-of-8 block size.
 TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_BlockSize16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
@@ -403,8 +405,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int8_BlockSize4) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4,
                                         /*weight_bits=*/8),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // UINT4 weight: exercises the unsigned→signed conversion path (TransformUnsignedToSignedFixedPoint).
@@ -412,8 +414,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16UInt4_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
                                         /*weight_bits=*/4, /*weight_is_unsigned=*/true),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 // UINT8 weight: unsigned 8-bit path.
@@ -421,8 +423,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16UInt8_BlockSize4) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4,
                                         /*weight_bits=*/8, /*weight_is_unsigned=*/true),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 // INT2, block_size=16: DISABLED. Two independent blockers (same as Conv BQ):
@@ -432,8 +434,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulBQ_U16Int2_BlockSize16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16,
                                         /*weight_bits=*/2),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 // Rank-3 activation [1, M, K]: leading dim=1, reshapes to [1, 1, M, K] matching weight [1, 1, K, N].
@@ -442,8 +444,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank3Activation) {
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
                                         /*weight_bits=*/4, /*weight_is_unsigned=*/false,
                                         /*act_shape_override=*/{1, 2, 16}),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Rank-3 weight [1, K, N]: leading dim = 1, reshapeable to [1, 1, K, N].
@@ -452,8 +454,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank3Weight) {
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
                                         /*weight_bits=*/4, /*weight_is_unsigned=*/false,
                                         /*act_shape_override=*/{}, /*weight_shape_override=*/{1, 16, 4}),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Rank-4 activation [1, 1, M, K]: already in 4-D form, no reshape needed.
@@ -462,8 +464,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank4Activation) {
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
                                         /*weight_bits=*/4, /*weight_is_unsigned=*/false,
                                         /*act_shape_override=*/{1, 1, 2, 16}),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Rank-4 weight [1, 1, K, N]: already in the [1,1,K,N] form QNN requires.
@@ -472,8 +474,8 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank4Weight) {
   RunQnnModelTest(BuildBQMatMulTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8,
                                         /*weight_bits=*/4, /*weight_is_unsigned=*/false,
                                         /*act_shape_override=*/{}, /*weight_shape_override=*/{1, 1, 16, 4}),
-                  GetBQMatMulProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  GetBQMatMulProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp) {

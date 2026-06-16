@@ -327,8 +327,7 @@ static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<fl
   RunQnnModelTest(build_fn,
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Creates a graph with a single Q/DQ Conv operator. Used for testing HTP backend.
@@ -988,8 +987,7 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
                       /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
                   provider_options,
                   /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-4f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
 }
 
 TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
@@ -1002,8 +1000,7 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                       /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
                   provider_options,
                   /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-4f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -1096,7 +1093,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
   RunQnnModelTest(BuildConvMulGraph,
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
@@ -1109,8 +1106,7 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
                       /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
                   provider_options,
                   /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
 TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
@@ -1123,8 +1119,7 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                       /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
                   provider_options,
                   /*opset*/ 13,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
@@ -3226,8 +3221,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
                                       /*bias=*/false),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // 1x1 Conv with bias. Exercises the INT32→FP16 bias dequantization path.
@@ -3241,8 +3235,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
                                       /*bias=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // 1x1 Conv with per-channel quantized bias (DQ axis=0, [OC] scales).
@@ -3258,8 +3251,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBiasPerChannel) {
                                       /*bias_per_channel=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // 1x1 Conv with larger IC and more blocks per channel.
@@ -3272,8 +3264,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
                                       /*block_size=*/8),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Regression: existing per-channel INT4 Conv (no block_size) continues to work.
@@ -3309,8 +3300,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_BlockSize16) {
                                       /*weight_bits=*/4),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
@@ -3323,8 +3313,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize4) {
                                       /*weight_bits=*/8),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT8, block_size=8: larger block size, still a valid HTP multiple-of-4.
@@ -3337,8 +3326,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
                                       /*weight_bits=*/8),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT2, block_size=16: DISABLED. Two independent blockers:
@@ -3356,8 +3344,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16Int2_1x1_BlockSize16) {
                                       /*weight_bits=*/2),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/0.0f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
 }
@@ -3375,8 +3362,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16UInt2_1x1_BlockSize16) {
                                       /*weight_is_unsigned=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/0.0f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
 }
@@ -3393,8 +3379,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_NoBias) {
                                       /*weight_is_unsigned=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // UINT4 weight with bias: verifies unsigned weight path works with the FP16 bias dequantization.
@@ -3408,8 +3393,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_WithBias) {
                                       /*weight_is_unsigned=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // UINT8 weight, block_size=4: exercises TransformUnsignedToSignedFixedPoint for 8-bit.
@@ -3426,8 +3410,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
                                       /*weight_is_unsigned=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

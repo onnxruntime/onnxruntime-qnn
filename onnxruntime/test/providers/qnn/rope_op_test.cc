@@ -49,8 +49,7 @@ static void RunRopeOpTest(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(model_builder,
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(abs_err)});
 }
 
 // Basic test with FP16 data type (QNN EP only supports FP16 for RotaryEmbedding)

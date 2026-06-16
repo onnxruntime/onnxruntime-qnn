@@ -144,7 +144,7 @@ static void RunPadOpTest(const TestInputDef<T>& data_def,
   RunQnnModelTest(BuildPadTestCase<T>(data_def, pads_def, constant_value_def, attrs, has_constant_value, opset),
                   provider_options,
                   opset,
-                  expected_ep_assignment, f32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(f32_abs_err)});
 }
 
 // Runs a QDQ Pad model on the QNN HTP backend. Checks the graph node assignment, and that inference
