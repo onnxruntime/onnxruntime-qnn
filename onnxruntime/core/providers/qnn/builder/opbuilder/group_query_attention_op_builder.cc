@@ -83,6 +83,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
             "kv_cache_bit_width attribute not supported");
 
   int32_t local_window_size = node_helper.Get("local_window_size", -1);
+  RETURN_IF(local_window_size < -1, ("unsupported value for local_window_size: " + std::to_string(local_window_size)).c_str());
   RETURN_IF(local_window_size != -1 && SafeInt<uint32_t>(local_window_size) < max_sequence_length,
             "Local attention through local_window_size not supported");
 
@@ -101,6 +102,10 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   float softcap = node_helper.Get("softcap", 0.0f);
   RETURN_IF(softcap != 0.0f, "softcap != 0 not supported");
 
+  // Validate OpConfig with backend
+  std::vector<std::string> input_names;
+  RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, true));
+  RETURN_IF_ERROR(ProcessAttributesAndOutputs(qnn_model_wrapper, node_unit, std::move(input_names), logger, true));
   return Ort::Status();
 }
 
@@ -156,8 +161,8 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
 
   // num_heads
   std::optional<int64_t> num_heads = node_helper.GetInt64("num_heads");
-  uint32_t num_heads_u32 = SafeInt<uint32_t>(num_heads.value());
   RETURN_IF_NOT(num_heads.has_value(), "required attribute num_heads not provided");
+  uint32_t num_heads_u32 = SafeInt<uint32_t>(num_heads.value());
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
                                node_unit.Name(),
@@ -167,8 +172,8 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
 
   // kv_num_heads
   const std::optional<int64_t> kv_num_heads = node_helper.GetInt64("kv_num_heads");
-  const uint32_t kv_num_heads_u32 = SafeInt<uint32_t>(kv_num_heads.value());
   RETURN_IF_NOT(kv_num_heads.has_value(), "required attribute kv_num_heads not provided");
+  const uint32_t kv_num_heads_u32 = SafeInt<uint32_t>(kv_num_heads.value());
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
                                node_unit.Name(),
