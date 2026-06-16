@@ -50,8 +50,6 @@ jobs:
       build_android_aarch64: true
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true
-      build_linux_x86_64: true
-      linux_x86_64_target_py_vsns: "['3.10','3.12']"
       linux_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
@@ -75,21 +73,15 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # We only publish this for AI Hub to use and they only want x86_64 Linux
-      - name: Download Linux x86_64 Python 3.10 Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: linux-x86_64-py3.10-wheels
+          name: linux-x86_64_ubuntu_22_04-py3.12-wheels
 
-      - name: Download Linux x86_64 Python 3.12 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64-py3.12-wheels
-
-      - name: Consolidate Wheels
+      - name: Copy wheel
         run: |
           mkdir "${{ github.workspace }}/build/dist"
-          cp "${{ github.workspace }}/build/linux-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
 
       - name: Create config file
         run: |
@@ -137,16 +129,6 @@ jobs:
       # ---------------
       # Download wheels
       # ---------------
-
-      - name: Download Linux x86_64 Python 3.10 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64-py3.10-wheels
-
-      - name: Download Linux x86_64 Python 3.12 Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64-py3.12-wheels
 
       - name: Download Linux Aarch64 manylinux_2_34 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -271,11 +253,6 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_oe_gcc11_2-pyNone-tests
-
-      - name: Download Linux x86_64 Tests from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: linux-x86_64-py3.10-tests
 
       - name: Download Windows ARM64 Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -409,11 +386,11 @@ jobs:
 
       - name: Verify Wheel artifacts
         run: |
-          # After merge: 2 Linux x86_64 (py3.10, py3.12) + 4 Linux Aarch64 manylinux_2_34 + 4 Linux x86_64 Ubuntu 22.04 + 4 Windows ARM64 + 4 merged AMD = 18 wheels
+          # After merge: 4 Linux Aarch64 manylinux_2_34 + 4 Linux x86_64 Ubuntu 22.04 + 4 Windows ARM64 + 4 merged AMD = 16 wheels
           # (arm64ec and x86_64 originals are deleted by the merge step above)
           count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
           echo "Found $count wheel(s)"
-          [ "$count" -eq 18 ] || { echo "ERROR: Expected 18 wheels, found $count"; exit 1; }
+          [ "$count" -eq 16 ] || { echo "ERROR: Expected 16 wheels, found $count"; exit 1; }
 
       - name: Verify NuGet artifact
         run: |
@@ -428,7 +405,6 @@ jobs:
             "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2"
             "onnxruntime-tests-linux-x86_64_ubuntu_22_04.tar.bz2"
             "onnxruntime-tests-linux-aarch64_oe_gcc11_2.tar.bz2"
-            "onnxruntime-tests-linux-x86_64.tar.bz2"
             "onnxruntime-testdata.tar.bz2"
           )
           missing=()
