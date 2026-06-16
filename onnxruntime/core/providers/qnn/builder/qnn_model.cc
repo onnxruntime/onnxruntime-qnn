@@ -359,10 +359,10 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
 #endif
 
   if (QNN_GRAPH_NO_ERROR != status) {
-    std::ostringstream oss;
-    oss << "Failed to finalize QNN graph. Error code: " << status;
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    return MAKE_EP_FAIL("Failed to finalize QNN graph.");
+    const std::string qnn_err = utils::GetQnnErrorMessage(qnn_backend_manager_->GetQnnInterface(), status);
+    return MAKE_EP_FAIL(("Failed to finalize QNN graph. Error: " + qnn_err +
+                         ", Code: " + std::to_string(status))
+                            .c_str());
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
@@ -601,7 +601,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   }
 
   if (QNN_GRAPH_NO_ERROR != execute_status) {
-    return MAKE_EP_FAIL(("QNN graph execute error. Error code: " + std::to_string(execute_status)).c_str());
+    const std::string qnn_err = utils::GetQnnErrorMessage(qnn_backend_manager_->GetQnnInterface(), execute_status);
+    return MAKE_EP_FAIL(("QNN graph execute error. Error: " + qnn_err +
+                         ", Code: " + std::to_string(execute_status))
+                            .c_str());
   }
 
   return Ort::Status();

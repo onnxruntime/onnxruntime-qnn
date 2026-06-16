@@ -39,7 +39,11 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to create Qnn graph: " + graph_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  ("Failed to create Qnn graph: " + graph_name +
+                   ". Error: " + utils::GetQnnErrorMessage(qnn_interface_, rt) +
+                   ", Code: " + std::to_string(rt))
+                      .c_str());
       return false;
     }
   }
