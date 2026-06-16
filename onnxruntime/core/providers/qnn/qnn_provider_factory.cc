@@ -3,7 +3,10 @@
 
 #include "core/providers/qnn/qnn_provider_factory.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <optional>
 
@@ -12,6 +15,7 @@
 #include "QnnCommon.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
 
@@ -476,12 +480,51 @@ OrtStatus* CreateEpFactories(const char* registration_name,
                              size_t max_factories,
                              size_t* num_factories) {
   if (ort_api_base == nullptr) {
-    return nullptr;  // Cannot create status without API base
+    return nullptr;
   }
 
-  const OrtApi* ort_api = ort_api_base->GetApi(ORT_API_VERSION);
+  // kMinOrtApiVersion must be at least the ORT API version that introduced
+  // the newest ORT API method this EP calls. Below this floor, GetApi()
+  // returns a function table missing members the EP would dereference.
+  constexpr uint32_t kMinOrtApiVersion = 24;
+  static_assert(kMinOrtApiVersion <= ORT_API_VERSION,
+                "kMinOrtApiVersion must not exceed ORT_API_VERSION");
+
+  const char* version_str = ort_api_base->GetVersionString();
+  const uint32_t runtime_api_version = onnxruntime::qnn::detail::ParseRuntimeOrtApiVersion(version_str);
+
+  if (runtime_api_version == 0) {
+    const OrtApi* fallback_api = ort_api_base->GetApi(1);
+    if (fallback_api == nullptr) {
+      return nullptr;
+    }
+    char msg[256];
+    std::snprintf(msg, sizeof(msg),
+                  "QNN EP could not parse host ORT version string \"%s\" "
+                  "(expected \"1.X.Y\" with major == 1).",
+                  version_str != nullptr ? version_str : "(null)");
+    return fallback_api->CreateStatus(ORT_FAIL, msg);
+  }
+
+  if (runtime_api_version < kMinOrtApiVersion) {
+    const OrtApi* fallback_api = ort_api_base->GetApi(runtime_api_version);
+    if (fallback_api == nullptr) {
+      return nullptr;
+    }
+    char msg[256];
+    std::snprintf(msg, sizeof(msg),
+                  "QNN EP requires ORT >= 1.%u (API %u). "
+                  "Host ORT is %s (API %u).",
+                  kMinOrtApiVersion, kMinOrtApiVersion,
+                  version_str, runtime_api_version);
+    return fallback_api->CreateStatus(ORT_FAIL, msg);
+  }
+
+  const uint32_t requested_api_version =
+      std::min(runtime_api_version, static_cast<uint32_t>(ORT_API_VERSION));
+  const OrtApi* ort_api = ort_api_base->GetApi(requested_api_version);
   if (ort_api == nullptr) {
-    return nullptr;  // Cannot create status without ORT API
+    return nullptr;
   }
 
   // Manual init for the C++ API

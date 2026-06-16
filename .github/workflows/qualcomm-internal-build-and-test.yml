@@ -13,9 +13,6 @@ on:
       do_all:
         type: boolean
         default: true
-      do_linux_x86_64:
-        type: boolean
-        default: false
       do_windows_arm64:
         type: boolean
         default: false
@@ -90,22 +87,6 @@ jobs:
           else
             echo "code=false" >> "${GITHUB_OUTPUT}"
           fi
-
-  build-and-test-linux-x86_64:
-    if: ${{ inputs.do_all }}
-    needs: [archive-testdata, path-filter]
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
-      nightly_build: ${{ inputs.nightly_build }}
-      target_os: linux
-      target_arch: x86_64
-      testdata_archive_artifact_name: testdata-tarbz2
-      # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
-      # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
-      # version of cpython that's installed on our Linux build machines.
-      target_py_vsn: "3.10"
 
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all }}

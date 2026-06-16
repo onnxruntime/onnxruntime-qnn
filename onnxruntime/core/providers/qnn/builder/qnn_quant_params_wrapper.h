@@ -68,6 +68,24 @@ class QnnQuantParamsWrapper {
             (include_bw && params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET));
   }
 
+  // Read (scale, offset) for a per-tensor encoding, dispatching on the active union member.
+  // 8/16/32-bit lives in scaleOffsetEncoding; 4-bit lives in bwScaleOffsetEncoding — they are
+  // separate union members, so reading the wrong one yields garbage. Caller must have verified
+  // IsPerTensor(/*include_bw*/ true).
+  Ort::Status GetPerTensorScaleOffset(/*out*/ float& scale, /*out*/ int32_t& offset) const {
+    if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+      scale = params_.scaleOffsetEncoding.scale;
+      offset = params_.scaleOffsetEncoding.offset;
+      return Ort::Status();
+    }
+    if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+      scale = params_.bwScaleOffsetEncoding.scale;
+      offset = params_.bwScaleOffsetEncoding.offset;
+      return Ort::Status();
+    }
+    return MAKE_EP_FAIL("GetPerTensorScaleOffset: encoding is not per-tensor.");
+  }
+
   bool IsPerChannel() const {
     return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
            (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET ||

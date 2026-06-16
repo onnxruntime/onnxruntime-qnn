@@ -380,8 +380,13 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
-  // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls.
-  qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls. Leaving it
+  // null when disabled keeps validator interface/handle both null, so ValidateQnnNode() falls back
+  // to the serializer's generic checks -- correct on a device-less host where the target backend
+  // validates against an arch-agnostic op table and over-rejects arch-specific ops.
+  if (!skip_backend_op_validation_) {
+    qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  }
 
   // Load the serializer backend and set it as the activate backend.
   QnnInterface_t* serializer_interface_provider{nullptr};
@@ -1932,7 +1937,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     }
   }
 
-  if (status.IsOK() && qnn_serializer_config_) {
+  if (status.IsOK() && qnn_serializer_config_ && !skip_backend_op_validation_) {
     status = InitializeQnnValidatorLog();
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeQnnValidatorLog succeed.");
@@ -1949,6 +1954,10 @@ Ort::Status QnnBackendManager::SetupBackend(
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateValidatorDevice succeed.");
     }
+  } else if (qnn_serializer_config_ && skip_backend_op_validation_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    "skip_backend_op_validation=1: skipping target-backend op validation; "
+                    "DLC dump will use the serializer's generic op validation.");
   }
 
   if (status.IsOK()) {
@@ -2292,6 +2301,17 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::Profili
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
     profiling_info.num_events = num_events;
 #endif
+
+    // When framework op tracing is enabled, attach the lookup so InitCsvFile()
+    // emits the `ONNX Source Ops` column header and ProcessEvent() annotates each
+    // NODE row with the originating ONNX op names. The lookup is read by pointer
+    // and continues to fill as later graphs compose; only DETAILED/OPTRACE
+    // profiling produces the per-NODE events this column annotates.
+    const bool has_node_level_profiling = profiling_level_merge_ == ProfilingLevel::DETAILED ||
+                                          profiling_level_merge_ == ProfilingLevel::OPTRACE;
+    if (enable_framework_op_trace_ && has_node_level_profiling) {
+      profiling_info.op_trace_lookup = &op_trace_lookup_;
+    }
 
     profile::Serializer profile_writer(profiling_info,
                                        qnn_sys_interface_,

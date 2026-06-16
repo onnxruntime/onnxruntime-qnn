@@ -229,7 +229,7 @@ import sys
 try:
     shutil.make_archive('../wheel', 'zip', '.', '.')
 except Exception as error:
-    print(f"ERROR: Failed to create wheels.zip: {error}", file=sys.stderr)
+    print(f"ERROR: Failed to create wheel.zip: {error}", file=sys.stderr)
     sys.exit(1)
 PYTHON_EOF
 
