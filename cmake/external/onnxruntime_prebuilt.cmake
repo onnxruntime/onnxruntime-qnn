@@ -213,6 +213,7 @@ ExternalProject_Add(
     PATCH_COMMAND ""
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
+    BUILD_ALWAYS ON
     INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
     BUILD_BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
     # Enable comprehensive logging for debugging
