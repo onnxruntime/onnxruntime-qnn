@@ -81,7 +81,7 @@ def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
                     if "ORT_CLASS_RELEASE" in m_decl.group(0):
                         name = "Release" + name
                     version = int(m_since.group(1)) if m_since else 0
-                    if name not in result or result[name] > version:
+                    if name not in result or result[name] < version:
                         result[name] = version
             pos = cend + 2
     return result
@@ -91,9 +91,7 @@ def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
 # EP source scanning: collect every API member name actually called
 # ---------------------------------------------------------------------------
 
-_CALL_RE = re.compile(
-    r"\b(?:ort_api|ep_api|model_editor_api|compile_api)\s*[.>\-]+\s*([A-Z]\w+)\s*\("
-)
+_CALL_RE = re.compile(r"\b(?:ort_api|ep_api|model_editor_api|compile_api)\s*[.>\-]+\s*([A-Z]\w+)\s*\(")
 
 
 def scan_ep_source(ep_root: pathlib.Path) -> set[str]:
@@ -124,9 +122,7 @@ def compute_floor(ort_header_root: pathlib.Path, ep_source_root: pathlib.Path) -
         )
     used = scan_ep_source(ep_source_root)
     if not used:
-        raise RuntimeError(
-            f"No ORT API calls found under {ep_source_root}. Path looks wrong."
-        )
+        raise RuntimeError(f"No ORT API calls found under {ep_source_root}. Path looks wrong.")
     versions = [since_map[n] for n in used if n in since_map]
     if not versions:
         raise RuntimeError(
@@ -235,8 +231,7 @@ def main() -> int:
         baseline = read_baseline(args.baseline)
         if baseline is None:
             print(
-                f"error: baseline {args.baseline} missing or not an integer. "
-                "Run with --update-baseline to seed it.",
+                f"error: baseline {args.baseline} missing or not an integer. Run with --update-baseline to seed it.",
                 file=sys.stderr,
             )
             return 2

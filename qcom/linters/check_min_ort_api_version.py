@@ -64,8 +64,22 @@ def main() -> None:
     if proc.returncode == 0:
         return
 
-    description = (proc.stderr or proc.stdout or f"compute script exited {proc.returncode}").strip()
-    print(json.dumps(_msg(description)), flush=True)
+    # Exit 2 = cannot compute (no ORT headers); not drift. Surface as advice.
+    stderr = (proc.stderr or proc.stdout or f"compute script exited {proc.returncode}").strip()
+    if proc.returncode == 2:
+        print(
+            json.dumps(
+                _msg(
+                    "ORT API floor check skipped: "
+                    + stderr
+                    + " Run a build first, or pass --ort-header-root, so this lint can compute the floor.",
+                    severity="advice",
+                )
+            ),
+            flush=True,
+        )
+        return
+    print(json.dumps(_msg(stderr)), flush=True)
 
 
 if __name__ == "__main__":
