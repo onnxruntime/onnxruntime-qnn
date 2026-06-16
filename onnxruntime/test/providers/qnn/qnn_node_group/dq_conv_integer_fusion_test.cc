@@ -256,7 +256,7 @@ void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir
   AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", expected_conv2d_count);
   AssertOpInQnnGraph(json_qnn_graph_dir, "DepthWiseConv2d", expected_depthwise_conv2d_count);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", expected_dequantize_count);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseAdd", expected_add_count);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", expected_add_count);
   AssertOpInQnnGraph(json_qnn_graph_dir, "ConvInteger", /*count=*/0);
   AssertOpInQnnGraph(json_qnn_graph_dir, "DynamicQuantizeLinear", /*count=*/0);
 }

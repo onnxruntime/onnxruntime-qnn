@@ -1086,6 +1086,86 @@ TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   EXPECT_EQ(file_count, 1);
 }
 
+#if defined(__linux__) && !defined(__aarch64__)
+// Dumps a single ScatterElements(reduction=max) model -- a v73+ op the device-less HTP validator
+// rejects -- to DLC. Rejection is silent (the op drops to CPU, no throw), so the .dlc count is the
+// only signal: 0 = rejected, 1 = accepted onto QNN.
+static int CountScatterElementsMaxDlcFiles(const std::filesystem::path& qnn_dlc_dir,
+                                           bool skip_backend_op_validation) {
+  std::filesystem::remove_all(qnn_dlc_dir);
+
+  ModelTestBuilder helper;
+  // `data` must be a runtime input, else ORT constant-folds ScatterElements away before the EP sees it.
+  std::vector<float> data(8, 0.0f);
+  helper.MakeInput<float>("data", {8}, data);
+  helper.MakeInitializer<int64_t>("indices", {1}, {0});
+  helper.MakeInitializer<float>("updates", {1}, {1.0f});
+  helper.AddNode("scatter", "ScatterElements", {"data", "indices", "updates"}, {"Y"}, kOnnxDomain,
+                 {test::MakeAttribute("reduction", std::string("max"))});
+  helper.MakeOutput("Y");
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 18}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  ProviderOptions options;
+  options["backend_path"] = "libQnnHtp.so";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ir_dlc"] = "1";
+  options["dump_qnn_ir_dlc_dir"] = qnn_dlc_dir.string();
+  options["qnn_ir_backend_path"] = "libQnnIr.so";
+  if (skip_backend_op_validation) {
+    options["skip_backend_op_validation"] = "1";
+  }
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
+
+  if (!std::filesystem::exists(qnn_dlc_dir)) {
+    return 0;
+  }
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".dlc") {
+      ++file_count;
+    }
+  }
+  return file_count;
+}
+
+// Real A/B regression test for skip_backend_op_validation, valid ONLY on a device-less x86_64 Linux
+// host. There the HTP backend validates op configs against a static, arch-agnostic op table (no NPU
+// bound) and over-rejects v73+ ops such as ScatterElements(reduction=max) -- the #438 regression.
+// On real HTP hardware the validator is device-bound and accepts the op, so flag-off and flag-on
+// would behave identically; hence the x86_64-only guard.
+TEST_F(QnnHTPBackendTests, QnnIr_ScatterElementsMax_SkipBackendOpValidation_AB) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Flag off (#438 regression): backend validator rejects the op -> no QNN partition -> no DLC.
+  EXPECT_EQ(CountScatterElementsMaxDlcFiles(qnn_dlc_dir, /*skip_backend_op_validation*/ false), 0);
+
+  // Flag on (the fix): generic validation accepts the op -> it stays on QNN -> one DLC.
+  EXPECT_EQ(CountScatterElementsMaxDlcFiles(qnn_dlc_dir, /*skip_backend_op_validation*/ true), 1);
+}
+#endif  // defined(__linux__) && !defined(__aarch64__)
+
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN HTP backend.
 TEST_F(QnnHTPBackendTests, DISABLED_QnnSaver_OutputFiles) {
   const std::filesystem::path qnn_saver_output_dir = "saver_output";

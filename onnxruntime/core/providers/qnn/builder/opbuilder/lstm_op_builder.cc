@@ -531,12 +531,20 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
                                                   input_tensor_infos[3].quant_param.Copy(), std::vector<uint32_t>(output_shape));
         RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_output_tensorwrapper)),
                       "QNN EP: Failed to add output tensor for inserted ElementWiseAdd node.");
-        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD),
+        std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
+        Qnn_Scalar_t add_scalar = QNN_SCALAR_INIT;
+        add_scalar.dataType = QNN_DATATYPE_UINT_32;
+        add_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD;
+        QnnParamWrapper add_param(node_unit.Index(), add_node_name,
+                                  QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_scalar);
+        std::string add_param_name = add_param.GetParamTensorName();
+        RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(add_param)), "Failed to add operation param.");
+        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_ELEMENT_WISE_ADD,
+                                                      QNN_OP_ELEMENT_WISE_BINARY,
                                                       std::move(add_input_names),
                                                       {qnn_lstm_bias_name[i]},
-                                                      {},
+                                                      {add_param_name},
                                                       do_op_validation),
                       "Failed to create manually inserted ElementWiseAdd node.");
         qnn_lstm_input_names[qnn_input_indices[i]] = qnn_lstm_bias_name[i];
