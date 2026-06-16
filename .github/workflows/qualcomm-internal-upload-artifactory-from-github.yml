@@ -53,7 +53,6 @@ jobs:
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
-      windows_arm64_build_archive: true
 
   upload-wheel-workflow:
     name: "Upload Python Wheel artifacts to Artifactory"
@@ -360,6 +359,16 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download Windows ARM64EC Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-zip
+
+      - name: Download Windows x86_64 Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-zip
+
       - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -391,6 +400,8 @@ jobs:
           # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
           expected=(
             "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64ec.zip"
+            "onnxruntime-qnn-*-win-x64.zip"
             "onnxruntime-qnn-*-win-arm64x.zip"
             "onnxruntime-qnn-*-win-arm64-pdb.zip"
             "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
@@ -428,6 +439,18 @@ jobs:
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "${{ github.workspace }}/build/dist/output"
 
+      - name: Prepare Windows ARM64EC Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows x86_64 Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
       - name: Prepare Windows ARM64 (ARM64x) Zip lib for signing
         run: |
           ./qcom/scripts/signing/prepare_zip_for_signing.sh \
@@ -450,6 +473,63 @@ jobs:
             "zip.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
+      # ----------------------------------------------
+      # Download test archives to prepare test package
+      # ----------------------------------------------
+
+      - name: Download Linux Aarch64 manylinux_2_34 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tests
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tests
+
+      - name: Download ARM64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-tests
+
+      - name: Download ARM64EC Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-tests
+
+      - name: Download x86_64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-tests
+
+      - name: Collect Test Archives
+        # mv (not cp): archives are only needed as inputs to prepare_test_package.sh below.
+        # Unlike qualcomm-internal-release.yml, this workflow has no step that uploads
+        # the test artifacts individually, so keeping them in build/ serves no purpose.
+        run: |
+          TEST_ARCHIVES_DIR="${{ github.workspace }}/test_archives"
+          if [ -d "$TEST_ARCHIVES_DIR" ]; then
+            echo "Folder already exists: $TEST_ARCHIVES_DIR"
+          else
+            mkdir -p "$TEST_ARCHIVES_DIR"
+          fi
+          find "${{ github.workspace }}/build" -type f -name "onnxruntime-tests-*" \
+            -exec mv {} "$TEST_ARCHIVES_DIR/" \;
+
+      - name: Prepare Test Package Archive
+        run: |
+          TEST_PACKAGE_VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
+          if [ -z "${{ inputs.version_suffix }}" ]; then
+            VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
+          else
+            VERSION="${{ inputs.version_suffix }}"
+            TEST_PACKAGE_VERSION = $TEST_PACKAGE_VERSION-$VERSION"
+          fi
+          ./qcom/scripts/all/prepare_test_package.sh \
+            "${{ github.workspace }}/test_archives" \
+            "${{ github.workspace }}/build" \
+            "$TEST_PACKAGE_VERSION"
+
       - name: Publish Zip
         if: ${{ !inputs.skip_publish }}
         run: |
@@ -470,29 +550,34 @@ jobs:
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "$NETRC_FILE"
 
-          # Upload Windows ARM64 (ARM64x) archive
-          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
-            "$NETRC_FILE"
-
-          # Upload Linux aarch64 manylinux_2_34 zip
-          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
-            "$NETRC_FILE"
-
-          # Upload Linux x86_64 ubuntu 22.04 zip
-          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
-            "$NETRC_FILE"
-
-          # Upload Windows ARM64EC PDB archive
+          # Upload Windows ARM64EC archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
             "$NETRC_FILE"
 
-          # Upload Windows x86_64 PDB archive
+          # Upload Windows x86_64 archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows ARM64 (ARM64x) archive and PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux Aarch64 manylinux_2_34 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux x86_64 Ubuntu 22.04 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Test Package Archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/test_package/" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file

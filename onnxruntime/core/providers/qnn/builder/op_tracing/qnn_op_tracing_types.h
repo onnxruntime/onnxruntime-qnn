@@ -16,8 +16,10 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "nlohmann/json_fwd.hpp"
@@ -98,6 +100,42 @@ void ComputeTraceSummary(FrameworkOpTrace& trace);
 // Defined in qnn_op_tracing_serialization.cc.  Call sites that use the return value must
 // include nlohmann/json.hpp separately.
 nlohmann::json SerializeFrameworkOpTrace(const FrameworkOpTrace& trace);
+
+// Derives the AOT Phase 2 sidecar trace JSON path from a context model path.
+// Returns {parent_dir}/qnn_op_trace.json - the same filename Phase 1 writes when
+// framework_op_trace_dir is set to the context model's directory, so Phase 2
+// discovery is automatic without a manual rename step.
+// E.g. "/path/model_ctx.onnx" -> "/path/qnn_op_trace.json"
+// Defined in qnn_op_tracing_serialization.cc (test-safe translation unit).
+std::filesystem::path DeriveTracePathFromContextModel(const std::filesystem::path& ctx_model_path);
+
+// Lookup map: QNN op name -> ONNX source pairs.
+// Populated by OpTraceCollector at compile time;
+// persists in QnnModel for profiling enrichment at execute time.
+using OpTraceLookup = std::unordered_map<std::string, std::vector<TraceSourcePair>>;
+
+// Outcome of ParseTraceLookupFromFile, so callers can map each failure mode to
+// an appropriate log message without the parser needing a logger dependency.
+enum class TraceLoadStatus {
+  kOk,                     // parsed successfully (out_lookup populated)
+  kCannotOpen,             // file could not be opened
+  kParseError,             // file is not valid JSON
+  kMissingSubgraphTraces,  // valid JSON but missing the required top-level key
+};
+
+// Parses a trace JSON sidecar into a flat dst_name->sources lookup, iterating
+// all subgraph_traces[*].op_mappings. Defined in qnn_op_tracing_serialization.cc
+// with no Ort/logger dependency (the LoadTraceLookupFromFile wrapper supplies
+// logging). On any non-kOk status `out_lookup` is left unmodified.
+//
+// `skipped_entries` (optional) accumulates a count of malformed `op_mappings`
+// entries (empty `dst_name`, missing `sources`) that were silently skipped to
+// keep the loader forward-compatible with future schema additions. The wrapper
+// can use this to surface a warning when nonzero, distinguishing "empty
+// lookup because schema mismatch" from "empty lookup because no trace data".
+TraceLoadStatus ParseTraceLookupFromFile(const std::filesystem::path& trace_path,
+                                         OpTraceLookup& out_lookup,
+                                         size_t* skipped_entries = nullptr);
 
 }  // namespace qnn
 }  // namespace onnxruntime

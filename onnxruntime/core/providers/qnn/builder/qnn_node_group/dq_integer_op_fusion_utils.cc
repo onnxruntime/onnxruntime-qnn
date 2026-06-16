@@ -179,7 +179,8 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
   if (offsets.empty()) {
     offsets.assign(scales.size(), 0);
   } else if (offsets.size() == 1) {
-    offsets.assign(scales.size(), offsets[0]);
+    const int32_t offset = offsets[0];
+    offsets.assign(scales.size(), offset);
   } else {
     RETURN_IF_NOT(offsets.size() == scales.size(),
                   "B_zp length must equal B_scale length for per-channel");
@@ -209,7 +210,8 @@ Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
   if (zps_onnx.empty()) {
     zps_onnx.assign(scales.size(), 0);
   } else if (zps_onnx.size() == 1) {
-    zps_onnx.assign(scales.size(), zps_onnx[0]);
+    const int32_t zp = zps_onnx[0];
+    zps_onnx.assign(scales.size(), zp);
   } else {
     RETURN_IF_NOT(zps_onnx.size() == scales.size(), "Per-channel B_zp length mismatch");
   }
