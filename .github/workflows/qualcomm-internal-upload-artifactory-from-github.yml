@@ -49,7 +49,6 @@ jobs:
       build_android_aarch64: false
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: false
-      build_linux_x86_64: false
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
