@@ -85,6 +85,7 @@ void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_r
 void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateMaxRoiPoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

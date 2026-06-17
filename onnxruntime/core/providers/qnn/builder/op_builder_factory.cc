@@ -41,6 +41,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
+  CreateMaxRoiPoolOpBuilder("MaxRoiPool", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
   CreateNonZeroOpBuilder("NonZero", *this);

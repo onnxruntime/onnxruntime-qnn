@@ -2374,6 +2374,11 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
     *should_convert = 1;
   }
 
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "MaxRoiPool") {
+    // MaxRoiPool is translated to QNN's RoiPooling, which requires the NHWC layout for processing.
+    *should_convert = 1;
+  }
+
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "LpPool") {
     // LpPool is translated to a QNN AvgPool-based decomposition, which requires the NHWC layout
     // for processing.

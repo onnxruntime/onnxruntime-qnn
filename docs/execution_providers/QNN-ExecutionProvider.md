@@ -397,6 +397,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
 |ai.onnx:MaxPool||
+|ai.onnx:MaxRoiPool|rois must be a constant initializer|
 |ai.onnx:Mean||
 |ai.onnx:Min||
 |ai.onnx:Mod||
