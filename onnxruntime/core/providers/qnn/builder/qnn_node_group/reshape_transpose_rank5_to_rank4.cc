@@ -1,10 +1,12 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5_to_rank4.h"
 
 #include <gsl/gsl>
+#include <cassert>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <string>
 #include <array>
@@ -32,35 +34,6 @@ constexpr const char* kAttrTransposePerm = "perm";
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
-
-/// @brief Get the shape of a tensor from its OrtValueInfo
-std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info) {
-  if (value_info == nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTypeInfo* type_info = nullptr;
-  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  size_t dims_count = 0;
-  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  std::vector<int64_t> dims(dims_count);
-  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  return dims;
-}
 
 std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank5ToRank4Pattern(
     const QnnModelWrapper& qnn_model_wrapper,
@@ -166,6 +139,27 @@ std::optional<size_t> ValidatePatternConditions(
     return std::nullopt;
   }
 
+  // Condition 4: Reject per-axis / per-channel / blockwise QDQ on any rebuilt tensor.
+  // Rank collapse would require remapping (or invalidating) the quantization axis: if the axis
+  // sits after the merged dims it must shift down, and if it is one of the merged dims the
+  // per-channel encoding may be unrepresentable on the rank-4 tensor. Per-tensor (and unquantized)
+  // tensors carry no axis, so they are always safe.
+  const OrtNodeUnitIODef& reshape1_input_def = reshape1->Inputs()[0];
+  const OrtNodeUnitIODef& reshape1_output_def = reshape1->Outputs()[0];
+  const OrtNodeUnitIODef& transpose_output_def = transpose->Outputs()[0];
+  const OrtNodeUnitIODef& reshape2_output_def = reshape2->Outputs()[0];
+  for (const OrtNodeUnitIODef* def : {&reshape1_input_def, &reshape1_output_def,
+                                      &transpose_output_def, &reshape2_output_def}) {
+    TensorInfo info = {};
+    if (!qnn_model_wrapper.GetTensorInfo(*def, info).IsOK()) {
+      return std::nullopt;
+    }
+    if (info.quant_param.IsPerChannel() || info.quant_param.IsLPBQ() ||
+        info.quant_param.IsBlockQuantized()) {
+      return std::nullopt;
+    }
+  }
+
   return merge_perm_index.value();
 }
 
@@ -206,16 +200,25 @@ Ort::Status CreateOrValidateOnQnn(
   // (which are consecutive input indices because perm[p+1] == perm[p] + 1).
   const int64_t merge_input_idx_a = perm_rank5[merge_perm_index];
   const int64_t merge_input_idx_b = perm_rank5[merge_perm_index + 1];
-  if (merge_input_idx_b != merge_input_idx_a + 1) {
-    return Ort::Status("Merge indices must be consecutive in input space", OrtErrorCode::ORT_FAIL);
-  }
+  // Invariant guaranteed by FindAdjacentMergeIndex (called in ValidatePatternConditions):
+  // it returns merge_perm_index only when perm[merge_perm_index + 1] == perm[merge_perm_index] + 1.
+  assert(merge_input_idx_b == merge_input_idx_a + 1);
 
   // Build the rank-4 t1 shape by merging t1_rank5[merge_input_idx_a] and t1_rank5[merge_input_idx_b].
   std::vector<uint32_t> t1_rank4_dims;
   t1_rank4_dims.reserve(kRank4);
   for (size_t i = 0; i < t1_rank5_dims.size(); ++i) {
     if (static_cast<int64_t>(i) == merge_input_idx_a) {
-      t1_rank4_dims.push_back(t1_rank5_dims[i] * t1_rank5_dims[i + 1]);
+      // SafeInt throws on overflow; the fusion would otherwise emit a wrapped uint32_t dim.
+      // The QNN EP's SafeInt handler (qnn_safeint.h) throws std::runtime_error, not the
+      // upstream SafeIntException type.
+      uint32_t merged = 0;
+      try {
+        merged = SafeInt<uint32_t>(t1_rank5_dims[i]) * t1_rank5_dims[i + 1];
+      } catch (const std::runtime_error&) {
+        return Ort::Status("Merged dim overflows uint32_t", OrtErrorCode::ORT_FAIL);
+      }
+      t1_rank4_dims.push_back(merged);
     } else if (static_cast<int64_t>(i) == merge_input_idx_b) {
       continue;
     } else {
