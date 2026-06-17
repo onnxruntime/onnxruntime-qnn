@@ -1,10 +1,9 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-// GQA not available until opset version 2.12.0 (QAIRT 2.48). TODO: Remove this check once the EP uplevels to 2.48.
-#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 #include <cmath>
 
+#include "QnnOpDef.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -13,6 +12,8 @@
 namespace onnxruntime {
 namespace qnn {
 
+// GQA not available until opset version 2.12.0 (QAIRT 2.48). TODO: Remove this check once the EP uplevels to 2.48.
+#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 class GroupQueryAttentionOpBuilder : public BaseOpBuilder {
  public:
   GroupQueryAttentionOpBuilder() : BaseOpBuilder("GroupQueryAttentionOpBuilder") {}
@@ -253,7 +254,12 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
 void CreateGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<GroupQueryAttentionOpBuilder>());
 }
+#else
+void CreateGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+  ORT_UNUSED_PARAMETER(op_type);
+  ORT_UNUSED_PARAMETER(op_registrations);
+}
+#endif  // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 
 }  // namespace qnn
 }  // namespace onnxruntime
-#endif  // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
