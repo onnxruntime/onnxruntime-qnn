@@ -64,6 +64,36 @@ inline Ort::Logger MakeNullLogger() {
   return logger;
 }
 
+// OrtGlobalApiOverride
+//
+// RAII guard that replaces the global Ort::GetApi() with a caller-supplied
+// OrtApi for the duration of the scope, then restores the original on
+// destruction.
+//
+// Why this is needed: Ort::ConstNode / Ort::ConstValueInfo / Ort::ConstGraph
+// wrappers call OrtApi function pointers via the global Ort::GetApi(), not
+// through api_ptrs_. Tests that pass fake OrtNode*/OrtGraph* pointers to EP
+// code must override the global so that wrapper calls route through stubs
+// rather than the real ORT runtime (which dereferences fake pointers and
+// SIGSEGVs). Process-wide global; gtest runs tests sequentially so this is
+// safe, but do not use two overrides simultaneously in the same thread.
+class OrtGlobalApiOverride {
+ public:
+  explicit OrtGlobalApiOverride(const OrtApi* new_api) {
+    original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    Ort::detail::Global::Api(new_api);
+  }
+  ~OrtGlobalApiOverride() { Ort::detail::Global::Api(original_); }
+
+  OrtGlobalApiOverride(const OrtGlobalApiOverride&) = delete;
+  OrtGlobalApiOverride& operator=(const OrtGlobalApiOverride&) = delete;
+  OrtGlobalApiOverride(OrtGlobalApiOverride&&) = delete;
+  OrtGlobalApiOverride& operator=(OrtGlobalApiOverride&&) = delete;
+
+ private:
+  const OrtApi* original_ = nullptr;
+};
+
 // Reusable OrtApi stub tables for function-level unit tests.
 //
 // Holds the three stub structs (OrtApi / OrtEpApi / OrtModelEditorApi) that any
