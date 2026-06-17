@@ -546,7 +546,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
                                   htp_graph_configs_.enable_htp_monolithic_lstm,
                                   htp_graph_configs_.enable_htp_fp16_clamp_overflow,
                                   htp_graph_configs_.enable_htp_matmul_lut,
-                                  htp_graph_configs_.htp_num_cores};
+                                  htp_graph_configs_.htp_num_cores,
+                                  htp_graph_configs_.enable_htp_predication};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -1041,6 +1042,14 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                              true,
                                                              logger_);
 #endif
+
+  // HTP predication graph finalize config
+  htp_graph_configs_.enable_htp_predication = ParseBoolOption(ort_api,
+                                                              session_options_,
+                                                              FormatEPConfigKey("enable_htp_predication"),
+                                                              false,
+                                                              logger_);
+
 
   // Option to enable cross device prepare. Requires QAIRT >= 2.51.
   static constexpr const char* ENABLE_HTP_CROSS_DEVICE_PREPARE = "enable_htp_cross_device_prepare";
