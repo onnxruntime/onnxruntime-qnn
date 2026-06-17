@@ -10,10 +10,6 @@
 
 #include "gtest/gtest.h"
 
-#include "test/util/include/test_utils.h"
-
-#include <onnx/onnx_pb.h>
-
 namespace onnxruntime {
 namespace test {
 
@@ -27,7 +23,7 @@ static GetTestModelFn BuildMaxRoiPoolTestCase(const TestInputDef<float>& input_d
     MakeTestInput<float>(builder, "X", input_def);
     MakeTestInput<float>(builder, "rois", roi_def);
 
-    builder.AddNode("maxroipool_node", "MaxRoiPool", {"X", "rois"}, {"Y"}, "", attrs);
+    builder.AddNode("maxroipool_node", "MaxRoiPool", {"X", "rois"}, {"Y"}, kOnnxDomain, attrs);
 
     builder.MakeOutput("Y");
   };
@@ -54,7 +50,7 @@ GetTestQDQModelFn<QuantType> BuildMaxRoiPoolQDQTestCase(const TestInputDef<float
     std::string roi_qdq = AddQDQNodePair<QuantType>(builder, "qdq2", "rois", roi_qparams.scale,
                                                     roi_qparams.zero_point, use_contrib_qdq);
 
-    builder.AddNode("maxroipool_node", "MaxRoiPool", {input_qdq, roi_qdq}, {"maxroipool_output"}, "", attrs);
+    builder.AddNode("maxroipool_node", "MaxRoiPool", {input_qdq, roi_qdq}, {"maxroipool_output"}, kOnnxDomain, attrs);
 
     // op_output -> Q -> DQ -> output
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(

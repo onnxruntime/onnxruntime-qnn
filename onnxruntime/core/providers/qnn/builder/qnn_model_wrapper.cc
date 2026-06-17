@@ -1093,5 +1093,22 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
   return Ort::Status();
 }
 
+Ort::Status QnnModelWrapper::UnpackEffectiveConstantBytes(const std::string& tensor_name,
+                                                          std::vector<uint8_t>& bytes) {
+  if (IsConstantInput(tensor_name)) {
+    const OrtValueInfo* init = GetConstantTensor(tensor_name);
+    RETURN_IF(init == nullptr, "Constant initializer not found for tensor.");
+    return UnpackInitializerData(init, bytes);
+  }
+  if (IsFoldedConstant(tensor_name) && IsQnnTensorWrapperExist(tensor_name)) {
+    const QnnTensorWrapper& wrapper = GetQnnTensorWrapper(tensor_name);
+    const Qnn_ClientBuffer_t& buf = GetQnnTensorClientBuf(wrapper.GetQnnTensor());
+    const uint8_t* data_ptr = reinterpret_cast<const uint8_t*>(buf.data);
+    bytes.assign(data_ptr, data_ptr + buf.dataSize);
+    return Ort::Status();
+  }
+  return MAKE_EP_FAIL("Tensor is not a constant initializer or folded constant.");
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime

@@ -20,26 +20,6 @@ namespace qnn {
 
 namespace {
 
-// Accepts either a real initializer or a previously-folded STATIC tensor.
-Ort::Status GetConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,
-                                   const std::string& tensor_name,
-                                   /*out*/ std::vector<uint8_t>& bytes) {
-  if (qnn_model_wrapper.IsConstantInput(tensor_name)) {
-    const OrtValueInfo* init = qnn_model_wrapper.GetConstantTensor(tensor_name);
-    RETURN_IF(init == nullptr, "Constant initializer not found for tensor.");
-    return qnn_model_wrapper.UnpackInitializerData(init, bytes);
-  }
-  if (qnn_model_wrapper.IsFoldedConstant(tensor_name) &&
-      qnn_model_wrapper.IsQnnTensorWrapperExist(tensor_name)) {
-    const QnnTensorWrapper& wrapper = qnn_model_wrapper.GetQnnTensorWrapper(tensor_name);
-    const Qnn_ClientBuffer_t& buf = GetQnnTensorClientBuf(wrapper.GetQnnTensor());
-    const uint8_t* data_ptr = reinterpret_cast<const uint8_t*>(buf.data);
-    bytes.assign(data_ptr, data_ptr + buf.dataSize);
-    return Ort::Status();
-  }
-  return MAKE_EP_FAIL("Tensor is not a constant initializer or folded constant.");
-}
-
 // SafeInt guards against overflow from an adversarial shape before allocation.
 Ort::Status ComputeNumElements(gsl::span<const uint32_t> shape, /*out*/ size_t& num_elems) {
   SafeInt<size_t> safe_num_elems = 1;
@@ -108,7 +88,7 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
             "Folded DequantizeLinear only supports float32 output.");
 
   std::vector<uint8_t> quant_bytes;
-  RETURN_IF_ERROR(GetConstantTensorBytes(qnn_model_wrapper, input_def.name, quant_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackEffectiveConstantBytes(input_def.name, quant_bytes));
 
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));
@@ -148,7 +128,7 @@ Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF(!output_def.quant_param.has_value(), "Q output has no quant param.");
 
   std::vector<uint8_t> input_bytes;
-  RETURN_IF_ERROR(GetConstantTensorBytes(qnn_model_wrapper, input_def.name, input_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackEffectiveConstantBytes(input_def.name, input_bytes));
 
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));

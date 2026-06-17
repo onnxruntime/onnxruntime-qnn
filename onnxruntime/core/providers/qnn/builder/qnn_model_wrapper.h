@@ -359,6 +359,9 @@ class QnnModelWrapper {
                                     std::vector<uint8_t>& unpacked_tensor,
                                     const bool unpack_sub_byte_to_8_bit = true) const;
 
+  Ort::Status UnpackEffectiveConstantBytes(const std::string& tensor_name,
+                                           std::vector<uint8_t>& bytes);
+
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }

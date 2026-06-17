@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -26,26 +25,6 @@ namespace {
 // ORT CPU EP rather than exploding the QNN graph.
 constexpr int64_t kMaxMaxRoiPoolBins = 4096;
 
-// Reads the raw bytes of a constant tensor, whether it is a real ONNX initializer or a tensor
-// produced by a compile-time QDQ fold (the latter is how a quantized constant rois arrives).
-Ort::Status ReadConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,
-                                    const std::string& tensor_name,
-                                    std::vector<uint8_t>& bytes) {
-  if (qnn_model_wrapper.IsConstantInput(tensor_name)) {
-    const OrtValueInfo* init = qnn_model_wrapper.GetConstantTensor(tensor_name);
-    RETURN_IF(init == nullptr, "MaxRoiPool: rois constant initializer not found.");
-    return qnn_model_wrapper.UnpackInitializerData(init, bytes);
-  }
-  if (qnn_model_wrapper.IsFoldedConstant(tensor_name) && qnn_model_wrapper.IsQnnTensorWrapperExist(tensor_name)) {
-    const QnnTensorWrapper& wrapper = qnn_model_wrapper.GetQnnTensorWrapper(tensor_name);
-    const Qnn_ClientBuffer_t& buf = GetQnnTensorClientBuf(wrapper.GetQnnTensor());
-    const uint8_t* data_ptr = reinterpret_cast<const uint8_t*>(buf.data);
-    bytes.assign(data_ptr, data_ptr + buf.dataSize);
-    return Ort::Status();
-  }
-  return MAKE_EP_FAIL("MaxRoiPool: rois is not a constant initializer or folded constant.");
-}
-
 // Reads the constant rois [num_rois, 5] = [batch_index, x1, y1, x2, y2] and returns the
 // floating-point ROI corner coordinates (still in input-image space, before spatial_scale).
 // Handles both a plain fp32 initializer and a QDQ-folded 8-bit quantized constant.
@@ -57,7 +36,7 @@ Ort::Status ReadRoisAsFloat(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(rois_def, rois_info));
 
   std::vector<uint8_t> rois_bytes;
-  RETURN_IF_ERROR(ReadConstantTensorBytes(qnn_model_wrapper, rois_def.name, rois_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackEffectiveConstantBytes(rois_def.name, rois_bytes));
 
   const size_t num_elems = static_cast<size_t>(num_rois) * 5;
   rois_flat.resize(num_elems);
@@ -231,11 +210,12 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   const std::string name_base = node_unit.Name().empty()
                                     ? node_unit.OpType() + std::to_string(node_unit.Index())
                                     : node_unit.Name();
-  auto local_name = [&](std::string_view suffix) { return name_base + std::string(suffix); };
+  auto local_name = [&name_base](std::string_view suffix) { return name_base + std::string(suffix); };
 
   // Reusable zero tensor for empty bins (ONNX fills them with 0.0). Created lazily.
   std::string zero_bin_name;
-  auto ensure_zero_bin = [&]() -> Ort::Status {
+  auto ensure_zero_bin = [&qnn_model_wrapper, &out_info, dtype, channels,
+                          &zero_bin_name, &local_name]() -> Ort::Status {
     if (!zero_bin_name.empty()) {
       return Ort::Status();
     }
@@ -252,10 +232,20 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
       RETURN_IF_ERROR(out_info.quant_param.GetPerTensorScaleOffset(scale, offset));
       int quant_value = 0;
       RETURN_IF_ERROR(utils::Quantize(0.0, scale, offset, dtype, quant_value));
-      const size_t elem_size = qnn::utils::GetElementSizeByType(dtype);
-      RETURN_IF_NOT(elem_size > 0 && num_bytes % elem_size == 0, "MaxRoiPool zero-bin size mismatch.");
-      for (size_t i = 0; i < num_bytes; i += elem_size) {
-        std::memcpy(zero_bytes.data() + i, &quant_value, elem_size);
+      switch (dtype) {
+        case QNN_DATATYPE_UFIXED_POINT_8:
+        case QNN_DATATYPE_SFIXED_POINT_8: {
+          std::fill_n(zero_bytes.data(), channels, static_cast<uint8_t>(quant_value));
+          break;
+        }
+        case QNN_DATATYPE_UFIXED_POINT_16:
+        case QNN_DATATYPE_SFIXED_POINT_16: {
+          std::fill_n(reinterpret_cast<uint16_t*>(zero_bytes.data()), channels,
+                      static_cast<uint16_t>(quant_value));
+          break;
+        }
+        default:
+          return MAKE_EP_FAIL("MaxRoiPool: unsupported quantized output element type for zero-bin.");
       }
     }
     QnnTensorWrapper zero_tensor(zero_bin_name, QNN_TENSOR_TYPE_STATIC, dtype,
@@ -268,7 +258,9 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
   // Emit a StridedSlice + ReduceMax for one bin region and return its [1,1,1,C] output name.
   // batch_idx selects the image in the (NHWC) feature map; tag is a unique label for naming.
-  auto emit_bin = [&](uint32_t batch_idx, const std::string& tag,
+  auto emit_bin = [&qnn_model_wrapper, &node_unit, &x_info, &out_info, dtype, channels,
+                   &x_name, do_op_validation, &local_name, &ensure_zero_bin, &zero_bin_name](
+                      uint32_t batch_idx, const std::string& tag,
                       uint32_t hstart, uint32_t hend, uint32_t wstart, uint32_t wend,
                       /*out*/ std::string& bin_out_name) -> Ort::Status {
     if (hend <= hstart || wend <= wstart) {
@@ -299,7 +291,8 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     QnnParamWrapper ranges_param(node_unit.Index(), slice_out, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
                                  std::move(ranges_dims), std::move(ranges_data), /*is_signed*/ true);
     std::vector<std::string> slice_params{ranges_param.GetParamTensorName()};
-    qnn_model_wrapper.AddParamWrapper(std::move(ranges_param));
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(ranges_param)),
+                  "Failed to add MaxRoiPool StridedSlice ranges param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(local_name("_slice_node" + suffix),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
                                                   {x_name}, {slice_out}, std::move(slice_params),
@@ -317,7 +310,8 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
         node_unit.Index(), bin_out_name, QNN_OP_REDUCE_MAX_PARAM_AXES,
         std::vector<uint32_t>{2u}, std::move(axes_data));
     std::vector<std::string> rmax_params{axes_param.GetParamTensorName()};
-    qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(axes_param)),
+                  "Failed to add MaxRoiPool ReduceMax axes param.");
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), bin_out_name, true,
                                        QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, rmax_params));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(local_name("_rmax_node" + suffix),
@@ -330,7 +324,8 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
   // Concatenate a list of tensors along an axis, producing a new NATIVE output. A single-element
   // list is passed through with a Reshape (QNN Concat requires >= 2 inputs).
-  auto emit_concat = [&](const std::vector<std::string>& parts, uint32_t axis,
+  auto emit_concat = [&qnn_model_wrapper, &node_unit, &out_info, dtype, do_op_validation, &local_name](
+                         const std::vector<std::string>& parts, uint32_t axis,
                          const std::vector<uint32_t>& part_shape, const std::vector<uint32_t>& out_shape,
                          const std::string& name_suffix, /*out*/ std::string& concat_out) -> Ort::Status {
     concat_out = local_name(name_suffix);
