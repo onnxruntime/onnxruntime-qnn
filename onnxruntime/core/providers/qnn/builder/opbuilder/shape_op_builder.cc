@@ -13,7 +13,7 @@ namespace qnn {
 
 // Shape op builder.
 // Maps ONNX Shape -> QNN Shape. ONNX Shape produces an int64 1-D tensor; QNN requires the
-// output to be uint32/int32, so the int64 output is downcast to int32 (BaseOpBuilder::ProcessOutputs
+// output to be int32, so the int64 output is downcast to int32 (BaseOpBuilder::ProcessOutputs
 // inserts a Cast back to int64 when the output is a graph output). For intermediate outputs,
 // the QNN tensor type remains INT_32 and downstream ops consume it directly.
 // The ONNX `start`/`end` attributes are mapped to the QNN `start`/`end` scalar params (uint32).
@@ -34,14 +34,12 @@ class ShapeOpBuilder : public BaseOpBuilder {
 };
 
 Qnn_DataType_t ShapeOpBuilder::GetSupportedOutputDataType(size_t index, Qnn_DataType_t qnn_data_type) const {
-  // ONNX Shape has an int64 output, but QNN requires uint32 or int32.
-  // If this node produces a graph output, BaseOpBuilder::ProcessOutputs() adds a Cast node after the Shape op.
-  // Otherwise, it just sets the output type to uint32 or int32.
+  // ONNX Shape always produces an int64 output (no unsigned variant per the ONNX spec), but QNN
+  // requires int32. If this node produces a graph output, BaseOpBuilder::ProcessOutputs() adds a
+  // Cast node after the Shape op. Otherwise, it just sets the output type to int32.
   ORT_UNUSED_PARAMETER(index);
   if (qnn_data_type == QNN_DATATYPE_INT_64) {
     return QNN_DATATYPE_INT_32;
-  } else if (qnn_data_type == QNN_DATATYPE_UINT_64) {
-    return QNN_DATATYPE_UINT_32;
   }
 
   return qnn_data_type;

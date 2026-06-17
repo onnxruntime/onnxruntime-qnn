@@ -185,6 +185,21 @@ TEST_F(QnnHTPBackendTests, Shape_Default_QDQ_U16_HTP) {
                               true);  // Use com.microsoft Q/DQ ops (uint16 zero-point not in ONNX opset 15)
 }
 
+// HtpOpDefSupplement caps Shape's input rank at 4 on HTP. A rank-5 input must fall back to CPU EP
+// (ExpectedEPNodeAssignment::None), mirroring ArgMaxMinU8_RankGreaterThan4_Unsupported.
+TEST_F(QnnHTPBackendTests, Shape_RankGreaterThan4_Unsupported) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<float>("shape_node", "Shape",
+                                         {TestInputDef<float>({2, 3, 4, 5, 6}, false, -10.0f, 10.0f)},
+                                         {}, {}),
+                  provider_options,
+                  15,
+                  ExpectedEPNodeAssignment::None);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
