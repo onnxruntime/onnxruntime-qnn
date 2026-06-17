@@ -220,12 +220,8 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // Handle keepdims param.
   //
   auto onnx_keepdims = node_attr_helper.Get("keepdims", (int32_t)1);
-  Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
-  scalar_param.dataType = QNN_DATATYPE_BOOL_8;
-  scalar_param.bool8Value = static_cast<uint8_t>(onnx_keepdims == 0 ? 0 : 1);
-  QnnParamWrapper keep_dims_param(node_unit.Index(), node_unit.Name(), QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, scalar_param);
-  param_tensor_names.push_back(keep_dims_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(keep_dims_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
+                                     QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, param_tensor_names));
 
   if (node_unit.OpType() == "ReduceL2") {
     // If ReduceL2, QNN doesn't have a single Op for it, we need to add a
@@ -249,19 +245,16 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                         std::move(input_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pow2_tensorwrapper)), "AddTensorWrapper failed");
     std::string pow2_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    Qnn_Scalar_t pow2_scalar = QNN_SCALAR_INIT;
-    pow2_scalar.dataType = QNN_DATATYPE_UINT_32;
-    pow2_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    QnnParamWrapper pow2_param(node_unit.Index(), pow2_node_name,
-                               QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, pow2_scalar);
-    std::string pow2_param_name = pow2_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pow2_param)), "Failed to add operation param.");
+    std::vector<std::string> pow2_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), pow2_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, pow2_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(pow2_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   {input_name, input_name},
                                                   {pow2_output_name},
-                                                  {pow2_param_name},
+                                                  std::move(pow2_param_names),
                                                   do_op_validation),
                   "CreateQnnNode failed");
 

@@ -367,20 +367,12 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessAttributesAndOutputs(QnnModelW
   std::vector<std::string> param_tensor_names;
   int32_t axis_value = static_cast<int32_t>(axis_attr);
   Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(
-      ProcessAxisAttribute(qnn_model_wrapper,
-                           node_unit,
-                           axis_qnn_scalar,
-                           axis_value));
-
-  QnnParamWrapper axis_param(
-      node_unit.Index(),
-      node_unit.Name(),
-      QNN_OP_GATHER_PARAM_AXIS,
-      axis_qnn_scalar);
-
+  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
+  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(),
+                             QNN_OP_GATHER_PARAM_AXIS, axis_qnn_scalar);
   param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(axis_param)),
+                "Failed to add axis param.");
 
   // Creating Qnn node
   RETURN_IF_NOT(

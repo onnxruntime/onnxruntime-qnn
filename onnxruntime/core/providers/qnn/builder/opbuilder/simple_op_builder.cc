@@ -152,13 +152,8 @@ Ort::Status ProcessNodeAttribute(QnnModelWrapper& qnn_model_wrapper,
                                  const float default_value = 1.0f) {
   OrtNodeAttrHelper node_helper(node_unit);
   float attr_value = node_helper.Get(onnx_attr_key, default_value);
-  Qnn_Scalar_t attr_qnn_scalar = QNN_SCALAR_INIT;
-  attr_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-  attr_qnn_scalar.floatValue = attr_value;
-
-  QnnParamWrapper alpha_param(node_unit.Index(), node_unit.Name(), qnn_param_key, attr_qnn_scalar);
-  param_tensor_names.push_back(alpha_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(alpha_param));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), attr_value,
+                                      qnn_param_key, param_tensor_names));
 
   return Ort::Status();
 }
@@ -183,19 +178,17 @@ Ort::Status ProcessModeAttribute(QnnModelWrapper& qnn_model_wrapper,
                                  std::vector<std::string>& param_tensor_names) {
   OrtNodeAttrHelper node_helper(node_unit);
   std::string mode = node_helper.Get("mode", "DCR");
-  Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
-  mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t mode_value = QNN_OP_DEPTH_TO_SPACE_MODE_DCR;
   if ("DCR" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_DEPTH_TO_SPACE_MODE_DCR;
+    mode_value = QNN_OP_DEPTH_TO_SPACE_MODE_DCR;
   } else if ("CRD" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_DEPTH_TO_SPACE_MODE_CRD;  // CRD mode
+    mode_value = QNN_OP_DEPTH_TO_SPACE_MODE_CRD;  // CRD mode
   } else {
     return MAKE_EP_FAIL("DepthToSpace mode only support DCR & CRD.");
   }
 
-  QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_DEPTH_TO_SPACE_PARAM_MODE, mode_qnn_scalar);
-  param_tensor_names.push_back(mode_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), mode_value,
+                                         QNN_OP_DEPTH_TO_SPACE_PARAM_MODE, param_tensor_names));
 
   return Ort::Status();
 }
@@ -253,42 +246,34 @@ Ort::Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
                                         std::vector<std::string>& param_tensor_names) {
   OrtNodeAttrHelper node_helper(node_unit);
   int64_t align_corners = node_helper.Get("align_corners", static_cast<int64_t>(0));
-  Qnn_Scalar_t align_corners_qnn_scalar = QNN_SCALAR_INIT;
-  align_corners_qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;
-  align_corners_qnn_scalar.bool8Value = static_cast<uint8_t>(align_corners == 0 ? 0 : 1);
-  QnnParamWrapper align_corners_param(node_unit.Index(), node_unit.Name(), QNN_OP_GRID_SAMPLE_PARAM_ALIGN_CORNERS, align_corners_qnn_scalar);
-  param_tensor_names.push_back(align_corners_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(align_corners_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), align_corners != 0,
+                                     QNN_OP_GRID_SAMPLE_PARAM_ALIGN_CORNERS, param_tensor_names));
 
   std::string mode = node_helper.Get("mode", "linear");
-  Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
-  mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t mode_value = QNN_OP_GRID_SAMPLE_MODE_BILINEAR;
   if ("linear" == mode || "bilinear" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_GRID_SAMPLE_MODE_BILINEAR;
+    mode_value = QNN_OP_GRID_SAMPLE_MODE_BILINEAR;
   } else if ("nearest" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_GRID_SAMPLE_MODE_NEAREST;
+    mode_value = QNN_OP_GRID_SAMPLE_MODE_NEAREST;
   } else {
     return MAKE_EP_FAIL("GridSample mode only support [linear, bilinear, nearest].");
   }
-  QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_GRID_SAMPLE_PARAM_MODE, mode_qnn_scalar);
-  param_tensor_names.push_back(mode_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), mode_value,
+                                         QNN_OP_GRID_SAMPLE_PARAM_MODE, param_tensor_names));
 
   std::string padding_mode = node_helper.Get("padding_mode", "zeros");
-  Qnn_Scalar_t padding_mode_qnn_scalar = QNN_SCALAR_INIT;
-  padding_mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_ZEROS;
   if ("zeros" == padding_mode) {
-    padding_mode_qnn_scalar.uint32Value = QNN_OP_GRID_SAMPLE_PADDING_MODE_ZEROS;
+    padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_ZEROS;
   } else if ("border" == padding_mode) {
-    padding_mode_qnn_scalar.uint32Value = QNN_OP_GRID_SAMPLE_PADDING_MODE_BORDER;
+    padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_BORDER;
   } else if ("reflection" == padding_mode) {
-    padding_mode_qnn_scalar.uint32Value = QNN_OP_GRID_SAMPLE_PADDING_MODE_REFLECTION;
+    padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_REFLECTION;
   } else {
     return MAKE_EP_FAIL("GridSample padding_mode only support [zeros, border, reflection].");
   }
-  QnnParamWrapper padding_mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_GRID_SAMPLE_PARAM_PADDING_MODE, padding_mode_qnn_scalar);
-  param_tensor_names.push_back(padding_mode_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(padding_mode_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), padding_mode_value,
+                                         QNN_OP_GRID_SAMPLE_PARAM_PADDING_MODE, param_tensor_names));
 
   return Ort::Status();
 }
@@ -367,29 +352,13 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (op_type == "Softplus") {
     // ONNX Softplus has no attributes; set QNN defaults (beta=1, threshold=20).
-    Qnn_Scalar_t beta_scalar = QNN_SCALAR_INIT;
-    beta_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    beta_scalar.floatValue = 1.0f;
-    QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(),
-                               QNN_OP_ELEMENT_WISE_NEURON_PARAM_BETA, beta_scalar);
-    param_tensor_names.push_back(beta_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
-
-    Qnn_Scalar_t threshold_scalar = QNN_SCALAR_INIT;
-    threshold_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    threshold_scalar.floatValue = 20.0f;
-    QnnParamWrapper threshold_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_THRESHOLD, threshold_scalar);
-    param_tensor_names.push_back(threshold_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(threshold_param));
-
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SOFTPLUS;
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 1.0f,
+                                        QNN_OP_ELEMENT_WISE_NEURON_PARAM_BETA, param_tensor_names));
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 20.0f,
+                                        QNN_OP_ELEMENT_WISE_NEURON_PARAM_THRESHOLD, param_tensor_names));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SOFTPLUS),
+                                           QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, param_tensor_names));
   }
 
   if (op_type == "HardSwish") {
@@ -403,15 +372,9 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "beta",
                                          QNN_OP_ELEMENT_WISE_NEURON_PARAM_BETA,
                                          param_tensor_names, 0.5f));
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_HARD_SIGMOID;
-
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION,
-                                    neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_NEURON_OPERATION_HARD_SIGMOID),
+                                           QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, param_tensor_names));
   }
 
   if (op_type == "DepthToSpace") {
@@ -421,14 +384,9 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (op_type == "SpaceToDepth") {
     RETURN_IF_ERROR(ProcessBlockSizeAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
-
-    Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
-    mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-    mode_qnn_scalar.uint32Value = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
-
-    QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, mode_qnn_scalar);
-    param_tensor_names.push_back(mode_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(QNN_OP_SPACE_TO_DEPTH_MODE_DCR),
+                                           QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, param_tensor_names));
   }
 
   if (op_type == "GridSample") {
