@@ -694,6 +694,18 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     }
 
     Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
+
+    // If a sibling model sharing the same context already recovered from SSR
+    // (freeing the old context), our handles are stale.  Proactively recover
+    // before calling graphExecute with dangling handles.
+    if (!context_bin_filepath_.empty() &&
+        !qnn_backend_manager_->HasContextHandle(graph_info_->GraphContext())) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  "SSR recovery: context was freed by sibling model, recovering proactively.");
+      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      continue;  // retry with fresh context and re-bound tensors
+    }
+
     {
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 

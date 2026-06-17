@@ -5,6 +5,10 @@
 // on the FIRST graphExecute call to simulate an NPU Subsystem Restart (SSR).
 // Subsequent calls are forwarded to the real HTP backend unchanged.
 //
+// In multi-partition models, sibling QnnModel instances detect the stale context
+// proactively (via HasContextHandle check in ExecuteGraph) and recover without
+// needing the backend to return SSR for each graph individually.
+//
 // This mock does NOT perform a real PD reset — it simply returns the SSR error code.
 // This makes the test portable across devices regardless of CDSP driver configuration.
 
@@ -45,8 +49,12 @@ struct StaticInit {
 
 #if defined(_WIN32)
 
+// SSR mock state: fire SSR on the first graphExecute call per session.
+// g_ssr_fired is reset in QnnInterface_getProviders (called once per new session/test).
+static bool g_ssr_fired = false;
+
 // Intercepts graphExecute: returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION on the first call
-// to simulate SSR, then forwards to the real HTP backend on subsequent calls.
+// per session, then forwards to real HTP on subsequent calls.
 QNN_API
 Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
                                    const Qnn_Tensor_t* inputs,
@@ -55,9 +63,8 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
                                    uint32_t numOutputs,
                                    Qnn_ProfileHandle_t profileHandle,
                                    Qnn_SignalHandle_t signalHandle) {
-  static int call_cnt = 0;
-  if (call_cnt == 0) {
-    call_cnt += 1;
+  if (!g_ssr_fired) {
+    g_ssr_fired = true;
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
   if (!real_providerList) {
@@ -73,6 +80,9 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
 // Use a different name to avoid that macro collision.
 extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList,
                                                        uint32_t* numProviders) {
+  // Reset mock state for each new session that loads this provider.
+  g_ssr_fired = false;
+
   static QnnInterface_t mock_interface;
 #if defined(_WIN32)
   if (real_providerList) {
@@ -88,7 +98,7 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
   if (real_providerList) {
     mock_interface.apiVersion = real_providerList[0]->apiVersion;
     mock_interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
-    // Always intercept graphExecute to simulate SSR.
+    // Intercept graphExecute to simulate SSR.
     mock_interface.QNN_INTERFACE_VER_NAME.graphExecute = QnnGraph_execute;
   }
 #endif  // defined(_WIN32)
