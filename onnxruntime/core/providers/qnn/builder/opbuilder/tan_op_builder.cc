@@ -80,36 +80,30 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                 "Failed to add Cos output tensor.");
 
   // Create Sin node: input -> sin_out
-  Qnn_Scalar_t sin_op_scalar = QNN_SCALAR_INIT;
-  sin_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  sin_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIN;
-  QnnParamWrapper sin_op_param(node_unit.Index(), node_unit.Name() + "_Sin",
-                               QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sin_op_scalar);
-  std::string sin_op_param_name = sin_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sin_op_param)), "Failed to add Sin operation param.");
+  std::vector<std::string> sin_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_Sin",
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIN),
+                                         QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sin_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Sin"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_UNARY,
                                                 {input_names[0]},
                                                 {sin_output_name},
-                                                {sin_op_param_name},
+                                                std::move(sin_param_names),
                                                 do_op_validation),
                 "Failed to create Sin node.");
 
   // Create Cos node: input -> cos_out
-  Qnn_Scalar_t cos_op_scalar = QNN_SCALAR_INIT;
-  cos_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  cos_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_UNARY_OPERATION_COS;
-  QnnParamWrapper cos_op_param(node_unit.Index(), node_unit.Name() + "_Cos",
-                               QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, cos_op_scalar);
-  std::string cos_op_param_name = cos_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(cos_op_param)), "Failed to add Cos operation param.");
+  std::vector<std::string> cos_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_Cos",
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_COS),
+                                         QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, cos_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Cos"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_UNARY,
                                                 {input_names[0]},
                                                 {cos_output_name},
-                                                {cos_op_param_name},
+                                                std::move(cos_param_names),
                                                 do_op_validation),
                 "Failed to create Cos node.");
 
@@ -123,19 +117,16 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   // Create Div node: sin_out / cos_out -> output
   std::string div_node_name = utils::UniqueNameGenerator().New(node_unit, "_Div");
-  Qnn_Scalar_t div_op_scalar = QNN_SCALAR_INIT;
-  div_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  div_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE;
-  QnnParamWrapper div_op_param(node_unit.Index(), div_node_name,
-                               QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_op_scalar);
-  std::string div_op_param_name = div_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(div_op_param)), "Failed to add Div operation param.");
+  std::vector<std::string> div_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), div_node_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {sin_output_name, cos_output_name},
                                                 {output_name},
-                                                {div_op_param_name},
+                                                std::move(div_param_names),
                                                 do_op_validation),
                 "Failed to create Div node.");
 

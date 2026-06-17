@@ -363,16 +363,13 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessAttributesAndOutputs(QnnModelW
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add output");
   }
 
-  // Creating axis param wrapper
+  // Creating axis param wrapper — GatherBlockQuantized uses "gather_axis", dtype INT_32.
   std::vector<std::string> param_tensor_names;
-  int32_t axis_value = static_cast<int32_t>(axis_attr);
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(),
-                             QNN_OP_GATHER_PARAM_AXIS, axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(axis_param)),
-                "Failed to add axis param.");
+  int32_t axis = 0;
+  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "gather_axis",
+                                       static_cast<int32_t>(axis_attr), axis));
+  RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                        axis, QNN_OP_GATHER_PARAM_AXIS, param_tensor_names));
 
   // Creating Qnn node
   RETURN_IF_NOT(
