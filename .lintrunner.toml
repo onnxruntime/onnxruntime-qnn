@@ -138,3 +138,19 @@ init_command = [
     '--requirement=requirements-lintrunner.txt',
 ]
 is_formatter = true
+
+[[linter]]
+code = 'PRIVATE-ORT-HEADERS'
+include_patterns = [
+    'onnxruntime/core/providers/qnn/**/*.h',
+    'onnxruntime/core/providers/qnn/**/*.cc',
+    'cmake/external/onnxruntime_prebuilt.cmake',
+    'cmake/onnxruntime_providers_qnn.cmake',
+    'cmake/onnxruntime_unittests.cmake',
+]
+command = [
+    'python',
+    'qcom/linters/check_private_ort_headers.py',
+    '@{{PATHSFILE}}'
+]
+is_formatter = false

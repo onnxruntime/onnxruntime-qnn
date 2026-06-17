@@ -9,6 +9,7 @@
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -23,6 +24,12 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
                             const Ort::Logger& logger,
                             std::vector<std::string>& input_names,
                             bool do_op_validation) const override ORT_MUST_USE_RESULT;
+
+  Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                          const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names,
+                                          const Ort::Logger& logger,
+                                          bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -85,8 +92,8 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        value = static_cast<double>(reinterpret_cast<const MLFloat16*>(raw_ptr)->ToFloat());
-        offset += sizeof(MLFloat16);
+        value = static_cast<double>(reinterpret_cast<const Ort::Float16_t*>(raw_ptr)->ToFloat());
+        offset += sizeof(Ort::Float16_t);
         break;
       }
       case QNN_DATATYPE_BOOL_8:
@@ -153,7 +160,7 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        RETURN_IF_NOT(channel == static_cast<uint32_t>(raw_ptr_length / sizeof(MLFloat16)),
+        RETURN_IF_NOT(channel == static_cast<uint32_t>(raw_ptr_length / sizeof(Ort::Float16_t)),
                       "initializer size not match Qnn data type.");
         break;
       }
@@ -242,10 +249,10 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        raw_tensor.resize(double_tensor.size() * sizeof(MLFloat16));
-        MLFloat16* raw_ptr = reinterpret_cast<MLFloat16*>(raw_tensor.data());
+        raw_tensor.resize(double_tensor.size() * sizeof(Ort::Float16_t));
+        Ort::Float16_t* raw_ptr = reinterpret_cast<Ort::Float16_t*>(raw_tensor.data());
         for (size_t i = 0; i < double_tensor.size(); ++i) {
-          raw_ptr[i] = MLFloat16(static_cast<float>(double_tensor[i]));
+          raw_ptr[i] = Ort::Float16_t(static_cast<float>(double_tensor[i]));
         }
         break;
       }
@@ -482,6 +489,30 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
   }
 }
 
+// Single source of truth for float execution, shared by ProcessInputs (stores params) and
+// ProcessAttributesAndOutputs (emits the op).
+//   - has_float_output: quantized input, no output Q -> float island; BN emits float directly.
+//   - use_float_params: also covers u8/u16 input with per-channel scale, whose fused weight
+//     gamma/sqrt(var+eps) can overflow a single per-tensor requant scale.
+struct BatchNormFloatExecution {
+  bool has_float_output;
+  bool use_float_params;
+};
+
+BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
+                                                   const TensorInfo& scale_info,
+                                                   const TensorInfo& output_info) {
+  const bool is_quantized_op = input_info.quant_param.IsQuantized();
+  const bool has_float_output = is_quantized_op && !output_info.quant_param.IsQuantized();
+  const bool use_float_params =
+      has_float_output ||
+      (is_quantized_op &&
+       (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+        input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
+       scale_info.quant_param.IsPerChannel());
+  return {has_float_output, use_float_params};
+}
+
 }  // namespace
 
 // BatchNorm is sensitive with data layout, no special validation so far
@@ -566,10 +597,10 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
   {
     const std::string& scale_name = inputs[1].name;
     const std::string& bias_name = inputs[2].name;
-    TensorInfo var_info = {};
-    TensorInfo mean_info = {};
     TensorInfo scale_info = {};
     TensorInfo bias_info = {};
+    TensorInfo mean_info = {};
+    TensorInfo var_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[3], mean_info));
@@ -580,6 +611,11 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
     const bool is_quantized_op = input_info.quant_param.IsQuantized();
 
+    // When BN runs in float, params below are stored as f32 (see GetBatchNormFloatExecution).
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+    const bool use_float_params = GetBatchNormFloatExecution(input_info, scale_info, output_info).use_float_params;
+
     // Check if bias needs conversion (will be done after preprocessing)
     const bool bias_is_float = !bias_info.quant_param.IsQuantized() &&
                                (bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
@@ -587,17 +623,17 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
 
     std::vector<uint8_t> scale_unpacked_tensor;
     std::vector<uint8_t> bias_unpacked_tensor;
-    std::vector<uint8_t> var_unpacked_tensor;
     std::vector<uint8_t> mean_unpacked_tensor;
+    std::vector<uint8_t> var_unpacked_tensor;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_info.initializer_tensor, scale_unpacked_tensor));
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, bias_unpacked_tensor));
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(mean_info.initializer_tensor, mean_unpacked_tensor));
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(var_info.initializer_tensor, var_unpacked_tensor));
 
-    std::vector<double> mean_double_tensor;
-    std::vector<double> std_double_tensor;
     std::vector<double> scale_double_tensor;
     std::vector<double> bias_double_tensor;
+    std::vector<double> mean_double_tensor;
+    std::vector<double> std_double_tensor;
 
     OrtNodeAttrHelper node_helper(node_unit);
     const float epsilon = node_helper.Get("epsilon", 1e-05f);  // Default is 1e-05 according to ONNX spec.
@@ -642,15 +678,23 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
       bias_info.quant_param = QnnQuantParamsWrapper(1.0f, 0);  // Placeholder, computed in Postprocess
     }
 
+    // use_float_params stores the fused weight/bias as F32.
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(scale_name)) {
       std::vector<uint8_t> scale_raw_tensor;
-      QnnQuantParamsWrapper scale_quant_param = scale_info.quant_param;
-      RETURN_IF_ERROR(Postprocess(scale_info,
-                                  scale_double_tensor,
-                                  scale_rmax,
-                                  scale_rmin,
-                                  scale_quant_param,
-                                  scale_raw_tensor));
+      QnnQuantParamsWrapper scale_quant_param;
+      if (use_float_params) {
+        RETURN_IF_ERROR(ConvertToRawOnQnnDataType(QNN_DATATYPE_FLOAT_32, scale_double_tensor, scale_raw_tensor));
+        scale_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
+      } else {
+        scale_quant_param = scale_info.quant_param;
+        RETURN_IF_ERROR(Postprocess(scale_info,
+                                    scale_double_tensor,
+                                    scale_rmax,
+                                    scale_rmin,
+                                    scale_quant_param,
+                                    scale_raw_tensor));
+      }
+
       Qnn_TensorType_t scale_tensor_type = qnn_model_wrapper.GetTensorType(scale_name);
       QnnTensorWrapper input_tensorwrapper(scale_name, scale_tensor_type, scale_info.qnn_data_type,
                                            std::move(scale_quant_param), std::move(scale_info.shape),
@@ -661,13 +705,19 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
 
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(bias_name)) {
       std::vector<uint8_t> bias_raw_tensor;
-      QnnQuantParamsWrapper bias_quant_param = bias_info.quant_param;
-      RETURN_IF_ERROR(Postprocess(bias_info,
-                                  bias_double_tensor,
-                                  bias_rmax,
-                                  bias_rmin,
-                                  bias_quant_param,
-                                  bias_raw_tensor));
+      QnnQuantParamsWrapper bias_quant_param;
+      if (use_float_params) {
+        RETURN_IF_ERROR(ConvertToRawOnQnnDataType(QNN_DATATYPE_FLOAT_32, bias_double_tensor, bias_raw_tensor));
+        bias_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
+      } else {
+        bias_quant_param = bias_info.quant_param;
+        RETURN_IF_ERROR(Postprocess(bias_info,
+                                    bias_double_tensor,
+                                    bias_rmax,
+                                    bias_rmin,
+                                    bias_quant_param,
+                                    bias_raw_tensor));
+      }
       Qnn_TensorType_t bias_tensor_type = qnn_model_wrapper.GetTensorType(bias_name);
       QnnTensorWrapper input_tensorwrapper(bias_name, bias_tensor_type, bias_info.qnn_data_type,
                                            std::move(bias_quant_param), std::move(bias_info.shape),
@@ -676,6 +726,91 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
     }
     input_names.push_back(bias_name);
   }
+
+  return Ort::Status();
+}
+
+Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                                     const OrtNodeUnit& node_unit,
+                                                                     std::vector<std::string>&& input_names,
+                                                                     const Ort::Logger& logger,
+                                                                     bool do_op_validation) const {
+  if (input_names.size() < 1) {
+    return Ort::Status();
+  }
+
+  TensorInfo input_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+  TensorInfo scale_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], scale_info));
+
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+
+  // has_float_output emits BN's float result with no trailing Quantize, feeding downstream float ops.
+  const BatchNormFloatExecution float_exec = GetBatchNormFloatExecution(input_info, scale_info, output_info);
+  const bool has_float_output = float_exec.has_float_output;
+  const bool use_float_params = float_exec.use_float_params;
+
+  if (!use_float_params) {
+    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
+                                   logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
+    return Ort::Status();
+  }
+
+  // Insert Dequantize (quantized -> Float_32) before BN
+  const std::string& orig_input_name = input_names[0];
+  const std::string convert_in_output = utils::UniqueNameGenerator().New(orig_input_name, "_to_f32");
+
+  std::vector<uint32_t> input_shape = input_info.shape;
+  QnnTensorWrapper convert_in_out_tensor(convert_in_output, QNN_TENSOR_TYPE_NATIVE,
+                                         QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
+                                         std::vector<uint32_t>(input_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(convert_in_out_tensor)), "Failed to add tensor");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_dequant_in"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
+                                                {orig_input_name}, {convert_in_output}, {},
+                                                do_op_validation),
+                "Failed to add dequantize node");
+
+  // BN node: all float32
+  const auto& outputs = node_unit.Outputs();
+  const std::string& orig_output_name = outputs[0].name;
+  bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
+
+  // A float output is written directly; otherwise an intermediate feeds the trailing Quantize.
+  const std::string bn_output_name = has_float_output
+                                         ? orig_output_name
+                                         : utils::UniqueNameGenerator().New(orig_output_name, "_bn_f32");
+  Qnn_TensorType_t bn_out_tensor_type = (has_float_output && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ
+                                                                              : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper bn_out_tensor(bn_output_name, bn_out_tensor_type,
+                                 QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
+                                 std::vector<uint32_t>(output_info.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bn_out_tensor)), "Failed to add tensor");
+
+  std::vector<std::string> bn_inputs = {convert_in_output, input_names[1], input_names[2]};
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_bn"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_BATCHNORM,
+                                                std::move(bn_inputs), {bn_output_name}, {},
+                                                do_op_validation),
+                "Failed to add Batchnorm node");
+
+  if (has_float_output) {
+    return Ort::Status();  // Output is the float result; downstream ops re-quantize as needed.
+  }
+
+  // Insert Quantize (Float_32 -> quantized) after BN
+  Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper final_out_tensor(orig_output_name, out_tensor_type,
+                                    output_info.qnn_data_type, std::move(output_info.quant_param),
+                                    std::move(output_info.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_out_tensor)), "Failed to add tensor");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_quant_out"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
+                                                {bn_output_name}, {orig_output_name}, {},
+                                                do_op_validation),
+                "Failed to add quantize node");
 
   return Ort::Status();
 }
@@ -715,6 +850,13 @@ Ort::Status BatchNormalizationOpBuilder::CheckHtpDataTypes(const std::vector<Qnn
   Qnn_DataType_t scale_dtype = in_dtypes[1];
   Qnn_DataType_t bias_dtype = in_dtypes[2];
   Qnn_DataType_t y_dtype = out_dtypes[0];
+
+  // Quantized input with a float output: the input is dequantized and BN is run in float.
+  const bool x_is_quantized = (x_dtype == QNN_DATATYPE_UFIXED_POINT_8 || x_dtype == QNN_DATATYPE_SFIXED_POINT_8 ||
+                               x_dtype == QNN_DATATYPE_UFIXED_POINT_16 || x_dtype == QNN_DATATYPE_SFIXED_POINT_16);
+  if (x_is_quantized && (y_dtype == QNN_DATATYPE_FLOAT_32 || y_dtype == QNN_DATATYPE_FLOAT_16)) {
+    return Ort::Status();
+  }
 
   // We likely need to re-quantize scale/bias for HTP compatibility, override dtypes before checking.
   // Note: We conservatively assume scale may have negative values during validation.

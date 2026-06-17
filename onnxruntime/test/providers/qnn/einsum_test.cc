@@ -9,7 +9,6 @@
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/test_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -55,7 +54,7 @@ GetTestQDQModelFn<InputAQType> BuildTestCaseQdq(const std::vector<TestInputDef<f
                                                 bool use_contrib_qdq = false) {
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
+    QNN_TEST_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
 
     builder.graph_->set_name("qdq_einsum_graph");
 

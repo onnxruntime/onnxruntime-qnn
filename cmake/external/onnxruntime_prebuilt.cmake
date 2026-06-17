@@ -24,6 +24,7 @@ if(onnxruntime_ORT_HOME)
     message(STATUS "Use prebuilt from MS only at ${onnxruntime_ORT_HOME}. ORT Core will NOT be built from source")
     set(ORT_BUILD_COMMAND ${CMAKE_COMMAND} -E echo "Skipping ORT_BUILD_COMMAND")
     set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib")
+    set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include")
 else()
     # Use Python to run build.py
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -105,6 +106,11 @@ else()
         endif()
     endif()
 
+    if(onnxruntime_CMAKE_DEPS_MIRROR_DIR)
+        list(APPEND ORT_BUILD_COMMAND --cmake_deps_mirror_dir)
+        list(APPEND ORT_BUILD_COMMAND "${onnxruntime_CMAKE_DEPS_MIRROR_DIR}")
+    endif()
+
     list(APPEND ORT_BUILD_COMMAND --targets)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_perf_test)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_plugin_ep_onnx_test)
@@ -120,6 +126,12 @@ else()
         # Single-config generators: executable is directly in build directory
         set(ORT_PREBUILT_SOURCE "${ORT_BUILD_DIR}/${CMAKE_BUILD_TYPE}")
     endif()
+
+    set(ONNXRUNTIME_APPLICATION_INCLUDES
+        # For onnxruntime_cxx_api.h
+        "${ORT_SOURCE_DIR}/include/onnxruntime/core/session"
+        # For cpu_provider_factory.h (Note: cpu_provider_factory.h is a public header released in ORT prebuilt)
+        "${ORT_SOURCE_DIR}/include/onnxruntime/core/providers/cpu")
 endif()
 
 # Define platform-specific file lists.
@@ -201,13 +213,13 @@ ExternalProject_Add(
     PATCH_COMMAND ""
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
+    BUILD_ALWAYS ON
     INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
     BUILD_BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
     # Enable comprehensive logging for debugging
     LOG_DOWNLOAD ON
     LOG_PATCH ON
     LOG_CONFIGURE ON
-    LOG_BUILD ON
     LOG_INSTALL ON
     LOG_OUTPUT_ON_FAILURE ON
     LOG_MERGED_STDOUTERR ON
@@ -215,10 +227,6 @@ ExternalProject_Add(
     # Don't run more than one Ninja build at a time
     USES_TERMINAL_BUILD ON
 )
-
-# TODO: In long-term, we aim to remove the dependency of QNN-EP plugin library on ORT Core
-set(ONNXRUNTIME_APPLICATION_SOURCE_ROOT "${ORT_SOURCE_DIR}/onnxruntime")
-set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${ORT_SOURCE_DIR}/include/onnxruntime")
 
 # Create imported target for ONNX Runtime
 add_library(onnxruntime SHARED IMPORTED GLOBAL)
@@ -229,9 +237,6 @@ if(NOT ANDROID)
     add_library(onnxruntime_providers_shared SHARED IMPORTED GLOBAL)
     add_dependencies(onnxruntime_providers_shared ort_core_target)
 endif()
-
-# Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
-file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
 
 # Platform-specific library configuration
 if(WIN32)

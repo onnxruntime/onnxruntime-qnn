@@ -10,6 +10,14 @@ permissions:
 on:
   workflow_call:
     inputs: &common_inputs
+      has_code_changes:
+        description: |
+          If false, the job runs checkout + (skipped) steps only and skips ALL heavy work
+          (submodule init, build, tests, uploads), reporting success so required status checks
+          stay green on PRs that don't touch code. Defaults to true so release callers
+          (build-artifacts.yml) and direct workflow_dispatch are unaffected.
+        default: true
+        type: boolean
       target_os:
         description: "The OS for which to build: windows or linux"
         default: windows
@@ -17,7 +25,7 @@ on:
       target_arch:
         description: |
           The architecture for which to build.
-          [Linux] aarch64_manylinux_2_34, aarch64_oe_gcc11_2, or x86_64.
+          [Linux] aarch64_manylinux_2_34, aarch64_oe_gcc11_2, x86_64, or x86_64_ubuntu_22_04.
           [Windows] arm64, arm64ec, arm64x, or x86_64.
         default: arm64
         type: string
@@ -29,6 +37,10 @@ on:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      build_config:
+        description: "Specify the type of build: Debug, Release, or RelWithDebInfo."
+        default: "Release"
+        type: string
       version_suffix:
         description: "Version suffix. If set, the specified suffix will be appended to the version string."
         type: string
@@ -71,12 +83,26 @@ on:
       upload_nuget:
         default: false
         type: boolean
-      build_zip:
+      build_archive:
         default: false
         type: boolean
-      upload_zip:
+      upload_archive:
         default: false
         type: boolean
+      build_pdb_archive:
+        description: "If true (Windows only), build an archive containing just the PDB debug symbols."
+        default: false
+        type: boolean
+      upload_pdb_archive:
+        description: "If true, upload the PDB archive as a CI artifact."
+        default: false
+        type: boolean
+      testdata_archive_artifact_name:
+        description: |
+          Artifact name to download as the testdata archive in the test step.
+          Empty disables the download.
+        type: string
+        default: ""
       build_aar:
         description: |
           If true, also build the Android AAR during the Android build.
@@ -97,11 +123,15 @@ env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
 
   # Cross compilation on Windows adds a folder to the build directory.
-  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && 'Release/Release' || 'Release' }}"
+  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config) || inputs.build_config }}"
 
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
+  # Materialize for step-level `if` checks: GitHub Actions does not allow `env`/`secrets`
+  # contexts in job-level `if`, so jobs gate on `github.event.pull_request.head.repo.fork`
+  # while steps gate on `env.BUILD_ARTIFACTORY_REPO != ''`. Both signals skip Artifactory
+  # work on fork PRs (where this secret is empty).
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
   BUILD_SOURCEBRANCH: "${{ github.ref }}"
@@ -117,30 +147,37 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
+        # Submodules omitted here; initialized below only when a heavy build is needed, so
+        # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
+      - name: Initialize submodules
+        if: ${{ inputs.has_code_changes }}
+        run: git submodule update --init --recursive
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+        if: ${{ inputs.has_code_changes }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
-          ${{ inputs.build_zip == true && '--build-zip' || '' }}
+          ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{ inputs.target_os }}_${{ inputs.target_arch }}
+          ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-        if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
+        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
-        if: ${{ always() && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
+        # Skipped on fork PRs: the action creates a check run, which the fork-PR GITHUB_TOKEN cannot do.
+        if: ${{ always() && inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           group_reports: false
@@ -152,14 +189,16 @@ jobs:
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v7
-        if: ${{ always() && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
+        if: ${{ always() && inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
+      # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
       - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -169,50 +208,94 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Upload Test Archive to Artifactory
-        if: ${{ inputs.upload_test_archive }}
+        if: ${{ inputs.has_code_changes && inputs.upload_test_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
           src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
-        if: ${{ inputs.upload_wheel }}
+        if: ${{ inputs.has_code_changes && inputs.upload_wheel && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
           src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
       - name: Upload NuGet to Artifactory
-        if: ${{ inputs.upload_nuget }}
+        if: ${{ inputs.has_code_changes && inputs.upload_nuget && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-nuget"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/Qualcomm.ML.OnnxRuntime.QNN*.nupkg"
 
       - name: Upload Archive to Artifactory
-        if: ${{ inputs.upload_zip }}
+        if: ${{ inputs.has_code_changes && inputs.upload_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
 
       - name: Upload AAR to Artifactory
-        if: ${{ inputs.upload_aar }}
+        if: ${{ inputs.has_code_changes && inputs.upload_aar && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{inputs.target_os}}-${{ inputs.target_arch }}-aar"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar"
 
       - name: Upload POM to Artifactory
-        if: ${{ inputs.upload_aar }}
+        if: ${{ inputs.has_code_changes && inputs.upload_aar && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom"
 
+      - name: Build Windows ${{ inputs.target_arch }} PDB Archive
+        if: ${{ inputs.has_code_changes && inputs.build_pdb_archive && inputs.target_os == 'windows' }}
+        run: >
+          python.exe tools/ci_build/pkg_assets.py
+          --source_dir ${{ github.workspace }}
+          --build_dir ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ inputs.target_arch }}
+          --config Release
+          --pdb_only
+          --target_arch ${{ inputs.target_arch }}
+          ${{ env.BUILD_CONFIG_DIR == 'Release' && '--use_ninja' || '' }}
+          ${{ env.ORT_VERSION_SUFFIX != '' && format('--version_suffix {0}', env.ORT_VERSION_SUFFIX) || '' }}
+
+      - name: Upload PDB Archive to Artifactory
+        if: ${{ inputs.has_code_changes && inputs.upload_pdb_archive && inputs.target_os == 'windows' && env.BUILD_ARTIFACTORY_REPO != '' }}
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip"
+          src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn-*-win-*-pdb.zip"
+
+  # Fork PRs cannot access Artifactory secrets, so the real test/test-wheel jobs are skipped for them.
+  # GitHub branch protection treats a skipped required check as not-satisfied, permanently blocking fork PRs.
+  # These two stub jobs carry the same `name:` as the real ones and run only on fork PRs so that branch
+  # protection sees a green check on the exact context it requires, without running anything that needs secrets.
+  test-fork-stub:
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork == true }}
+    needs: [build]
+    runs-on: ["self-hosted", "linux", "X64", "Build"]
+    timeout-minutes: 10
+    steps:
+      - run: echo "Cross-runner tests skipped on fork PRs (need Artifactory secrets); change is still compiled, x86_64 jobs run unit tests, full suite runs post-merge on main."
+        shell: bash
+
+  test-wheel-fork-stub:
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
+    if: ${{ inputs.test_wheel && github.event.pull_request.head.repo.fork == true }}
+    needs: [build]
+    runs-on: ["self-hosted", "linux", "X64", "Build"]
+    timeout-minutes: 10
+    steps:
+      - run: echo "Wheel smoke test skipped on fork PRs (downloads wheel from Artifactory, needs secrets); wheel is still built, full suite runs post-merge on main."
+        shell: bash
+
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    if: ${{ inputs.run_tests && !inputs.build_test_same_runner }}
+    # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
+    if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
     defaults:
@@ -220,10 +303,13 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
+        # Submodules omitted here; initialized below only when a heavy test run is needed.
+      - name: Initialize submodules
+        if: ${{ inputs.has_code_changes }}
+        run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -233,21 +319,30 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Download Tests from Artifactory
+        if: ${{ inputs.has_code_changes }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
 
+      - name: Download testdata from Artifactory
+        if: ${{ inputs.has_code_changes && inputs.testdata_archive_artifact_name != '' }}
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: ${{ inputs.testdata_archive_artifact_name }}
+
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+        if: ${{ inputs.has_code_changes }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          --config ${{ inputs.build_config }}
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
-        if: always() # always run even if the previous step fails
+        if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           group_reports: false
@@ -259,7 +354,7 @@ jobs:
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v7
-        if: always() # always run even if the previous step fails
+        if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
           retention-days: 7
@@ -268,7 +363,8 @@ jobs:
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
-    if: ${{ inputs.test_wheel }}
+    # Wheel smoke test downloads the wheel from Artifactory; fork stub above handles the fork case.
+    if: ${{ inputs.test_wheel && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
     defaults:
@@ -276,10 +372,13 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
+        # Submodules omitted here; initialized below only when a heavy wheel smoke test is needed.
+      - name: Initialize submodules
+        if: ${{ inputs.has_code_changes }}
+        run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -289,15 +388,18 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Download Wheel from Artifactory
+        if: ${{ inputs.has_code_changes }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
+        if: ${{ inputs.has_code_changes }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only

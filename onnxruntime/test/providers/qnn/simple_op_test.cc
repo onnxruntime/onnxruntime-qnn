@@ -8,9 +8,8 @@
 #include <string>
 #include <filesystem>
 #include <variant>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
+
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -147,6 +146,29 @@ TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
                  ExpectedEPNodeAssignment::All);
 }
 
+// Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.
+TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
+  RunOpTestOnCPU("HardSwish",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Test float HardSwish on the QNN HTP backend.
+TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
+  QNN_SKIP_TEST_ON_ARM64("Fails on ARM64/AARCH64");
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  RunQnnModelTest(BuildOpTestCase<float>("HardSwish_node", "HardSwish",
+                                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                                         {}, {}),
+                  provider_options,
+                  14,
+                  ExpectedEPNodeAssignment::All,
+                  0.004f);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
@@ -200,7 +222,7 @@ static void RunQDQOpTest(const std::string& op_type,
 
   TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                        BuildQDQOpTestCase<InputQType, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq, nullptr, combine_quant_inputs_qparams),
+                                                                  op_domain, use_contrib_qdq, combine_quant_inputs_qparams),
                        provider_options,
                        opset_version,
                        expected_ep_assignment,
@@ -217,15 +239,13 @@ static void RunOpTest(const std::string& op_type,
                       const std::string& op_domain = kOnnxDomain,
                       float fp32_abs_err = 1e-5f,
                       bool enable_htp_fp16_precision = false,
-                      std::optional<std::string> soc_model = std::nullopt) {
+                      [[maybe_unused]] std::optional<std::string> soc_model = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
   if (enable_htp_fp16_precision) {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = soc_model.has_value() ? *soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
@@ -258,9 +278,7 @@ static void RunOpTest(const std::string& op_type,
 
   if (enable_htp_fp16_precision) {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -661,132 +679,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Log_U16) {
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
 
-// Check that QNN compiles DQ -> Softmax -> Q as a single unit.
-// Test that the default axis (-1) for SoftMax opset 13 works.
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_DefaultAxis) {
-  const std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint8_t>("Softmax",
-                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                        {},  // Uses default axis of -1 for opset 13
-                        13,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Tests accuracy of 16-bit QDQ Softmax (opset 13) with default axis
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_U16_DefaultAxis) {
-  const std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint16_t>("Softmax",
-                         {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                         {},  // Uses default axis of -1 for opset 13
-                         13,
-                         ExpectedEPNodeAssignment::All,
-                         kOnnxDomain,  // Sofmax's domain
-                         true);        // Use com.microsoft domain for Q/DQ ops
-}
-
-// Test that 8-bit QDQ Softmax (opset 13) with axis != -1 is supported by QNN EP.
-// QNN EP will wrap the operator with transposes.
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_NonLastAxis) {
-  const std::vector<float> input_data = {0.0f, 1.0f, 2.0f, 10.0f, 11.0f, 12.0f, 100.0f, 110.0f, 120.0f,
-                                         1.0856307f, 0.99734545f, 0.2829785f, 1.5062947f, 0.5786002f, 1.6514366f,
-                                         2.4266791f, 0.42891264f, 1.2659363f};
-  RunQDQOpTest<uint8_t>("Softmax",
-                        {TestInputDef<float>({1, 2, 3, 3}, false, input_data)},
-                        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                        13,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Test that 8-bit QDQ Softmax (opset 13) with axis != -1 is supported by QNN EP.
-// QNN EP will wrap the operator with transposes.
-// This is a configuration used in one of our partner's models.
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_NonLastAxis_LargeInput) {
-  const std::vector<float> input_data = GetFloatDataInRange(-50.0f, 50.0f, 124);
-  RunQDQOpTest<uint8_t>("Softmax",
-                        {TestInputDef<float>({1, 124, 1}, false, input_data)},
-                        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                        13,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Test that 16-bit QDQ Softmax (opset 13) with axis != -1 is supported by QNN EP.
-// QNN EP will wrap the operator with transposes.
-// This is a configuration used in one of our partner's models.
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_U16_NonLastAxis_LargeInput) {
-  const std::vector<float> input_data = GetFloatDataInRange(-50.0f, 50.0f, 124);
-  RunQDQOpTest<uint16_t>("Softmax",
-                         {TestInputDef<float>({1, 124, 1}, false, input_data)},
-                         {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                         13,
-                         ExpectedEPNodeAssignment::All,
-                         kOnnxDomain,
-                         true);
-}
-
-// Check that QNN compiles DQ -> Softmax -> Q as a single unit.
-// Test that the default axis (1) for SoftMax opset < 13 works.
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_DefaultAxis) {
-  RunQDQOpTest<uint8_t>("Softmax",
-                        {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
-                        {},  // Uses default axis of 1 for opset < 13.
-                        11,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Check that QNN compiles DQ -> Softmax -> Q as a single unit.
-// Test that setting an axis value of -1 works for Softmax opset < 13.
-TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_SetAxis) {
-  RunQDQOpTest<uint8_t>("Softmax",
-                        {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
-                        {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                        11,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Check that QNN compiles DQ -> LogSoftmax -> Q as a single unit.
-// Test that the default axis (-1) for LogSoftmax opset 13 works.
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_DefaultAxis) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint8_t>("LogSoftmax",
-                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                        {},  // Uses default axis of -1 for opset 13
-                        13,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Test that 8-bit QDQ LogSoftmax (opset 13) with axis != -1 is supported by QNN EP.
-// QNN EP will wrap the operator with transposes.
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_NonLastAxis) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint8_t>("LogSoftmax",
-                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                        13,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Check that QNN compiles DQ -> LogSoftmax -> Q as a single unit.
-// Test that the default axis (1) for LogSoftmax opset < 13 works.
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_DefaultAxis) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint8_t>("LogSoftmax",
-                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                        {},  // Uses default axis of 1 for opset < 13.
-                        11,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Check that QNN compiles DQ -> LogSoftmax -> Q as a single unit.
-// Test that setting an axis value of -1 works for LogSoftmax opset < 13.
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_SetAxis) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint8_t>("LogSoftmax",
-                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                        {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                        11,
-                        ExpectedEPNodeAssignment::All);
-}
-
 // Test accuracy of QDQ Abs op.
 TEST_F(QnnHTPBackendTests, UnaryOp_Abs) {
   RunQDQOpTest<uint8_t>("Abs",
@@ -1046,9 +938,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1216,6 +1106,38 @@ TEST_F(QnnHTPBackendTests, BinaryOp_And4D) {
   RunOpTest<bool>("And",
                   {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
                    TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, Xor4D) {
+  RunOpTestOnCPU<bool>("Xor",
+                       {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                        TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                       {},
+                       17,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Xor4D) {
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                   TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, XorBroadcast) {
+  std::vector<bool> a_data(2 * 1 * 4);
+  std::vector<bool> b_data(2 * 3 * 4);
+  for (size_t i = 0; i < a_data.size(); ++i) a_data[i] = (i % 2) == 0;
+  for (size_t i = 0; i < b_data.size(); ++i) b_data[i] = (i % 3) == 0;
+
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({2, 1, 4}, false, a_data),
+                   TestInputDef<bool>({2, 3, 4}, false, b_data)},
                   {},
                   17,
                   ExpectedEPNodeAssignment::All);
@@ -1917,6 +1839,45 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU16) {
                          ExpectedEPNodeAssignment::All);
 }
 
+// Test that QDQ uint16 HardSigmoid -> Mul produces correct output
+// Reproduces MobileNetV3 SE block accuracy bug where HardSigmoid output scale must be
+// overridden to 1/65536 for HTP to compute Mul correctly
+TEST_F(QnnHTPBackendTests, HardSigmoidMul_QU16_ScaleOverride) {
+  // Build: input -> HardSigmoid -> Mul(input, hardsigmoid_output) -> output
+  // This mimics SE attention: x * sigmoid(fc(x))
+  auto input_def = TestInputDef<float>({1, 16, 1, 1}, false, GetFloatDataInRange(-3.0f, 3.0f, 16));
+
+  auto build_f32_model = [input_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    builder.AddNode("HardSigmoid", "HardSigmoid", {"input"}, {"hsig_out"});
+    builder.AddNode("Mul", "Mul", {"input", "hsig_out"}, {"output"});
+    builder.MakeOutput("output");
+  };
+
+  auto build_qdq_model = [input_def](ModelTestBuilder& builder,
+                                     std::vector<QuantParams<uint16_t>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<uint16_t> input_qparams = GetTestInputQuantParams<uint16_t>(input_def);
+
+    std::string input_dq = AddQDQNodePair<uint16_t>(builder, "input_qdq", "input",
+                                                    input_qparams.scale, input_qparams.zero_point, true);
+    builder.AddNode("HardSigmoid", "HardSigmoid", {input_dq}, {"hsig_out"});
+    std::string hsig_dq = AddQDQNodePair<uint16_t>(builder, "hsig_qdq", "hsig_out",
+                                                   1.0f / 65536.0f, static_cast<uint16_t>(0), true);
+    builder.AddNode("Mul", "Mul", {input_dq, hsig_dq}, {"mul_out"});
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "output_qdq", "mul_out",
+                                                    output_qparams[0].scale, output_qparams[0].zero_point, true);
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  GetTestQDQModelFn<uint16_t> qdq_fn = build_qdq_model;
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance());
+}
+
 // Test that QDQ HardSigmoid is supported by QNN EP.
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QDQ_Supported) {
   RunQDQOpTest<uint8_t>("HardSigmoid",
@@ -2020,9 +1981,7 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 
   provider_options["backend_type"] = "htp";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -2047,9 +2006,7 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
 TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";

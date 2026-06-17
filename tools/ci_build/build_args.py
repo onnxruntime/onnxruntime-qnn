@@ -386,11 +386,13 @@ def add_csharp_binding_args(parser: argparse.ArgumentParser) -> None:
 def add_packaging_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments for packaging and distribution."""
     parser.add_argument(
-        "--build_zip_asset", action="store_true", help="Build zip asset package containing QNN EP and dependencies."
+        "--build_archive_asset",
+        action="store_true",
+        help="Build archive asset package containing QNN EP and dependencies.",
     )
     parser.add_argument(
-        "--zip_asset_name_suffix",
-        help="Suffix for zip asset name (used for nightly builds).",
+        "--archive_name_suffix",
+        help="Suffix for archive asset name (used for nightly builds).",
     )
 
 
@@ -440,6 +442,11 @@ def add_other_feature_args(parser: argparse.ArgumentParser) -> None:
         type=str,
         default="",
         help="Version suffix for Python Wheel, NuGet and Zip archive.",
+    )
+    parser.add_argument(
+        "--nightly_build",
+        action="store_true",
+        help="Mark this as a nightly build, appending a date-based suffix to the wheel version.",
     )
 
 

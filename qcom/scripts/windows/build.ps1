@@ -16,8 +16,8 @@ param (
     [bool]$BuildNuget = $false,
 
     [Parameter(Mandatory = $false,
-               HelpMessage = "If true, build Zip archive.")]
-    [bool]$BuildZip = $false,
+               HelpMessage = "If true, build archive.")]
+    [bool]$BuildArchive = $false,
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
@@ -136,9 +136,9 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-# Use static MSVC runtime for ARM64 builds to eliminate MSVCP140.dll and
+# Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
-if ($Arch -in @("aarch64", "arm64", "arm64ec")) {
+if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
     $CommonArgs += "--enable_msvc_static_runtime"
 }
 
@@ -170,7 +170,7 @@ else {
     $FakeClCcacheDir = $BuildDir.Replace("\", "/")
     $CommonArgs += `
         "--cmake_extra_defines", "CMAKE_VS_GLOBALS=CLToolExe=cl.exe;CLToolPath=$FakeClCcacheDir;UseMultiToolTask=true", `
-        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,RelWithDebInfo">":Embedded">"'
+        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,Release,RelWithDebInfo">":Embedded">"'
 }
 
 $TargetPyExe = $null
@@ -191,6 +191,7 @@ if ($BuildAsX) {
     $CommonArgs += "--buildasx"
 }
 
+$BuildNugetArgs = @()
 if ($BuildNuget) {
     $TargetNugetDir = (Get-NugetBinDir)
     $env:Path = "$TargetNugetDir;" + $env:Path
@@ -199,7 +200,7 @@ if ($BuildNuget) {
         Get-Command nuget.exe -ErrorAction SilentlyContinue
     }
     Write-Host "Building Nuget using $TargetNugetExe"
-    $CommonArgs += "--build_nuget"
+    $BuildNugetArgs += "--build_nuget"
 }
 
 if ($CMakeGenerator -eq "Ninja") {
@@ -210,6 +211,20 @@ if ($CMakeGenerator -eq "Ninja") {
 $VersionSuffixArg = @()
 if ($env:ORT_VERSION_SUFFIX) {
     $VersionSuffixArg += "--version_suffix", "$env:ORT_VERSION_SUFFIX"
+}
+
+$BuildArchiveArgs = @()
+if ($BuildArchive) {
+    $BuildArchiveArgs += "--build_archive_asset"
+}
+
+$BuildWheelArgs = @()
+if ($BuildWheel) {
+    $BuildWheelArgs += "--build_wheel"
+    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
+        $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
+        $BuildWheelArgs += "--nightly_build"
+    }
 }
 
 switch ($Mode) {
@@ -271,7 +286,10 @@ else {
 
     if ($GenerateBuild -or $DoBuild) {
         try {
-            python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
+                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            }
+            $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
             if ($GenerateBuild) {
                 if (-not (Test-Path $BuildVEnv)) {
@@ -284,80 +302,30 @@ else {
                     Assert-Success { python.exe -m pip install uv }
                     Assert-Success { uv.exe pip install -r "$RepoRoot\tools\ci_build\github\windows\python\requirements.txt" --native-tls }
                     Assert-Success -ErrorMessage "Failed to generate build" {
-                        .\build.bat --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
+                        & $BuildBatPath --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
                     }
                 }
             }
 
             if ($DoBuild) {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
-                Assert-Success -ErrorMessage "Failed to build" {
-                    & cmake --build $BuildOutputDir --config $Config
+                Use-PyVenv -PyVenv $BuildVEnv {
+                    Assert-Success -ErrorMessage "Failed to build" {
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs $BuildWheelArgs
+                    }
                 }
 
                 if ($CMakeGenerator -in @("Visual Studio 17 2022", "Visual Studio 18 2026")) {
                     $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
                 }
 
-                if ($BuildWheel) {
-                    $PyNightlyArg = ""
-                    $WheelNameSuffix = ""
-                    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
-                        $PyNightlyArg = "--nightly_build"
-                        $WheelNameSuffix = "--wheel_name_suffix=qcom_internal"
-                    }
-                    $PyVersionSuffixArg = ""
-                    if ($env:ORT_VERSION_SUFFIX) {
-                        $PyVersionSuffixArg = "--version_suffix=$env:ORT_VERSION_SUFFIX"
-                    }
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
-                                python.exe (Join-Path $RepoRoot "setup.py") `
-                                    bdist_wheel `
-                                    $WheelNameSuffix `
-                                    --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg `
-                                    $PyVersionSuffixArg
-                            }
-                        }
-                    }
-                }
-
                 if ($BuildNuget) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            $BuildBatPath = (Join-Path $RepoRoot "build.bat")
-                            Assert-Success -ErrorMessage "Failed to build nuget" {
-                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
-
-                                $DistDir = Join-Path $BinDir "dist"
-                                if (-not (Test-Path $DistDir)) {
-                                    New-Item -ItemType Directory -Path $DistDir | Out-Null
-                                }
-                                foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
-                                    Copy-Item -Path $Pkg.FullName -Destination $DistDir
-                                }
-                            }
-                        }
+                    $DistDir = Join-Path $BinDir "dist"
+                    if (-not (Test-Path $DistDir)) {
+                        New-Item -ItemType Directory -Path $DistDir | Out-Null
                     }
-                }
-                if ($BuildZip) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            $PkgAssetsArgs = @(
-                                "--source", $RepoRoot,
-                                "--build_dir", $BuildDir,
-                                "--config", $Config,
-                                "--verbose"
-                            )
-                            if ($CMakeGenerator -eq "Ninja") {
-                                $PkgAssetsArgs += "--use_ninja"
-                            }
-                            Assert-Success -ErrorMessage "Failed to build zip" {
-                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs $VersionSuffixArg
-                            }
-                        }
+                    foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
+                        Copy-Item -Path $Pkg.FullName -Destination $DistDir
                     }
                 }
             }
@@ -365,7 +333,10 @@ else {
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
             # very cheap to regenerate.
-            Remove-Item -Recurse -Force (Join-Path $RepoRoot "mirror")
+            $mirrorDir = Join-Path $RepoRoot "mirror"
+            if (Test-Path $mirrorDir) {
+                Remove-Item -Recurse -Force $mirrorDir
+            }
         }
     }
 

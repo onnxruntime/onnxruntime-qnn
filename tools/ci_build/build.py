@@ -17,7 +17,7 @@ REPO_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", ".."))
 
 sys.path.insert(0, os.path.join(REPO_DIR, "tools", "python"))
 from build_args import parse_arguments  # noqa: E402
-from pkg_assets import build_zip_asset  # noqa: E402
+from pkg_assets import build_archive_asset  # noqa: E402
 from util import (  # noqa: E402
     generate_android_triplets,
     generate_linux_triplets,
@@ -424,7 +424,7 @@ def generate_build_tree(
                 add_default_definition(
                     cmake_extra_defines,
                     "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT",
-                    "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>",
+                    "$<$<CONFIG:Debug,Release,RelWithDebInfo>:Embedded>",
                 )
             else:
                 # Always enable debug info even in release build. The debug information is in separated *.pdb files that
@@ -1065,7 +1065,7 @@ def main():
         # TODO: find asan DLL and copy it to onnxruntime/capi folder when args.enable_address_sanitizer is True and
         #  the target OS is Windows
         if args.build_wheel:
-            nightly_build = bool(os.getenv("NIGHTLY_BUILD") == "1")
+            nightly_build = args.nightly_build
             build_python_wheel(
                 source_dir,
                 build_dir,
@@ -1101,14 +1101,27 @@ def main():
                 use_ninja=(args.cmake_generator == "Ninja"),
             )
 
-        if args.build_zip_asset:
-            build_zip_asset(
+        if args.build_archive_asset:
+            build_archive_asset(
                 source_dir,
                 build_dir,
                 configs,
-                args.zip_asset_name_suffix,
+                args.archive_name_suffix,
                 args.version_suffix,
                 use_ninja=(args.cmake_generator == "Ninja"),
+                target_arch=(
+                    "arm64x"
+                    if getattr(args, "arm64ec", False) and getattr(args, "buildasx", False)
+                    else "arm64ec"
+                    if getattr(args, "arm64ec", False)
+                    else "arm64"
+                    if getattr(args, "arm64", False)
+                    else "arm"
+                    if getattr(args, "arm", False)
+                    else "x86"
+                    if getattr(args, "x86", False)
+                    else None
+                ),
             )
 
     if args.gen_doc:

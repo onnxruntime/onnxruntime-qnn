@@ -3,16 +3,21 @@
 
 #include "core/providers/qnn/qnn_provider_factory.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <optional>
 
+#include "onnxruntime_c_api.h"
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "QnnCommon.h"
 
-#include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
-#include "core/session/abi_devices.h"
+#include "core/providers/qnn/soc_utils.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
@@ -95,34 +100,81 @@ const char* ORT_API_CALL QnnEpFactory::GetVersionImpl(const OrtEpFactory* this_p
 }
 
 // Creates and returns OrtEpDevice instances for all OrtHardwareDevices that this factory supports.
-// An EP created with this factory is expected to be able to execute a model with *all* supported
-// hardware devices at once. A single instance of QNN EP is not currently setup to partition a model among
-// multiple different QNN backends at once (e.g, npu, cpu, gpu), so currently this factory instance is set
-// to default to npu.
 OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this_ptr,
                                                               const OrtHardwareDevice* const* devices,
                                                               size_t num_devices,
                                                               OrtEpDevice** ep_devices,
                                                               size_t max_ep_devices,
                                                               size_t* p_num_ep_devices) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
   size_t& num_ep_devices = *p_num_ep_devices;
   num_ep_devices = 0;
 
-  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) {
+    OrtEpDevice* ep_device = nullptr;
+    OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device);
+    ep_devices[num_ep_devices++] = ep_device;
+    factory->ep_devices_.push_back(ep_device);
+
+    return status;
+  };
+
+  auto create_hw_device = [&factory](const OrtHardwareDeviceType device_type,
+                                     OrtHardwareDevice*& device,
+                                     const bool is_virtual = true) {
+    OrtKeyValuePairs* hw_metadata = nullptr;
+    if (is_virtual) {
+      factory->ort_api.CreateKeyValuePairs(&hw_metadata);
+      factory->ort_api.AddKeyValuePair(hw_metadata, kOrtHardwareDevice_MetadataKey_IsVirtual, "1");
+    }
+
+    OrtStatus* status = factory->ep_api.CreateHardwareDevice(device_type,
+                                                             factory->vendor_id_,
+                                                             0,
+                                                             factory->vendor_.c_str(),
+                                                             hw_metadata,
+                                                             &device);
+
+    if (hw_metadata) {
+      factory->ort_api.ReleaseKeyValuePairs(hw_metadata);
+    }
+
+    return status;
+  };
+
+  bool has_npu_hw_device = false;
 
   for (size_t idx = 0; idx < num_devices && num_ep_devices < max_ep_devices; ++idx) {
-    const OrtHardwareDevice& device = *devices[idx];
-    auto device_type = factory->ort_api.HardwareDevice_Type(&device);
-    auto vendor_id = factory->ort_api.HardwareDevice_VendorId(&device);
+    const OrtHardwareDevice* device = devices[idx];
+    auto device_type = factory->ort_api.HardwareDevice_Type(device);
+    auto vendor_id = factory->ort_api.HardwareDevice_VendorId(device);
 
-    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) || device_type == OrtHardwareDeviceType_CPU) {
-      OrtEpDevice* ep_device = nullptr;
-      OrtKeyValuePairs* ep_options = nullptr;
-      OrtStatus* status = factory->ep_api.CreateEpDevice(factory, &device, nullptr, ep_options, &ep_device);
-      ep_devices[num_ep_devices++] = ep_device;
-      factory->ep_devices_.push_back(ep_device);
+    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) ||
+        device_type == OrtHardwareDeviceType_CPU) {
+      RETURN_IF_NOT_NULL(create_ep_device(device));
 
-      RETURN_IF_NOT_NULL(status);
+      if (device_type == OrtHardwareDeviceType_NPU) {
+        has_npu_hw_device = true;
+      }
+    }
+  }
+
+  if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
+    if (qnn::soc::GetSocId() != 0) {
+      // If ORT Core does not detect NPU hardware but we recognize the device as WoS (through qnn::soc::GetSocId),
+      // exploit virtual hardware device to create an NPU hardware device for user to select from.
+      // Such case happens for older WoS devices (e.g., Makena) that ORT Core's device discovery logic could not detect
+      // NPU through DXCore.
+      OrtHardwareDevice* undetected_npu_hw_device = nullptr;
+      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
+      factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
+          undetected_npu_hw_device,
+          FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
+
+      RETURN_IF_NOT_NULL(create_ep_device(factory->undetected_npu_hw_device_.get()));
+    } else {
+      // Enable originally expected usage of virtual hardware device for cross-platform compilation if necessary.
     }
   }
 
@@ -190,8 +242,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     } else if (num_devices == 1) {
       device_to_use = devices[0];
     } else {
-      const auto is_npu = [](const OrtHardwareDevice* device) { return device->type == OrtHardwareDeviceType_NPU; };
-      const auto is_gpu = [](const OrtHardwareDevice* device) { return device->type == OrtHardwareDeviceType_GPU; };
+      const auto is_npu = [&factory](const OrtHardwareDevice* device) {
+        return factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_NPU;
+      };
+      const auto is_gpu = [&factory](const OrtHardwareDevice* device) {
+        return factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU;
+      };
 
       auto device_it = std::find_if(devices, devices + num_devices, is_npu);
       if (device_it != devices + num_devices) {
@@ -218,7 +274,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     }
     assert(device_to_use != nullptr);
 
-    auto default_backends_it = kDefaultBackends.find(device_to_use->type);
+    auto default_backends_it = kDefaultBackends.find(factory->ort_api.HardwareDevice_Type(device_to_use));
     if (default_backends_it == kDefaultBackends.end()) {
       return factory->ort_api.CreateStatus(ORT_FAIL, "Could not determine default backend path for device");
     }
@@ -292,17 +348,68 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     _Out_ OrtCompiledModelCompatibility* model_compatibility) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
-  if (factory->qnn_ep_ == nullptr) {
-    // Currently we require EP must first be created as QNN backend is mandatory for validating the compatibility.
-    // Possibly consider creating a fake EP for validation only if necessary.
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Unable to validate model compatibility without EP created.");
+  if (factory->qnn_ep_ != nullptr) {
+    return factory->qnn_ep_->ValidateCompiledModelCompatibilityInfo(devices,
+                                                                    num_devices,
+                                                                    compatibility_info,
+                                                                    model_compatibility);
   }
 
-  return factory->qnn_ep_->ValidateCompiledModelCompatibilityInfo(devices,
-                                                                  num_devices,
-                                                                  compatibility_info,
-                                                                  model_compatibility);
+  // EP has not been created yet. Create a temporary QNN EP for validation.
+  const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
+
+  // Determine backend type from the provided devices (Only supports NPU currently).
+  std::string backend_type;
+  for (size_t i = 0; i < num_devices; ++i) {
+    auto device_type = factory->ort_api.HardwareDevice_Type(devices[i]);
+    if (device_type == OrtHardwareDeviceType_NPU) {
+      backend_type = "htp";
+      break;
+    }
+  }
+  if (backend_type.empty()) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL,
+                                         "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
+                                         "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
+  }
+
+  using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
+  OrtSessionOptions* temp_session_options = nullptr;
+  if (OrtStatus* _status = factory->ort_api.CreateSessionOptions(&temp_session_options)) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return _status;
+  }
+  SessionOptionsUniquePtr session_options(temp_session_options, factory->ort_api.ReleaseSessionOptions);
+
+  if (OrtStatus* _status = factory->ort_api.AddSessionConfigEntry(session_options.get(),
+                                                                  (provider_prefix + "backend_type").c_str(),
+                                                                  backend_type.c_str())) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return _status;
+  }
+
+  if (!OrtLoggingManager::HasDefaultLogger()) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Default logger is not available for model compatibility check.");
+  }
+  const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
+
+  std::unique_ptr<QnnEp> temp_qnn_ep;
+  try {
+    temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
+  } catch (const std::exception& e) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL, e.what());
+  } catch (...) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Unknown exception occurred while creating temporary QNN EP for compatibility check.");
+  }
+
+  return temp_qnn_ep->ValidateCompiledModelCompatibilityInfo(devices,
+                                                             num_devices,
+                                                             compatibility_info,
+                                                             model_compatibility);
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImpl(
@@ -346,15 +453,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 
   // Try to create a temporary QNN EP to test backend setup
   std::unique_ptr<QnnEp> temp_qnn_ep;
-  OrtDeviceEpIncompatibilityDetails compat_details;
   try {
     temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
-    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, &compat_details));
-    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
-        details,
-        compat_details.reasons_bitmask,
-        compat_details.error_code,
-        compat_details.notes.c_str());
+    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, details));
   } catch (...) {
     OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
@@ -363,6 +464,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
         QNN_COMMON_ERROR_UNDEFINED,
         "Unknown exception occurred while creating QNN EP for compatibility check");
   }
+  return nullptr;
 }
 
 }  // namespace onnxruntime
@@ -378,12 +480,51 @@ OrtStatus* CreateEpFactories(const char* registration_name,
                              size_t max_factories,
                              size_t* num_factories) {
   if (ort_api_base == nullptr) {
-    return nullptr;  // Cannot create status without API base
+    return nullptr;
   }
 
-  const OrtApi* ort_api = ort_api_base->GetApi(ORT_API_VERSION);
+  // kMinOrtApiVersion must be at least the ORT API version that introduced
+  // the newest ORT API method this EP calls. Below this floor, GetApi()
+  // returns a function table missing members the EP would dereference.
+  constexpr uint32_t kMinOrtApiVersion = 24;
+  static_assert(kMinOrtApiVersion <= ORT_API_VERSION,
+                "kMinOrtApiVersion must not exceed ORT_API_VERSION");
+
+  const char* version_str = ort_api_base->GetVersionString();
+  const uint32_t runtime_api_version = onnxruntime::qnn::detail::ParseRuntimeOrtApiVersion(version_str);
+
+  if (runtime_api_version == 0) {
+    const OrtApi* fallback_api = ort_api_base->GetApi(1);
+    if (fallback_api == nullptr) {
+      return nullptr;
+    }
+    char msg[256];
+    std::snprintf(msg, sizeof(msg),
+                  "QNN EP could not parse host ORT version string \"%s\" "
+                  "(expected \"1.X.Y\" with major == 1).",
+                  version_str != nullptr ? version_str : "(null)");
+    return fallback_api->CreateStatus(ORT_FAIL, msg);
+  }
+
+  if (runtime_api_version < kMinOrtApiVersion) {
+    const OrtApi* fallback_api = ort_api_base->GetApi(runtime_api_version);
+    if (fallback_api == nullptr) {
+      return nullptr;
+    }
+    char msg[256];
+    std::snprintf(msg, sizeof(msg),
+                  "QNN EP requires ORT >= 1.%u (API %u). "
+                  "Host ORT is %s (API %u).",
+                  kMinOrtApiVersion, kMinOrtApiVersion,
+                  version_str, runtime_api_version);
+    return fallback_api->CreateStatus(ORT_FAIL, msg);
+  }
+
+  const uint32_t requested_api_version =
+      std::min(runtime_api_version, static_cast<uint32_t>(ORT_API_VERSION));
+  const OrtApi* ort_api = ort_api_base->GetApi(requested_api_version);
   if (ort_api == nullptr) {
-    return nullptr;  // Cannot create status without ORT API
+    return nullptr;
   }
 
   // Manual init for the C++ API

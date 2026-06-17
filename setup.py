@@ -65,21 +65,22 @@ qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
 # manylinux2014_ppc64le
 # manylinux2014_s390x
 manylinux_tags = [
-    "manylinux1_x86_64",
     "manylinux1_i686",
-    "manylinux2010_x86_64",
+    "manylinux1_x86_64",
     "manylinux2010_i686",
-    "manylinux2014_x86_64",
-    "manylinux2014_i686",
+    "manylinux2010_x86_64",
     "manylinux2014_aarch64",
     "manylinux2014_armv7l",
+    "manylinux2014_i686",
     "manylinux2014_ppc64",
     "manylinux2014_ppc64le",
     "manylinux2014_s390x",
-    "manylinux_2_28_x86_64",
+    "manylinux2014_x86_64",
     "manylinux_2_28_aarch64",
-    "manylinux_2_34_x86_64",
+    "manylinux_2_28_x86_64",
     "manylinux_2_34_aarch64",
+    "manylinux_2_34_x86_64",
+    "manylinux_2_35_x86_64",
 ]
 is_manylinux = environ.get("AUDITWHEEL_PLAT", None) in manylinux_tags
 
@@ -179,11 +180,6 @@ else:
     qnn_deps = [
         "Genie.dll",
         "HtpPrepare.dll",
-        "libQnnHtpV68Skel.so",
-        "libqnnhtpv73.cat",
-        "libQnnHtpV73Skel.so",
-        "libqnnhtpv81.cat",
-        "libQnnHtpV81Skel.so",
         "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",
@@ -195,10 +191,15 @@ else:
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
+        "libQnnHtpV68Skel.so",
+        "libQnnHtpV73Skel.so",
+        "libQnnHtpV81Skel.so",
+        "libqnnhtpv73.cat",
+        "libqnnhtpv81.cat",
     ]
     libs.extend(qnn_deps)
 
-if is_manylinux:
+if is_manylinux or platform.system() == "Linux":
     data = list(dl_libs)
 else:
     data = list(libs)
@@ -354,7 +355,7 @@ setup(
     data_files=data_files,
     install_requires=install_requires,
     extras_require=extras_require,
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     keywords="onnx machine learning qnn qualcomm",
     classifiers=classifiers,
 )

@@ -40,6 +40,12 @@ class QnnQuantParamsWrapper {
   QnnQuantParamsWrapper(gsl::span<const float> scales, gsl::span<const int32_t> offsets,
                         gsl::span<const uint32_t> block_size, Qnn_DataType_t tensor_data_type);
 
+  // Construct a BQ quantization param with specified bitwidth and float offsets.
+  QnnQuantParamsWrapper(gsl::span<const float> scales,
+                        gsl::span<const float> offsets,
+                        const uint32_t bitwidth,
+                        gsl::span<const uint32_t> block_size);
+
   Qnn_QuantizeParams_t& Get() { return params_; }
   const Qnn_QuantizeParams_t& Get() const { return params_; }
 
@@ -62,6 +68,24 @@ class QnnQuantParamsWrapper {
             (include_bw && params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET));
   }
 
+  // Read (scale, offset) for a per-tensor encoding, dispatching on the active union member.
+  // 8/16/32-bit lives in scaleOffsetEncoding; 4-bit lives in bwScaleOffsetEncoding — they are
+  // separate union members, so reading the wrong one yields garbage. Caller must have verified
+  // IsPerTensor(/*include_bw*/ true).
+  Ort::Status GetPerTensorScaleOffset(/*out*/ float& scale, /*out*/ int32_t& offset) const {
+    if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+      scale = params_.scaleOffsetEncoding.scale;
+      offset = params_.scaleOffsetEncoding.offset;
+      return Ort::Status();
+    }
+    if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+      scale = params_.bwScaleOffsetEncoding.scale;
+      offset = params_.bwScaleOffsetEncoding.offset;
+      return Ort::Status();
+    }
+    return MAKE_EP_FAIL("GetPerTensorScaleOffset: encoding is not per-tensor.");
+  }
+
   bool IsPerChannel() const {
     return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
            (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET ||
@@ -75,7 +99,8 @@ class QnnQuantParamsWrapper {
 
   bool IsBlockQuantized() const {
     return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
-           (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCK);
+           (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCK ||
+            params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
   }
 
   // Get a copy of scales. Works for both per-tensor and per-channel.
@@ -178,6 +203,9 @@ class QnnQuantParamsWrapper {
   uint32_t num_blocks_ = 0;
   std::unique_ptr<uint32_t[]> block_encoding_axis_data_;
   std::unique_ptr<Qnn_ScaleOffset_t[]> block_encoding_scale_offsets_data_;
+
+  // Store BwFloatBlockEncoding scale offset data.
+  std::unique_ptr<Qnn_FloatScaleOffset_t[]> bw_float_block_encoding_scale_offsets_data_;
 };
 
 }  // namespace qnn

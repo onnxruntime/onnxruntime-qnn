@@ -6,9 +6,7 @@
 #include <string>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -376,9 +374,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMinMax) {
 // Test FP16 Clip with min (FP16)
 TEST_F(QnnHTPBackendTests, Clip_FP16) {
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";

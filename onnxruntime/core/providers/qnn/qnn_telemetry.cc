@@ -19,7 +19,6 @@
 #include <TraceLoggingProvider.h>
 #include <evntrace.h>
 #include <winmeta.h>
-#include "core/platform/windows/TraceLoggingConfig.h"
 
 // Seems this workaround can be dropped when we drop support for VS2017 toolchains
 // https://developercommunity.visualstudio.com/content/problem/85934/traceloggingproviderh-is-incompatible-with-utf-8.html
@@ -44,6 +43,17 @@
 #undef _tlgPragmaUtf8End
 #define _tlgPragmaUtf8End
 #endif
+
+// QNN-EP COPY START
+// Below are copied from core/platform/windows/TraceLoggingConfig.h directly.
+// Configuration macro for use in TRACELOGGING_DEFINE_PROVIDER. The definition
+// in this file configures the provider as a normal (non-telemetry) provider.
+#ifndef TraceLoggingOptionMicrosoftTelemetry
+#define TraceLoggingOptionMicrosoftTelemetry() \
+  TraceLoggingOptionGroup(0000000000, 00000, 00000, 0000, 0000, 0000, 0000, 0000, 000, 0000, 0000)
+// Empty definition for TraceLoggingOptionMicrosoftTelemetry
+#endif
+// QNN-EP COPY END
 
 TRACELOGGING_DEFINE_PROVIDER(telemetry_provider_handle, "Microsoft.ML.ONNXRuntime",
                              // {3a26b1ff-7484-7484-7484-15261f42614d}

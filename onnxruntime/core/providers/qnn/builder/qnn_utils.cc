@@ -87,6 +87,8 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
 
 size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
   const static std::unordered_map<ONNXTensorElementDataType, size_t> elem_type_to_size = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, sizeof(Int2x4)},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, sizeof(UInt2x4)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, sizeof(Int4x2)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, sizeof(UInt4x2)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, sizeof(int8_t)},
@@ -111,6 +113,8 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
 
 std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
   const static std::unordered_map<ONNXTensorElementDataType, std::string_view> elem_type_to_name = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, "int2_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, "uint2_t"},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, "int4_t"},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, "uint4_t"},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, "int8_t"},
@@ -557,13 +561,13 @@ static inline uint32_t FillJSONArrayFromRawData(nlohmann::json* json_array, cons
 }
 
 template <>
-inline uint32_t FillJSONArrayFromRawData<MLFloat16>(nlohmann::json* json_array, const void* ptr, uint32_t num_elems) {
-  gsl::span<const MLFloat16> elems{reinterpret_cast<const MLFloat16*>(ptr), static_cast<size_t>(num_elems)};
+inline uint32_t FillJSONArrayFromRawData<Ort::Float16_t>(nlohmann::json* json_array, const void* ptr, uint32_t num_elems) {
+  gsl::span<const Ort::Float16_t> elems{reinterpret_cast<const Ort::Float16_t*>(ptr), static_cast<size_t>(num_elems)};
   for (auto elem : elems) {
     json_array->push_back(elem.ToFloat());
   }
 
-  return num_elems * sizeof(MLFloat16);
+  return num_elems * sizeof(Ort::Float16_t);
 }
 
 // Fills json array with typed elements from the raw source buffer.
@@ -590,7 +594,7 @@ static uint32_t AppendQnnElemsToJSONArray(nlohmann::json* json_array, const void
     case QNN_DATATYPE_FLOAT_32:
       return FillJSONArrayFromRawData<float>(json_array, data, num_elems);
     case QNN_DATATYPE_FLOAT_16:
-      return FillJSONArrayFromRawData<MLFloat16>(json_array, data, num_elems);
+      return FillJSONArrayFromRawData<Ort::Float16_t>(json_array, data, num_elems);
     default:
       return 0;  // Do not append anything for unsupported types.
   }
@@ -835,17 +839,18 @@ const nlohmann::json& QnnJSONGraph::Finalize() {
 
 Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
-                           Qnn_DataType_t& tensor_data_type) {
-  RETURN_IF_NOT(OnnxDataTypeToQnnDataType(onnx_data_type, tensor_data_type, is_quantized_tensor),
+                           Qnn_DataType_t& tensor_data_type, QnnBackendType backend_type) {
+  RETURN_IF_NOT(OnnxDataTypeToQnnDataType(onnx_data_type, tensor_data_type, is_quantized_tensor, backend_type),
                 "Failed to map Onnx data type to Qnn data type!");
 
   return Ort::Status();
 }
 
-bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
-                               Qnn_DataType_t& qnn_data_type,
-                               bool is_quantized) {
-  const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type = {
+namespace {
+// Maps are built once on first use (function-local statics) instead of being
+// rebuilt on every call, since this sits on the partition-time hot path.
+const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t>& CreateMap(QnnBackendType backend_type) {
+  static const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> base = {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, QNN_DATATYPE_INT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_INT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, QNN_DATATYPE_INT_32},
@@ -860,13 +865,26 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
 
-  const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type_quantized = {
+  static const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> gpu = [] {
+    auto m = base;
+    m[ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4] = QNN_DATATYPE_SFIXED_POINT_4;
+    m[ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4] = QNN_DATATYPE_UFIXED_POINT_4;
+    return m;
+  }();
+
+  return IsGpuBackend(backend_type) ? gpu : base;
+}
+
+const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t>& CreateMapQuantize(QnnBackendType backend_type) {
+  static const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> base = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_SFIXED_POINT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, QNN_DATATYPE_SFIXED_POINT_32},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, QNN_DATATYPE_INT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, QNN_DATATYPE_UFIXED_POINT_8},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, QNN_DATATYPE_UFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, QNN_DATATYPE_UFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, QNN_DATATYPE_UFIXED_POINT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, QNN_DATATYPE_UFIXED_POINT_32},
@@ -876,6 +894,24 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, QNN_DATATYPE_FLOAT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
+
+  static const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> gpu = [] {
+    auto m = base;
+    m[ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4] = QNN_DATATYPE_SFIXED_POINT_4;
+    m[ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4] = QNN_DATATYPE_UFIXED_POINT_4;
+    return m;
+  }();
+
+  return IsGpuBackend(backend_type) ? gpu : base;
+}
+}  // namespace
+
+bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
+                               Qnn_DataType_t& qnn_data_type,
+                               bool is_quantized,
+                               QnnBackendType backend_type) {
+  const auto& onnx_to_qnn_data_type = CreateMap(backend_type);
+  const auto& onnx_to_qnn_data_type_quantized = CreateMapQuantize(backend_type);
 
   const auto do_type_mapping = [](const std::unordered_map<ONNXTensorElementDataType,
                                                            Qnn_DataType_t>& mapping_table,
@@ -1265,7 +1301,7 @@ std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_
   if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
@@ -1277,7 +1313,7 @@ std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interfac
     });
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 // Calculate strides for a given shape without using TensorShape
@@ -1694,8 +1730,8 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
     CASE_UNPACK(UINT16, uint16_t, int32_data_size);
     CASE_UNPACK(UINT32, uint32_t, uint64_data_size);
     CASE_UNPACK(UINT64, uint64_t, uint64_data_size);
-    CASE_UNPACK(FLOAT16, onnxruntime::MLFloat16, int32_data_size);
-    CASE_UNPACK(BFLOAT16, onnxruntime::BFloat16, int32_data_size);
+    CASE_UNPACK(FLOAT16, Ort::Float16_t, int32_data_size);
+    CASE_UNPACK(BFLOAT16, Ort::BFloat16_t, int32_data_size);
 #if !defined(DISABLE_FLOAT8_TYPES)
     // Refer to core/session/onnxruntime_cxx_api.h.
     CASE_UNPACK(FLOAT8E4M3FN, uint8_t, int32_data_size);
@@ -1705,6 +1741,8 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
 #endif
     CASE_UNPACK_INT4(INT4, Int4x2, int32_data_size);
     CASE_UNPACK_INT4(UINT4, UInt4x2, int32_data_size);
+    CASE_UNPACK_INT2(INT2, Int2x4, int32_data_size);
+    CASE_UNPACK_INT2(UINT2, UInt2x4, int32_data_size);
     default:
       return MAKE_EP_FAIL(("Unsupported type: " + std::to_string(onnx_data_type)).c_str());
   }

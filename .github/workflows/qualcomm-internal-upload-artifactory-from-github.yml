@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel, nuget and zip from GitHub workflow
+name: Publish ONNX Runtime Execution Provider wheel, nuget, archive, maven and windows libs for signing from GitHub workflow
 
 permissions:
   checks: write
@@ -10,7 +10,7 @@ permissions:
 
 on:
   workflow_call:
-    inputs: &common_inputs
+    inputs:
       nightly_build:
         description: "If true, include a verbose version string in file names."
         type: boolean
@@ -19,6 +19,10 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
+      linux_target_py_vsns:
+        description: "JSON list of Python versions to build for Linux targets (aarch64 manylinux_2_34 and x86_64 Ubuntu 22.04)"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
         description: "JSON list of Windows architectures to build"
         type: string
@@ -31,8 +35,6 @@ on:
         description: "If true, skip publishing artifacts (dry run)."
         type: boolean
         default: false
-  workflow_dispatch:
-    inputs: *common_inputs
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -42,18 +44,17 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
-      build_linux_x86_64: false
-      build_android_aarch64_aar: true
-      linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
-      windows_target_archs: ${{ inputs.windows_target_archs }}
-      windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
-      windows_arm64_build_nuget: true
-      windows_arm64_build_zip: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
+      build_android_aarch64: false
+      build_android_aarch64_aar: true
+      build_linux_aarch64_oe_gcc11_2: false
+      linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
+      windows_target_archs: ${{ inputs.windows_target_archs }}
+      windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
 
   upload-wheel-workflow:
-    name: "Upload python wheel artifacts to Artifactory"
+    name: "Upload Python Wheel artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -69,101 +70,115 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # Download Python wheels from Artifactory
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.12-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.13 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.13-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux Aarch64 manylinux_2_34 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-aarch64_manylinux_2_34-py3.14-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-wheels
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.12-wheels
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.13-wheels
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Python 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.14-wheels
+
+      - name: Download Windows ARM64 Python 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-wheels
 
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.11-wheels
-
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.11-wheels
-
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.12 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.12-wheels
 
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.12-wheels
-
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.12-wheels
-
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.13 from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.13-wheels
 
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-arm64ec-py3.13-wheels
-
-      - name: Download Wheel from Artifactory
-        uses: ./.github/actions/download-ci-artifact
-        with:
-          name: windows-x86_64-py3.13-wheels
-
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64 Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.14-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Windows ARM64EC Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-wheels
+
+      - name: Download Windows ARM64EC Python 3.12 from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.12-wheels
+
+      - name: Download Windows ARM64EC Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.13-wheels
+
+      - name: Download Windows ARM64EC Python 3.14 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64ec-py3.14-wheels
 
-      - name: Download Wheel from Artifactory
+      - name: Download Windows x86_64 Python 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-wheels
+
+      - name: Download Windows x86_64 Python 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.12-wheels
+
+      - name: Download Windows x86_64 Python 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.13-wheels
+
+      - name: Download Windows x86_64 Python 3.14 from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.14-wheels
 
-      - name: Consolidate Wheels
+      - name: Consolidate Python Wheels
         run: |
           mkdir "${{ github.workspace }}/build/dist"
+          mkdir "${{ github.workspace }}/build/dist/arm64ec"
+          mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
-
-      - name: Consolidate Wheels
-        run: |
-          mkdir "${{ github.workspace }}/build/dist/arm64ec"
+          cp "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist/"*.whl "${{ github.workspace }}/build/dist/arm64ec"
-
-      - name: Consolidate Wheels
-        run: |
-          mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist/x64"
 
       - name: Install Dependencies
@@ -186,30 +201,52 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD wheels in build/dist/
+          # After merge: 4 Linux Aarch64 manylinux_2_34 + 4 Linux x86_64 Ubuntu 22.04 + 4 Windows ARM64 + 4 merged AMD wheels in build/dist/
           count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
           echo "Found $count wheel(s) in build/dist"
-          [ "$count" -eq 12 ] || { echo "ERROR: Expected 12 wheels in build/dist, found $count"; exit 1; }
+          [ "$count" -eq 16 ] || { echo "ERROR: Expected 16 wheels in build/dist, found $count"; exit 1; }
 
-      - name: Check Wheels
+      - name: Check Python Wheels
         run: |
           source uplevel_venv/bin/activate
           twine check ${{ github.workspace }}/build/dist/*.whl
 
-      - name: Publish
+      - name: Prepare Windows Wheel libs for signing
+        run: |
+          ./qcom/scripts/signing/prepare_wheels_for_signing.sh \
+            "${{ github.workspace }}/build/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Upload unsigned Windows Wheel libs to Artifactory
+        if: ${{ !inputs.skip_publish }}
+        run: |
+          NETRC_FILE=$(mktemp -p /tmp)
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" <<EOF
+          machine artifactory-las.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+          VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
+          ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
+            "${{ github.workspace }}/build/dist/output/unsigned_libs/wheel.zip" \
+            "wheel.zip" "$VERSION" "$NETRC_FILE"
+          rm -f "$NETRC_FILE"
+
+      - name: Publish Wheels
         if: ${{ !inputs.skip_publish }}
         env:
           TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
         run: |
           source uplevel_venv/bin/activate
-          twine upload -r re-artifactory-pypi-test-project \
+          twine upload -r artifactory-pypi-test-project \
             --cert ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
             --config-file ./qcom/scripts/upleveling/.pypirc \
             ${{ github.workspace }}/build/dist/*.whl
 
   upload-nuget-workflow:
-    name: "Upload nuget artifacts to Artifactory"
+    name: "Upload Nuget artifacts to Artifactory"
     runs-on: [Windows, self-hosted, Build, X64]
     needs: [build-artifacts]
 
@@ -228,7 +265,7 @@ jobs:
       - name: Download NuGet from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: windows-arm64-py3.11-nuget
+          name: windows-arm64x-py3.11-nuget
 
       - name: Verify NuGet artifact
         shell: powershell
@@ -237,7 +274,40 @@ jobs:
           Write-Host "Found $count NuGet package(s)"
           if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
 
-      - name: Publish
+      - name: Prepare Windows NuGet libs for signing
+        shell: powershell
+        run: |
+          .\qcom\scripts\signing\prepare_nuget_for_signing.ps1 `
+            -NuGetDirectory "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" `
+            -OutputDirectory "${{ github.workspace }}\build\dist\output"
+
+      - name: Upload unsigned Windows NuGet libs to Artifactory
+        if: ${{ !inputs.skip_publish }}
+        shell: powershell
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          $netrcFile = New-TemporaryFile
+          @"
+          machine artifactory-las.qualcomm.com
+          login $env:ARTIFACTORY_USERNAME
+          password $env:ARTIFACTORY_PASSWORD
+          "@ | Set-Content -Path $netrcFile
+          icacls $netrcFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
+
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" -Filter "*.nupkg" | Select-Object -First 1
+          $version = $pkg.BaseName -replace '^Qualcomm\.ML\.OnnxRuntime\.QNN\.' -replace '\.nupkg$' -replace '-', ''
+
+          .\qcom\scripts\signing\upload_unsigned_to_artifactory.ps1 `
+            -ZipFile "${{ github.workspace }}\build\dist\output\unsigned_libs\nuget.zip" `
+            -Filename "nuget.zip" `
+            -Version $version `
+            -NetrcFile $netrcFile
+
+          Remove-Item -Path $netrcFile -Force
+
+      - name: Publish NuGet
         if: ${{ !inputs.skip_publish }}
         shell: powershell
         env:
@@ -254,10 +324,10 @@ jobs:
           uv pip install -r .\qcom\requirements.txt
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
-            -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
+            -InputDir "${{ github.workspace }}\build\windows-arm64x\Release"
 
   upload-zip-workflow:
-    name: "Upload zip artifacts to Artifactory"
+    name: "Upload Zip artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -273,29 +343,193 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
+      - name: Download Linux Aarch64 manylinux_2_34 TGZ from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tgz
+
+      - name: Download Linux x86_64 Ubuntu 22.04 TGZ from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tgz
+
       - name: Download Windows ARM64 Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-zip
 
-      - name: Download Linux aarch64 manylinux_2_34 TGZ from Artifactory
+      - name: Download Windows ARM64EC Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: linux-aarch64_manylinux_2_34-py3.11-tgz
+          name: windows-arm64ec-py3.11-zip
+
+      - name: Download Windows x86_64 Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-zip
+
+      - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-zip
+
+      - name: Download Windows ARM64 PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-pdb-zip
+
+      - name: Download Windows ARM64EC PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-pdb-zip
+
+      - name: Download Windows x86_64 PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-pdb-zip
+
+      - name: Download Windows ARM64 (ARM64x) Windows PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-pdb-zip
 
       - name: Verify Zip artifacts
         run: |
-          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
-          echo "Found $count Zip archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
+          # Expected .zip artifacts. Append its glob here for a new one.
+          # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
+          expected=(
+            "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64ec.zip"
+            "onnxruntime-qnn-*-win-x64.zip"
+            "onnxruntime-qnn-*-win-arm64x.zip"
+            "onnxruntime-qnn-*-win-arm64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
+            "onnxruntime-qnn-*-win-x64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64x-pdb.zip"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .zip artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.zip" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} Zip archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.zip"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected Zip archive(s)."
 
       - name: Verify TGZ artifact
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
           echo "Found $count TGZ archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
+          [ "$count" -eq 2 ] || { echo "ERROR: Expected 2 TGZ archive, found $count"; exit 1; }
 
-      - name: Publish
+      - name: Prepare Windows ARM64 Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows ARM64EC Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows x86_64 Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows ARM64 (ARM64x) Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Upload unsigned Windows Zip libs to Artifactory
+        if: ${{ !inputs.skip_publish }}
+        run: |
+          NETRC_FILE=$(mktemp -p /tmp)
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" <<EOF
+          machine artifactory-las.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+          VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
+          ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
+            "${{ github.workspace }}/build/dist/output/unsigned_libs/zip.zip" \
+            "zip.zip" "$VERSION" "$NETRC_FILE"
+          rm -f "$NETRC_FILE"
+
+      # ----------------------------------------------
+      # Download test archives to prepare test package
+      # ----------------------------------------------
+
+      - name: Download Linux Aarch64 manylinux_2_34 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tests
+
+      - name: Download Linux x86_64 Ubuntu 22.04 Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64_ubuntu_22_04-py3.11-tests
+
+      - name: Download ARM64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-tests
+
+      - name: Download ARM64EC Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-tests
+
+      - name: Download x86_64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-tests
+
+      - name: Collect Test Archives
+        # mv (not cp): archives are only needed as inputs to prepare_test_package.sh below.
+        # Unlike qualcomm-internal-release.yml, this workflow has no step that uploads
+        # the test artifacts individually, so keeping them in build/ serves no purpose.
+        run: |
+          TEST_ARCHIVES_DIR="${{ github.workspace }}/test_archives"
+          if [ -d "$TEST_ARCHIVES_DIR" ]; then
+            echo "Folder already exists: $TEST_ARCHIVES_DIR"
+          else
+            mkdir -p "$TEST_ARCHIVES_DIR"
+          fi
+          find "${{ github.workspace }}/build" -type f -name "onnxruntime-tests-*" \
+            -exec mv {} "$TEST_ARCHIVES_DIR/" \;
+
+      - name: Prepare Test Package Archive
+        run: |
+          TEST_PACKAGE_VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
+          if [ -z "${{ inputs.version_suffix }}" ]; then
+            VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
+          else
+            VERSION="${{ inputs.version_suffix }}"
+            TEST_PACKAGE_VERSION = $TEST_PACKAGE_VERSION$VERSION"
+          fi
+          ./qcom/scripts/all/prepare_test_package.sh \
+            "${{ github.workspace }}/test_archives" \
+            "${{ github.workspace }}/build" \
+            "$TEST_PACKAGE_VERSION"
+
+      - name: Publish Zip
         if: ${{ !inputs.skip_publish }}
         run: |
           # Create temporary .netrc file with credentials
@@ -305,26 +539,51 @@ jobs:
                        mktemp -p "${{ github.workspace }}")
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" << EOF
-          machine re-artifactory.qualcomm.com
+          machine artifactory-las.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
 
-          # Upload Windows ARM64 zip
+          # Upload Windows ARM64 archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "$NETRC_FILE"
 
-          # Upload Linux aarch64 manylinux_2_34 zip
+          # Upload Windows ARM64EC archive and PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows x86_64 archive and PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows ARM64 (ARM64x) archive and PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux Aarch64 manylinux_2_34 zip
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux x86_64 Ubuntu 22.04 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-x86_64_ubuntu_22_04/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Test Package Archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/test_package/" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
 
-  upload-android-aar-workflow:
-    name: "Upload Android AAR artifacts to Artifactory"
+  upload-android-maven-workflow:
+    name: "Upload Android Maven artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -351,4 +610,36 @@ jobs:
         with:
           name: android-aarch64-pom
 
-      # TODO: add Publish phase
+      - name: Install Dependencies
+        run: ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Set up Java + Maven and import CA
+        uses: ./.github/actions/setup-java-maven
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat VERSION_NUMBER)-SNAPSHOT" >> $GITHUB_OUTPUT
+
+      - name: Publish Maven artifact snapshot to Internal Artifactory
+        if: ${{ !inputs.skip_publish }}
+        env:
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+        run: |
+          source uplevel_venv/bin/activate
+          python ./qcom/scripts/upleveling/maven/publish_maven_snapshot.py \
+            --aar-path    "${{ github.workspace }}/build/android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar" \
+            --pom-path    "${{ github.workspace }}/build/android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom" \
+            --version     "${{ steps.version.outputs.version }}" \
+            --group-id    com.qualcomm.qti \
+            --artifact-id onnxruntime-android-qnn \
+            --repository-id  snapshots \
+            --repository-url https://artifactory-qdc-global.qualcomm.com/artifactory/aisw-maven-virtual/
+
+      - name: Validate APK build against snapshot
+        if: ${{ !inputs.skip_publish }}
+        env:
+          AAR_MAVEN_COORD: "com.qualcomm.qti:onnxruntime-android-qnn:${{ steps.version.outputs.version }}"
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+        run: ./qcom/scripts/upleveling/maven/validate_apk.sh

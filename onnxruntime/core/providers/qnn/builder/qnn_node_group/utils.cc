@@ -160,20 +160,25 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
 
     const OrtNode* potential_child = consumers[0].node;
 
-    // 4. If the child is a DequantizeLinear, skip it and look at its child.
-    // DQ -> op -> Q -> (DQ) -> ...
-    if (Ort::ConstNode(potential_child).GetOperatorType() == DEQUANTIZE_LINEAR) {
-      const std::vector<Ort::ConstValueInfo> dq_outputs = Ort::ConstNode(potential_child).GetOutputs();
-      if (dq_outputs.size() != 1) {
+    // 4. If the child is Q/DQ wrapper(s), skip through them and look at the next math child.
+    // Example: DQ -> op -> Q -> DQ -> ...
+    while (potential_child != nullptr) {
+      const std::string child_op = Ort::ConstNode(potential_child).GetOperatorType();
+      if (child_op != QUANTIZE_LINEAR && child_op != DEQUANTIZE_LINEAR) {
+        break;
+      }
+
+      const std::vector<Ort::ConstValueInfo> qdq_outputs = Ort::ConstNode(potential_child).GetOutputs();
+      if (qdq_outputs.size() != 1) {
         return nullptr;
       }
 
-      const std::vector<Ort::ValueInfoConsumerProducerInfo> dq_consumers = dq_outputs[0].GetConsumers();
-      if (dq_consumers.size() != 1 || dq_consumers[0].node == nullptr) {
+      const std::vector<Ort::ValueInfoConsumerProducerInfo> qdq_consumers = qdq_outputs[0].GetConsumers();
+      if (qdq_consumers.size() != 1 || qdq_consumers[0].node == nullptr) {
         return nullptr;
       }
 
-      potential_child = dq_consumers[0].node;
+      potential_child = qdq_consumers[0].node;
     }
 
     // 5. Check if the child node is of the expected type.

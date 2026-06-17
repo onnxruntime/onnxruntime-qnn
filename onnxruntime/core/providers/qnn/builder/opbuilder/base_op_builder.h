@@ -131,8 +131,8 @@ class BaseOpBuilder : public IOpBuilder {
   static const std::string& GetQnnOpType(const std::string& onnx_op_type) {
     static const std::unordered_map<std::string, std::string> onnx_op_type_to_qnn_op_type = {
         {"Abs", QNN_OP_ELEMENT_WISE_ABS},
-        {"Add", QNN_OP_ELEMENT_WISE_ADD},
-        {"And", QNN_OP_ELEMENT_WISE_AND},
+        {"Add", QNN_OP_ELEMENT_WISE_BINARY},
+        {"And", QNN_OP_ELEMENT_WISE_BINARY},
         {"ArgMax", QNN_OP_ARGMAX},
         {"ArgMin", QNN_OP_ARGMIN},
         {"Asin", QNN_OP_ELEMENT_WISE_ASIN},
@@ -149,11 +149,11 @@ class BaseOpBuilder : public IOpBuilder {
         {"CumSum", QNN_OP_CUMULATIVE_SUM},
         {"DepthToSpace", QNN_OP_DEPTH_TO_SPACE},
         {"DequantizeLinear", QNN_OP_DEQUANTIZE},
-        {"Div", QNN_OP_ELEMENT_WISE_DIVIDE},
+        {"Div", QNN_OP_ELEMENT_WISE_BINARY},
         {"Elu", QNN_OP_ELU},
-        {"Equal", QNN_OP_ELEMENT_WISE_EQUAL},
+        {"Equal", QNN_OP_ELEMENT_WISE_BINARY},
         {"Exp", QNN_OP_ELEMENT_WISE_EXP},
-        {"Expand", QNN_OP_ELEMENT_WISE_MULTIPLY},
+        {"Expand", QNN_OP_ELEMENT_WISE_BINARY},
         {"Flatten", QNN_OP_RESHAPE},
         {"Floor", QNN_OP_ELEMENT_WISE_FLOOR},
         {"Gather", QNN_OP_GATHER},
@@ -162,33 +162,35 @@ class BaseOpBuilder : public IOpBuilder {
         {"Gemm", QNN_OP_FULLY_CONNECTED},
         {"GlobalAveragePool", QNN_OP_POOL_AVG_2D},
         {"GlobalMaxPool", QNN_OP_POOL_MAX_2D},
-        {"Greater", QNN_OP_ELEMENT_WISE_GREATER},
-        {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_GREATER_EQUAL},
+        {"Greater", QNN_OP_ELEMENT_WISE_BINARY},
+        {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_BINARY},
         {"GridSample", QNN_OP_GRID_SAMPLE},
         {"GroupNormalization", QNN_OP_GROUP_NORM},
         {"HardSigmoid", QNN_OP_ELEMENT_WISE_NEURON},
-        {"HardSwish", QNN_OP_HARD_SWISH},
+        {"HardSwish", QNN_OP_ELEMENT_WISE_NEURON},
         {"InstanceNormalization", QNN_OP_INSTANCE_NORM},
         {"LRN", QNN_OP_LRN},
         {"LSTM", QNN_OP_LSTM},
         {"LayerNormalization", QNN_OP_LAYER_NORM},
         {"LeakyRelu", QNN_OP_PRELU},
-        {"Less", QNN_OP_ELEMENT_WISE_LESS},
-        {"LessOrEqual", QNN_OP_ELEMENT_WISE_LESS_EQUAL},
+        {"Less", QNN_OP_ELEMENT_WISE_BINARY},
+        {"LessOrEqual", QNN_OP_ELEMENT_WISE_BINARY},
         {"Log", QNN_OP_ELEMENT_WISE_LOG},
         {"LogSoftmax", QNN_OP_LOG_SOFTMAX},
         {"LpNormalization", QNN_OP_L2_NORM},
         {"MatMul", QNN_OP_MAT_MUL},
-        {"Max", QNN_OP_ELEMENT_WISE_MAXIMUM},
+        {"Max", QNN_OP_ELEMENT_WISE_BINARY},
         {"MaxPool", QNN_OP_POOL_MAX_2D},
-        {"Min", QNN_OP_ELEMENT_WISE_MINIMUM},
-        {"Mul", QNN_OP_ELEMENT_WISE_MULTIPLY},
+        {"Min", QNN_OP_ELEMENT_WISE_BINARY},
+        {"Mul", QNN_OP_ELEMENT_WISE_BINARY},
         {"Neg", QNN_OP_ELEMENT_WISE_NEG},
         {"Not", QNN_OP_ELEMENT_WISE_NOT},
-        {"Or", QNN_OP_ELEMENT_WISE_OR},
+        {"NotEqual", QNN_OP_ELEMENT_WISE_BINARY},
+        {"OneHot", QNN_OP_ONE_HOT},
+        {"Or", QNN_OP_ELEMENT_WISE_BINARY},
         {"PRelu", QNN_OP_PRELU},
         {"Pad", QNN_OP_PAD},
-        {"Pow", QNN_OP_ELEMENT_WISE_POWER},
+        {"Pow", QNN_OP_ELEMENT_WISE_BINARY},
         {"QuantizeLinear", QNN_OP_QUANTIZE},
         {"RMSNormalization", QNN_OP_RMS_NORM},
         {"ReduceMax", QNN_OP_REDUCE_MAX},
@@ -213,15 +215,16 @@ class BaseOpBuilder : public IOpBuilder {
         {"Split", QNN_OP_SPLIT},
         {"Sqrt", QNN_OP_ELEMENT_WISE_SQUARE_ROOT},
         {"Squeeze", QNN_OP_RESHAPE},
-        {"Sub", QNN_OP_ELEMENT_WISE_SUBTRACT},
-        {"Sum", QNN_OP_ELEMENT_WISE_ADD},
+        {"Sub", QNN_OP_ELEMENT_WISE_BINARY},
+        {"Sum", QNN_OP_ELEMENT_WISE_BINARY},
         {"Tanh", QNN_OP_TANH},
         {"Tile", QNN_OP_TILE},
         {"TopK", QNN_OP_TOP_K},
         {"Transpose", QNN_OP_TRANSPOSE},
         {"Unsqueeze", QNN_OP_RESHAPE},
         {"Upsample", QNN_OP_RESIZE},
-        {"Where", QNN_OP_ELEMENT_WISE_SELECT}};
+        {"Where", QNN_OP_ELEMENT_WISE_SELECT},
+        {"Xor", QNN_OP_ELEMENT_WISE_BINARY}};
     auto it = onnx_op_type_to_qnn_op_type.find(onnx_op_type);
     if (it == onnx_op_type_to_qnn_op_type.end()) {
       ORT_CXX_API_THROW(("Unable to map given ONNX op type to QNN" + onnx_op_type).c_str(), ORT_EP_FAIL);
@@ -395,6 +398,28 @@ inline Ort::Status ComputePadAndOutputShape(const int64_t in_dim,
   out_dim = qnn::ComputeOutputShape(in_dim, stride, kernel, dilation, pad_head, pad_tail);
   return Ort::Status();
 }
+
+// Resolves the common ONNX pooling attributes (kernel_shape, strides, dilations, pads, auto_pad,
+// ceil_mode) into QNN-friendly arrays. Shared by pool_op_builder and lp_pool_op_builder.
+//
+// - 1D values are expanded to {1, val} 2D form (matches the rank-3-as-rank-4 reshape pattern).
+// - SAME_UPPER / SAME_LOWER auto_pad is converted to explicit pads using the provided output
+//   spatial dims. VALID and NOTSET leave pad_amount unchanged from the read value.
+// - pad_amount is returned in ONNX layout: [begin0, begin1, ..., end0, end1, ...]. Callers must
+//   invoke ReArrangePads(...) before handing it to a QNN op param.
+// - rounding_mode is set from the ceil_mode attribute (caller's input value is used as the
+//   default if the attribute is absent — pass 0 for floor-mode default).
+//
+// input_shape / output_shape must be NHWC / NDHWC layout with matching rank (rank 4 NHWC for 2D
+// pool, rank 5 for 3D); spatial dims are at indices [1 .. rank-2].
+Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
+                                  gsl::span<const uint32_t> input_shape,
+                                  gsl::span<const uint32_t> output_shape,
+                                  std::vector<uint32_t>& filter_size,
+                                  std::vector<uint32_t>& stride,
+                                  std::vector<uint32_t>& dilations,
+                                  std::vector<uint32_t>& pad_amount,
+                                  int32_t& rounding_mode);
 
 constexpr inline int64_t ComputeTotalPad(int64_t in_size,
                                          int64_t stride,

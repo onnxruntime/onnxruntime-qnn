@@ -113,10 +113,16 @@ function Get-DefaultCMakeGenerator() {
 }
 
 function Get-HostArch() {
-    switch ((Get-CimInstance Win32_operatingsystem).OSArchitecture) {
-        "ARM 64-bit Processor" { "arm64" }
-        "64-bit" { "x86_64" }
-        default { throw "Unknown OS Architecture $OsArch." }
+    # PROCESSOR_ARCHITEW6432 is set on WOW64 / x64-emulated processes and reports the
+    # real host arch. Fall back to machine-scope PROCESSOR_ARCHITECTURE (locale-independent).
+    $arch = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITEW6432", "Process")
+    if ([string]::IsNullOrEmpty($arch)) {
+        $arch = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE", "Machine")
+    }
+    switch ($arch) {
+        "ARM64" { "arm64" }
+        "AMD64" { "x86_64" }
+        default { throw "Unknown OS Architecture $arch." }
     }
 }
 
