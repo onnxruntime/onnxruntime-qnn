@@ -406,6 +406,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       {"Or", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_OR},
       {"Xor", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_XOR},
       {"Equal", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_EQUAL},
+      {"NotEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL},
       {"Greater", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER},
       {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER_EQUAL},
       {"Less", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_LESS},
@@ -419,6 +420,33 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     op_scalar.uint32Value = binary_it->second;
     QnnParamWrapper op_param(node_unit.Index(), node_unit.Name(),
                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
+    param_tensor_names.push_back(op_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(op_param));
+  }
+
+  static const std::unordered_map<std::string, uint32_t> unary_op_to_operation = {
+      {"Abs", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ABS},
+      {"Asin", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ASIN},
+      {"Atan", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ATAN},
+      {"Ceil", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_CEIL},
+      {"Cos", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_COS},
+      {"Exp", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_EXP},
+      {"Floor", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_FLOOR},
+      {"Log", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_LOG},
+      {"Neg", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_NEG},
+      {"Not", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_NOT},
+      {"Round", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ROUND},
+      {"Sign", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIGN},
+      {"Sin", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIN},
+      {"Sqrt", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT},
+  };
+  auto unary_it = unary_op_to_operation.find(op_type);
+  if (unary_it != unary_op_to_operation.end()) {
+    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
+    op_scalar.dataType = QNN_DATATYPE_UINT_32;
+    op_scalar.uint32Value = unary_it->second;
+    QnnParamWrapper op_param(node_unit.Index(), node_unit.Name(),
+                             QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, op_scalar);
     param_tensor_names.push_back(op_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(op_param));
   }
