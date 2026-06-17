@@ -5,12 +5,14 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include "QnnBackend.h"
+#include "QnnInterface.h"
+#include "QnnOpDef.h"
+#include "QnnTypes.h"
+
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/unit/qnn_unit_test_utils.h"
-
-using namespace onnxruntime;
-using namespace onnxruntime::qnn;
 
 namespace onnxruntime {
 namespace test {
@@ -96,13 +98,13 @@ std::unique_ptr<qnn::QnnModelWrapper> MakeWrapperWithOverrides(
 // Verifies IsQnnTensorWrapperExist returns false before adding and true after.
 TEST(QnnUnit_ModelWrapperTest, IsQnnTensorWrapperExist_TrueAfterAdd_FalseBeforeAdd) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("t0"));
 
-  QnnTensorWrapper tensor("t0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper tensor("t0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
   EXPECT_TRUE(wrapper->IsQnnTensorWrapperExist("t0"));
@@ -112,13 +114,13 @@ TEST(QnnUnit_ModelWrapperTest, IsQnnTensorWrapperExist_TrueAfterAdd_FalseBeforeA
 // Verifies AddParamWrapper adds a scalar param successfully (returns true).
 TEST(QnnUnit_ModelWrapperTest, AddParamWrapper_ScalarParam_AddsSuccessfully) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   Qnn_Scalar_t scalar{};
   scalar.dataType = QNN_DATATYPE_UINT_32;
   scalar.uint32Value = 42u;
-  QnnParamWrapper param(0, "node0", "stride", scalar);
+  qnn::QnnParamWrapper param(0, "node0", "stride", scalar);
 
   EXPECT_TRUE(wrapper->AddParamWrapper(std::move(param)));
 }
@@ -126,18 +128,18 @@ TEST(QnnUnit_ModelWrapperTest, AddParamWrapper_ScalarParam_AddsSuccessfully) {
 // Verifies that adding a duplicate param returns true without re-inserting.
 TEST(QnnUnit_ModelWrapperTest, AddParamWrapper_DuplicateParam_ReturnsTrueWithoutOverwrite) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   Qnn_Scalar_t scalar1{};
   scalar1.dataType = QNN_DATATYPE_UINT_32;
   scalar1.uint32Value = 1u;
-  QnnParamWrapper param1(0, "node0", "k", scalar1);
+  qnn::QnnParamWrapper param1(0, "node0", "k", scalar1);
 
   Qnn_Scalar_t scalar2{};
   scalar2.dataType = QNN_DATATYPE_UINT_32;
   scalar2.uint32Value = 2u;
-  QnnParamWrapper param2(0, "node0", "k", scalar2);
+  qnn::QnnParamWrapper param2(0, "node0", "k", scalar2);
 
   ASSERT_TRUE(wrapper->AddParamWrapper(std::move(param1)));
   EXPECT_TRUE(wrapper->AddParamWrapper(std::move(param2)));  // duplicate — still succeeds
@@ -147,7 +149,7 @@ TEST(QnnUnit_ModelWrapperTest, AddParamWrapper_DuplicateParam_ReturnsTrueWithout
 // (the default wrapper constructed by QnnModelWrapperTestContext).
 TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_NullOverrideMap_IsNoOp) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Should not crash — tensor_name_overrides_ is nullptr, so call is a no-op.
@@ -157,14 +159,14 @@ TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_NullOverrideMap_IsNoOp) {
 // Verifies GetOnnxShape returns false for a nullopt (dynamic shape).
 TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_NullOpt_ReturnsFalse) {
   std::vector<uint32_t> shape;
-  EXPECT_FALSE(QnnModelWrapper::GetOnnxShape(std::nullopt, shape));
+  EXPECT_FALSE(qnn::QnnModelWrapper::GetOnnxShape(std::nullopt, shape));
   EXPECT_TRUE(shape.empty());
 }
 
 // Verifies GetOnnxShape produces {1} for a scalar (empty dim list).
 TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_Scalar_ReturnsOneElement) {
   std::vector<uint32_t> shape;
-  EXPECT_TRUE(QnnModelWrapper::GetOnnxShape(std::vector<int64_t>{}, shape));
+  EXPECT_TRUE(qnn::QnnModelWrapper::GetOnnxShape(std::vector<int64_t>{}, shape));
   ASSERT_EQ(shape.size(), 1u);
   EXPECT_EQ(shape[0], 1u);
 }
@@ -172,7 +174,7 @@ TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_Scalar_ReturnsOneElement) {
 // Verifies GetOnnxShape converts positive dims correctly.
 TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_ValidDims_ConvertsCorrectly) {
   std::vector<uint32_t> shape;
-  EXPECT_TRUE(QnnModelWrapper::GetOnnxShape(std::vector<int64_t>{1, 3, 224, 224}, shape));
+  EXPECT_TRUE(qnn::QnnModelWrapper::GetOnnxShape(std::vector<int64_t>{1, 3, 224, 224}, shape));
   ASSERT_EQ(shape.size(), 4u);
   EXPECT_EQ(shape[0], 1u);
   EXPECT_EQ(shape[1], 3u);
@@ -183,7 +185,7 @@ TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_ValidDims_ConvertsCorrectly) {
 // Verifies GetOnnxShape returns false when any dim is negative (dynamic).
 TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_NegativeDim_ReturnsFalse) {
   std::vector<uint32_t> shape;
-  EXPECT_FALSE(QnnModelWrapper::GetOnnxShape(std::vector<int64_t>{1, -1, 224}, shape));
+  EXPECT_FALSE(qnn::QnnModelWrapper::GetOnnxShape(std::vector<int64_t>{1, -1, 224}, shape));
 }
 
 // ── ComposeQnnGraph ───────────────────────────────────────────────────────
@@ -191,7 +193,7 @@ TEST(QnnUnit_ModelWrapperTest, GetOnnxShape_NegativeDim_ReturnsFalse) {
 // ComposeQnnGraph returns false immediately when no ops have been added.
 TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_EmptyOpList_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_FALSE(wrapper->ComposeQnnGraph());
@@ -202,10 +204,10 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_EmptyOpList_ReturnsFalse) {
 // When input_info.names is empty, GetGraphInputTensorWrappers returns an empty vector.
 TEST(QnnUnit_ModelWrapperTest, GetGraphInputTensorWrappers_EmptyNames_ReturnsEmpty) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  std::vector<QnnTensorWrapper> result = wrapper->GetGraphInputTensorWrappers();
+  std::vector<qnn::QnnTensorWrapper> result = wrapper->GetGraphInputTensorWrappers();
   EXPECT_TRUE(result.empty());
 }
 
@@ -215,14 +217,14 @@ TEST(QnnUnit_ModelWrapperTest, GetGraphInputTensorWrappers_ExistingTensor_Return
   QnnModelWrapperTestContext ctx;
   ctx.input_info.names.push_back("t_in");
   ctx.input_info.indices["t_in"] = 0;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("t_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper tensor("t_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
-  std::vector<QnnTensorWrapper> result = wrapper->GetGraphInputTensorWrappers();
+  std::vector<qnn::QnnTensorWrapper> result = wrapper->GetGraphInputTensorWrappers();
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0].GetName(), "t_in");
   // The tensor was moved out — it should no longer exist in the wrapper.
@@ -234,14 +236,14 @@ TEST(QnnUnit_ModelWrapperTest, GetGraphOutputTensorWrappers_ExistingTensor_Retur
   QnnModelWrapperTestContext ctx;
   ctx.output_info.names.push_back("t_out");
   ctx.output_info.indices["t_out"] = 0;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("t_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper tensor("t_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
-  std::vector<QnnTensorWrapper> result = wrapper->GetGraphOutputTensorWrappers();
+  std::vector<qnn::QnnTensorWrapper> result = wrapper->GetGraphOutputTensorWrappers();
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0].GetName(), "t_out");
   EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("t_out"));
@@ -253,17 +255,17 @@ TEST(QnnUnit_ModelWrapperTest, GetGraphInputTensorWrappers_OffloadIOQuant_Resolv
   QnnModelWrapperTestContext ctx;
   ctx.input_info.names.push_back("internal_t");
   ctx.input_info.indices["internal_t"] = 0;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.offload_graph_io_quantization = true;
   std::unordered_map<std::string, std::string> overrides;
   overrides["internal_t"] = "original_t";
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
-  QnnTensorWrapper tensor("internal_t", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  qnn::QnnTensorWrapper tensor("internal_t", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
-  std::vector<QnnTensorWrapper> result = wrapper->GetGraphInputTensorWrappers();
+  std::vector<qnn::QnnTensorWrapper> result = wrapper->GetGraphInputTensorWrappers();
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0].GetName(), "internal_t");                // original key
   EXPECT_EQ(result[0].GetResolvedTensorName(), "original_t");  // resolved via override
@@ -275,18 +277,18 @@ TEST(QnnUnit_ModelWrapperTest, GetGraphInputTensorWrappers_OffloadIOQuant_Resolv
 // duplicate node.
 TEST(QnnUnit_ModelWrapperTest, AddCastNode_OutputAlreadyExists_ReturnsOK) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Pre-add the output tensor.
-  QnnTensorWrapper out("cast_out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("cast_out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
   Ort::Status status = wrapper->AddCastNode(
       "cast0", "in0", "cast_out",
       QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
-      QnnQuantParamsWrapper(), {4u},
+      qnn::QnnQuantParamsWrapper(), {4u},
       /*do_op_validation=*/false);
   EXPECT_TRUE(status.IsOK());
 }
@@ -294,13 +296,13 @@ TEST(QnnUnit_ModelWrapperTest, AddCastNode_OutputAlreadyExists_ReturnsOK) {
 // When the output tensor is new, AddCastNode must add the tensor and the node.
 TEST(QnnUnit_ModelWrapperTest, AddCastNode_NewOutput_AddsNodeAndTensor) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   Ort::Status status = wrapper->AddCastNode(
       "cast0", "in0", "cast_out",
       QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
-      QnnQuantParamsWrapper(), {4u},
+      qnn::QnnQuantParamsWrapper(), {4u},
       /*do_op_validation=*/false);
   EXPECT_TRUE(status.IsOK());
   EXPECT_TRUE(wrapper->IsQnnTensorWrapperExist("cast_out"));
@@ -312,14 +314,14 @@ TEST(QnnUnit_ModelWrapperTest, AddCastNode_NewOutput_AddsNodeAndTensor) {
 // must add both input and output tensors and return OK.
 TEST(QnnUnit_ModelWrapperTest, AddReshapeNode_Normal_NoOpValidation_AddsNodes) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   Ort::Status status = wrapper->AddReshapeNode(
       "reshape_in", "reshape_out",
       {1u, 12u}, {12u},
       QNN_DATATYPE_FLOAT_32,
-      QnnQuantParamsWrapper(),
+      qnn::QnnQuantParamsWrapper(),
       /*do_op_validation=*/false);
   EXPECT_TRUE(status.IsOK());
   EXPECT_TRUE(wrapper->IsQnnTensorWrapperExist("reshape_in"));
@@ -329,12 +331,12 @@ TEST(QnnUnit_ModelWrapperTest, AddReshapeNode_Normal_NoOpValidation_AddsNodes) {
 // The single-quant-param overload must return an error for per-channel quant.
 TEST(QnnUnit_ModelWrapperTest, AddReshapeNode_PerChannelQuant_ReturnsError) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   std::vector<float> scales{1.0f, 2.0f};
   std::vector<int32_t> offsets{0, 0};
-  QnnQuantParamsWrapper per_channel_quant(
+  qnn::QnnQuantParamsWrapper per_channel_quant(
       gsl::make_span(scales.data(), scales.size()),
       gsl::make_span(offsets.data(), offsets.size()),
       /*axis=*/0, /*is_int4=*/false);
@@ -351,13 +353,13 @@ TEST(QnnUnit_ModelWrapperTest, AddReshapeNode_PerChannelQuant_ReturnsError) {
 // With is_for_input=true, AddTransposeNode adds input tensor + perm param + output tensor.
 TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_Normal_IsForInputTrue_AddsAll) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   Ort::Status status = wrapper->AddTransposeNode(
       0, "t_in", "t_out",
       {1u, 3u, 4u}, {0u, 2u, 1u}, {1u, 4u, 3u},
-      QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
+      QNN_DATATYPE_FLOAT_32, qnn::QnnQuantParamsWrapper(),
       /*do_op_validation=*/false,
       /*is_for_input=*/true, /*is_for_output=*/false);
   EXPECT_TRUE(status.IsOK());
@@ -370,18 +372,18 @@ TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_Normal_IsForInputTrue_AddsAll) {
 // add the perm param + output tensor.
 TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_Normal_IsForInputFalse_SkipsInputTensor) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Pre-add "t_in" to simulate it being the output of an upstream node.
-  QnnTensorWrapper existing_in("t_in", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                               QnnQuantParamsWrapper(), std::vector<uint32_t>{1u, 3u, 4u});
+  qnn::QnnTensorWrapper existing_in("t_in", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                    qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1u, 3u, 4u});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(existing_in)));
 
   Ort::Status status = wrapper->AddTransposeNode(
       0, "t_in", "t_out",
       {1u, 3u, 4u}, {0u, 2u, 1u}, {1u, 4u, 3u},
-      QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
+      QNN_DATATYPE_FLOAT_32, qnn::QnnQuantParamsWrapper(),
       /*do_op_validation=*/false,
       /*is_for_input=*/false, /*is_for_output=*/false);
   EXPECT_TRUE(status.IsOK());
@@ -393,12 +395,12 @@ TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_Normal_IsForInputFalse_SkipsInpu
 // Per-channel quant param must be rejected.
 TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_PerChannelQuant_ReturnsError) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   std::vector<float> scales{1.0f, 2.0f};
   std::vector<int32_t> offsets{0, 0};
-  QnnQuantParamsWrapper per_channel_quant(
+  qnn::QnnQuantParamsWrapper per_channel_quant(
       gsl::make_span(scales.data(), scales.size()),
       gsl::make_span(offsets.data(), offsets.size()),
       /*axis=*/0, /*is_int4=*/false);
@@ -426,15 +428,15 @@ Qnn_ErrorHandle_t StubBackendValidateOpConfig(Qnn_BackendHandle_t, Qnn_OpConfig_
 TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16Enabled_OpValidation_AppliesAndRestoresConversion) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.backendValidateOpConfig = StubBackendValidateOpConfig;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // Add two FP32 NATIVE tensors (not graph I/O).
-  QnnTensorWrapper in("in0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("in0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
@@ -456,11 +458,11 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16Enabled_OpValidation_AppliesAnd
 // An empty tensor name should be rejected immediately.
 TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_EmptyName_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper tensor("", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   EXPECT_FALSE(wrapper->AddTensorWrapper(std::move(tensor)));
 }
 
@@ -468,17 +470,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_EmptyName_ReturnsFalse) {
 // and leave the original entry unchanged.
 TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_DuplicateTensor_ReturnsTrueKeepsOriginal) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper t1("dup", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper t1("dup", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(t1)));
   ASSERT_TRUE(wrapper->IsQnnTensorWrapperExist("dup"));
 
   // Second add: same name, different dtype — should still succeed without overwrite.
-  QnnTensorWrapper t2("dup", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{8});
+  qnn::QnnTensorWrapper t2("dup", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{8});
   EXPECT_TRUE(wrapper->AddTensorWrapper(std::move(t2)));
 
   // Original FLOAT_32 entry must be preserved.
@@ -490,30 +492,30 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_DuplicateTensor_ReturnsTrueKeeps
 TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_HtpSharedMemory_GraphInput_SetsMemHandle) {
   QnnModelWrapperTestContext ctx;
   ctx.input_info.indices["t_in"] = 0;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("t_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  qnn::QnnTensorWrapper tensor("t_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
-  EXPECT_EQ(GetQnnTensorMemType(wrapper->GetQnnTensorWrapper("t_in").GetQnnTensor()),
+  EXPECT_EQ(qnn::GetQnnTensorMemType(wrapper->GetQnnTensorWrapper("t_in").GetQnnTensor()),
             QNN_TENSORMEMTYPE_MEMHANDLE);
 }
 
 // With htp_shared_memory enabled but the tensor is NOT a graph I/O, mem type stays RAW.
 TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_HtpSharedMemory_NonGraphIO_KeepsRaw) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("t_nat", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  qnn::QnnTensorWrapper tensor("t_nat", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
-  EXPECT_EQ(GetQnnTensorMemType(wrapper->GetQnnTensorWrapper("t_nat").GetQnnTensor()),
+  EXPECT_EQ(qnn::GetQnnTensorMemType(wrapper->GetQnnTensorWrapper("t_nat").GetQnnTensor()),
             QNN_TENSORMEMTYPE_RAW);
 }
 
@@ -522,14 +524,14 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_HtpSharedMemory_NonGraphIO_Keeps
 // A tensor that was added must be retrievable by name with matching metadata.
 TEST(QnnUnit_ModelWrapperTest, GetQnnTensorWrapper_ExistingTensor_ReturnsRef) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("t0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 2});
+  qnn::QnnTensorWrapper tensor("t0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_UINT_8,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 2});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
-  const QnnTensorWrapper& ref = wrapper->GetQnnTensorWrapper("t0");
+  const qnn::QnnTensorWrapper& ref = wrapper->GetQnnTensorWrapper("t0");
   EXPECT_EQ(ref.GetName(), "t0");
   EXPECT_EQ(ref.GetTensorDataType(), QNN_DATATYPE_UINT_8);
 }
@@ -537,7 +539,7 @@ TEST(QnnUnit_ModelWrapperTest, GetQnnTensorWrapper_ExistingTensor_ReturnsRef) {
 // Requesting a tensor that was never added must throw.
 TEST(QnnUnit_ModelWrapperTest, GetQnnTensorWrapper_NonExistingTensor_Throws) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_THROW(wrapper->GetQnnTensorWrapper("does_not_exist"), Ort::Exception);
@@ -548,7 +550,7 @@ TEST(QnnUnit_ModelWrapperTest, GetQnnTensorWrapper_NonExistingTensor_Throws) {
 TEST(QnnUnit_ModelWrapperTest, IsGraphInput_TrueForRegisteredName) {
   QnnModelWrapperTestContext ctx;
   ctx.input_info.indices["graph_in"] = 0;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_TRUE(wrapper->IsGraphInput("graph_in"));
@@ -558,7 +560,7 @@ TEST(QnnUnit_ModelWrapperTest, IsGraphInput_TrueForRegisteredName) {
 TEST(QnnUnit_ModelWrapperTest, IsGraphOutput_TrueForRegisteredName) {
   QnnModelWrapperTestContext ctx;
   ctx.output_info.indices["graph_out"] = 0;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_TRUE(wrapper->IsGraphOutput("graph_out"));
@@ -569,12 +571,12 @@ TEST(QnnUnit_ModelWrapperTest, IsGraphOutput_TrueForRegisteredName) {
 
 TEST(QnnUnit_ModelWrapperTest, GetModelSettings_ReturnsConstructedSettings) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   settings.offload_graph_io_quantization = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  const ModelSettings& got = wrapper->GetModelSettings();
+  const qnn::ModelSettings& got = wrapper->GetModelSettings();
   EXPECT_TRUE(got.htp_bf16_enable);
   EXPECT_TRUE(got.offload_graph_io_quantization);
   EXPECT_FALSE(got.htp_shared_memory);
@@ -582,10 +584,10 @@ TEST(QnnUnit_ModelWrapperTest, GetModelSettings_ReturnsConstructedSettings) {
 
 TEST(QnnUnit_ModelWrapperTest, GetQnnBackendType_ReturnsCPU) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::CPU);
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::CPU);
 
-  EXPECT_EQ(wrapper->GetQnnBackendType(), QnnBackendType::CPU);
+  EXPECT_EQ(wrapper->GetQnnBackendType(), qnn::QnnBackendType::CPU);
 }
 
 // ── SetTensorNameOverride (non-null map paths) ────────────────────────────
@@ -593,7 +595,7 @@ TEST(QnnUnit_ModelWrapperTest, GetQnnBackendType_ReturnsCPU) {
 // A valid (internal, original) pair must be inserted into the map.
 TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_NonNullMap_InsertsEntry) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   std::unordered_map<std::string, std::string> overrides;
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
@@ -605,7 +607,7 @@ TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_NonNullMap_InsertsEntry) {
 // Calling SetTensorNameOverride twice with the same key must keep the first value.
 TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_NonNullMap_IgnoresDuplicate) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   std::unordered_map<std::string, std::string> overrides;
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
@@ -619,7 +621,7 @@ TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_NonNullMap_IgnoresDuplicate
 // An empty internal name must not insert any entry.
 TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_EmptyInternal_IsNoOp) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   std::unordered_map<std::string, std::string> overrides;
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
@@ -630,7 +632,7 @@ TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_EmptyInternal_IsNoOp) {
 // An empty original name must not insert any entry.
 TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_EmptyOriginal_IsNoOp) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   std::unordered_map<std::string, std::string> overrides;
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
@@ -643,7 +645,7 @@ TEST(QnnUnit_ModelWrapperTest, SetTensorNameOverride_EmptyOriginal_IsNoOp) {
 // Passing a null context handle must return false before any SDK call.
 TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_NullContext_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_FALSE(wrapper->CreateQnnGraph(nullptr, "my_graph"));
@@ -655,7 +657,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_NullContext_ReturnsFalse) {
 // and returns true — no QNN SDK function is called.
 TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_NoValidation_ReturnsTrue) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   bool ok = wrapper->CreateQnnNode("relu0",
@@ -686,14 +688,14 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_NativeTensors_Succeeds) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // No graph I/O names — RegisterGraphInputOutputInOrder is a no-op loop.
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
@@ -714,13 +716,13 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_AppTypeIOTensors_
   ctx.output_info.indices["out"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
@@ -730,26 +732,26 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_AppTypeIOTensors_
   EXPECT_TRUE(wrapper->ComposeQnnGraph());
 }
 
-// A scalar QnnParamWrapper can be passed through ComposeQnnGraph.
+// A scalar qnn::QnnParamWrapper can be passed through ComposeQnnGraph.
 // Covers: CreateQnnParamTensors (scalar-param branch — no QNN SDK call).
 TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_WithScalarParam_Succeeds) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
   Qnn_Scalar_t scalar{};
   scalar.dataType = QNN_DATATYPE_UINT_32;
   scalar.uint32Value = 1u;
-  QnnParamWrapper param(0, "n0", "stride", scalar);
+  qnn::QnnParamWrapper param(0, "n0", "stride", scalar);
   std::string param_key = param.GetParamTensorName();  // "n0_0_stride"
   ASSERT_TRUE(wrapper->AddParamWrapper(std::move(param)));
 
@@ -772,15 +774,15 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16Enabled_ProcessesConversions)
   ctx.output_info.indices["out"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // FP32 graph I/O tensors — BF16 conversion will insert Cast ops around the main op.
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
@@ -816,7 +818,7 @@ OrtStatus* StubGetInitializersEmpty(const OrtGraph*, const OrtValueInfo**, size_
 // A non-null context with an empty graph name must return false (line ~31-33).
 TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_EmptyName_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
@@ -829,7 +831,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_EmptyName_ReturnsFalse) {
 TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_AlreadyInitialized_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreate;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
@@ -842,14 +844,14 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_AlreadyInitialized_ReturnsFalse) {
 TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_WithValidation_NoBF16_Succeeds) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.backendValidateOpConfig = StubBackendValidateOpConfig;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   // htp_bf16_enable defaults to false — exercises the non-BF16 validation path.
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  QnnTensorWrapper in("in0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("in0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
@@ -864,12 +866,12 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingInputTensor_ReturnsFalse) 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Add only the output tensor; "nonexistent_in" is never added to the map.
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                                      {"nonexistent_in"}, {"out"}, {}, false));
@@ -883,13 +885,13 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingParam_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   // Reference a param that was never added to model_params_map_.
@@ -913,17 +915,17 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeIntermediateInput_Conv
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   // Also stub Graph_GetInitializers (called even when num=0) to avoid null-pointer SEGFAULT.
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // "mid" is a NATIVE FP32 tensor that is NOT a graph input or output.
   // ProcessBF16InputConversion hits the NATIVE && FP32 branch and converts it in-place.
-  QnnTensorWrapper mid("mid", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper mid("mid", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   // "out" is a graph output (FP32, APP_READ).
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(mid)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
 
@@ -945,16 +947,16 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeFP32Output_ConvertedIn
   ctx.input_info.indices["inp"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // "inp": APP_WRITE FP32 graph input → ProcessBF16InputConversion inserts FP32→BF16 cast.
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   // "mid": NATIVE FP32, NOT a graph output → ProcessBF16OutputConversion converts dtype in-place.
-  QnnTensorWrapper mid("mid", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper mid("mid", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(mid)));
 
@@ -974,13 +976,13 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_WrongType_SkipsPr
   ctx.input_info.indices["inp"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1000,13 +1002,13 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_AlreadyCreated_Sk
   ctx.output_info.indices["out"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1030,14 +1032,14 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_CalledTwice_CastTensorReused
   ctx.output_info.indices["out"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1062,19 +1064,19 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_StaticNonConstantInput_AddsC
   // IsConstantInput safely returns false via Graph_GetNumInitializers stub (0 initializers).
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // "inp": STATIC FP32, not a graph input or constant → hits STATIC non-constant branch.
   // Provide a client buffer matching the tensor size (4 floats = 16 bytes) to pass the
   // size-consistency check in CreateTensorInQnnGraph.
   std::vector<uint8_t> buf(16, 0);
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4}, std::move(buf));
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4}, std::move(buf));
   // "out": APP_READ FP32 graph output → ProcessBF16OutputConversion inserts BF16→FP32 cast.
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1104,13 +1106,13 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_GraphAddNodeFails_ReturnsFalse) {
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   // graphAddNode forced to fail — triggers the error path in CreateQnnGraphOp.
   ctx.qnn_interface.graphAddNode = StubGraphAddNodeFail;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1128,12 +1130,12 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_TensorCreateFails
   ctx.input_info.indices["inp"] = 0;
   // Forced failure: CreateQnnGraphTensor → CreateTensorInQnnGraph → tensorCreateGraphTensor → fail.
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateFail;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // "inp" must be in model_tensors_map_ as APP_WRITE so all pre-checks pass before the SDK call.
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   // Add at least one op so qnn_op_property_list_ is non-empty (passes the empty-list check).
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1148,13 +1150,13 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BuildJson_Succeeds) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1171,13 +1173,13 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BuildJson_Succeeds) {
 TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_ProcessBF16Conversions_InputNotInMap_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
   // Empty input/output info → RegisterGraphInputOutputInOrder is a no-op → always returns true.
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // Add "out" but intentionally omit "missing_inp" to trigger the BF16 input-not-found failure.
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                                      {"missing_inp"}, {"out"}, {}, false));
@@ -1193,16 +1195,16 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_OffloadIoQuant_Se
   ctx.input_info.indices["inp"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.offload_graph_io_quantization = true;
   // Non-null overrides with an entry for "inp" → GetTensorNameOverride("inp") returns non-null.
   std::unordered_map<std::string, std::string> overrides{{"inp", "inp_orig"}};
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1217,12 +1219,12 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_OffloadIoQuant_Se
 TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingOutputTensor_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Add "inp" but NOT "out_missing" — CreateQnnInputOutputTensors for outputs will fail.
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                                      {"inp"}, {"out_missing"}, {}, false));
@@ -1257,7 +1259,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFail
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveFail;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
@@ -1269,7 +1271,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveSucc
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveSuccess;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
@@ -1283,13 +1285,13 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_InputTensorCreate_InMainLoop_Fail
   QnnModelWrapperTestContext ctx;
   // Empty input/output info → RegisterGraphInputOutputInOrder is a no-op (no pre-registration).
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateFail;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1303,14 +1305,14 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_InputTensorCreate_InMainLoop_Fail
 TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_ParamTensorCreate_InMainLoop_Fails_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateFail;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // TENSOR-type param: CreateQnnGraphParam → CreateTensorInQnnGraph → tensorCreateGraphTensor.
   // Data size must match: 1 element × sizeof(uint32_t) = 4 bytes for QNN_DATATYPE_UINT_32.
   std::vector<uint32_t> shape{1};
   std::vector<uint8_t> data(sizeof(uint32_t), 0);
-  QnnParamWrapper param(0, "n0", "stride", QNN_DATATYPE_UINT_32, std::move(shape), std::move(data));
+  qnn::QnnParamWrapper param(0, "n0", "stride", QNN_DATATYPE_UINT_32, std::move(shape), std::move(data));
   std::string pname = param.GetParamTensorName();  // "n0_0_stride"
   ASSERT_TRUE(wrapper->AddParamWrapper(std::move(param)));
 
@@ -1332,16 +1334,16 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeBF16Input_ElseBranch_S
   ctx.input_info.indices["inp"] = 0;
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // NATIVE BF16 tensors: is_graph_input_or_init=true for "inp" but dtype≠FP32 →
   // none of the first three BF16 conditions match → else branch at line ~323.
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
-  QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
-                       QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
   ASSERT_TRUE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1354,9 +1356,9 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeBF16Input_ElseBranch_S
 // No SDK stubs needed: we fail before reaching backendValidateOpConfig.
 TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16_ApplyConversionFails_InputNotInMap_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // "missing_inp" is NOT in model_tensors_map_ → ApplyBF16ConversionForValidation returns false.
   bool ok = wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
@@ -1369,11 +1371,11 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16_ApplyConversionFails_InputNotI
 // No SDK stubs needed: do_op_validation=true skips tensorCreateGraphTensor calls.
 TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
 
   // "out_missing" is NOT in model_tensors_map_ → second CreateQnnInputOutputTensors fails → line ~473.
@@ -1403,15 +1405,15 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
   ctx.backend_handle = backend.backend_handle;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // HTP validator requires quantized tensors for Relu — float32 is rejected at validation.
-  QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
-  QnnTensorWrapper input_tw("relu_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
-                            quant.Copy(), std::vector<uint32_t>{1, 4});
-  QnnTensorWrapper output_tw("relu_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
-                             quant.Copy(), std::vector<uint32_t>{1, 4});
+  qnn::QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  qnn::QnnTensorWrapper input_tw("relu_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
+                                 quant.Copy(), std::vector<uint32_t>{1, 4});
+  qnn::QnnTensorWrapper output_tw("relu_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
+                                  quant.Copy(), std::vector<uint32_t>{1, 4});
 
   std::vector<Qnn_Tensor_t> inputs = {input_tw.GetQnnTensor()};
   std::vector<Qnn_Tensor_t> outputs = {output_tw.GetQnnTensor()};
@@ -1434,14 +1436,14 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
   ctx.backend_handle = backend.backend_handle;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
-  QnnTensorWrapper input_tw("in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
-                            quant.Copy(), std::vector<uint32_t>{1, 4});
-  QnnTensorWrapper output_tw("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
-                             quant.Copy(), std::vector<uint32_t>{1, 4});
+  qnn::QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  qnn::QnnTensorWrapper input_tw("in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
+                                 quant.Copy(), std::vector<uint32_t>{1, 4});
+  qnn::QnnTensorWrapper output_tw("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
+                                  quant.Copy(), std::vector<uint32_t>{1, 4});
 
   std::vector<Qnn_Tensor_t> inputs = {input_tw.GetQnnTensor()};
   std::vector<Qnn_Tensor_t> outputs = {output_tw.GetQnnTensor()};
@@ -1460,7 +1462,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
 // IsExternalOverrideTarget: null override map → always returns false.
 TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_NullMap_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);  // tensor_name_overrides_ = nullptr
 
   EXPECT_FALSE(wrapper->IsExternalOverrideTarget("any_name"));
@@ -1469,7 +1471,7 @@ TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_NullMap_ReturnsFalse) {
 // IsExternalOverrideTarget: the external name IS a target of an existing override.
 TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_TargetExists_ReturnsTrue) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   std::unordered_map<std::string, std::string> overrides{{"internal_a", "external_a"}};
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
@@ -1479,7 +1481,7 @@ TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_TargetExists_ReturnsTrue
 // IsExternalOverrideTarget: the external name is NOT a target of any override.
 TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_TargetNotPresent_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   std::unordered_map<std::string, std::string> overrides{{"internal_a", "external_a"}};
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
 
@@ -1490,7 +1492,7 @@ TEST(QnnUnit_ModelWrapperTest, IsExternalOverrideTarget_TargetNotPresent_Returns
 // No OrtApi calls are made — covers the early-return branch in IsPerChannelQuantized.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NoQuantParam_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -1548,7 +1550,7 @@ TEST(QnnUnit_ModelWrapperTest, IsConstantInput_FoundAndIsConstant_ReturnsTrue) {
   ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
   g_init_vi_name = "my_weight";
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_TRUE(wrapper->IsConstantInput("my_weight"));
@@ -1564,7 +1566,7 @@ TEST(QnnUnit_ModelWrapperTest, IsConstantInput_FoundButNotConstant_ReturnsFalse)
   ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantFalse;
   g_init_vi_name = "my_weight";
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_FALSE(wrapper->IsConstantInput("my_weight"));
@@ -1580,7 +1582,7 @@ TEST(QnnUnit_ModelWrapperTest, GetConstantTensor_FoundAndIsConstant_ReturnsNonNu
   ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
   g_init_vi_name = "const_w";
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_NE(wrapper->GetConstantTensor("const_w"), nullptr);
@@ -1593,7 +1595,7 @@ TEST(QnnUnit_ModelWrapperTest, GetConstantTensor_NotFound_ReturnsNull) {
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_EQ(wrapper->GetConstantTensor("nonexistent"), nullptr);
@@ -1609,7 +1611,7 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorType_ConstantInput_ReturnsStatic) {
   ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
   g_init_vi_name = "const_w";
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_EQ(wrapper->GetTensorType("const_w"), QNN_TENSOR_TYPE_STATIC);
@@ -1625,7 +1627,7 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_NoQuantParam_Float_NotInitializer_S
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -1634,7 +1636,7 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_NoQuantParam_Float_NotInitializer_S
   io_def.shape = std::vector<int64_t>{1, 3, 4};
   io_def.quant_param = std::nullopt;
 
-  TensorInfo info{};
+  qnn::TensorInfo info{};
   Ort::Status status = wrapper->GetTensorInfo(io_def, info);
 
   EXPECT_TRUE(status.IsOK());
@@ -1657,7 +1659,7 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_IsConstantInitializer_SetsInitializ
   ctx.stub_ort_api.ValueInfo_IsConstantInitializer = StubVIIsConstantTrue;
   g_init_vi_name = "const_w";
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -1666,7 +1668,7 @@ TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_IsConstantInitializer_SetsInitializ
   io_def.shape = std::vector<int64_t>{4};
   io_def.quant_param = std::nullopt;
 
-  TensorInfo info{};
+  qnn::TensorInfo info{};
   Ort::Status status = wrapper->GetTensorInfo(io_def, info);
 
   EXPECT_TRUE(status.IsOK());
@@ -1682,16 +1684,16 @@ TEST(QnnUnit_ModelWrapperTest, MakeTensorWrapper_TensorInfo_NonInit_GraphOutput_
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
   ctx.output_info.indices["out_tensor"] = 0;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  TensorInfo tinfo{};
+  qnn::TensorInfo tinfo{};
   tinfo.qnn_data_type = QNN_DATATYPE_FLOAT_32;
   tinfo.shape = {1u, 4u};
   tinfo.is_initializer = false;
   tinfo.initializer_tensor = nullptr;
 
-  QnnTensorWrapper tw;
+  qnn::QnnTensorWrapper tw;
   Ort::Status status = wrapper->MakeTensorWrapper(tinfo, "out_tensor", tw);
 
   EXPECT_TRUE(status.IsOK());
@@ -1706,16 +1708,16 @@ TEST(QnnUnit_ModelWrapperTest, MakeTensorWrapper_TensorInfo_NonInit_Native_Retur
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  TensorInfo tinfo{};
+  qnn::TensorInfo tinfo{};
   tinfo.qnn_data_type = QNN_DATATYPE_UINT_8;
   tinfo.shape = {4u};
   tinfo.is_initializer = false;
   tinfo.initializer_tensor = nullptr;
 
-  QnnTensorWrapper tw;
+  qnn::QnnTensorWrapper tw;
   Ort::Status status = wrapper->MakeTensorWrapper(tinfo, "mid_tensor", tw);
 
   EXPECT_TRUE(status.IsOK());
@@ -1725,14 +1727,14 @@ TEST(QnnUnit_ModelWrapperTest, MakeTensorWrapper_TensorInfo_NonInit_Native_Retur
 }
 
 // MakeTensorWrapper(OrtNodeUnitIODef, wrapper): non-initializer, graph input → APP_WRITE.
-// Covers the first overload — goes through GetTensorInfo then constructs QnnTensorWrapper.
+// Covers the first overload — goes through GetTensorInfo then constructs qnn::QnnTensorWrapper.
 TEST(QnnUnit_ModelWrapperTest, MakeTensorWrapper_IODef_GraphInput_ReturnsAppWrite) {
   QnnModelWrapperTestContext ctx;
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
   ctx.input_info.indices["inp_t"] = 0;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -1741,7 +1743,7 @@ TEST(QnnUnit_ModelWrapperTest, MakeTensorWrapper_IODef_GraphInput_ReturnsAppWrit
   io_def.shape = std::vector<int64_t>{1, 4};
   io_def.quant_param = std::nullopt;
 
-  QnnTensorWrapper tw;
+  qnn::QnnTensorWrapper tw;
   Ort::Status status = wrapper->MakeTensorWrapper(io_def, tw);
 
   EXPECT_TRUE(status.IsOK());
@@ -1756,7 +1758,7 @@ TEST(QnnUnit_ModelWrapperTest, AddNoopReshapeNode_InputNotInMap_ReturnsError) {
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef output;
@@ -1778,12 +1780,12 @@ TEST(QnnUnit_ModelWrapperTest, AddNoopReshapeNode_MatchingShapes_Succeeds) {
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Pre-add the input tensor (shape {1, 4}).
-  QnnTensorWrapper in("in_t", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{1u, 4u});
+  qnn::QnnTensorWrapper in("in_t", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1u, 4u});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
 
   OrtNodeUnitIODef output;
@@ -1803,12 +1805,12 @@ TEST(QnnUnit_ModelWrapperTest, AddNoopReshapeNode_ShapeMismatch_ReturnsError) {
   ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
   ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   // Input shape = {4} (rank 1), output shape = {1, 4} (rank 2) → mismatch.
-  QnnTensorWrapper in("in_t", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                      QnnQuantParamsWrapper(), std::vector<uint32_t>{4u});
+  qnn::QnnTensorWrapper in("in_t", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4u});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
 
   OrtNodeUnitIODef output;
@@ -1909,7 +1911,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_UINT8_ReturnsRawBytes) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -1930,7 +1932,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_INT8_ReturnsRawBytes) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -1944,7 +1946,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_INT8_ReturnsRawBytes) {
 // UnpackZeroPoints: null input pointer → RETURN_IF fires → error.
 TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_NullInput_ReturnsError) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   std::vector<int32_t> zps;
@@ -1962,7 +1964,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT8_NegatesValues) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -1987,7 +1989,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT8_NegatesValues) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -2009,7 +2011,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT16_NegatesValues) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -2031,7 +2033,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT16_NegatesValues) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -2053,7 +2055,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_INT32_NegatesValues) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -2075,7 +2077,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UINT32_NegatesValues) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -2096,7 +2098,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackZeroPoints_UnsupportedType_ReturnsError) {
 
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
@@ -2124,7 +2126,7 @@ void SetupShapeStubs(QnnModelWrapperTestContext& ctx) {
 // IsPerChannelQuantized: scale pointer is null → RETURN_IF fires → error.
 TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NullScale_ReturnsError) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2144,7 +2146,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_ScalarScale_PerTensor) {
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2166,7 +2168,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_OneElemVectorScale_PerTenso
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2188,7 +2190,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_DefaultAxis)
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2211,7 +2213,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_MultiElemScale_PositiveAxis
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2235,7 +2237,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NormalizedToPo
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2260,7 +2262,7 @@ TEST(QnnUnit_ModelWrapperTest, IsPerChannelQuantized_NegativeAxis_NoShape_Return
 
   QnnModelWrapperTestContext ctx;
   SetupShapeStubs(ctx);
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   OrtNodeUnitIODef io_def;
@@ -2286,17 +2288,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryDisabled_GraphInput_
   QnnModelWrapperTestContext ctx;
   ctx.input_info.indices = {{"input0", 0}};
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = false;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
+  qnn::QnnTensorWrapper tensor("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
 
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
   const auto& stored = wrapper->GetQnnTensorWrapper("input0");
-  EXPECT_EQ(GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_RAW);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_RAW);
 }
 
 // Verifies that when htp_shared_memory is enabled, a graph input tensor
@@ -2305,17 +2307,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryEnabled_GraphInput_M
   QnnModelWrapperTestContext ctx;
   ctx.input_info.indices = {{"input0", 0}};
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
+  qnn::QnnTensorWrapper tensor("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
 
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
   const auto& stored = wrapper->GetQnnTensorWrapper("input0");
-  EXPECT_EQ(GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
 }
 
 // Verifies that when htp_shared_memory is enabled, a graph output tensor
@@ -2324,17 +2326,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryEnabled_GraphOutput_
   QnnModelWrapperTestContext ctx;
   ctx.output_info.indices = {{"output0", 0}};
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 1000});
+  qnn::QnnTensorWrapper tensor("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 1000});
 
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
   const auto& stored = wrapper->GetQnnTensorWrapper("output0");
-  EXPECT_EQ(GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
 }
 
 // Verifies that when htp_shared_memory is enabled, an intermediate (native) tensor
@@ -2343,17 +2345,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryEnabled_Intermediate
   QnnModelWrapperTestContext ctx;
   // "intermediate0" is NOT in input_info or output_info.
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("intermediate0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 256});
+  qnn::QnnTensorWrapper tensor("intermediate0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 256});
 
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
   const auto& stored = wrapper->GetQnnTensorWrapper("intermediate0");
-  EXPECT_EQ(GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_RAW);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_RAW);
 }
 
 // Verifies that when htp_shared_memory is disabled, a graph output tensor
@@ -2362,17 +2364,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryDisabled_GraphOutput
   QnnModelWrapperTestContext ctx;
   ctx.output_info.indices = {{"output0", 0}};
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = false;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 1000});
+  qnn::QnnTensorWrapper tensor("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 1000});
 
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
 
   const auto& stored = wrapper->GetQnnTensorWrapper("output0");
-  EXPECT_EQ(GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_RAW);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored.GetQnnTensor()), QNN_TENSORMEMTYPE_RAW);
 }
 
 // Verifies that both graph input and output tensors get MEMHANDLE when
@@ -2382,23 +2384,23 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryEnabled_BothInputAnd
   ctx.input_info.indices = {{"input0", 0}};
   ctx.output_info.indices = {{"output0", 0}};
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = true;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper input_tensor("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                                QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
-  QnnTensorWrapper output_tensor("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
-                                 QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 1000});
+  qnn::QnnTensorWrapper input_tensor("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                     qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
+  qnn::QnnTensorWrapper output_tensor("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                                      qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 1000});
 
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(input_tensor)));
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(output_tensor)));
 
   const auto& stored_input = wrapper->GetQnnTensorWrapper("input0");
-  EXPECT_EQ(GetQnnTensorMemType(stored_input.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored_input.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
 
   const auto& stored_output = wrapper->GetQnnTensorWrapper("output0");
-  EXPECT_EQ(GetQnnTensorMemType(stored_output.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
+  EXPECT_EQ(qnn::GetQnnTensorMemType(stored_output.GetQnnTensor()), QNN_TENSORMEMTYPE_MEMHANDLE);
 }
 
 // Verifies that adding a duplicate tensor (same name) returns true
@@ -2407,17 +2409,17 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_DuplicateTensor_ReturnsTrueWitho
   QnnModelWrapperTestContext ctx;
   ctx.input_info.indices = {{"input0", 0}};
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   settings.htp_shared_memory = false;
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor1("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
-                           QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
+  qnn::QnnTensorWrapper tensor1("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 224, 224});
   ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor1)));
 
   // Attempt to add another tensor with the same name
-  QnnTensorWrapper tensor2("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_16,
-                           QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 112, 112});
+  qnn::QnnTensorWrapper tensor2("input0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_16,
+                                qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 3, 112, 112});
   EXPECT_TRUE(wrapper->AddTensorWrapper(std::move(tensor2)));
 
   // Should still have the original data type
@@ -2429,11 +2431,11 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_DuplicateTensor_ReturnsTrueWitho
 TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryDisabled_EmptyName_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
 
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  QnnTensorWrapper tensor("", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
-                          QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 256});
+  qnn::QnnTensorWrapper tensor("", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 256});
 
   EXPECT_FALSE(wrapper->AddTensorWrapper(std::move(tensor)));
 }
@@ -2445,7 +2447,7 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryDisabled_EmptyName_R
 
 TEST(QnnUnit_ModelWrapperTest, FoldedConstant_DefaultIsFalse) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_FALSE(wrapper->IsFoldedConstant("not_marked"));
@@ -2454,7 +2456,7 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_DefaultIsFalse) {
 
 TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MarkMakesTensorFolded) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   wrapper->MarkTensorAsFoldedConstant("weight_dq");
@@ -2467,7 +2469,7 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MarkMakesTensorFolded) {
 
 TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MarkIsIdempotent) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   wrapper->MarkTensorAsFoldedConstant("weight_dq");
@@ -2479,7 +2481,7 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MarkIsIdempotent) {
 
 TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MultipleTensorsTrackedIndependently) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   wrapper->MarkTensorAsFoldedConstant("a");
@@ -2497,7 +2499,7 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MultipleTensorsTrackedIndependentl
 // Marking is independent of AddTensorWrapper so op builders can mark before or after.
 TEST(QnnUnit_ModelWrapperTest, FoldedConstant_DoesNotRequireTensorWrapper) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   wrapper->MarkTensorAsFoldedConstant("phantom_tensor");
@@ -2510,7 +2512,7 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_DoesNotRequireTensorWrapper) {
 // Folded-constant outputs MUST map to STATIC (not NATIVE) so they aren't treated as runtime intermediates.
 TEST(QnnUnit_ModelWrapperTest, FoldedConstant_GetTensorTypeIsStatic) {
   QnnModelWrapperTestContext ctx;
-  ModelSettings settings{};
+  qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   EXPECT_EQ(wrapper->GetTensorType("unmarked"), QNN_TENSOR_TYPE_NATIVE);
