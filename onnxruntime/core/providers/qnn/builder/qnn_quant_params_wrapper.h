@@ -203,7 +203,7 @@ class QnnQuantParamsWrapper {
 
   // Stores LowPowerBlockQuant encodings meta like number of per_channel_scales, per-block scales,
   // and blockwise_expansion_data
-  uint32_t per_channel_scales_size_;
+  uint32_t per_channel_scales_size_ = 0;
   std::unique_ptr<uint8_t[]> block_scales_data_;
   std::unique_ptr<char[]> blockwise_expansion_data_;
 

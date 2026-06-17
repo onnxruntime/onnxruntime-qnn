@@ -197,10 +197,10 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |'0'|Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
 |'1'|Default. Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
 
-|`"convert_bq_to_lpbq"`|Description|
+|`"enable_block_quant_weight_optimization"`|Description|
 |---|---|
-|'0'|Disabled. Block quantized model will run with block quantized weight encodings and float activations.|
-|'1'|Default. Enabled. Block quantized weight encodings will be converted to Low Power Block Quantized encodings.|
+|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
