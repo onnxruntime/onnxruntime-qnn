@@ -164,7 +164,7 @@ Ort::Status MaxRoiPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrappe
                 "Expect pooled_shape[1] == output_tensor.shape[3]");
 
   float spatial_scale = node_helper.Get("spatial_scale", 1.0f);
-  RETURN_IF(spatial_scale == 0, "MaxRoiPool got invalid spatial_scale=0");
+  RETURN_IF(spatial_scale <= 0, "MaxRoiPool got invalid spatial_scale <= 0");
 
   // The decomposition emits O(num_rois * ph * pw) QNN nodes; bound the graph size.
   const int64_t num_bins = num_rois * pooled_shape[0] * pooled_shape[1];
@@ -228,13 +228,18 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::vector<float> rois_flat;
   RETURN_IF_ERROR(ReadRoisAsFloat(qnn_model_wrapper, inputs[1], num_rois, rois_flat));
 
+  const std::string name_base = node_unit.Name().empty()
+                                    ? node_unit.OpType() + std::to_string(node_unit.Index())
+                                    : node_unit.Name();
+  auto local_name = [&](std::string_view suffix) { return name_base + std::string(suffix); };
+
   // Reusable zero tensor for empty bins (ONNX fills them with 0.0). Created lazily.
   std::string zero_bin_name;
   auto ensure_zero_bin = [&]() -> Ort::Status {
     if (!zero_bin_name.empty()) {
       return Ort::Status();
     }
-    zero_bin_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_zero_bin");
+    zero_bin_name = local_name("_zero_bin");
     const size_t num_bytes = qnn::utils::GetQnnTensorDataSizeInBytes(static_cast<size_t>(channels), dtype);
     std::vector<uint8_t> zero_bytes(num_bytes, 0);
 
@@ -276,7 +281,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
     // StridedSlice is a byte-copy, so it stays in X's quant domain; the ReduceMax below requantizes
     // to the output domain.
-    const std::string slice_out = utils::UniqueNameGenerator().New(node_unit.Name(), "_slice" + suffix);
+    const std::string slice_out = local_name("_slice" + suffix);
     const uint32_t bh = hend - hstart;
     const uint32_t bw = wend - wstart;
     std::vector<uint32_t> slice_shape{1u, bh, bw, channels};
@@ -295,14 +300,14 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
                                  std::move(ranges_dims), std::move(ranges_data), /*is_signed*/ true);
     std::vector<std::string> slice_params{ranges_param.GetParamTensorName()};
     qnn_model_wrapper.AddParamWrapper(std::move(ranges_param));
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_slice" + suffix),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(local_name("_slice_node" + suffix),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
                                                   {x_name}, {slice_out}, std::move(slice_params),
                                                   do_op_validation),
                   "Failed to add MaxRoiPool StridedSlice node.");
 
     // ReduceMax over H,W (axes 1,2) keepdims -> [1,1,1,C].
-    bin_out_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_rmax" + suffix);
+    bin_out_name = local_name("_rmax" + suffix);
     QnnTensorWrapper rmax_tensor(bin_out_name, QNN_TENSOR_TYPE_NATIVE, dtype,
                                  out_info.quant_param.Copy(), std::vector<uint32_t>{1u, 1u, 1u, channels});
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(rmax_tensor)),
@@ -315,7 +320,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), bin_out_name, true,
                                        QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, rmax_params));
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_rmax" + suffix),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(local_name("_rmax_node" + suffix),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_REDUCE_MAX,
                                                   {slice_out}, {bin_out_name}, std::move(rmax_params),
                                                   do_op_validation),
@@ -328,7 +333,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   auto emit_concat = [&](const std::vector<std::string>& parts, uint32_t axis,
                          const std::vector<uint32_t>& part_shape, const std::vector<uint32_t>& out_shape,
                          const std::string& name_suffix, /*out*/ std::string& concat_out) -> Ort::Status {
-    concat_out = utils::UniqueNameGenerator().New(node_unit.Name(), name_suffix);
+    concat_out = local_name(name_suffix);
     if (parts.size() == 1) {
       RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
           parts[0], concat_out, std::vector<uint32_t>(part_shape), std::vector<uint32_t>(out_shape),
@@ -343,7 +348,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     std::vector<std::string> concat_params;
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), concat_out, axis,
                                            QNN_OP_CONCAT_PARAM_AXIS, concat_params));
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, name_suffix),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(local_name(name_suffix + "_node"),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
                                                   std::vector<std::string>(parts), {concat_out},
                                                   std::move(concat_params), do_op_validation),
@@ -401,7 +406,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
                                 std::vector<uint32_t>{1u, pooled_h * pooled_w, 1u, channels},
                                 "_roi_concat_r" + std::to_string(r), roi_concat));
 
-    std::string roi_tile = utils::UniqueNameGenerator().New(node_unit.Name(), "_roi_tile_r" + std::to_string(r));
+    std::string roi_tile = local_name("_roi_tile_r" + std::to_string(r));
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
         roi_concat, roi_tile,
         std::vector<uint32_t>{1u, pooled_h * pooled_w, 1u, channels},
@@ -434,7 +439,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::vector<std::string> out_concat_params;
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), output_name, 0u,
                                          QNN_OP_CONCAT_PARAM_AXIS, out_concat_params));
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_out_concat"),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(local_name("_out_concat"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
                                                 std::move(roi_tile_names), {output_name},
                                                 std::move(out_concat_params), do_op_validation),

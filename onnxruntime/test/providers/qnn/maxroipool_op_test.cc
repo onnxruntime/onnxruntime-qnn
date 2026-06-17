@@ -38,25 +38,28 @@ static GetTestModelFn BuildMaxRoiPoolTestCase(const TestInputDef<float>& input_d
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildMaxRoiPoolQDQTestCase(const TestInputDef<float>& input_def,
                                                         const TestInputDef<float>& roi_def,
-                                                        const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
-  return [input_def, roi_def, attrs](ModelTestBuilder& builder,
-                                     std::vector<QuantParams<QuantType>>& output_qparams) {
+                                                        const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                        bool use_contrib_qdq = false) {
+  return [input_def, roi_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
+                                                      std::vector<QuantParams<QuantType>>& output_qparams) {
     // X -> Q -> DQ ->
     MakeTestInput<float>(builder, "X", input_def);
     QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    std::string input_qdq = AddQDQNodePair<QuantType>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);
+    std::string input_qdq = AddQDQNodePair<QuantType>(builder, "qdq1", "X", input_qparams.scale,
+                                                      input_qparams.zero_point, use_contrib_qdq);
 
     // rois -> Q -> DQ ->
     MakeTestInput<float>(builder, "rois", roi_def);
     QuantParams<QuantType> roi_qparams = GetTestInputQuantParams<QuantType>(roi_def);
-    std::string roi_qdq = AddQDQNodePair<QuantType>(builder, "qdq2", "rois", roi_qparams.scale, roi_qparams.zero_point);
+    std::string roi_qdq = AddQDQNodePair<QuantType>(builder, "qdq2", "rois", roi_qparams.scale,
+                                                    roi_qparams.zero_point, use_contrib_qdq);
 
     builder.AddNode("maxroipool_node", "MaxRoiPool", {input_qdq, roi_qdq}, {"maxroipool_output"}, "", attrs);
 
     // op_output -> Q -> DQ -> output
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
         builder, "qdq_out", "maxroipool_output",
-        output_qparams[0].scale, output_qparams[0].zero_point);
+        output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -68,7 +71,7 @@ static void RunMaxRoiPoolOpTest(const TestInputDef<float>& input_def,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
                                 const std::string& backend_name = "cpu",
                                 int opset = 13,
-                                float f32_abs_err = 1e-4f) {
+                                float f32_abs_err = 1e-5f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -89,14 +92,15 @@ static void RunQDQMaxRoiPoolOpTest(const TestInputDef<float>& input_def,
                                    const TestInputDef<float>& roi_def,
                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                    ExpectedEPNodeAssignment expected_ep_assignment,
-                                   int opset = 13) {
+                                   int opset = 13,
+                                   bool use_contrib_qdq = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 
   TestQDQModelAccuracy(BuildMaxRoiPoolTestCase(input_def, roi_def, attrs),
-                       BuildMaxRoiPoolQDQTestCase<QuantType>(input_def, roi_def, attrs),
+                       BuildMaxRoiPoolQDQTestCase<QuantType>(input_def, roi_def, attrs, use_contrib_qdq),
                        provider_options,
                        opset,
                        expected_ep_assignment);
@@ -241,6 +245,45 @@ TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdq_spatial_scale) {
                                   {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
                                    test::MakeAttribute("spatial_scale", 0.5f)},
                                   ExpectedEPNodeAssignment::All);
+}
+
+// 16-bit quantized output exercises a different requantize/accumulation path through the
+// decomposed StridedSlice/ReduceMax/Concat chain than the 8-bit cases above.
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdqU16) {
+  RunQDQMaxRoiPoolOpTest<uint16_t>(TestInputDef<float>({1, 1, 4, 4}, false,
+                                                       {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+                                                        9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f}),
+                                   TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f}),
+                                   {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                                    test::MakeAttribute("spatial_scale", 1.0f)},
+                                   ExpectedEPNodeAssignment::All,
+                                   /*opset=*/13,
+                                   /*use_contrib_qdq=*/true);
+}
+
+// Adaptive binning on HTP (QDQ u16).
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdqU16_AdaptiveBins) {
+  RunQDQMaxRoiPoolOpTest<uint16_t>(TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(0.0f, 32.0f, 32)),
+                                   TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f}),
+                                   {test::MakeAttribute("pooled_shape", std::vector<int64_t>{3, 3}),
+                                    test::MakeAttribute("spatial_scale", 1.0f)},
+                                   ExpectedEPNodeAssignment::All,
+                                   /*opset=*/13,
+                                   /*use_contrib_qdq=*/true);
+}
+
+// Empty-bin path on HTP (QDQ u16). All-negative data so the empty bins (filled with 0.0) pin the
+// output max, forcing a non-zero output zero_point.
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdqU16_EmptyBins) {
+  RunQDQMaxRoiPoolOpTest<uint16_t>(TestInputDef<float>({1, 1, 4, 4}, false,
+                                                       {-1.0f, -2.0f, -3.0f, -4.0f, -5.0f, -6.0f, -7.0f, -8.0f,
+                                                        -9.0f, -10.0f, -11.0f, -12.0f, -13.0f, -14.0f, -15.0f, -16.0f}),
+                                   TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 3.0f, 1.0f, 6.0f}),
+                                   {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                                    test::MakeAttribute("spatial_scale", 1.0f)},
+                                   ExpectedEPNodeAssignment::All,
+                                   /*opset=*/13,
+                                   /*use_contrib_qdq=*/true);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
