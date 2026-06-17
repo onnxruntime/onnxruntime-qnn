@@ -75,7 +75,7 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
   if (op_type == "Sum") {
     size_t inputs_num = node_unit.Inputs().size();
     RETURN_IF_NOT(inputs_num == 2,
-                  ("QNN EP supports Sum operator with QNN_OP_ELEMENT_WISE_ADD, which takes exactly 2 inputs."
+                  ("QNN EP supports Sum operator with QNN_OP_ELEMENT_WISE_BINARY, which takes exactly 2 inputs."
                    "Got ONNX's Sum operator with " +
                    std::to_string(inputs_num) + " inputs.")
                       .c_str());
@@ -433,6 +433,36 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (op_type == "GridSample") {
     RETURN_IF_ERROR(ProcessGridSampleAttributes(qnn_model_wrapper, node_unit, param_tensor_names));
+  }
+
+  static const std::unordered_map<std::string, uint32_t> binary_op_to_operation = {
+      {"Add", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD},
+      {"Sub", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT},
+      {"Mul", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY},
+      {"Div", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE},
+      {"Max", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MAXIMUM},
+      {"Min", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MINIMUM},
+      {"Sum", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD},
+      {"Expand", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY},
+      {"And", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_AND},
+      {"Or", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_OR},
+      {"Xor", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_XOR},
+      {"Equal", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_EQUAL},
+      {"Greater", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER},
+      {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER_EQUAL},
+      {"Less", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_LESS},
+      {"LessOrEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_LESS_EQUAL},
+      {"Pow", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_POWER},
+  };
+  auto binary_it = binary_op_to_operation.find(op_type);
+  if (binary_it != binary_op_to_operation.end()) {
+    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
+    op_scalar.dataType = QNN_DATATYPE_UINT_32;
+    op_scalar.uint32Value = binary_it->second;
+    QnnParamWrapper op_param(node_unit.Index(), node_unit.Name(),
+                             QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
+    param_tensor_names.push_back(op_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(op_param));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,

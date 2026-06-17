@@ -1,7 +1,8 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-// Implementations of ComputeTraceSummary and SerializeFrameworkOpTrace.
+// Implementations of ComputeTraceSummary and SerializeFrameworkOpTrace,
+// and DeriveTracePathFromContextModel.
 //
 // This translation unit (.cc file) is compiled directly into the test binary
 // (via cmake) so that unit tests can call these functions without linking
@@ -11,6 +12,7 @@
 
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 
+#include <fstream>
 #include <unordered_set>
 
 #include "nlohmann/json.hpp"
@@ -138,6 +140,51 @@ nlohmann::json SerializeFrameworkOpTrace(const FrameworkOpTrace& trace) {
   j["summary"] = std::move(summary);
 
   return j;
+}
+
+std::filesystem::path DeriveTracePathFromContextModel(const std::filesystem::path& ctx_model_path) {
+  return ctx_model_path.parent_path() / "qnn_op_trace.json";
+}
+
+TraceLoadStatus ParseTraceLookupFromFile(const std::filesystem::path& trace_path,
+                                         OpTraceLookup& out_lookup,
+                                         size_t* skipped_entries) {
+  std::ifstream ifs(trace_path);
+  if (!ifs.is_open()) {
+    return TraceLoadStatus::kCannotOpen;
+  }
+  auto j = nlohmann::json::parse(ifs, nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) {
+    return TraceLoadStatus::kParseError;
+  }
+  if (!j.contains("subgraph_traces")) {
+    return TraceLoadStatus::kMissingSubgraphTraces;
+  }
+  size_t skipped = 0;
+  for (const auto& sg : j.at("subgraph_traces")) {
+    if (!sg.contains("op_mappings")) {
+      continue;
+    }
+    for (const auto& m : sg.at("op_mappings")) {
+      std::string dst_name = m.value("dst_name", "");
+      if (dst_name.empty() || !m.contains("sources")) {
+        ++skipped;
+        continue;
+      }
+      std::vector<TraceSourcePair> sources;
+      for (const auto& src : m.at("sources")) {
+        std::string name = src.value("name", "");
+        std::string type_str = src.value("type", "OP");
+        sources.push_back({std::move(name),
+                           type_str == "OP" ? TraceTargetType::kOp : TraceTargetType::kTensor});
+      }
+      out_lookup[std::move(dst_name)] = std::move(sources);
+    }
+  }
+  if (skipped_entries != nullptr) {
+    *skipped_entries = skipped;
+  }
+  return TraceLoadStatus::kOk;
 }
 
 }  // namespace qnn
