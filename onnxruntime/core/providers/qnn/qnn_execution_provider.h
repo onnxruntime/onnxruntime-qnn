@@ -226,8 +226,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   std::string dump_qnn_ep_input_graph_dir_;
   // Per-EP counter that disambiguates output filenames. Always appended to
   // the filename so two graphs whose names sanitize to the same string still
-  // produce two distinct files.
-  std::atomic<size_t> dump_qnn_ep_input_graph_count_{0};
+  // produce two distinct files. ORT calls GetCapabilityImpl sequentially
+  // from a single thread today, so plain size_t is sufficient.
+  size_t dump_qnn_ep_input_graph_count_ = 0;
 
   // === Framework op trace ===
   bool enable_framework_op_trace_ = false;

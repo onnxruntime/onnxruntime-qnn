@@ -14,7 +14,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
-#include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
+#include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -2897,10 +2897,11 @@ TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_StripsLeadingDotsAndDashes) {
   EXPECT_EQ(qnn::SanitizeGraphNameForFilename("."), "graph");
 }
 
-TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_DropsTrailingDotAndSpace) {
-  // Trailing space is replaced with `_` by the safe-set pass (so the result
-  // does not end in space, satisfying the Windows constraint). Trailing
-  // dots are explicitly stripped because Windows treats them as ignorable.
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_DropsTrailingDot) {
+  // Trailing dots are explicitly stripped because Windows treats them as
+  // ignorable. Trailing space is already replaced with `_` by the safe-set
+  // pass before the trim runs, so it never reaches the trim — the
+  // `"foo. "` case below documents that contract.
   EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo. "), "foo._");
   EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo.bar."), "foo.bar");
   EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo..."), "foo");

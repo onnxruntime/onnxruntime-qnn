@@ -836,8 +836,15 @@ serialize model as it contains compiled nodes").
 
 ### Why the dump is QNN-Netron JSON, not an ONNX model
 
-The dump deliberately uses the same JSON schema as `dump_json_qnn_graph` rather
-than emitting a real `.onnx`. The QNN EP ships as a **standalone ABI plugin** that
+Netron is the open-source neural-net viewer that already understands the
+JSON shape produced by QNN's existing `dump_json_qnn_graph`
+(the post-compile QNN graph). The schema is not formally specified,
+but it is stable and observable in this repository at
+`onnxruntime/core/providers/qnn/builder/qnn_utils.cc` (`QnnJSONGraph`). The
+EP-input dump deliberately reuses that schema rather than emitting a real
+`.onnx`.
+
+The QNN EP ships as a **standalone ABI plugin** that
 links only the public ONNX Runtime C/C++ API, Abseil, and nlohmann/json — it does
 **not** link protobuf or the ONNX proto definitions. Constructing or serializing
 an `onnx::ModelProto` therefore is not possible from the EP without adding a

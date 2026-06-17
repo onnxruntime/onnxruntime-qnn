@@ -75,10 +75,9 @@ The tool produces both **node-level** and **tensor-level** mappings.
 #### Honest caveats
 
 1. **The matcher does not run ORT.** It operates on saved ONNX files. If your downstream consumer needs a runtime (in-process) mapping rather than an offline one over saved files, this tool is not the right choice.
-2. **Pattern table is hand-curated.** New ORT fusion passes need to be added to `FUSION_PATTERNS` to be recognized. The matcher will not crash on unknown patterns; it will just leave the optimized node in `unmapped_optimized_nodes`.
-3. **First-version scope.** Patterns currently encoded: `MatMul+Add -> Gemm`, the Erf-form `Gelu`, Tanh-form `FastGelu`, `QuickGelu`, `BiasGelu`, `BiasSoftmax`, `SkipLayerNormalization`, `FusedMatMul`. Branching fusions (LayerNormalization, EmbedLayerNormalization, Attention, GroupQueryAttention) are not in the pattern table because the matcher's walk-back is linear; the matcher will report partial matches for those via initializer anchoring instead.
-4. **Fusion tensor attribution.** For fused nodes, the optimized output tensor is attributed to the **last** source node (deepest in topological order). This matches the semantics of most ORT fusions; the explanatory note in the JSON makes the heuristic explicit.
-5. **No guarantees on attribute equivalence.** The matcher checks op_type and I/O structure but does not verify node attributes (kernel size, strides, etc.) are consistent between source and optimized.
+2. **Pattern table is hand-curated and lives in one place.** The authoritative list is the `FUSION_PATTERNS` dict in `source_to_optimized_matcher.py`; adding a new ORT fusion means adding one entry there and nowhere else. The matcher will not crash on unknown patterns — it just leaves the optimized node in `unmapped_optimized_nodes`. Branching fusions (LayerNormalization, EmbedLayerNormalization, Attention, GroupQueryAttention) are deliberately absent because the walk-back is linear; the matcher reports partial matches for those via initializer anchoring instead.
+3. **Fusion tensor attribution.** For fused nodes, the optimized output tensor is attributed to the **last** source node (deepest in topological order). This matches the semantics of most ORT fusions; the explanatory note in the JSON makes the heuristic explicit.
+4. **No guarantees on attribute equivalence.** The matcher checks op_type and I/O structure but does not verify node attributes (kernel size, strides, etc.) are consistent between source and optimized.
 
 #### QNN EP / QDQ-direct workflow
 
@@ -444,6 +443,8 @@ Msg Timestamp,...,Event Identifier,ONNX Source Ops,Original ONNX Source Ops
 
 - Python 3.9+ (PEP 604 union syntax in module-level annotations; `onnx` package floor).
 - `onnx` (any recent version, `pip install onnx`) — required for the matcher and for Mode B of the enrichment tool. Mode A of the enrichment tool is pure stdlib and does not need `onnx`.
+
+For convenience, this directory ships its own [`requirements.txt`](./requirements.txt) listing the runtime deps; install with `pip install -r qcom/tools/op_trace_matcher/requirements.txt`. The repo-wide `requirements-dev.txt` already covers these plus `pytest` for the unit tests.
 
 No ORT runtime dependency — both tools operate on saved `.onnx` files and JSON/CSV artifacts only.
 

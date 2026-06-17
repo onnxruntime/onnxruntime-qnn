@@ -179,6 +179,7 @@ def enrich(profiling_csv: Path, merged_trace: dict, output_csv: Path) -> dict:
         "rows_enriched_optimized": 0,
         "rows_unresolved_qnn_op": 0,
         "added_optimized_column": False,
+        "filled_existing_onnx_column": False,
         "node_events_present": False,
     }
 

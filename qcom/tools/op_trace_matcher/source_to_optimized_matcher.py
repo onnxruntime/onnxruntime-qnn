@@ -155,12 +155,14 @@ class GraphIndex:
             elif _onnx_numpy_helper is not None:
                 try:
                     payload = _onnx_numpy_helper.to_array(init).tobytes()
-                except Exception:
-                    # Fall back to proto serialization if the initializer cannot
-                    # be converted (unsupported type / external data not yet
-                    # resolved). The hash is still byte-stable within a single
-                    # protobuf process; cross-process stability is the only
-                    # property weakened.
+                except (ValueError, TypeError, RuntimeError):
+                    # numpy_helper raises ValueError for malformed tensor
+                    # field counts, TypeError for unsupported dtypes (BF16
+                    # variants on older onnx versions), and RuntimeError when
+                    # external_data is referenced but not yet resolved. Fall
+                    # back to proto serialization in those cases. The hash is
+                    # still byte-stable within a single protobuf process;
+                    # cross-process stability is the only property weakened.
                     payload = init.SerializeToString()
             else:
                 payload = init.SerializeToString()
@@ -173,7 +175,7 @@ class GraphIndex:
 
         seen_names: set[str] = set()
         for idx, node in enumerate(graph.node):
-            name = node.name or f"<unnamed_{node.op_type}_{idx}>"
+            name = node.name or f"unnamed_{node.op_type}_{idx}"
             if name in seen_names:
                 name = f"{name}__dup{idx}"
             seen_names.add(name)
@@ -237,7 +239,7 @@ class GraphIndex:
         seen_names: set[str] = set()
         for idx, (node_name, raw_ninfo) in enumerate(json_nodes.items()):
             ninfo = raw_ninfo or {}
-            name = node_name or f"<unnamed_{ninfo.get('type', 'op')}_{idx}>"
+            name = node_name or f"unnamed_{ninfo.get('type', 'op')}_{idx}"
             if name in seen_names:
                 name = f"{name}__dup{idx}"
             seen_names.add(name)
@@ -978,6 +980,24 @@ def join_qnn_trace(
 
     Output entries follow the QNN EP `TraceSourcePair` schema (`{name, type}`),
     with an additional `op_type` field on op entries for human readability.
+
+    Returns:
+        A tuple ``(extended_trace, stats)``.
+
+        ``extended_trace`` is a deep copy of ``qnn_trace`` with an
+        ``original_sources`` field added next to ``sources`` on every
+        op_mappings/tensor_mappings entry.
+
+        ``stats`` is a dict with the following integer keys:
+
+          - ``op_mappings_total`` / ``op_mappings_extended`` — count of
+            ``op_mappings[]`` entries traversed and how many had at least one
+            ``original_sources`` entry written.
+          - ``tensor_mappings_total`` / ``tensor_mappings_extended`` — same
+            counts for ``tensor_mappings[]``.
+          - ``op_sources_unresolved`` / ``tensor_sources_unresolved`` — count
+            of ``sources[]`` references (op-typed and tensor-typed) that
+            could not be resolved to an original-ONNX name.
     """
     qnn_trace = copy.deepcopy(qnn_trace)
     node_index: dict[str, list[dict]] = {

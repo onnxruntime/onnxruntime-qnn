@@ -3,8 +3,6 @@
 
 #include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 
-#include <algorithm>
-#include <cctype>
 #include <fstream>
 #include <set>
 #include <string>
@@ -199,12 +197,16 @@ bool DumpQnnEpInputGraphToJson(const OrtGraph* graph,
   // and platforms (downstream diff/hash tools will not see hash-iteration
   // noise).
   std::set<std::string> seen_op_types;
+  // Tracks node names already used as JSON object keys so a collision does
+  // not silently overwrite an earlier node.
+  std::unordered_set<std::string> seen_node_names;
   size_t type_info_failures = 0;
 
   Ort::ConstGraph ort_graph{graph};
 
-  // Nodes: one entry per ONNX node, keyed by node name (fall back to
-  // op_type + index when unnamed so the JSON object key stays unique).
+  // Nodes: one entry per ONNX node, keyed by node name (fall back to a
+  // synthesized `unnamed_{op_type}_{index}` form when unnamed so the JSON
+  // object key stays unique and matches the offline matcher's convention).
   std::vector<Ort::ConstNode> nodes = ort_graph.GetNodes();
   for (size_t i = 0; i < nodes.size(); ++i) {
     const Ort::ConstNode& node = nodes[i];
@@ -212,11 +214,30 @@ bool DumpQnnEpInputGraphToJson(const OrtGraph* graph,
     std::string op_type = std::string(node.GetOperatorType());
     std::string node_name = std::string(node.GetName());
     if (node_name.empty()) {
-      node_name = op_type + "_" + std::to_string(i);
+      // Synthesize a name for an unnamed node.
+      node_name = "unnamed_" + op_type + "_" + std::to_string(i);
+    }
+    // Disambiguate a name that has already been emitted (ONNX does not
+    // guarantee unique node names; the synthesized fallback above can also
+    // collide with an explicit name). Suffix with `__dup{i}` using the node's
+    // position index, matching the offline matcher's convention.
+    if (!seen_node_names.insert(node_name).second) {
+      node_name = node_name + "__dup" + std::to_string(i);
+      seen_node_names.insert(node_name);
     }
 
+    // `package` distinguishes contrib / internal-domain ops (e.g.
+    // `com.microsoft`, `com.ms.internal.nhwc` introduced by ORT's layout
+    // transformer) from the default ONNX op set. Empty / `ai.onnx` is
+    // normalized to "onnx" so the field matches what the post-compile
+    // `dump_json_qnn_graph` path emits for native ONNX nodes.
+    std::string node_domain = std::string(node.GetDomain());
     json node_json = json::object();
-    node_json["package"] = "onnx";
+    if (node_domain.empty() || node_domain == "ai.onnx") {
+      node_json["package"] = "onnx";
+    } else {
+      node_json["package"] = std::move(node_domain);
+    }
     node_json["type"] = op_type;
     node_json["input_names"] =
         CollectNodeTensorNames(node.GetInputs(), id_alloc, seen_tensors, tensors_json, type_info_failures);

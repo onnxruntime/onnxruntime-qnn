@@ -29,6 +29,7 @@
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
+#include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
@@ -252,6 +253,43 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Using " + key + ": " + (result ? "1" : "0")).c_str());
 
   return result;
+}
+
+// Creates `dir` (and any missing parents) and verifies it is writable by
+// round-tripping a small probe file. Returns true on success. On failure,
+// logs a WARNING tagged with `feature_name` so callers can disable the
+// associated feature flag with a clear log trail. Used by every
+// QNN-EP-side dump option whose output is written incrementally during
+// session run (so a non-writable directory should disable the feature at
+// session-start rather than mid-inference).
+static bool ProbeDumpDirectoryWritable(const std::string& dir,
+                                       const std::string& feature_name,
+                                       const Ort::Logger& logger) {
+  std::filesystem::path probe_dir(dir);
+  std::error_code ec;
+  std::filesystem::create_directories(probe_dir, ec);
+  if (ec) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                (feature_name + " directory could not be created: " + probe_dir.string() +
+                 " (" + ec.message() + "); the feature will be disabled.")
+                    .c_str());
+    return false;
+  }
+  std::filesystem::path probe_file = probe_dir / ".qnn_ep_dump_probe";
+  bool ok = false;
+  {
+    std::ofstream ofs(probe_file);
+    ok = ofs.is_open() && (ofs << "1").good();
+  }
+  std::filesystem::remove(probe_file, ec);
+  if (!ok) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                (feature_name + " directory not writable: " + probe_dir.string() +
+                 "; the feature will be disabled.")
+                    .c_str());
+    return false;
+  }
+  return true;
 }
 
 #ifdef _WIN32
@@ -966,7 +1004,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   if (!json_graph_dir_str.empty()) {
     json_qnn_graph_dir_ = json_graph_dir_str;
     if (dump_json_qnn_graph_) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("JSON graphs directory: " + json_qnn_graph_dir_).c_str());
+      if (ProbeDumpDirectoryWritable(json_qnn_graph_dir_, "QNN JSON graph dump", logger_)) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("JSON graphs directory: " + json_qnn_graph_dir_).c_str());
+      } else {
+        dump_json_qnn_graph_ = false;
+      }
     } else {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
@@ -1003,27 +1045,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     // surface as a WARNING after the entire compile + in-memory trace build
     // finishes. Disabling tracing here lets us skip all the per-graph collection
     // work when the trace can never be written.
-    std::filesystem::path probe_dir(framework_op_trace_dir_);
-    std::error_code ec;
-    std::filesystem::create_directories(probe_dir, ec);
-    bool probe_ok = !ec;
-    if (probe_ok) {
-      std::filesystem::path probe_file = probe_dir / ".qnn_op_trace_probe";
-      {
-        std::ofstream ofs(probe_file);
-        probe_ok = ofs.is_open() && (ofs << "1").good();
-      }
-      std::filesystem::remove(probe_file, ec);
-    }
-    if (!probe_ok) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  ("Framework op trace directory not writable: " + probe_dir.string() +
-                   "; framework op tracing will be disabled.")
-                      .c_str());
-      enable_framework_op_trace_ = false;
-    } else {
+    if (ProbeDumpDirectoryWritable(framework_op_trace_dir_,
+                                   "Framework op trace",
+                                   logger_)) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
                   ("Framework op tracing enabled. Output dir: " + framework_op_trace_dir_).c_str());
+    } else {
+      enable_framework_op_trace_ = false;
     }
   } else if (!framework_op_trace_dir_.empty()) {
     ORT_CXX_LOG(logger_,
@@ -1060,27 +1088,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
     // Probe writability up-front so a non-writable path disables the feature
     // before the per-graph walk runs.
-    std::filesystem::path probe_dir(dump_qnn_ep_input_graph_dir_);
-    std::error_code ec;
-    std::filesystem::create_directories(probe_dir, ec);
-    bool probe_ok = !ec;
-    if (probe_ok) {
-      std::filesystem::path probe_file = probe_dir / ".qnn_ep_input_graph_probe";
-      {
-        std::ofstream ofs(probe_file);
-        probe_ok = ofs.is_open() && (ofs << "1").good();
-      }
-      std::filesystem::remove(probe_file, ec);
-    }
-    if (!probe_ok) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  ("QNN EP input graph dump directory not writable: " + probe_dir.string() +
-                   "; the dump will be disabled.")
-                      .c_str());
-      dump_qnn_ep_input_graph_ = false;
-    } else {
+    if (ProbeDumpDirectoryWritable(dump_qnn_ep_input_graph_dir_,
+                                   "QNN EP input graph dump",
+                                   logger_)) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
                   ("QNN EP input graph dump enabled. Output dir: " + dump_qnn_ep_input_graph_dir_).c_str());
+    } else {
+      dump_qnn_ep_input_graph_ = false;
     }
   }
 
@@ -1612,6 +1626,29 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  // Best-effort diagnostic dump of the ONNX graph the EP just received.
+  // Fires before any subgraph / EPContext / Genie / backend-setup early
+  // return below so every GetCapability invocation produces a dump file —
+  // including subgraphs and sessions that later fail to set up a backend
+  // (precisely the cases where a "what did the EP see?" artifact is most
+  // useful). Filename is sanitized graph name + per-EP counter; the
+  // matcher's recommended consumption is "highest counter per unique
+  // sanitized name" (see docs/execution_providers/QNN-ExecutionProvider.md).
+  if (ep->dump_qnn_ep_input_graph_) {
+    Ort::ConstGraph dump_graph{graph};
+    // SanitizeGraphNameForFilename returns "graph" when the input is empty
+    // or sanitizes to empty, so a single call covers both the present-name
+    // and missing-name paths.
+    std::string graph_name = qnn::SanitizeGraphNameForFilename(std::string(dump_graph.GetName()));
+    size_t count = ep->dump_qnn_ep_input_graph_count_++;
+    std::filesystem::path out_path =
+        std::filesystem::path(ep->dump_qnn_ep_input_graph_dir_) /
+        (graph_name + "." + std::to_string(count) + "_qnn_ep_input_graph.json");
+    // Best-effort diagnostic: failures are already logged inside the dumper,
+    // so the bool return is intentionally discarded.
+    qnn::DumpQnnEpInputGraphToJson(graph, out_path, ep->logger_);
+  }
+
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
   if (parent_node != nullptr) {
@@ -1741,28 +1778,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     if (!ep->onnx_graph_io_names_.has_value()) {
       ep->onnx_graph_io_names_.emplace(std::move(input_order), std::move(output_order));
     }
-  }
-
-  // Dump the EP-input ONNX graph (pre-partition) as a QNN-Netron-schema JSON.
-  // Best-effort diagnostic: failures are logged inside the dumper and never
-  // abort compilation. The filename always carries a per-EP counter so two
-  // graphs whose names sanitize to the same string produce two distinct
-  // files; the sanitized name (when present) is used as a human-readable
-  // prefix.
-  if (ep->dump_qnn_ep_input_graph_) {
-    Ort::ConstGraph dump_graph{graph};
-    std::string raw_name = std::string(dump_graph.GetName());
-    std::string graph_name;
-    if (raw_name.empty()) {
-      graph_name = "graph";
-    } else {
-      graph_name = qnn::SanitizeGraphNameForFilename(raw_name);
-    }
-    size_t count = ep->dump_qnn_ep_input_graph_count_.fetch_add(1, std::memory_order_relaxed);
-    std::filesystem::path out_path =
-        std::filesystem::path(ep->dump_qnn_ep_input_graph_dir_) /
-        (graph_name + "." + std::to_string(count) + "_qnn_ep_input_graph.json");
-    qnn::DumpQnnEpInputGraphToJson(graph, out_path, ep->logger_);
   }
 
   // Get node units for the ABI layer
