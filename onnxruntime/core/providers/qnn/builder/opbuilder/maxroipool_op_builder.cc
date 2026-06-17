@@ -228,8 +228,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::vector<float> rois_flat;
   RETURN_IF_ERROR(ReadRoisAsFloat(qnn_model_wrapper, inputs[1], num_rois, rois_flat));
 
-  // Reusable zero tensor for empty bins (value 0 matches ONNX for degenerate ROIs/bins). Created
-  // lazily so models without empty bins do not carry an unused tensor.
+  // Reusable zero tensor for empty bins (ONNX fills them with 0.0). Created lazily.
   std::string zero_bin_name;
   auto ensure_zero_bin = [&]() -> Ort::Status {
     if (!zero_bin_name.empty()) {
@@ -238,6 +237,22 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     zero_bin_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_zero_bin");
     const size_t num_bytes = qnn::utils::GetQnnTensorDataSizeInBytes(static_cast<size_t>(channels), dtype);
     std::vector<uint8_t> zero_bytes(num_bytes, 0);
+
+    // For a quantized output, the bytes must encode 0.0 under its scale/offset, not all-zero.
+    if (out_info.quant_param.IsQuantized()) {
+      RETURN_IF_NOT(out_info.quant_param.IsPerTensor(/*include_bw*/ true),
+                    "MaxRoiPool requires a per-tensor quantized output.");
+      float scale = 0.0f;
+      int32_t offset = 0;
+      RETURN_IF_ERROR(out_info.quant_param.GetPerTensorScaleOffset(scale, offset));
+      int quant_value = 0;
+      RETURN_IF_ERROR(utils::Quantize(0.0, scale, offset, dtype, quant_value));
+      const size_t elem_size = qnn::utils::GetElementSizeByType(dtype);
+      RETURN_IF_NOT(elem_size > 0 && num_bytes % elem_size == 0, "MaxRoiPool zero-bin size mismatch.");
+      for (size_t i = 0; i < num_bytes; i += elem_size) {
+        std::memcpy(zero_bytes.data() + i, &quant_value, elem_size);
+      }
+    }
     QnnTensorWrapper zero_tensor(zero_bin_name, QNN_TENSOR_TYPE_STATIC, dtype,
                                  out_info.quant_param.Copy(), std::vector<uint32_t>{1u, 1u, 1u, channels},
                                  std::move(zero_bytes));
@@ -259,13 +274,14 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
     const std::string suffix = tag + "_h" + std::to_string(hstart) + "_w" + std::to_string(wstart);
 
-    // StridedSlice X[batch_idx, hstart:hend, wstart:wend, :] -> [1, bh, bw, C].
+    // StridedSlice is a byte-copy, so it stays in X's quant domain; the ReduceMax below requantizes
+    // to the output domain.
     const std::string slice_out = utils::UniqueNameGenerator().New(node_unit.Name(), "_slice" + suffix);
     const uint32_t bh = hend - hstart;
     const uint32_t bw = wend - wstart;
     std::vector<uint32_t> slice_shape{1u, bh, bw, channels};
-    QnnTensorWrapper slice_tensor(slice_out, QNN_TENSOR_TYPE_NATIVE, dtype,
-                                  out_info.quant_param.Copy(), std::vector<uint32_t>(slice_shape));
+    QnnTensorWrapper slice_tensor(slice_out, QNN_TENSOR_TYPE_NATIVE, x_info.qnn_data_type,
+                                  x_info.quant_param.Copy(), std::vector<uint32_t>(slice_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(slice_tensor)),
                   "Failed to add MaxRoiPool slice tensor.");
 
@@ -342,10 +358,10 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   for (uint32_t r = 0; r < num_rois; ++r) {
     const float* roi = &rois_flat[static_cast<size_t>(r) * 5];
     // roi = [batch_index, x1, y1, x2, y2]. batch_index selects the image in the feature map.
-    uint32_t batch_idx = static_cast<uint32_t>(std::max<int32_t>(0, static_cast<int32_t>(std::lround(roi[0]))));
-    if (batch_idx >= x_info.shape[0]) {
-      batch_idx = 0;
-    }
+    const int32_t batch_index = static_cast<int32_t>(std::lround(roi[0]));
+    RETURN_IF(batch_index < 0 || static_cast<uint32_t>(batch_index) >= x_info.shape[0],
+              "MaxRoiPool rois batch_index is out of range.");
+    const uint32_t batch_idx = static_cast<uint32_t>(batch_index);
     const int32_t x1 = static_cast<int32_t>(std::lround(roi[1] * spatial_scale));
     const int32_t y1 = static_cast<int32_t>(std::lround(roi[2] * spatial_scale));
     const int32_t x2 = static_cast<int32_t>(std::lround(roi[3] * spatial_scale));

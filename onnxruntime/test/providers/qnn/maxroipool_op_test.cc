@@ -147,12 +147,30 @@ TEST_F(QnnCPUBackendTests, TestMaxRoiPool_AdaptiveBins) {
                       ExpectedEPNodeAssignment::All);
 }
 
-// Empty-bin path: a 1x1 ROI pooled into a 2x2 grid yields degenerate bins that ONNX fills with 0.
+// Empty-bin path: a ROI extending past the boundary (y2=6 > H=4) yields empty bins after clamping.
 TEST_F(QnnCPUBackendTests, TestMaxRoiPool_EmptyBins) {
   RunMaxRoiPoolOpTest(TestInputDef<float>({1, 1, 4, 4}, false,
                                           {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
                                            9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f}),
-                      TestInputDef<float>({1, 5}, true, {0.0f, 1.0f, 1.0f, 1.0f, 1.0f}),
+                      TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 3.0f, 1.0f, 6.0f}),
+                      {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                       test::MakeAttribute("spatial_scale", 1.0f)},
+                      ExpectedEPNodeAssignment::All);
+}
+
+// Multi-ROI: num_rois > 1 exercises the final Concat branch (single-ROI takes a reshape-only path).
+TEST_F(QnnCPUBackendTests, TestMaxRoiPool_MultiRoi) {
+  RunMaxRoiPoolOpTest(TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(0.0f, 32.0f, 32)),
+                      TestInputDef<float>({3, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f, 0.0f, 1.0f, 1.0f, 3.0f, 3.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f}),
+                      {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                       test::MakeAttribute("spatial_scale", 1.0f)},
+                      ExpectedEPNodeAssignment::All);
+}
+
+// Cross-image sampling: N > 1 feature map with ROIs whose batch_index selects different images.
+TEST_F(QnnCPUBackendTests, TestMaxRoiPool_MultiImage) {
+  RunMaxRoiPoolOpTest(TestInputDef<float>({2, 1, 4, 4}, false, GetFloatDataInRange(0.0f, 32.0f, 32)),
+                      TestInputDef<float>({2, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f, 1.0f, 0.0f, 0.0f, 3.0f, 3.0f}),
                       {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
                        test::MakeAttribute("spatial_scale", 1.0f)},
                       ExpectedEPNodeAssignment::All);
@@ -181,6 +199,47 @@ TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdq_AdaptiveBins) {
                                   TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f}),
                                   {test::MakeAttribute("pooled_shape", std::vector<int64_t>{3, 3}),
                                    test::MakeAttribute("spatial_scale", 1.0f)},
+                                  ExpectedEPNodeAssignment::All);
+}
+
+// Multi-ROI on HTP: exercises the final Concat branch.
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdq_MultiRoi) {
+  RunQDQMaxRoiPoolOpTest<uint8_t>(TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(0.0f, 32.0f, 32)),
+                                  TestInputDef<float>({3, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f, 0.0f, 1.0f, 1.0f, 3.0f, 3.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f}),
+                                  {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                                   test::MakeAttribute("spatial_scale", 1.0f)},
+                                  ExpectedEPNodeAssignment::All);
+}
+
+// Empty-bin path on HTP. All-negative data so the empty bins (filled with 0.0) pin the output max,
+// forcing a non-zero output zero_point.
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdq_EmptyBins) {
+  RunQDQMaxRoiPoolOpTest<uint8_t>(TestInputDef<float>({1, 1, 4, 4}, false,
+                                                      {-1.0f, -2.0f, -3.0f, -4.0f, -5.0f, -6.0f, -7.0f, -8.0f,
+                                                       -9.0f, -10.0f, -11.0f, -12.0f, -13.0f, -14.0f, -15.0f, -16.0f}),
+                                  TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 3.0f, 1.0f, 6.0f}),
+                                  {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                                   test::MakeAttribute("spatial_scale", 1.0f)},
+                                  ExpectedEPNodeAssignment::All);
+}
+
+// Cross-image sampling on HTP: ROIs select different images.
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdq_MultiImage) {
+  RunQDQMaxRoiPoolOpTest<uint8_t>(TestInputDef<float>({2, 1, 4, 4}, false, GetFloatDataInRange(0.0f, 32.0f, 32)),
+                                  TestInputDef<float>({2, 5}, true, {0.0f, 0.0f, 0.0f, 3.0f, 3.0f, 1.0f, 0.0f, 0.0f, 3.0f, 3.0f}),
+                                  {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                                   test::MakeAttribute("spatial_scale", 1.0f)},
+                                  ExpectedEPNodeAssignment::All);
+}
+
+// spatial_scale on HTP (QDQ): rois are scaled before binning.
+TEST_F(QnnHTPBackendTests, TestMaxRoiPoolQdq_spatial_scale) {
+  RunQDQMaxRoiPoolOpTest<uint8_t>(TestInputDef<float>({1, 1, 4, 4}, false,
+                                                      {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+                                                       9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f}),
+                                  TestInputDef<float>({1, 5}, true, {0.0f, 0.0f, 0.0f, 6.0f, 6.0f}),
+                                  {test::MakeAttribute("pooled_shape", std::vector<int64_t>{2, 2}),
+                                   test::MakeAttribute("spatial_scale", 0.5f)},
                                   ExpectedEPNodeAssignment::All);
 }
 

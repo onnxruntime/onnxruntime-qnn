@@ -2375,7 +2375,8 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   }
 
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "MaxRoiPool") {
-    // MaxRoiPool is translated to QNN's RoiPooling, which requires the NHWC layout for processing.
+    // MaxRoiPool is decomposed into StridedSlice/ReduceMax/Concat, which require the NHWC layout
+    // for processing.
     *should_convert = 1;
   }
 
