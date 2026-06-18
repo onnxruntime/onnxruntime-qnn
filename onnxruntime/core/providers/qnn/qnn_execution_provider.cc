@@ -471,7 +471,7 @@ static qnn::ProfilingLevel GetProfilingLevelFromETWLevel(unsigned char level, co
 }
 #endif  // defined(_WIN32)
 
-std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const {
+std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() {
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
   static const std::string QNN_SAVER_PATH_KEY = "qnn_saver_path";
   std::string qnn_saver_path;
@@ -529,6 +529,35 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
 
   if (dump_qnn_ir_dlc) {
     return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path), std::move(qnn_ir_dlc_dir));
+  }
+
+  static const std::string DUMP_PARTITION_DLC_BUNDLE = "dump_partition_dlc_bundle";
+  dump_partition_dlc_bundle_ = ParseBoolOption(ort_api,
+                                               session_options_,
+                                               FormatEPConfigKey(DUMP_PARTITION_DLC_BUNDLE),
+                                               false,
+                                               logger_);
+
+  static const std::string PARTITION_DLC_BUNDLE_DIR = "partition_dlc_bundle_dir";
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey(PARTITION_DLC_BUNDLE_DIR),
+                                 "",
+                                 partition_dlc_bundle_dir_);
+
+  if (dump_partition_dlc_bundle_) {
+    if (partition_dlc_bundle_dir_.empty()) {
+      ORT_CXX_API_THROW("dump_partition_dlc_bundle is set but partition_dlc_bundle_dir is empty.",
+                        ORT_INVALID_ARGUMENT);
+    }
+    std::filesystem::path partitions_dir =
+        std::filesystem::path(partition_dlc_bundle_dir_) / "partitions";
+    return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path),
+                                              partitions_dir.string());
+  } else if (!partition_dlc_bundle_dir_.empty()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "Provided partition_dlc_bundle_dir, but did not set dump_partition_dlc_bundle to 1.");
   }
 
   return nullptr;
@@ -2235,6 +2264,36 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
+
+    if (dump_partition_dlc_bundle_) {
+      PartitionBundleRecord record;
+      record.name = fused_node_name;
+      const auto& inputs_info = qnn_model->GetInputsInfo();
+      for (const auto& input_name : qnn_model->GetInputNames()) {
+        auto it = inputs_info.find(input_name);
+        PartitionBundleTensor t;
+        t.name = input_name;
+        if (it != inputs_info.end()) {
+          t.dtype = std::string(qnn::utils::GetElementNameByType(
+              static_cast<ONNXTensorElementDataType>(it->second.data_type_)));
+          t.shape = it->second.shape_;
+        }
+        record.inputs.push_back(std::move(t));
+      }
+      const auto& outputs_info = qnn_model->GetOutputsInfo();
+      for (const auto& output_name : qnn_model->GetOutputNames()) {
+        auto it = outputs_info.find(output_name);
+        PartitionBundleTensor t;
+        t.name = output_name;
+        if (it != outputs_info.end()) {
+          t.dtype = std::string(qnn::utils::GetElementNameByType(
+              static_cast<ONNXTensorElementDataType>(it->second.data_type_)));
+          t.shape = it->second.shape_;
+        }
+        record.outputs.push_back(std::move(t));
+      }
+      partition_bundle_records_.push_back(std::move(record));
+    }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     if (use_multithreaded_prepare) {
       auto& model_info = model_infos.emplace_back();
@@ -2752,6 +2811,68 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // When multiple graphs are compiled, all subgraph traces are collected into a single file.
   if (ep->enable_framework_op_trace_) {
     ep->CollectAndWriteFrameworkOpTrace(graphs[0]);
+  }
+
+  if (ep->dump_partition_dlc_bundle_ && !ep->partition_bundle_records_.empty()) {
+    namespace fs = std::filesystem;
+    fs::path bundle_dir(ep->partition_dlc_bundle_dir_);
+    std::error_code ec;
+    fs::create_directories(bundle_dir, ec);
+
+    auto tensor_to_json = [](const QnnEp::PartitionBundleTensor& t) {
+      nlohmann::json j;
+      j["name"] = t.name;
+      j["dtype"] = t.dtype;
+      j["shape"] = t.shape;
+      return j;
+    };
+
+    nlohmann::json manifest;
+    manifest["bundle_version"] = 1;
+    manifest["partitions"] = nlohmann::json::array();
+
+    std::unordered_map<std::string, std::string> producer_of;
+    for (const auto& rec : ep->partition_bundle_records_) {
+      nlohmann::json p;
+      p["name"] = rec.name;
+      p["dlc_path"] = (fs::path("partitions") / (rec.name + ".dlc")).generic_string();
+      p["inputs"] = nlohmann::json::array();
+      for (const auto& in : rec.inputs) p["inputs"].push_back(tensor_to_json(in));
+      p["outputs"] = nlohmann::json::array();
+      for (const auto& out : rec.outputs) p["outputs"].push_back(tensor_to_json(out));
+      manifest["partitions"].push_back(std::move(p));
+      for (const auto& out : rec.outputs) {
+        producer_of[out.name] = rec.name;
+      }
+    }
+
+    manifest["edges"] = nlohmann::json::array();
+    for (const auto& rec : ep->partition_bundle_records_) {
+      for (const auto& in : rec.inputs) {
+        auto it = producer_of.find(in.name);
+        if (it != producer_of.end()) {
+          nlohmann::json edge;
+          edge["producer_partition"] = it->second;
+          edge["consumer_partition"] = rec.name;
+          edge["tensor_name"] = in.name;
+          manifest["edges"].push_back(std::move(edge));
+        }
+      }
+    }
+
+    fs::path manifest_path = bundle_dir / "manifest.json";
+    std::ofstream ofs(manifest_path);
+    if (ofs) {
+      ofs << manifest.dump(2);
+      ORT_CXX_LOG(ep->logger_,
+                  ORT_LOGGING_LEVEL_INFO,
+                  ("Wrote partition DLC bundle manifest: " + manifest_path.string()).c_str());
+    } else {
+      ORT_CXX_LOG(ep->logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Failed to write partition DLC bundle manifest: " + manifest_path.string()).c_str());
+    }
+    ep->partition_bundle_records_.clear();
   }
 
   if (ep->context_cache_enabled_) {

@@ -151,8 +151,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void InitQnnHtpGraphConfigs(
       const qnn::HtpGraphConfigs_t& configs,
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
-
-  std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
+  std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig();
 
   std::string FormatEPConfigKey(const std::string& key) const {
     return GetProviderOptionPrefix(name_) + key;
@@ -257,6 +256,21 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // produce two distinct files. ORT calls GetCapabilityImpl sequentially
   // from a single thread today, so plain size_t is sufficient.
   size_t dump_qnn_ep_input_graph_count_ = 0;
+
+  bool dump_partition_dlc_bundle_ = false;
+  std::string partition_dlc_bundle_dir_ = "";
+
+  struct PartitionBundleTensor {
+    std::string name;
+    std::string dtype;
+    std::vector<int64_t> shape;
+  };
+  struct PartitionBundleRecord {
+    std::string name;
+    std::vector<PartitionBundleTensor> inputs;
+    std::vector<PartitionBundleTensor> outputs;
+  };
+  std::vector<PartitionBundleRecord> partition_bundle_records_;
 
   // === Framework op trace ===
   bool enable_framework_op_trace_ = false;
