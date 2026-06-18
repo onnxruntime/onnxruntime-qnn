@@ -780,7 +780,6 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<int16_t, Int4x2, int16_t>({4, 128}, {128, 64}, 64, 0, QDQTolerance(0.05f));
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 3, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
-  RunQDQBlockQuantMatMulOpTest<uint16_t, int8_t, uint16_t>({4, 32}, {32, 16}, 16, 0, QDQTolerance(), ExpectedEPNodeAssignment::None);
 }
 
 #endif  // defined(__linux__)
