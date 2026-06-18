@@ -203,7 +203,7 @@ Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
   // Explicit check and provide clear message here
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
-    int32_t ln_axis = 0;
+    int32_t ln_axis = -1;
     RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
     RETURN_IF(static_cast<size_t>(ln_axis) != input_rank - 1,
               "QNN LayerNorm on HTP only supports normalization along the last axis.");
