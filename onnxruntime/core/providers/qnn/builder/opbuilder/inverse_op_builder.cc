@@ -178,19 +178,16 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(det_mul_0_output)),
                 "Failed to add Inverse - Det - Mul(a, d) output tensor.");
 
-  Qnn_Scalar_t mul_0_scalar = QNN_SCALAR_INIT;
-  mul_0_scalar.dataType = QNN_DATATYPE_UINT_32;
-  mul_0_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  QnnParamWrapper mul_0_param(node_unit.Index(), det_mul_0_name,
-                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_0_scalar);
-  std::string mul_0_param_name = mul_0_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_0_param)), "Failed to add operation param.");
+  std::vector<std::string> mul_0_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), det_mul_0_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_0_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(det_mul_0_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {sliced_output_names[0], sliced_output_names[3]},
                                                 {det_mul_0_output_name},
-                                                {mul_0_param_name},
+                                                std::move(mul_0_param_names),
                                                 do_op_validation),
                 "Failed to add Inverse - Det - Mul(a, d) node.");
 
@@ -204,19 +201,16 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(det_mul_1_output)),
                 "Failed to add Inverse - Det - Mul(b, c) output tensor.");
 
-  Qnn_Scalar_t mul_1_scalar = QNN_SCALAR_INIT;
-  mul_1_scalar.dataType = QNN_DATATYPE_UINT_32;
-  mul_1_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  QnnParamWrapper mul_1_param(node_unit.Index(), det_mul_1_name,
-                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_1_scalar);
-  std::string mul_1_param_name = mul_1_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_1_param)), "Failed to add operation param.");
+  std::vector<std::string> mul_1_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), det_mul_1_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_1_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(det_mul_1_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {sliced_output_names[1], sliced_output_names[2]},
                                                 {det_mul_1_output_name},
-                                                {mul_1_param_name},
+                                                std::move(mul_1_param_names),
                                                 do_op_validation),
                 "Failed to add Inverse - Det - Mul(b, c) node.");
 
@@ -230,19 +224,16 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(det_sub_output)),
                 "Failed to add Inverse - Det - Sub(ad, bc) output tensor.");
 
-  Qnn_Scalar_t sub_scalar = QNN_SCALAR_INIT;
-  sub_scalar.dataType = QNN_DATATYPE_UINT_32;
-  sub_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT;
-  QnnParamWrapper sub_param(node_unit.Index(), det_sub_name,
-                            QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, sub_scalar);
-  std::string sub_param_name = sub_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sub_param)), "Failed to add operation param.");
+  std::vector<std::string> sub_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), det_sub_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, sub_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(det_sub_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {det_mul_0_output_name, det_mul_1_output_name},
                                                 {det_sub_output_name},
-                                                {sub_param_name},
+                                                std::move(sub_param_names),
                                                 do_op_validation),
                 "Failed to add Inverse - Det - Sub(ad, bc) node.");
 
@@ -301,19 +292,16 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(adj_mul_output)),
                 "Failed to add Inverse - Adj - Mul([d, b, a, c], [1, -1, -1, 1]) output tensor.");
 
-  Qnn_Scalar_t adj_mul_scalar = QNN_SCALAR_INIT;
-  adj_mul_scalar.dataType = QNN_DATATYPE_UINT_32;
-  adj_mul_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  QnnParamWrapper adj_mul_param(node_unit.Index(), adj_mul_name,
-                                QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, adj_mul_scalar);
-  std::string adj_mul_param_name = adj_mul_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(adj_mul_param)), "Failed to add operation param.");
+  std::vector<std::string> adj_mul_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), adj_mul_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, adj_mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(adj_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {adj_cat_output_name, adj_mul_tensor_name},
                                                 {adj_mul_output_name},
-                                                {adj_mul_param_name},
+                                                std::move(adj_mul_param_names),
                                                 do_op_validation),
                 "Failed to add Inverse - Adj - Mul([d, b, a, c], [1, -1, -1, 1]) node.");
 
@@ -329,19 +317,16 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                 "Failed to add Inverse - Adj / Det output tensor.");
 
   // Expect QNN element-wise ops to broadcast unit dimensions.
-  Qnn_Scalar_t div_scalar = QNN_SCALAR_INIT;
-  div_scalar.dataType = QNN_DATATYPE_UINT_32;
-  div_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE;
-  QnnParamWrapper div_param(node_unit.Index(), inverse_div_name,
-                            QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_scalar);
-  std::string div_param_name = div_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(div_param)), "Failed to add operation param.");
+  std::vector<std::string> div_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), inverse_div_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(inverse_div_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {adj_mul_output_name, det_sub_output_name},
                                                 {inverse_div_output_name},
-                                                {div_param_name},
+                                                std::move(div_param_names),
                                                 do_op_validation),
                 "Failed to add Inverse - Adj / Det node.");
 

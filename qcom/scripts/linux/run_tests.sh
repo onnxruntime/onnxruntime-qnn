@@ -9,6 +9,9 @@ source "${REPO_ROOT}/qcom/scripts/linux/tools.sh"
 
 set_strict_mode
 
+# QNN CPU is not advertised by default; tests use it as the x86 attach point, so opt in.
+export ORT_QNN_ENABLE_CPU_BACKEND=1
+
 declare -i errors=0
 #
 # Run a command and increment ${errors} if it fails.

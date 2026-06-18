@@ -58,12 +58,8 @@ Ort::Status ArgMaxMinOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF(node_helper.Get("select_last_index", static_cast<int32_t>(0)) != 0,
             "QNN ArgMax/ArgMin only support select_last_index=0.");
   auto onnx_keepdims = node_helper.Get("keepdims", static_cast<int32_t>(1));
-  Qnn_Scalar_t keep_dims_scalar = QNN_SCALAR_INIT;
-  keep_dims_scalar.dataType = QNN_DATATYPE_BOOL_8;
-  keep_dims_scalar.bool8Value = static_cast<uint8_t>(onnx_keepdims == 0 ? 0 : 1);
-  QnnParamWrapper keep_dims_param(node_unit.Index(), node_unit.Name(), QNN_OP_ARGMAX_PARAM_KEEP_DIMS, keep_dims_scalar);
-  param_tensor_names.push_back(keep_dims_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(keep_dims_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
+                                     QNN_OP_ARGMAX_PARAM_KEEP_DIMS, param_tensor_names));
 
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
                                  std::move(input_names),
