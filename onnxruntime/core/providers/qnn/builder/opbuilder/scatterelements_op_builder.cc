@@ -152,24 +152,21 @@ Ort::Status ScatterElementsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   param_tensor_names.push_back(axis_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
-  Qnn_Scalar_t reduction_scalar = QNN_SCALAR_INIT;
-  reduction_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t reduction_value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_NONE;
   if (reduction == "none") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_NONE;
+    reduction_value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_NONE;
   } else if (reduction == "add") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_ADD;
+    reduction_value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_ADD;
   } else if (reduction == "mul") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MUL;
+    reduction_value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MUL;
   } else if (reduction == "max") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MAX;
+    reduction_value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MAX;
   } else {
     return MAKE_EP_FAIL(("Unexpected ScatterElements reduction: " + reduction).c_str());
   }
 
-  QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(),
-                                  QNN_OP_SCATTER_ELEMENTS_PARAM_REDUCTION, reduction_scalar);
-  param_tensor_names.push_back(reduction_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), reduction_value,
+                                         QNN_OP_SCATTER_ELEMENTS_PARAM_REDUCTION, param_tensor_names));
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),

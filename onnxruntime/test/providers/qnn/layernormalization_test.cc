@@ -137,7 +137,8 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                                 const TestInputDef<float>& bias_def,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                bool use_contrib_qdq_ops = false) {
+                                bool use_contrib_qdq_ops = false,
+                                QDQTolerance tolerance = QDQTolerance()) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -147,7 +148,8 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                                                                          use_contrib_qdq_ops),
                        provider_options,
                        17,  // opset
-                       expected_ep_assignment);
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 // Test that QNN HTP only supports axis = -1 (i.e., last dimension).
@@ -223,6 +225,127 @@ TEST_F(QnnHTPBackendTests, DISABLED_LayerNorm1D_LastAxis_DynamicScale) {
                                         TestInputDef<float>(),
                                         {test::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
                                         ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleAndBiasMisaligned) {
+  // scale + bias both misaligned -> LN, Mul (intermediate), Add (final)
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      // Full-rank scale with non-1 dim before the normalized axis -> externalize_scale.
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      // Full-rank bias with non-1 dim before the normalized axis -> externalize_bias.
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleMisaligned_NoBias) {
+  // scale misaligned, no bias -> LN, Mul (final)
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_BiasMisaligned_ScaleAligned) {
+  // scale aligned, bias misaligned -> LN(scale), Add (final)
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      // 1D scale aligned with X.shape[axis:]=[3], does not need externalization.
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.1f, 1.0f, 3)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// 16-bit activations + 8-bit weights through the decomposition path. Exercises the 16-bit
+// const_buf dispatch in the synthesized identity scale and the 16-bit branches of bias
+// requantization (which the 8/8 decomposition tests above don't cover).
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleAndBiasMisaligned_A16W8) {
+  RunLayerNormQDQTest<uint16_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All,
+      true);  // Use 'com.microsoft' Q/DQ ops (uint16).
+}
+
+// Small-amplitude scale forces the synthesized "ones" tensor to saturate when quantized
+// in the user's scheme: u8 over [0, 0.005] gives scale ≈ 1.96e-5, so round(1.0/scale) =
+// 51000 saturates to 255 ≈ 0.005 — a 200× silent error in the identity scale. The op
+// builder detects the saturation (deq != 1.0 within an LSB) and rejects the decomposition,
+// so QNN reports the node as unsupported and the model falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_SmallAmplitudeScale_FallsBack) {
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      // Tight scale range [0, 0.005] -> u8 quant scale ≈ 1.96e-5; quantizing 1.0 saturates.
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 0.005f, 6)),
+      TestInputDef<float>(),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::None);
+}
+
+static void RunLayerNormTest(const TestInputDef<float>& input_def,
+                             const TestInputDef<float>& scale_def,
+                             const TestInputDef<float>& bias_def,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             float fp32_abs_err = 0.01f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  GetTestModelFn model_fn =
+      bias_def.GetShape().empty()
+          ? BuildOpTestCase<float>("layer_norm_node", "LayerNormalization",
+                                   {input_def, scale_def}, {}, attrs)
+          : BuildOpTestCase<float, int64_t>("layer_norm_node", "LayerNormalization",
+                                            {input_def, scale_def}, {}, {bias_def}, attrs);
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  17,  // opset
+                  expected_ep_assignment,
+                  fp32_abs_err);
+}
+
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_standard_test) {
+  RunLayerNormTest(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(-0.1f, 0.1f, 3)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Standard LN with no bias.
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_no_bias) {
+  RunLayerNormTest(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// FP decomposition: scale + bias both misaligned. Exercises the FP branch of the synthesized
+// "ones" tensor (FLOAT_32 / FLOAT_16 dispatch) plus both Mul and Add lowerings in one shot.
+// The other two FP misalignment shapes (scale-only, bias-only) hit the same FP synth-ones
+// codepath and are already covered structurally by the QDQ Decomposed_* triplet.
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_decomposed) {
+  RunLayerNormTest(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(-0.1f, 0.1f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

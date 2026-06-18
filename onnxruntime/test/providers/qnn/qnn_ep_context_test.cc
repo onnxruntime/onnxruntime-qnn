@@ -3177,8 +3177,8 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
   CleanUpCtxFile(ctx_path);
 }
 
-// Test 2: prepare_only without explicit ep.context_enable gets disabled with a warning — session still creates.
-TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
+// Test 2: prepare_only without explicit ep.context_enable errors out at session creation
+TEST_F(QnnHTPBackendTests, PrepareOnly_ErrorsWhenContextCacheNotSet) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3204,18 +3204,19 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
   std::remove(ctx_path.c_str());
 
   Ort::SessionOptions so;
-  // Intentionally omit kOrtSessionOptionEpContextEnable — prepare_only_ should be disabled with warning.
+  // Intentionally omit kOrtSessionOptionEpContextEnable — session creation should fail.
   SetPrepareOnlyOptions(so, ctx_path, /*explicit_context_enable=*/false);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  // since ep.context_enable was not set. Session falls back to normal (non-prepare_only) mode.
+  // ep.context_enable was not set, so prepare_only is invalid: GetCapability returns EP_FAIL
+  // instead of silently downgrading to a normal JIT session.
   try {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
-    SUCCEED();
+    FAIL() << "Expected session creation to fail when prepare_only is set without ep.context_enable";
   } catch (const std::exception& e) {
-    FAIL() << "Session creation should not throw: " << e.what();
+    ASSERT_THAT(e.what(), testing::HasSubstr("enable_htp_prepare_only=1 requires ep.context_enable=1"));
   }
 }
 

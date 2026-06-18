@@ -106,6 +106,11 @@ else()
         endif()
     endif()
 
+    if(onnxruntime_CMAKE_DEPS_MIRROR_DIR)
+        list(APPEND ORT_BUILD_COMMAND --cmake_deps_mirror_dir)
+        list(APPEND ORT_BUILD_COMMAND "${onnxruntime_CMAKE_DEPS_MIRROR_DIR}")
+    endif()
+
     list(APPEND ORT_BUILD_COMMAND --targets)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_perf_test)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_plugin_ep_onnx_test)
@@ -208,6 +213,7 @@ ExternalProject_Add(
     PATCH_COMMAND ""
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
+    BUILD_ALWAYS ON
     INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
     BUILD_BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
     # Enable comprehensive logging for debugging

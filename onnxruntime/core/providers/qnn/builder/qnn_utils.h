@@ -25,6 +25,7 @@
 #include "QnnInterface.h"
 #include "QnnTypes.h"
 
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -119,13 +120,15 @@ size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
 bool QnnTensorHasDynamicShape(const Qnn_Tensor_t& tensor);
 
 // TODO: make these work with Wrappers?
+std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type);
 std::ostream& operator<<(std::ostream& out, const Qnn_Param_t& qnn_param);
 std::ostream& operator<<(std::ostream& out, const Qnn_Tensor_t& tensor);
 std::ostream& operator<<(std::ostream& out, const QnnOpConfigWrapper& op_conf_wrapper);
 
 Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
-                           Qnn_DataType_t& tensor_data_type);
+                           Qnn_DataType_t& tensor_data_type,
+                           QnnBackendType backend_type = QnnBackendType::CPU);
 
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
@@ -144,7 +147,8 @@ UniqueNameGeneratorImpl& UniqueNameGenerator();
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
-                               bool is_quantized = false);
+                               bool is_quantized = false,
+                               QnnBackendType backend_type = QnnBackendType::CPU);
 
 inline Ort::Status GetOnnxTensorElemDataType(const OrtValueInfo* value_info,
                                              /*out*/ ONNXTensorElementDataType& onnx_data_type) {
@@ -808,6 +812,7 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
    Intended for ORT logging
 */
 std::string PtrToString(const void* const ptr);
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

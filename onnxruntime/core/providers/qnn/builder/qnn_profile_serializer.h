@@ -11,6 +11,7 @@
 #include <System/QnnSystemInterface.h>
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/ort_api.h"
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -30,6 +31,10 @@ namespace profile {
 struct ProfilingInfo {
   std::string graph_name = "";
   std::string csv_output_filepath = "";
+  // Optional trace lookup for NODE event annotation.
+  // Non-null when enable_framework_op_trace_ is true and tracing data exists.
+  // Pointer lifetime is owned by QnnBackendManager and outlasts the Serializer.
+  const OpTraceLookup* op_trace_lookup = nullptr;
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   uint64_t start_time = 0;
@@ -104,6 +109,11 @@ class Serializer {
       const std::string& eventLevel,
       const char* eventIdentifier);
 #endif
+
+  // Returns a semicolon-separated list of ONNX source op names for a QNN op
+  // identifier, or an empty string when tracing is disabled or the op is not
+  // in the lookup. Strips the ":OpId_{N}" HTP profiling suffix before lookup.
+  std::string LookupOnnxSources(const char* identifier) const;
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   class ManagedSerializationTargetHandle {
