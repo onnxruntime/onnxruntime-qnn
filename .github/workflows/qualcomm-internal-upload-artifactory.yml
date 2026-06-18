@@ -201,7 +201,7 @@ jobs:
                        mktemp -p "${{ github.workspace }}")
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" << EOF
-          machine artifactory-las.qualcomm.com
+          machine artifactory-qdc-global.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -252,7 +252,7 @@ jobs:
                        mktemp -p "${{ github.workspace }}")
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" << EOF
-          machine artifactory-las.qualcomm.com
+          machine artifactory-qdc-global.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
