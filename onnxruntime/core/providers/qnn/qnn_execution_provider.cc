@@ -1697,6 +1697,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   // Collect graph and fused nodes names.
   std::vector<std::pair<std::string, std::string>> names;
   names.reserve(count);
+  std::vector<std::unordered_map<std::string, std::string>> io_name_overrides_per_graph(count);
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const char* graph_name = nullptr;
@@ -1729,6 +1730,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
 
     names.push_back(std::pair<std::string, std::string>(graph_name, ep_context_node_name));
+    io_name_overrides_per_graph[graph_idx] = qnn::ParseIoNameOverrides(ep_context_node);
   }
 
   // Get QnnModel from EP shared contexts
@@ -1762,7 +1764,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
             /*onnx_output_names=*/nullptr,
             /*model_settings=*/nullptr,
             /*graph_configs=*/nullptr,
-            /*tensor_name_overrides=*/nullptr,
+            /*tensor_name_overrides=*/io_name_overrides_per_graph[graph_idx].empty()
+                ? nullptr
+                : &io_name_overrides_per_graph[graph_idx],
             /*json_qnn_graph_path=*/{}};
         RETURN_IF_NOT_OK(qnn_model_shared->SetGraphInputOutputInfo(context));
         RETURN_IF_NOT_OK(qnn_model_shared->SetupQnnInputOutput(logger_));
@@ -1840,7 +1844,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
         /*onnx_output_names=*/nullptr,
         /*model_settings=*/nullptr,
         /*graph_configs=*/nullptr,
-        /*tensor_name_overrides=*/nullptr,
+        /*tensor_name_overrides=*/io_name_overrides_per_graph[graph_idx].empty()
+            ? nullptr
+            : &io_name_overrides_per_graph[graph_idx],
         /*json_qnn_graph_path=*/{}};
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(context));
     RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
@@ -1906,7 +1912,8 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              logger_,
                                              share_ep_contexts_,
                                              stop_share_ep_contexts_,
-                                             name_));
+                                             name_,
+                                             tensor_name_overrides_));
 
   // Get compatibility info for later query in GetCompiledModelCompatibilityInfo.
   Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(compatibility_info_);
@@ -2132,12 +2139,16 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 #endif  // _WIN32
 
   // Clean up transient GetCapability→Compile state.
+  // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
+  // below to serialize the io_name_overrides attribute into the EPContext model.
   ep->onnx_graph_io_names_.reset();
-  ep->tensor_name_overrides_.clear();
 
   if (ep->context_cache_enabled_) {
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
+
+  // Clear only after CreateEPContextNodes has serialized the map into the EPContext model.
+  ep->tensor_name_overrides_.clear();
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   end = std::chrono::steady_clock::now();
