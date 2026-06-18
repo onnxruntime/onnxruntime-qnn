@@ -310,7 +310,7 @@ TEST(QnnUnit_ModelTest, ComposeGraph_IdentityGraph_WithJsonPath_TriggersLogTenso
   FakeGraph graph{{inner}, {&x}, {&y}, {}};
   FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
 
-  std::string tmp_json = std::filesystem::temp_directory_path() / "qnn_unit_model_test_graph.json";
+  std::string tmp_json = (std::filesystem::temp_directory_path() / "qnn_unit_model_test_graph.json").string();
   std::remove(tmp_json.c_str());
 
   std::vector<std::string> in_names{"x"};
@@ -347,7 +347,7 @@ static void RunComposeGraphWithDtype(ONNXTensorElementDataType elem_type) {
   FakeGraph graph{{inner}, {&x}, {&y}, {}};
   FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
 
-  std::string tmp_json = std::filesystem::temp_directory_path() / "qnn_unit_model_test_dtype.json";
+  std::string tmp_json = (std::filesystem::temp_directory_path() / "qnn_unit_model_test_dtype.json").string();
   std::remove(tmp_json.c_str());
 
   std::vector<std::string> in_names{"x"};
@@ -405,7 +405,7 @@ TEST(QnnUnit_ModelTest, LogTensorDetails_JsonPathWithoutDot_CoversElseBranch) {
   FakeGraph graph{{inner}, {&x}, {&y}, {}};
   FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
 
-  std::string tmp_json = std::filesystem::temp_directory_path() / "qnn_unit_no_ext";
+  std::string tmp_json = (std::filesystem::temp_directory_path() / "qnn_unit_no_ext").string();
   std::remove(tmp_json.c_str());
 
   std::vector<std::string> in_names{"x"};

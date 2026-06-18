@@ -298,10 +298,10 @@ inline OrtStatus* StubMockGetTensorData(const OrtValue*,
   auto it = g_mock_init_reg.vi_to_spec.find(g_mock_chain_vi);
   if (it != g_mock_init_reg.vi_to_spec.end() && !it->second.raw_bytes.empty()) {
     *out = it->second.raw_bytes.data();
-  } else {
-    *out = nullptr;
+    return nullptr;
   }
-  return nullptr;
+  *out = nullptr;
+  return MakeMockChainMissStatus();
 }
 
 // SetupMockInitRegistryStubs — install all stubs for the mock initializer registry.

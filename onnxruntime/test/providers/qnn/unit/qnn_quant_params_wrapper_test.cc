@@ -757,7 +757,10 @@ TEST(QnnUnit_QuantParamsWrapperTest, InitFromIODef_PerTensor_Int4_NoZeroPoint_Se
                           scale_vi, /*zp_vi=*/nullptr);
   QnnQuantParamsWrapper q;
   ASSERT_TRUE(q.Init(*fx.wrapper, io_def).IsOK());
-  // Without zp, is_int4_type is false → falls into per-tensor non-int4 path.
+  // Without a zp VI, Init() cannot determine the bitwidth from the IODef alone
+  // and treats the input as non-int4 (falls into the SCALE_OFFSET path). This is
+  // the intended behavior: is_int4_type is derived from the presence of an int4
+  // zp tensor, not from the ONNX element type alone.
   EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_SCALE_OFFSET);
   EXPECT_EQ(q.Get().scaleOffsetEncoding.offset, 0);
 }

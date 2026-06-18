@@ -128,15 +128,12 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   // Ort::Status / OrtTypeInfo / OrtTensorTypeAndShapeInfo destructors call
   // these through Ort::GetApi(). Leaving them null would crash on every
   // RAII teardown.
-  api.ReleaseStatus = [](OrtStatus*) noexcept {};
   api.ReleaseTypeInfo = [](OrtTypeInfo*) noexcept {};
   api.ReleaseTensorTypeAndShapeInfo = [](OrtTensorTypeAndShapeInfo*) noexcept {};
 
   // ---- OrtStatus minimal heap-allocated wrapper ----
   // EP code constructs OrtStatus via Ort::Status(msg, code) which calls
   // CreateStatus, and inspects results via GetErrorCode / GetErrorMessage.
-  // ReleaseStatus is already stubbed as no-op (the small leaks here are
-  // bounded to per-test allocations).
   struct FakeOrtStatus {
     OrtErrorCode code;
     std::string message;
