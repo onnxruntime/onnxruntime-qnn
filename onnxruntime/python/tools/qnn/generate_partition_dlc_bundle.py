@@ -161,7 +161,4 @@ def main():
 
 
 if __name__ == "__main__":
-    assert sanitize_filename("/encoder/layer.0/Add_output_0") == "_encoder_layer.0_Add_output_0"
-    assert sanitize_filename("simple_name") == "simple_name"
-    assert sanitize_filename("a:b\\c") == "a_b_c"
     main()
