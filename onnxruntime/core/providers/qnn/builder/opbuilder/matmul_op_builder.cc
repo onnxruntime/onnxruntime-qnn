@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 #include <functional>
@@ -848,12 +848,8 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     param_tensor_names.push_back(dilation_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(dilation_param));
 
-    Qnn_Scalar_t group_scalar = QNN_SCALAR_INIT;
-    group_scalar.dataType = QNN_DATATYPE_UINT_32;
-    group_scalar.uint32Value = 1;
-    QnnParamWrapper group_param(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_GROUP, group_scalar);
-    param_tensor_names.push_back(group_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(group_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 1,
+                                           QNN_OP_CONV_2D_PARAM_GROUP, param_tensor_names));
   } else if (use_fully_connected) {
     qnn_op_type = QNN_OP_FULLY_CONNECTED;
   } else {

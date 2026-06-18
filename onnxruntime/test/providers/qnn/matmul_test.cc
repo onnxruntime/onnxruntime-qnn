@@ -310,6 +310,7 @@ static void RunQDQBlockQuantMatMulOpTest(
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_block_quant_weight_optimization"] = "1";
 
   const size_t num_input_elems = static_cast<size_t>(
       std::accumulate(shape_input.begin(), shape_input.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
