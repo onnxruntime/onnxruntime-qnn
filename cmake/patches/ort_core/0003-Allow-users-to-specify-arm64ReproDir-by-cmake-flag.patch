@@ -1,7 +1,7 @@
 From 00a90b4e96be555505d65bb318ab113a69b28a9f Mon Sep 17 00:00:00 2001
 From: hungjuiw <hungjuiw@qti.qualcomm.com>
 Date: Wed, 18 Mar 2026 14:58:21 +0800
-Subject: [PATCH 3/4] Allow users to specify arm64ReproDir by cmake flag
+Subject: [PATCH 3/5] Allow users to specify arm64ReproDir by cmake flag
 
 ---
  cmake/arm64x.cmake | 3 ++-
