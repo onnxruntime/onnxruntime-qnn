@@ -88,7 +88,7 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 |`"backend_path"`|Description|
 |---|-----|
-|'libQnnCpu.so' or 'QnnCpu.dll'|Enable CPU backend. See `backend_type` 'cpu'.|
+|'libQnnCpu.so' or 'QnnCpu.dll'|Enable CPU backend. See `backend_type` 'cpu'. Not shipped in the onnxruntime-qnn release package; obtain the file directly from the QAIRT SDK.|
 |'libQnnHtp.so' or 'QnnHtp.dll'|Enable HTP backend. See `backend_type` 'htp'.|
 |'libQnnGpu.so' or 'QnnGpu.dll'|Enable GPU backend. See `backend_type` 'gpu'.|
 |'libQnnSaver.so' or 'QnnSaver.dll'|Enable Saver backend. See `backend_type` 'saver'.|
@@ -96,6 +96,15 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 **Note:** `backend_path` is an alternative to `backend_type`. At most one of the two should be specified.
 `backend_path` requires a platform-specific path (e.g., `libQnnCpu.so` vs. `QnnCpu.dll`) but also allows one to specify an arbitrary path.
+
+### CPU backend availability (`ORT_QNN_ENABLE_CPU_BACKEND`)
+
+The QNN CPU backend is a reference implementation intended for integration testing, not production inference. Its visibility to the runtime depends on the host architecture:
+
+- **x86_64 hosts**: the CPU backend is always advertised (it doubles as the HTP emulator).
+- **arm64 hosts**: the CPU backend is hidden by default. Set the `ORT_QNN_ENABLE_CPU_BACKEND` environment variable to a non-empty, non-`0` value (e.g., `1`) before the QNN EP is registered / `OrtEnv` is created to opt in.
+
+This only affects automatic EP/backend selection. Explicit `backend_type='cpu'` or `backend_path='...QnnCpu...'` provider options continue to work on both architectures when the corresponding QNN CPU library is available on disk (see note above about packaging).
 
 |`"genie_log_level"`|Description|
 |---|---|
