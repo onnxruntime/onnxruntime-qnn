@@ -19,6 +19,7 @@ data (no header), which is the format qnn-net-run consumes via --input_list.
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -32,7 +33,6 @@ ORT_TYPE_TO_NUMPY = {
     "float": np.float32,
     "double": np.float64,
     "float16": np.float16,
-    "bfloat16": np.float32,
     "int8": np.int8,
     "int16": np.int16,
     "int32": np.int32,
@@ -74,13 +74,15 @@ def add_boundary_outputs(model_path: Path, boundary_names) -> Path:
         if name in existing_value_info:
             model.graph.output.append(existing_value_info[name])
         else:
-            # ponytail: synthesize a minimal ValueInfo when the tensor isn't
-            # in value_info; CPU EP infers the type at run time.
             vi = onnx.helper.make_empty_tensor_value_info(name)
             model.graph.output.append(vi)
     tmp_path = Path(tempfile.mkstemp(suffix=".onnx")[1])
     onnx.save(model, str(tmp_path))
     return tmp_path
+
+
+def sanitize_filename(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
 
 
 def main():
@@ -110,8 +112,13 @@ def main():
         if np_dtype is None:
             sys.exit(f"unsupported input dtype {inp.type!r} for {inp.name!r}")
         arr = np.fromfile(user_inputs[inp.name], dtype=np_dtype)
-        shape = [d if isinstance(d, int) and d > 0 else 1 for d in inp.shape]
-        feeds[inp.name] = arr.reshape(shape)
+        dynamic_dims = [d for d in inp.shape if not (isinstance(d, int) and d > 0)]
+        if dynamic_dims:
+            sys.exit(
+                f"input {inp.name!r} has dynamic shape {inp.shape}; "
+                f"freeze the model (e.g. via onnxruntime.tools.make_dynamic_shape_fixed) before running this helper."
+            )
+        feeds[inp.name] = arr.reshape(inp.shape)
 
     output_names = [o.name for o in sess.get_outputs()]
     outputs = sess.run(output_names, feeds)
@@ -120,6 +127,8 @@ def main():
         name_to_value.setdefault(name, arr)
 
     runtime_dir = bundle_dir / "runtime"
+    quantized_dtypes = {"int8", "uint8", "int16", "uint16", "int4", "uint4", "int2", "uint2"}
+    quantized_mismatch = False
     for p in manifest["partitions"]:
         pdir = runtime_dir / p["name"]
         (pdir / "inputs").mkdir(parents=True, exist_ok=True)
@@ -130,10 +139,21 @@ def main():
                 if v is None:
                     print(f"warn: boundary {kind[:-1]} {t['name']!r} not produced", file=sys.stderr)
                     continue
-                np.ascontiguousarray(v).tofile(pdir / key / f"{t['name']}.raw")
+                fname = sanitize_filename(t["name"]) + ".raw"
+                t["raw_file"] = f"{key}/{fname}"
+                np.ascontiguousarray(v).tofile(pdir / key / fname)
+                if t.get("dtype", "").rstrip("_t") in quantized_dtypes and np.issubdtype(v.dtype, np.floating):
+                    quantized_mismatch = True
 
     modified_model.unlink(missing_ok=True)
     manifest["goldens_source"] = "cpu"
+    if quantized_mismatch:
+        manifest["goldens_domain_mismatch"] = True
+        print(
+            "warn: manifest declares quantized boundary tensors but goldens were captured "
+            "float-domain from CPU EP; quantize them before comparing against on-device DLC I/O.",
+            file=sys.stderr,
+        )
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     print(f"Bundle ready: {bundle_dir}")
@@ -141,4 +161,7 @@ def main():
 
 
 if __name__ == "__main__":
+    assert sanitize_filename("/encoder/layer.0/Add_output_0") == "_encoder_layer.0_Add_output_0"
+    assert sanitize_filename("simple_name") == "simple_name"
+    assert sanitize_filename("a:b\\c") == "a_b_c"
     main()

@@ -5,7 +5,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
+#include <unordered_map>
 
 #include "nlohmann/json.hpp"
 #include "gtest/gtest.h"
@@ -165,6 +167,63 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_MultiPartition) {
     fs::path dlc = tmp.path() / p["dlc_path"].get<std::string>();
     EXPECT_TRUE(fs::exists(dlc)) << "DLC missing for partition " << p["name"];
   }
+}
+
+// Fan-out: QNN-A output is consumed by a CPU op AND directly by QNN-B.
+// edges only records direct QNN→QNN tensor handoffs (not QNN→CPU→QNN chains),
+// so this is the topology that exercises the edge-builder with a non-empty result.
+TEST_F(QnnCPUBackendTests, PartitionDlcBundle_DirectQnnToQnnEdge) {
+  ScopedTempDir tmp;
+  ProviderOptions opts;
+  opts["backend_type"] = "cpu";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["dump_partition_dlc_bundle"] = "1";
+  opts["partition_dlc_bundle_dir"] = tmp.path().string();
+
+  auto build_model = [](ModelTestBuilder& builder) {
+    std::vector<float> data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+    builder.MakeInput<float>("in0", {2, 2}, data);
+    builder.MakeInput<float>("in1", {2, 2}, data);
+    builder.AddNode("add1", "Add", {"in0", "in1"}, {"a"});
+    builder.AddNode("trilu", "Trilu", {"a"}, {"t"});
+    builder.MakeOutput("Y");
+    builder.AddNode("add2", "Add", {"a", "t"}, {"Y"});
+  };
+
+  try {
+    RunQnnModelTest(build_model, opts, 14, ExpectedEPNodeAssignment::Some);
+  } catch (const std::exception&) {
+  }
+
+  fs::path manifest_path = tmp.path() / "manifest.json";
+  ASSERT_TRUE(fs::exists(manifest_path));
+  std::ifstream ifs(manifest_path);
+  auto j = nlohmann::json::parse(ifs, nullptr, false);
+  ASSERT_FALSE(j.is_discarded());
+  ASSERT_GE(j["partitions"].size(), 2u) << "Expected at least 2 QNN partitions";
+  ASSERT_TRUE(j.contains("edges"));
+  ASSERT_GE(j["edges"].size(), 1u) << "Expected a direct QNN→QNN edge for tensor 'a'";
+
+  std::unordered_map<std::string, std::set<std::string>> partition_outputs;
+  std::unordered_map<std::string, std::set<std::string>> partition_inputs;
+  for (const auto& p : j["partitions"]) {
+    const std::string name = p["name"].get<std::string>();
+    for (const auto& t : p["outputs"]) partition_outputs[name].insert(t["name"].get<std::string>());
+    for (const auto& t : p["inputs"]) partition_inputs[name].insert(t["name"].get<std::string>());
+  }
+  bool found_a_edge = false;
+  for (const auto& e : j["edges"]) {
+    const auto producer = e["producer_partition"].get<std::string>();
+    const auto consumer = e["consumer_partition"].get<std::string>();
+    const auto tensor = e["tensor_name"].get<std::string>();
+    EXPECT_NE(producer, consumer) << "edge endpoints must be distinct partitions";
+    EXPECT_TRUE(partition_outputs[producer].count(tensor))
+        << "edge tensor '" << tensor << "' must be an output of producer '" << producer << "'";
+    EXPECT_TRUE(partition_inputs[consumer].count(tensor))
+        << "edge tensor '" << tensor << "' must be an input of consumer '" << consumer << "'";
+    if (tensor == "a") found_a_edge = true;
+  }
+  EXPECT_TRUE(found_a_edge) << "Expected a direct edge carrying tensor 'a' between the two QNN Add partitions";
 }
 
 }  // namespace test

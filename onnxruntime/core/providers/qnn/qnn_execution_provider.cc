@@ -23,6 +23,7 @@
 #endif
 
 #include "HTP/QnnHtpGraph.h"
+#include "nlohmann/json.hpp"
 
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -528,6 +529,17 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() {
   }
 
   if (dump_qnn_ir_dlc) {
+    bool bundle_flag = ParseBoolOption(ort_api,
+                                       session_options_,
+                                       FormatEPConfigKey("dump_partition_dlc_bundle"),
+                                       false,
+                                       logger_);
+    if (bundle_flag) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "dump_qnn_ir_dlc and dump_partition_dlc_bundle are both set; "
+                  "dump_qnn_ir_dlc takes precedence and the partition bundle will not be produced.");
+    }
     return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path), std::move(qnn_ir_dlc_dir));
   }
 
@@ -554,7 +566,9 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() {
         std::filesystem::path(partition_dlc_bundle_dir_) / "partitions";
     return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path),
                                               partitions_dir.string());
-  } else if (!partition_dlc_bundle_dir_.empty()) {
+  }
+
+  if (!partition_dlc_bundle_dir_.empty()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
                 "Provided partition_dlc_bundle_dir, but did not set dump_partition_dlc_bundle to 1.");
@@ -2267,6 +2281,13 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 
     if (dump_partition_dlc_bundle_) {
       PartitionBundleRecord record;
+      auto safe_dtype = [](int32_t data_type) -> std::string {
+        try {
+          return std::string(qnn::utils::GetElementNameByType(static_cast<ONNXTensorElementDataType>(data_type)));
+        } catch (...) {
+          return "elem_type_" + std::to_string(data_type);
+        }
+      };
       record.name = fused_node_name;
       const auto& inputs_info = qnn_model->GetInputsInfo();
       for (const auto& input_name : qnn_model->GetInputNames()) {
@@ -2274,8 +2295,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
         PartitionBundleTensor t;
         t.name = input_name;
         if (it != inputs_info.end()) {
-          t.dtype = std::string(qnn::utils::GetElementNameByType(
-              static_cast<ONNXTensorElementDataType>(it->second.data_type_)));
+          t.dtype = safe_dtype(it->second.data_type_);
           t.shape = it->second.shape_;
         }
         record.inputs.push_back(std::move(t));
@@ -2286,8 +2306,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
         PartitionBundleTensor t;
         t.name = output_name;
         if (it != outputs_info.end()) {
-          t.dtype = std::string(qnn::utils::GetElementNameByType(
-              static_cast<ONNXTensorElementDataType>(it->second.data_type_)));
+          t.dtype = safe_dtype(it->second.data_type_);
           t.shape = it->second.shape_;
         }
         record.outputs.push_back(std::move(t));
@@ -2837,9 +2856,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       p["name"] = rec.name;
       p["dlc_path"] = (fs::path("partitions") / (rec.name + ".dlc")).generic_string();
       p["inputs"] = nlohmann::json::array();
-      for (const auto& in : rec.inputs) p["inputs"].push_back(tensor_to_json(in));
+      for (const auto& in : rec.inputs) {
+        p["inputs"].push_back(tensor_to_json(in));
+      }
       p["outputs"] = nlohmann::json::array();
-      for (const auto& out : rec.outputs) p["outputs"].push_back(tensor_to_json(out));
+      for (const auto& out : rec.outputs) {
+        p["outputs"].push_back(tensor_to_json(out));
+      }
       manifest["partitions"].push_back(std::move(p));
       for (const auto& out : rec.outputs) {
         producer_of[out.name] = rec.name;
