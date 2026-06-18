@@ -16,7 +16,7 @@ on:
         type: string
         default: '3.10'
       nightly_coverage:
-        description: "Set to true on nightly runs to update the per-file coverage Excel in Artifactory"
+        description: "Set to true to upload the per-file coverage Excel to Artifactory"
         type: boolean
         default: false
   workflow_dispatch:
@@ -26,7 +26,7 @@ on:
         type: string
         default: '3.10'
       nightly_coverage:
-        description: "Set to true to test the nightly Artifactory upload path"
+        description: "Set to true to upload the per-file coverage Excel to Artifactory"
         type: boolean
         default: false
 
