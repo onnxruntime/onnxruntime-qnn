@@ -410,13 +410,13 @@ namespace utils {
 // partition, or none. This prevents BFS from splitting fusion members across partition boundaries when an
 // unsupported op sits topologically between them.
 struct QnnNodeGroupInfo {
-  size_t group_id = 0;                                        // Dense index into the groups vector.
-  const OrtNodeUnit* target_node_unit = nullptr;              // From IQnnNodeGroup::GetTargetNodeUnit(); nullptr if defunct.
-  std::vector<const OrtNodeUnit*> member_node_units;          // All member NodeUnits (includes the target).
-  std::unordered_set<const OrtNodeUnit*> member_set;          // O(1) membership test; mirrors member_node_units.
-  bool is_supported = false;                                  // Cached IQnnNodeGroup::IsSupported() result.
-  bool is_defunct = false;                                    // Set when the group is demoted; BFS skips defunct entries.
-  size_t external_in_degree = 0;                              // Count of input edges from NodeUnits NOT in member_set.
+  size_t group_id = 0;                                // Dense index into the groups vector.
+  const OrtNodeUnit* target_node_unit = nullptr;      // From IQnnNodeGroup::GetTargetNodeUnit(); nullptr if defunct.
+  std::vector<const OrtNodeUnit*> member_node_units;  // All member NodeUnits (includes the target).
+  std::unordered_set<const OrtNodeUnit*> member_set;  // O(1) membership test; mirrors member_node_units.
+  bool is_supported = false;                          // Cached IQnnNodeGroup::IsSupported() result.
+  bool is_defunct = false;                            // Set when the group is demoted; BFS skips defunct entries.
+  size_t external_in_degree = 0;                      // Count of input edges from NodeUnits NOT in member_set.
 };
 
 // Walks each member's OrtNode inputs and counts edges whose producer NodeUnit is not in the group's member_set.

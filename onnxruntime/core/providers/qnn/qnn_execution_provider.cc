@@ -1411,9 +1411,9 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
           }
           if (dry_in_degree[dgid] > 0) {
             --dry_in_degree[dgid];
-          }
-          if (dry_in_degree[dgid] == 0) {
-            q.push_back(dgid);
+            if (dry_in_degree[dgid] == 0) {
+              q.push_back(dgid);
+            }
           }
         }
       }

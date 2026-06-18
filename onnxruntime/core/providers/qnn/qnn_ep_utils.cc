@@ -2018,9 +2018,9 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
         auto& d_in = group_in_degree[downstream_gid];
         if (d_in > 0) {
           --d_in;
-        }
-        if (d_in == 0) {
-          queue_current.push_back(downstream_gid);
+          if (d_in == 0) {
+            queue_current.push_back(downstream_gid);
+          }
         }
       }
     }
