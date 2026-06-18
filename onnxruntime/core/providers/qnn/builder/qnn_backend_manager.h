@@ -404,7 +404,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 #endif
 
-
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
   Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
                                      Qnn_LogHandle_t& log_handle,
