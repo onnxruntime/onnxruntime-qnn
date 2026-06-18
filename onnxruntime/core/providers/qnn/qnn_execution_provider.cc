@@ -528,21 +528,6 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() {
     }
   }
 
-  if (dump_qnn_ir_dlc) {
-    bool bundle_flag = ParseBoolOption(ort_api,
-                                       session_options_,
-                                       FormatEPConfigKey("dump_partition_dlc_bundle"),
-                                       false,
-                                       logger_);
-    if (bundle_flag) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  "dump_qnn_ir_dlc and dump_partition_dlc_bundle are both set; "
-                  "dump_qnn_ir_dlc takes precedence and the partition bundle will not be produced.");
-    }
-    return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path), std::move(qnn_ir_dlc_dir));
-  }
-
   static const std::string DUMP_PARTITION_DLC_BUNDLE = "dump_partition_dlc_bundle";
   dump_partition_dlc_bundle_ = ParseBoolOption(ort_api,
                                                session_options_,
@@ -556,6 +541,16 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() {
                                  FormatEPConfigKey(PARTITION_DLC_BUNDLE_DIR),
                                  "",
                                  partition_dlc_bundle_dir_);
+
+  if (dump_qnn_ir_dlc) {
+    if (dump_partition_dlc_bundle_) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "dump_qnn_ir_dlc and dump_partition_dlc_bundle are both set; "
+                  "dump_qnn_ir_dlc takes precedence and the partition bundle will not be produced.");
+    }
+    return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path), std::move(qnn_ir_dlc_dir));
+  }
 
   if (dump_partition_dlc_bundle_) {
     if (partition_dlc_bundle_dir_.empty()) {

@@ -208,8 +208,12 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_DirectQnnToQnnEdge) {
   std::unordered_map<std::string, std::set<std::string>> partition_inputs;
   for (const auto& p : j["partitions"]) {
     const std::string name = p["name"].get<std::string>();
-    for (const auto& t : p["outputs"]) partition_outputs[name].insert(t["name"].get<std::string>());
-    for (const auto& t : p["inputs"]) partition_inputs[name].insert(t["name"].get<std::string>());
+    for (const auto& t : p["outputs"]) {
+      partition_outputs[name].insert(t["name"].get<std::string>());
+    }
+    for (const auto& t : p["inputs"]) {
+      partition_inputs[name].insert(t["name"].get<std::string>());
+    }
   }
   bool found_a_edge = false;
   for (const auto& e : j["edges"]) {
@@ -221,7 +225,9 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_DirectQnnToQnnEdge) {
         << "edge tensor '" << tensor << "' must be an output of producer '" << producer << "'";
     EXPECT_TRUE(partition_inputs[consumer].count(tensor))
         << "edge tensor '" << tensor << "' must be an input of consumer '" << consumer << "'";
-    if (tensor == "a") found_a_edge = true;
+    if (tensor == "a") {
+      found_a_edge = true;
+    }
   }
   EXPECT_TRUE(found_a_edge) << "Expected a direct edge carrying tensor 'a' between the two QNN Add partitions";
 }

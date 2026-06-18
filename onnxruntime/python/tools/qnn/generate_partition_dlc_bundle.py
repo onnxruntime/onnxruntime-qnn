@@ -112,8 +112,7 @@ def main():
         if np_dtype is None:
             sys.exit(f"unsupported input dtype {inp.type!r} for {inp.name!r}")
         arr = np.fromfile(user_inputs[inp.name], dtype=np_dtype)
-        dynamic_dims = [d for d in inp.shape if not (isinstance(d, int) and d > 0)]
-        if dynamic_dims:
+        if any(not (isinstance(d, int) and d > 0) for d in inp.shape):
             sys.exit(
                 f"input {inp.name!r} has dynamic shape {inp.shape}; "
                 f"freeze the model (e.g. via onnxruntime.tools.make_dynamic_shape_fixed) before running this helper."
@@ -142,7 +141,7 @@ def main():
                 fname = sanitize_filename(t["name"]) + ".raw"
                 t["raw_file"] = f"{key}/{fname}"
                 np.ascontiguousarray(v).tofile(pdir / key / fname)
-                if t.get("dtype", "").rstrip("_t") in quantized_dtypes and np.issubdtype(v.dtype, np.floating):
+                if t.get("dtype", "").removesuffix("_t") in quantized_dtypes and np.issubdtype(v.dtype, np.floating):
                     quantized_mismatch = True
 
     modified_model.unlink(missing_ok=True)
