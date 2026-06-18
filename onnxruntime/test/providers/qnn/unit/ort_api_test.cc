@@ -17,6 +17,11 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+// Platform coverage:
+//   Linux x86-64 (coverage build): all sections.
+//   Windows: GetSessionConfigEntryOrDefault, OrtNodeAttrHelper (not-found),
+//            and OrtNodeUnit stub series only.
+
 #ifndef _WIN32
 #include <unistd.h>  // mkstemp, unlink
 #endif
@@ -180,6 +185,9 @@ TEST(QnnUnit_OrtApiTest, OrtLoadUnloadDynamicLibrary_ValidLib_Succeeds) {
 }
 
 TEST(QnnUnit_OrtApiTest, OrtUnloadDynamicLibrary_NullHandle_Fails) {
+  // ort_api.cc explicitly null-checks the handle before calling dlclose()
+  // (see OrtUnloadDynamicLibrary), so this assertion is intentional and
+  // platform-safe regardless of dlclose(NULL) behavior on the current libc.
   auto status = OrtUnloadDynamicLibrary(nullptr);
   EXPECT_FALSE(status.IsOK());
 }
