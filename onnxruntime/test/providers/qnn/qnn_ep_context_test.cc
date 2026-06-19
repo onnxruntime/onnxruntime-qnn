@@ -343,6 +343,7 @@ static void CheckEpContextNodeCounts(void* model_buffer, size_t model_buffer_siz
 //   - Recreates session with the compiled model.
 
 TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_disable_compile_input.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./compileapi_disable_compile_output.onnx");
   std::filesystem::remove(input_model_file);
@@ -408,6 +409,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
 //   - input model file
 //   - output model file
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_inputmodelfrompath.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./qnn_context_binary_multi_partition_test.onnx");
   std::filesystem::remove(input_model_file);
@@ -457,6 +459,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 //   - EPContext nodes in output model use embedded binary blobs.
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embedded) {
   // Create a test model and serialize it to a buffer.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   TestModel test_model;
   CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
@@ -502,6 +505,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embe
 //   - input model from file
 //   - save output model to a buffer
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_inputmodelfrompath.onnx");
   std::filesystem::remove(input_model_file);
 
@@ -557,6 +561,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 //   - test enabling AND disabling embed mode for context binary in EPContext node attributes
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInBuffers) {
   // Create a test model and serialize it to a buffer.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   TestModel test_model;
   CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
@@ -661,6 +666,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
 //   - save initializers (used by CPU EP) to external file.
 //   - EPContext nodes in output model use embedded binary blobs.
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_OutputInitializersFile) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_outputmodelbuffer_initializers.onnx");
   const ORTCHAR_T* output_initializers_file = ORT_TSTR("./compileapi_initializers.bin");
   std::filesystem::remove(input_model_file);
@@ -721,6 +727,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Outpu
 // Test that the explicit compile API can be configured to return an error if the output model does not
 // have EPContext nodes.
 TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfNoCompiledNodes) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("should_not_be_generated.onnx");
   std::filesystem::remove(output_model_file);
@@ -744,6 +751,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfNoCompiledNodes) {
 // Test that the explicit compile API can be configured to return an error if the output model already exists and
 // would have been overwritten.
 TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx_.onnx");
   std::filesystem::remove(output_model_file);
@@ -791,6 +799,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists) {
 // Tests that the explicit compile API returns an error if user tries to compile a compiled model.
 // This scenario is silently ignored in the original compilation approach with session option configs.
 TEST_F(QnnHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx_.onnx");
   std::filesystem::remove(output_model_file);
@@ -843,6 +852,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
 // Test that ORT does not generate an output model if the model does not contain EPContext nodes.
 // Also, ORT should not return an error.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_NoCompiledNodesDoesntGenerateOutput) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const char* output_model_file = "should_not_be_generated.onnx";
 
@@ -860,6 +870,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_NoCompiledNo
 // Test that ORT does not generate an output model if the input model is already compiled.
 // Also, ORT should not return an error.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompilingOfCompiledModel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const std::string output_model_file = "mul_1_ctx.onnx";
   std::filesystem::remove(output_model_file);
@@ -919,12 +930,14 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
 // Test that models with 1 non-quantized FusedGemm node and 1 quantized Add node can still generate the context binary
 // The generated Onnx model has 1 FusedGemm node and 1 EPContext node
 TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport1) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   QnnContextBinaryMultiPartitionTestBody(true);
 }
 
 // Test that models with 2 non-quantized FusedGemm nodes and 2 quantized Add nodes can still generate the context binary
 // The generated Onnx model has 2 FusedGemm nodes and 1 EPContext nodes
 TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport2) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   QnnContextBinaryMultiPartitionTestBody(false);
 }
 
@@ -1553,6 +1566,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
 // 1st run will generate the Qnn context cache onnx file
 // 2nd run directly loads and run from Qnn context cache model
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1608,6 +1622,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // 2nd run directly loads and run from Onnx skeleton file + Qnn context cache binary file
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1696,6 +1711,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // Then delete the context bin file to make the 2nd sesssion.Initialize() return the status with code INVALID_GRAPH
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1904,6 +1920,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryFileEmptyStringTest) {
 // 1st run will generate the Qnn context cache onnx file
 // 2nd run directly loads and run from Qnn context cache model
 TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1955,6 +1972,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
 // This is to support backward compatible for the models generated before the PR that
 // make context generation support multi-partition
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphNameInCtx) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2037,6 +2055,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
 
 // Model has 2 EPContext nodes, both with main_context=1 and embedded context binary
 TEST_F(QnnHTPBackendTests, QnnMultiContextEmbeded) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2052,6 +2071,7 @@ TEST_F(QnnHTPBackendTests, QnnMultiContextEmbeded) {
 
 // Model has 2 EPContext nodes, both with main_context=1 and external context binary
 TEST_F(QnnHTPBackendTests, QnnMultiContextExternal) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2171,6 +2191,8 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   // Create QDQ models
   std::vector<std::string> onnx_model_paths{"./weight_share1.onnx", "./weight_share2.onnx"};
@@ -2408,6 +2430,8 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   // Create QDQ models
   std::vector<std::string> onnx_model_paths{"./weight_share1.onnx", "./weight_share2.onnx"};
   // cleanup in case some failure test doesn't remove them
@@ -2531,6 +2555,8 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   // Create QDQ models
   std::vector<std::string> onnx_model_paths{"./weight_share1.onnx", "./weight_share2.onnx"};
   // cleanup in case some failure test doesn't remove them
@@ -2649,6 +2675,8 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   Ort::SessionOptions so;
   so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
@@ -3150,7 +3178,171 @@ TEST_F(QnnHTPBackendTests, CompileApi_InitializerHandler_ReuseExternalInitialize
   ASSERT_EQ(num_reused_ext_initializers, 2);  // Reused external conv weight and bias.
 }
 
-#ifdef _WIN32
+// ============================================================
+// prepare_only tests
+// ============================================================
+
+// Helper: build session options with prepare_only enabled.
+static void SetPrepareOnlyOptions(Ort::SessionOptions& so,
+                                  const std::string& ctx_path,
+                                  bool explicit_context_enable = true) {
+  if (explicit_context_enable) {
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  }
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_only", "1");
+}
+
+// Test 1: prepare_only writes ctx.onnx and frees backend (session create succeeds).
+TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_only_ctx_written_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetPrepareOnlyOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  {
+    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+    EXPECT_TRUE(std::filesystem::exists(ctx_path));
+  }
+
+  CleanUpCtxFile(ctx_path);
+}
+
+// Test 2: prepare_only without explicit ep.context_enable gets disabled with a warning — session still creates.
+TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_only_auto_ctx_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  // Intentionally omit kOrtSessionOptionEpContextEnable — prepare_only_ should be disabled with warning.
+  SetPrepareOnlyOptions(so, ctx_path, /*explicit_context_enable=*/false);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  // since ep.context_enable was not set. Session falls back to normal (non-prepare_only) mode.
+  ORT_TRY {
+    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+    SUCCEED();
+  }
+  ORT_CATCH(const std::exception& e) {
+    ORT_HANDLE_EXCEPTION([&e]() {
+      FAIL() << "Session creation should not throw: " << e.what();
+    });
+  }
+}
+
+// Test 3: Session.Run() on a prepare_only session returns EP_FAIL with the expected message.
+TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_only_run_error_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetPrepareOnlyOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ASSERT_TRUE(std::filesystem::exists(ctx_path));
+
+  // Get actual input/output names from the session — BuildGraphWithQAndNonQ uses
+  // auto-generated output names so we cannot hardcode them.
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
+  auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
+
+  std::vector<int64_t> input_dim{200, 200};
+  std::vector<float> input_data(200 * 200, 0.0f);
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                input_dim.data(), input_dim.size()));
+  const char* input_names[] = {input_name_ptr.get()};
+  const char* output_names[] = {output_name_ptr.get()};
+
+  ORT_TRY {
+    session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1);
+    FAIL() << "Expected Session.Run() to fail in prepare_only mode";
+  }
+  ORT_CATCH(const std::exception& e) {
+    ORT_HANDLE_EXCEPTION([&e]() {
+      ASSERT_THAT(e.what(), testing::HasSubstr("prepare_only mode"));
+    });
+  }
+
+  CleanUpCtxFile(ctx_path);
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
 // Utility class to help create enviornment using HNRD for testing.
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
 class HnrdTestHandle {
@@ -3162,14 +3354,18 @@ class HnrdTestHandle {
 
     std::filesystem::create_directory(temp_dir_);
     for (const std::string& lib : GetRelatedLibs()) {
-      std::filesystem::rename(lib, temp_dir_ / lib);
+      if (std::filesystem::exists(lib)) {
+        std::filesystem::rename(lib, temp_dir_ / lib);
+      }
     }
   }
 
   ~HnrdTestHandle() {
     // Move libraries back from temporary directory for later testcases.
     for (const std::string& lib : GetRelatedLibs()) {
-      std::filesystem::rename(temp_dir_ / lib, lib);
+      if (std::filesystem::exists(temp_dir_ / lib)) {
+        std::filesystem::rename(temp_dir_ / lib, lib);
+      }
     }
 
     std::filesystem::remove(temp_dir_);
@@ -3177,27 +3373,28 @@ class HnrdTestHandle {
 
  private:
   std::vector<std::string> GetRelatedLibs() {
+#ifdef _WIN32
     return {"QnnHtpPrepare.dll",
             "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "QnnHtpV" + std::to_string(htp_arch_) + "Stub.dll"};
+#else
+    return {"libQnnHtpPrepare.so",
+            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+            "libQnnHtpV" + std::to_string(htp_arch_) + "Stub.so"};
+#endif
   }
 
   uint32_t htp_arch_;
   std::filesystem::path temp_dir_;
 };
 
+#if defined(_WIN32) && defined(_M_ARM64)
 TEST_F(QnnHTPBackendTests, ModelCompatibility_SelfValidate_CbTradRtTrad) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   std::filesystem::path output_model_file("mul_1_ctx.onnx");
   std::filesystem::remove(output_model_file);
 
-  ProviderOptions qnn_options = {{"backend_type", "htp"}};
-
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  // By default, 8 is used, which will impact time to run all
-  // unit tests due to overhead of thread creation/destruction
-  qnn_options["num_graph_prepare_threads"] = "1";
-#endif
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}};
 
   {
     Ort::SessionOptions so;
@@ -3232,13 +3429,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbTradRtHnrd
   std::filesystem::path output_model_file("mul_1_ctx.onnx");
   std::filesystem::remove(output_model_file);
 
-  ProviderOptions qnn_options = {{"backend_type", "htp"}};
-
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  // By default, 8 is used, which will impact time to run all
-  // unit tests due to overhead of thread creation/destruction
-  qnn_options["num_graph_prepare_threads"] = "1";
-#endif
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}};
 
   {
     Ort::SessionOptions so;
@@ -3286,13 +3477,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtTrad
   std::filesystem::path output_model_file("mul_1_ctx.onnx");
   std::filesystem::remove(output_model_file);
 
-  ProviderOptions qnn_options = {{"backend_type", "htp"}};
-
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  // By default, 8 is used, which will impact time to run all
-  // unit tests due to overhead of thread creation/destruction
-  qnn_options["num_graph_prepare_threads"] = "1";
-#endif
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}};
 
   QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
   auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
@@ -3341,13 +3526,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtHnrd
   std::filesystem::path output_model_file("mul_1_ctx.onnx");
   std::filesystem::remove(output_model_file);
 
-  ProviderOptions qnn_options = {{"backend_type", "htp"}};
-
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  // By default, 8 is used, which will impact time to run all
-  // unit tests due to overhead of thread creation/destruction
-  qnn_options["num_graph_prepare_threads"] = "1";
-#endif
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}};
 
   QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
   auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
@@ -3376,6 +3555,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtHnrd
 
   std::filesystem::remove(output_model_file);
 }
+#endif  // defined(_WIN32) && defined(_M_ARM64)
 
 struct CompatibilityTestInfo {
   uint32_t backend_id = QNN_BACKEND_ID_HTP;
@@ -3401,9 +3581,7 @@ struct CompatibilityTestInfo {
             std::to_string(backend_api_version_major) + "." +
             std::to_string(backend_api_version_minor) + "." +
             std::to_string(backend_api_version_patch) + ":" +
-            std::to_string(context_blob_version_major) + "." +
-            std::to_string(context_blob_version_minor) + "." +
-            std::to_string(context_blob_version_patch) + ":" +
+            "0.0.0:" +  // Context blob version is deprecated.
             std::to_string(htp_arch) + ":" +
             (is_htp_usr_drv ? "1" : "0"));
   }
@@ -3422,13 +3600,21 @@ struct MallocAllocator : OrtAllocator {
 };
 
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
+#if defined(__aarch64__) || defined(_M_ARM64)
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  const uint32_t htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
+#else
+  const uint32_t htp_arch = 73;
+#endif
 
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
-  std::filesystem::path output_model_file("mul_1_ctx.onnx");
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
   std::filesystem::remove(output_model_file);
 
   ProviderOptions qnn_options = {{"backend_type", "htp"}};
+  qnn_options["htp_arch"] = std::to_string(htp_arch);
+
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // By default, 8 is used, which will impact time to run all
@@ -3440,7 +3626,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
     Ort::SessionOptions so;
     so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
     so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
-    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
@@ -3454,30 +3640,38 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, output_model_file.wstring().c_str(), so);
+    Ort::Session session(*ort_env, output_model_file, so);
 
     // Extract generated compatibility info from model metadata.
     OrtModelMetadata* model_metadata = nullptr;
-    Ort::GetApi().SessionGetModelMetadata(session, &model_metadata);
+    ASSERT_EQ(nullptr, Ort::GetApi().SessionGetModelMetadata(session, &model_metadata));
 
     MallocAllocator allocator;
     std::string key = std::string(kOrtModelMetadata_EpCompatibilityInfoPrefix) + onnxruntime::kQnnExecutionProvider;
     char* val = nullptr;
-    Ort::GetApi().ModelMetadataLookupCustomMetadataMap(model_metadata, &allocator, key.c_str(), &val);
+    ASSERT_EQ(nullptr,
+              Ort::GetApi().ModelMetadataLookupCustomMetadataMap(model_metadata, &allocator, key.c_str(), &val));
 
     CompatibilityTestInfo expected_info;
-    expected_info.htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
+    expected_info.htp_arch = htp_arch;
     ASSERT_TRUE(val != nullptr && expected_info.ToString() == val);
+    free(val);
+
+    Ort::GetApi().ReleaseModelMetadata(model_metadata);
   }
 
   std::filesystem::remove(output_model_file);
 }
 
+#if defined(_WIN32) && defined(_M_ARM64)
 static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_info,
                                               const OrtCompiledModelCompatibility expected_compatibility) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}});
+  RegisterQnnEpLibrary(registered_ep_device,
+                       so,
+                       onnxruntime::kQnnExecutionProvider,
+                       {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}});
 
   OrtEpFactory* ep_factory = registered_ep_device->GetMutableFactory();
   OrtEp* ep = nullptr;
@@ -3517,6 +3711,16 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbOldApiVersion) {
+  CompatibilityTestInfo test_info;
+  test_info.backend_api_version_major = 0;
+  test_info.backend_api_version_minor = 0;
+  test_info.backend_api_version_patch = 0;
+  test_info.htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
+}
+
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
   CompatibilityTestInfo test_info;
   test_info.backend_api_version_major = 9999;
@@ -3526,13 +3730,18 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiV
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
-  CompatibilityTestInfo test_info;
-  test_info.context_blob_version_major = 9999;
-  test_info.context_blob_version_minor = 9999;
-  test_info.context_blob_version_patch = 9999;
+// TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtHnrd_CbOldSdkVersion) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
 
-  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
+  QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
+  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
+
+  CompatibilityTestInfo test_info;
+  test_info.sdk_build_id = "v0.0.0.0";
+  test_info.htp_arch = static_cast<uint32_t>(htp_arch);
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
 // TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
@@ -3549,18 +3758,18 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtHnrd_
 }
 
 // TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtHnrd_CbNewBlobVersion) {
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_CbOldSdkVersion) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
 
   QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
   auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
 
   CompatibilityTestInfo test_info;
-  test_info.context_blob_version_major = 9999;
-  test_info.context_blob_version_minor = 9999;
-  test_info.context_blob_version_patch = 9999;
+  test_info.sdk_build_id = "v0.0.0.0";
+  test_info.htp_arch = static_cast<uint32_t>(htp_arch);
+  test_info.is_htp_usr_drv = true;
 
-  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
 // TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
@@ -3572,22 +3781,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_
 
   CompatibilityTestInfo test_info;
   test_info.sdk_build_id = "v9999.9999.9999.9999";
-  test_info.is_htp_usr_drv = true;
-
-  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
-}
-
-// TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_CbNewBlobVersion) {
-  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
-
-  QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
-  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
-
-  CompatibilityTestInfo test_info;
-  test_info.context_blob_version_major = 9999;
-  test_info.context_blob_version_minor = 9999;
-  test_info.context_blob_version_patch = 9999;
   test_info.is_htp_usr_drv = true;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
@@ -3606,9 +3799,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbNewHtpArch) {
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
-#endif  // _WIN32
-
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(_WIN32) && defined(_M_ARM64)
 
 }  // namespace test
 }  // namespace onnxruntime

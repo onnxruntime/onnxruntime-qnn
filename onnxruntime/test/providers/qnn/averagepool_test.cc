@@ -275,9 +275,16 @@ TEST_F(QnnHTPBackendTests, AveragePool1DFusedQnnNodePresent) {
   ProviderOptions options;
   options["backend_type"] = "htp";
 
-  std::function<void(const Graph&)> check_num_nodes = [](const Graph& graph) {
-    int number_of_nodes = graph.NumberOfNodes();
-    EXPECT_EQ(number_of_nodes, 1) << "Expected 1 fused QNN node for AveragePool rank-3 input.";
+  std::function<void(const Ort::Session&)> check_num_nodes = [](const Ort::Session& session) {
+    // The Reshape -> Pool -> Reshape gets fused to a single QNN node, so there should be
+    // exactly 1 QNN EP subgraph.
+    size_t num_qnn_subgraphs = 0;
+    for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+      if (subgraph.GetEpName() == kQnnExecutionProvider) {
+        num_qnn_subgraphs++;
+      }
+    }
+    EXPECT_EQ(num_qnn_subgraphs, 1u) << "Expected 1 fused QNN node for AveragePool rank-3 input.";
   };
 
   RunQnnModelTest(build_test_case,

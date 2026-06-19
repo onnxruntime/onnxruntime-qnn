@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. -->
+<!-- SPDX-License-Identifier: MIT -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>{{groupId}}</groupId>
+  <artifactId>{{artifactId}}</artifactId>
+  <version>{{version}}</version>
+  <packaging>pom</packaging>
+  <name>{{artifactId}}</name>
+  <description>{{artifactId}}</description>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>net.nicoulaj.maven.plugins</groupId>
+        <artifactId>checksum-maven-plugin</artifactId>
+        <version>1.10</version>
+        <executions>
+          <execution>
+            <id>checksum-maven-plugin-files</id>
+            <phase>package</phase>
+            <goals>
+              <goal>files</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <fileSets>
+            <fileSet>
+              <directory>${project.basedir}/files</directory>
+              <includes>
+                <include>*.aar</include>
+                <include>*.pom</include>
+                <include>*.jar</include>
+              </includes>
+            </fileSet>
+          </fileSets>
+          <csvSummary>false</csvSummary>
+          <generatePom>false</generatePom>
+          <algorithms>
+            <algorithm>SHA-1</algorithm>
+            <algorithm>MD5</algorithm>
+          </algorithms>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

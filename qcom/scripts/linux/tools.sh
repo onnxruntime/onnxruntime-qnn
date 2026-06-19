@@ -44,6 +44,13 @@ function get_cmake_bindir() {
     get_package_bindir cmake_$(get_host_platform)
 }
 
+#
+# Get the directory containing Maven binaries, installing them if necessary.
+#
+function get_maven_bindir() {
+    get_package_bindir maven_$(get_host_platform)
+}
+
 function get_host_platform() {
     case `uname` in
         Darwin)

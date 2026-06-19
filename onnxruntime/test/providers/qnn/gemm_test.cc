@@ -45,7 +45,7 @@ TEST_F(QnnCPUBackendTests, Gemm_NonDefaultAlphaBeta_Unsupported) {
                      {test::MakeAttribute("alpha", 1.5f)},
                      ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
 
-  // Check that beta != 1.0f is not supported.
+  // Check that non-zero, non-default beta is not supported.
   RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
                       TestInputDef<float>({2, 4}, false, -10.0f, 10.0f),
                       TestInputDef<float>({1, 4}, false, -1.0f, 1.0f)},
@@ -93,6 +93,18 @@ TEST_F(QnnCPUBackendTests, Gemm_Static_B_And_Bias) {
                       TestInputDef<float>({6, 4}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
                      {},
+                     ExpectedEPNodeAssignment::All);
+}
+
+// Test Gemm with beta=0.0: bias is present but must be ignored.
+TEST_F(QnnCPUBackendTests, Gemm_ZeroBeta_Static_B_And_Bias) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
+                      TestInputDef<float>({6, 4}, true, input_b_data),
+                      TestInputDef<float>({1, 4}, true, input_c_data)},
+                     {test::MakeAttribute("beta", 0.0f)},
                      ExpectedEPNodeAssignment::All);
 }
 
@@ -448,6 +460,18 @@ TEST_F(QnnHTPBackendTests, Gemm_Static_B_And_Bias) {
                                          TestInputDef<float>({6, 4}, true, input_b_data),
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
                                         {},
+                                        ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ Gemm with beta=0.0: bias is present but must be ignored.
+TEST_F(QnnHTPBackendTests, Gemm_ZeroBeta_Static_B_And_Bias_U8) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 6}, false, input_a_data),
+                                         TestInputDef<float>({6, 4}, true, input_b_data),
+                                         TestInputDef<float>({1, 4}, true, input_c_data)},
+                                        {test::MakeAttribute("beta", 0.0f)},
                                         ExpectedEPNodeAssignment::All);
 }
 

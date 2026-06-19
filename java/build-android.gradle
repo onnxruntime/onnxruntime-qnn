@@ -107,6 +107,7 @@ if (aarPath != null || qnnEpJniLibsDir != null) {
 						developer {
 							id = 'onnxruntime-qnn'
 							name = 'ONNX Runtime QNN'
+							email = 'onnxruntime-qnn@qti.qualcomm.com'
 						}
 					}
 				}

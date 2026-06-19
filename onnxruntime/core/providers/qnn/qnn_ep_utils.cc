@@ -6,6 +6,9 @@
 #include <iostream>
 #include <string>
 
+#include "core/providers/qnn/common/inlined_containers.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
+
 namespace onnxruntime {
 namespace QDQ {
 
