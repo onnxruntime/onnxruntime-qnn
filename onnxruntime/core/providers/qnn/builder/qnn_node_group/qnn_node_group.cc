@@ -138,7 +138,6 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
       starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
-      starting_node_unit.OpType() != "Reciprocal" &&
       starting_node_unit.OpType() != "Reshape") {
     return nullptr;
   }
