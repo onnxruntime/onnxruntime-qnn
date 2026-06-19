@@ -22,14 +22,8 @@ Timer::~Timer() { this->DeInitialize(); }
 void Timer::BkgTimer() {
   {
     std::unique_lock<std::mutex> lk(mtx_);
-    try {
-      thread_status_ = threadState::IDLE;
-      cv_.notify_all();
-    } catch (const std::system_error& e) {
-      ORT_UNUSED_PARAMETER(e);
-      thread_status_ = threadState::FAILED;
-      cv_.notify_all();
-    }
+    thread_status_ = threadState::IDLE;
+    cv_.notify_all();
   }
   while (true) {
     std::unique_lock<std::mutex> lk(mtx_);
@@ -73,11 +67,14 @@ bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg)
   std::unique_lock<std::mutex> lk(mtx_);
   timeout_arg_ = callbackArg;
   timeout_fn_ = callbackFn;
-  bkg_thread_ = std::thread(&Timer::BkgTimer, this);
-  cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE || thread_status_ == threadState::FAILED; });
-  if (thread_status_ == threadState::FAILED) {
+  try {
+    bkg_thread_ = std::thread(&Timer::BkgTimer, this);
+  } catch (const std::system_error& e) {
+    ORT_UNUSED_PARAMETER(e);
+    thread_status_ = threadState::FAILED;
     return false;
   }
+  cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE; });
   return true;
 }
 
