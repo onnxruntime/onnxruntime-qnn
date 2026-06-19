@@ -3733,6 +3733,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbNewHtpArch) {
 // ============================================================
 // prepare_and_load tests
 // ============================================================
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Test 1: prepare_and_load with context_enable=0 (Path A) — inference works in single session.
 TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathA_InferenceWorks) {
@@ -3966,6 +3967,8 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeOverridden) {
 
   CleanUpCtxFile(ctx_path);
 }
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
