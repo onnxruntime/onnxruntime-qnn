@@ -1149,10 +1149,7 @@ class ZipUpleveler(ArtifactUpleveler):
         # Check with `gh release view` first so that parallel zip/tgz jobs never
         # race on `gh release create` and accidentally produce two draft releases.
         release_exists = (
-            subprocess.run(
-                ["gh", "release", "view", tag], check=False, capture_output=True
-            ).returncode
-            == 0
+            subprocess.run(["gh", "release", "view", tag], check=False, capture_output=True).returncode == 0
         )
         if release_exists:
             logging.info(f"GitHub Release {tag} already exists, reusing it")
