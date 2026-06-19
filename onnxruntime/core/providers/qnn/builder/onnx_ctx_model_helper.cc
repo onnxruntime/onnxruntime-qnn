@@ -116,6 +116,38 @@ Ort::Status GetMainContextNode(const OrtGraph** graphs,
   return Ort::Status();
 }
 
+std::unordered_map<std::string, std::string> ParseIoNameOverrides(const OrtNode* ep_context_node) {
+  std::unordered_map<std::string, std::string> overrides;
+  if (ep_context_node == nullptr) {
+    return overrides;
+  }
+  OrtNodeAttrHelper node_helper(*ep_context_node);
+  const std::string encoded = node_helper.Get(IO_NAME_OVERRIDES, std::string{});
+  // Decode "internal=external;" pairs.
+  size_t pos = 0;
+  while (pos < encoded.size()) {
+    size_t sep = encoded.find(';', pos);
+    if (sep == std::string::npos) {
+      sep = encoded.size();
+    }
+    const std::string pair = encoded.substr(pos, sep - pos);
+    pos = sep + 1;
+    if (pair.empty()) {
+      continue;
+    }
+    size_t eq = pair.find('=');
+    if (eq == std::string::npos) {
+      continue;
+    }
+    std::string internal = pair.substr(0, eq);
+    std::string external = pair.substr(eq + 1);
+    if (!internal.empty() && !external.empty()) {
+      overrides.emplace(std::move(internal), std::move(external));
+    }
+  }
+  return overrides;
+}
+
 Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      const OrtApi& ort_api,
                                      const std::basic_string<ORTCHAR_T>& ctx_onnx_model_path,
@@ -296,7 +328,8 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  const Ort::Logger& logger,
                                  bool share_ep_contexts,
                                  bool stop_share_ep_contexts,
-                                 const std::string& ep_name) {
+                                 const std::string& ep_name,
+                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides) {
   // Still need more work to support multiple partition, it's out of EP's scope.
   // Already have code to make sure it's single partition before this method get invoked.
   for (size_t idx = 0; idx < count; ++idx) {
@@ -432,6 +465,27 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                                     ORT_OP_ATTR_STRING,
                                                     &attr));
     attributes.push_back(attr);
+
+    // Persist the offload_graph_io_quantization tensor-name overrides so the cached-context load
+    // path can resolve graph I/O by name rather than by position (position is unreliable when QNN
+    // reorders graph outputs). Skipped when the map is empty (offload disabled) so non-offload
+    // context models are byte-for-byte unaffected.
+    if (!tensor_name_overrides.empty()) {
+      std::string encoded;
+      for (const auto& [internal, external] : tensor_name_overrides) {
+        encoded += internal;
+        encoded += '=';
+        encoded += external;
+        encoded += ';';
+      }
+      attr = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(IO_NAME_OVERRIDES.c_str(),
+                                                      encoded.c_str(),
+                                                      static_cast<int>(encoded.length()),
+                                                      ORT_OP_ATTR_STRING,
+                                                      &attr));
+      attributes.push_back(attr);
+    }
 
     ORT_CXX_RETURN_ON_API_FAIL(model_editor_api.CreateNode(EPCONTEXT_OP.c_str(),
                                                            kMSDomain,
