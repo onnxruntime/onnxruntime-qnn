@@ -624,8 +624,8 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     // Only the first two dimensions (indexed by onnx_axis and 1 - onnx_axis) are used for LPBQ conversion.
     const std::vector<int64_t> scale_shape =
         utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
-    RETURN_IF_NOT(scale_shape.size() >= 2,
-                  "Block quantization scale tensors must have at least rank 2 for LPBQ conversion");
+    RETURN_IF_NOT(scale_shape.size() >= 2 && scale_shape.size() <= 4,
+                  "Block quantization scale tensors must have rank between 2 and 4 for LPBQ conversion");
     RETURN_IF_NOT(scale_shape[0] > 0 && scale_shape[1] > 0,
                   "Block quantization scale tensor dimensions must be positive");
     RETURN_IF_NOT(scale_shape[0] * scale_shape[1] == static_cast<int64_t>(scales.size()),
