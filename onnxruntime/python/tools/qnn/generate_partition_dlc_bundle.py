@@ -12,22 +12,27 @@ Usage:
 Reads <bundle-dir>/manifest.json (produced at compile time by the QNN EP when
 qnn.dump_partition_dlc_bundle=1), marks every boundary tensor as a graph output
 of a copy of the ONNX model, runs once on the CPU EP with the user-supplied
-inputs, then writes <bundle-dir>/runtime/<partition>/inputs/<name>.raw and
-goldens/<name>.raw for every partition. Files are raw little-endian tensor
-data (no header), which is the format qnn-net-run consumes via --input_list.
+inputs, then consolidates each partition into <bundle-dir>/<partition>/ holding
+its <partition>.dlc, inputs/<name>.raw and goldens/<name>.raw. Files are raw
+little-endian tensor data (no header), which is the format qnn-net-run consumes
+via --input_list.
 """
 
 import argparse
 import json
 import re
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import onnx
 
 import onnxruntime as ort
+from onnxruntime.tools.onnx_model_utils import make_dim_param_fixed
+
+# ORT-core QDQ propagation renames an edge <base>_pre_q / _q_to_dq / _dq_to_q, with an
+# optional _token_<N> uniquifier on collision (qdq_propagation.cc, graph.cc).
+_QDQ_RENAME = re.compile(r"(_pre_q|_q_to_dq|_dq_to_q)(_token_\d+)?$")
 
 ORT_TYPE_TO_NUMPY = {
     "float": np.float32,
@@ -50,6 +55,13 @@ def parse_args():
     p.add_argument("--bundle-dir", required=True, type=Path)
     p.add_argument("--model", required=True, type=Path)
     p.add_argument("--inputs", required=True, nargs="+", help="name=path.raw pairs; one per model input")
+    p.add_argument(
+        "--free-dim",
+        nargs="*",
+        default=[],
+        metavar="NAME=VALUE",
+        help="pin a dynamic dim_param (e.g. max_seq_len=1) before running",
+    )
     return p.parse_args()
 
 
@@ -63,22 +75,39 @@ def collect_boundary_tensors(manifest):
     return names
 
 
-def add_boundary_outputs(model_path: Path, boundary_names) -> Path:
-    model = onnx.load(str(model_path))
+def add_boundary_outputs(model_path: Path, boundary_names, free_dims=None):
+    # Load structure-only and save beside the source so external-data refs resolve; inlining a
+    # >2GB model would hit protobuf's cap.
+    model = onnx.load(str(model_path), load_external_data=False)
+    for name, value in (free_dims or {}).items():
+        make_dim_param_fixed(model.graph, name, value)
     existing_outputs = {o.name for o in model.graph.output}
     existing_value_info = {vi.name: vi for vi in model.graph.value_info}
     existing_inputs = {i.name for i in model.graph.input}
+    node_outputs = {o for n in model.graph.node for o in n.output}
+    sourceable = node_outputs | existing_value_info.keys() | existing_inputs
+
+    # Recover <base> from QDQ-propagation renames; accept only if it's a real ONNX tensor.
+    def onnx_name(name):
+        if name in existing_outputs or name in sourceable:
+            return name
+        stripped = _QDQ_RENAME.sub("", name)
+        return stripped if (stripped != name and stripped in sourceable) else None
+
+    alias, skipped = {}, []
     for name in boundary_names:
-        if name in existing_outputs or name in existing_inputs:
+        src = onnx_name(name)
+        if src is None:
+            skipped.append(name)
             continue
-        if name in existing_value_info:
-            model.graph.output.append(existing_value_info[name])
-        else:
-            vi = onnx.helper.make_empty_tensor_value_info(name)
-            model.graph.output.append(vi)
-    tmp_path = Path(tempfile.mkstemp(suffix=".onnx")[1])
+        alias[name] = src
+        if src not in existing_outputs and src not in existing_inputs:
+            model.graph.output.append(existing_value_info.get(src) or onnx.helper.make_empty_tensor_value_info(src))
+    if skipped:
+        print(f"skipped {len(skipped)} boundary tensors with no ONNX source: e.g. {skipped[0]}", file=sys.stderr)
+    tmp_path = model_path.parent / f"_boundary_{model_path.stem}.onnx"
     onnx.save(model, str(tmp_path))
-    return tmp_path
+    return tmp_path, alias
 
 
 def sanitize_filename(name: str) -> str:
@@ -101,7 +130,11 @@ def main():
         user_inputs[name] = Path(path)
 
     boundary_names = collect_boundary_tensors(manifest)
-    modified_model = add_boundary_outputs(args.model, boundary_names)
+    free_dims = {}
+    for spec in args.free_dim:
+        name, _, value = spec.partition("=")
+        free_dims[name] = int(value)
+    modified_model, alias = add_boundary_outputs(args.model, boundary_names, free_dims)
     sess = ort.InferenceSession(str(modified_model), providers=["CPUExecutionProvider"])
 
     feeds = {}
@@ -125,24 +158,34 @@ def main():
     for name, arr in feeds.items():
         name_to_value.setdefault(name, arr)
 
-    runtime_dir = bundle_dir / "runtime"
     quantized_dtypes = {"int8", "uint8", "int16", "uint16", "int4", "uint4", "int2", "uint2"}
     quantized_mismatch = False
     for p in manifest["partitions"]:
-        pdir = runtime_dir / p["name"]
+        pdir = bundle_dir / p["name"]
         (pdir / "inputs").mkdir(parents=True, exist_ok=True)
         (pdir / "goldens").mkdir(parents=True, exist_ok=True)
+        # Consolidate the compile-time DLC into this partition's folder (idempotent on rerun).
+        dlc_src = bundle_dir / p["dlc_path"]
+        dlc_dst = pdir / Path(p["dlc_path"]).name
+        if dlc_src.resolve() != dlc_dst.resolve() and dlc_src.exists():
+            dlc_src.replace(dlc_dst)
+        p["dlc_path"] = f"{p['name']}/{dlc_dst.name}"
         for kind, key in [("inputs", "inputs"), ("outputs", "goldens")]:
             for t in p[kind]:
-                v = name_to_value.get(t["name"])
+                v = name_to_value.get(alias.get(t["name"], t["name"]))
                 if v is None:
                     print(f"warn: boundary {kind[:-1]} {t['name']!r} not produced", file=sys.stderr)
                     continue
                 fname = sanitize_filename(t["name"]) + ".raw"
-                t["raw_file"] = f"{key}/{fname}"
+                t["raw_file"] = f"{p['name']}/{key}/{fname}"
                 np.ascontiguousarray(v).tofile(pdir / key / fname)
                 if t.get("dtype", "").removesuffix("_t") in quantized_dtypes and np.issubdtype(v.dtype, np.floating):
                     quantized_mismatch = True
+
+    # Drop the now-empty partitions/ dir the compiler left behind.
+    partitions_dir = bundle_dir / "partitions"
+    if partitions_dir.is_dir() and not any(partitions_dir.iterdir()):
+        partitions_dir.rmdir()
 
     modified_model.unlink(missing_ok=True)
     manifest["goldens_source"] = "cpu"

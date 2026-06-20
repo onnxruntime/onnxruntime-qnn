@@ -64,6 +64,11 @@ def test_bundle_fill():
         bundle.mkdir()
         (bundle / "manifest.json").write_text(json.dumps(_fake_manifest()))
 
+        # Fake the compile-time DLCs the helper consolidates into each partition folder.
+        (bundle / "partitions").mkdir()
+        for p in ("qnn_0", "qnn_1"):
+            (bundle / "partitions" / f"{p}.dlc").write_bytes(b"DLC" + p.encode())
+
         x = np.array([10, 20, 30, 40], dtype=np.float32)
         x_path = td / "x.raw"
         x.tofile(x_path)
@@ -82,18 +87,23 @@ def test_bundle_fill():
         )
         assert rc == 0, "helper exited non-zero"
 
-        rt = bundle / "runtime"
         for p, kind, name, expected in [
             ("qnn_0", "inputs", "X", x),
             ("qnn_0", "goldens", "T_a", x + 1),
             ("qnn_1", "inputs", "T_a", x + 1),
             ("qnn_1", "goldens", "Y", (x + 1) * 2),
         ]:
-            data = np.fromfile(rt / p / kind / f"{name}.raw", dtype=np.float32)
+            data = np.fromfile(bundle / p / kind / f"{name}.raw", dtype=np.float32)
             assert np.allclose(data, expected), f"{p}/{kind}/{name} mismatch: {data} != {expected}"
 
-        manifest = json.loads((bundle / "manifest.json").read_text())
-        assert manifest["goldens_source"] == "cpu"
+        # DLC, inputs and goldens now live together under <bundle>/<partition>/.
+        for p in ("qnn_0", "qnn_1"):
+            assert (bundle / p / f"{p}.dlc").is_file(), f"{p}.dlc not consolidated"
+        assert not (bundle / "partitions").exists(), "empty partitions/ should be removed"
+        manifest_after = json.loads((bundle / "manifest.json").read_text())
+        for p in manifest_after["partitions"]:
+            assert p["dlc_path"] == f"{p['name']}/{p['name']}.dlc", p["dlc_path"]
+        assert manifest_after["goldens_source"] == "cpu"
 
 
 if __name__ == "__main__":

@@ -72,30 +72,31 @@ static const char* DlError() {
 class QnnIrConfig : public QnnSerializerConfig {
  public:
   QnnIrConfig(std::string backend_path, std::string dlc_dir)
-      : QnnSerializerConfig(std::move(backend_path)), dlc_dir_(std::move(dlc_dir)), configs_builder_(MakeConfigsBuilder()) {
+      : QnnSerializerConfig(std::move(backend_path)), dlc_dir_(std::move(dlc_dir)) {
   }
 
   const QnnGraph_Config_t** Configure() override {
-    auto configs_builder = MakeConfigsBuilder();
+    // outputPath is read lazily at the deferred/batched FinalizeGraphs(); keep one per partition.
+    auto configs_builder = std::make_unique<QnnConfigsBuilder<QnnGraph_Config_t, QnnIrGraph_CustomConfig_t>>(
+        MakeConfigsBuilder());
 
     std::filesystem::path dlc_path = (dlc_dir_ / (GetGraphName() + ".dlc"));
-    std::string dlc_path_str = dlc_path.string();
-    gsl::not_null<QnnIrGraph_CustomConfig_t*> dlc_path_config = configs_builder.PushCustomConfig();
+    auto dlc_path_str = std::make_unique<std::string>(dlc_path.string());
+    gsl::not_null<QnnIrGraph_CustomConfig_t*> dlc_path_config = configs_builder->PushCustomConfig();
     dlc_path_config->option = QNN_IR_GRAPH_CONFIG_OPTION_SERIALIZATION;
     dlc_path_config->serializationOption.serializationType = QNN_IR_GRAPH_SERIALIZATION_TYPE_FLAT_BUFFER;
-    dlc_path_config->serializationOption.outputPath = dlc_path_str.c_str();
+    dlc_path_config->serializationOption.outputPath = dlc_path_str->c_str();
 
-    gsl::not_null<QnnGraph_Config_t*> dlc_path_custom_config = configs_builder.PushConfig();
+    gsl::not_null<QnnGraph_Config_t*> dlc_path_custom_config = configs_builder->PushConfig();
     dlc_path_custom_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
     dlc_path_custom_config->customConfig = dlc_path_config;
 
     std::filesystem::create_directories(dlc_path.parent_path());
 
-    // Keep the pointer to dlc_path_str's null-terminated string alive.
-    std::swap(dlc_path_str, dlc_path_str_);
-
-    std::swap(configs_builder, configs_builder_);
-    return configs_builder_.GetQnnConfigs();
+    const QnnGraph_Config_t** configs = configs_builder->GetQnnConfigs();
+    dlc_path_strs_.push_back(std::move(dlc_path_str));
+    configs_builders_.push_back(std::move(configs_builder));
+    return configs;
   }
 
   bool SupportsArbitraryGraphConfigs() const override {
@@ -108,8 +109,8 @@ class QnnIrConfig : public QnnSerializerConfig {
   }
 
   std::filesystem::path dlc_dir_;
-  std::string dlc_path_str_;
-  QnnConfigsBuilder<QnnGraph_Config_t, QnnIrGraph_CustomConfig_t> configs_builder_;
+  std::vector<std::unique_ptr<std::string>> dlc_path_strs_;
+  std::vector<std::unique_ptr<QnnConfigsBuilder<QnnGraph_Config_t, QnnIrGraph_CustomConfig_t>>> configs_builders_;
 };
 
 class QnnSaverConfig : public QnnSerializerConfig {
