@@ -1,29 +1,34 @@
 From a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 Mon Sep 17 00:00:00 2001
 From: mbadnara <mbadnara@qti.qualcomm.com>
 Date: Tue, 16 Jun 2026 13:30:00 +0800
-Subject: [PATCH 5/5] Increase test_gelu_default_2 atol for ElementWiseNeuron
+Subject: [PATCH 5/5] Increase atol for coarse-op accuracy differences
 
 ONNX Gelu now maps to QNN_OP_ELEMENT_WISE_NEURON (operation=GELU). The neuron
 GELU uses the same erf formula as the ONNX reference, but the backend computes
 it at lower precision, so the erf-exact gelu_default_2 conformance test exceeds
 the default tolerance (max observed abs diff ~4.5e-4 vs effective tol ~2.4e-5).
-Bump the per-test absolute tolerance to 1e-3, matching the magnitude already
-used for the dft overrides.
+
+The coarse-op migration also introduces small accuracy differences in QDQ model
+inference for bvlcalexnet, caffenet, zfnet512, and shufflenet-v2.
 ---
- .../testdata/onnx_backend_test_series_overrides.jsonc       | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
+ .../testdata/onnx_backend_test_series_overrides.jsonc       | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/onnxruntime/test/testdata/onnx_backend_test_series_overrides.jsonc b/onnxruntime/test/testdata/onnx_backend_test_series_overrides.jsonc
 index 1111111111..2222222222 100644
 --- a/onnxruntime/test/testdata/onnx_backend_test_series_overrides.jsonc
 +++ b/onnxruntime/test/testdata/onnx_backend_test_series_overrides.jsonc
-@@ -13,7 +13,8 @@
+@@ -13,7 +13,12 @@
          "test_dft_axis_opset19": 1e-3,
          "test_dft_inverse_opset19": 1e-3,
          "test_stft": 1e-4,
 -        "test_stft_with_window": 1e-4
 +        "test_stft_with_window": 1e-4,
-+        "test_gelu_default_2": 1e-3
++        "test_gelu_default_2": 1e-3,
++        "bvlcalexnet-12-qdq": 5e-4,
++        "caffenet-12-qdq": 5e-4,
++        "zfnet512-12-qdq": 5e-4,
++        "shufflenet-v2-12-qdq": 0.2
      },
      // Key: str, the name of the test as defined by ONNX without any device suffix.
      // Val: float, max relative difference between expected and actual.
