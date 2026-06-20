@@ -39,6 +39,135 @@ constexpr int32_t GetDefaultAxisAttribute(int opset_version) {
   return opset_version < 13 ? 1 : -1;
 }
 
+// Returns true if the Softmax output uses a non-natural quantized encoding that should be
+// decoupled from the consumer's encoding via an explicit Convert.
+//
+// Softmax output is in [0, 1] (strictly non-negative), so its natural quantized encoding is
+// asymmetric with offset (zero-point) 0. However, when the output feeds an op that requires a
+// symmetric encoding on that input (e.g. an HTP MatMul RHS on older HTP archs), aimet assigns the softmax
+// output a symmetric encoding (zero-point != 0). At 8-bit HTP softmax kernel mishandles the symmetric
+// output encoding producing garbage and near-zero accuracy
+//
+// The fix emits Softmax with its natural (zero-point 0) encoding and then a QNN_OP_CONVERT to the
+// original (symmetric) encoding the consumer expects, satisfying both the constraints
+
+static bool NeedsBoundedOutputSplit(const std::string& op_type, const TensorInfo& output_info,
+                                    QnnBackendType backend_type) {
+  // Limiting to Softmax for now, will scale to other ops next
+  if (op_type != "Softmax") {
+    return false;
+  }
+  if (!IsNpuBackend(backend_type)) {
+    return false;
+  }
+  if (!output_info.quant_param.IsPerTensor(/*include_bw*/ false)) {
+    return false;
+  }
+
+  // Only split when the encoding is symmetric (zero-point at the midpoint of the unsigned integer
+  // range), which is what aimet assigns when the [0, 1] output must feed a symmetric-input
+  // consumer (e.g. an HTP MatMul RHS)
+  const bool is_unsigned = output_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+                           output_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16;
+  if (!is_unsigned) {
+    return false;
+  }
+  const size_t bitwidth = utils::GetElementSizeByType(output_info.qnn_data_type) * 8;
+  const int32_t symmetric_offset = -(static_cast<int32_t>(uint64_t{1} << (bitwidth - 1)));
+  return output_info.quant_param.Get().scaleOffsetEncoding.offset == symmetric_offset;
+}
+
+// Builds the natural (zero-point 0) quantized encoding for an output bounded to the unit interval
+// [0, 1] -- e.g. Softmax, Sigmoid, HardSigmoid. Uses a power-of-two scale so the requant on HTP is
+// an exact bit-shift: scale = 1 / 2^bitwidth maps the unsigned range [0, 2^bitwidth - 1] to [0, ~1).
+static QnnQuantParamsWrapper BuildUnitRangeQuantParams(Qnn_DataType_t qnn_data_type) {
+  const size_t bitwidth = utils::GetElementSizeByType(qnn_data_type) * 8;
+  const float scale = 1.0f / static_cast<float>(uint64_t{1} << bitwidth);
+  return QnnQuantParamsWrapper(scale, /*offset*/ 0);
+}
+
+// Creates the QNN Softmax node and wires its output to `output_name`
+//
+// Normally this is a single Softmax node writing directly to `output_name` with the output's
+// (consumer-demanded) quantization params. When NeedsBoundedOutputSplit() is true, it instead
+// emits:  Softmax (natural offset-0 encoding) -> QNN_OP_CONVERT -> output_name (original encoding).
+// The Convert bridges the natural softmax encoding to the encoding the consumer expects
+//
+static Ort::Status CreateSoftmaxOutputNodes(QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            std::vector<std::string>&& input_names,
+                                            std::vector<std::string>&& param_tensor_names,
+                                            const std::string& output_name,
+                                            Qnn_DataType_t qnn_data_type,
+                                            const QnnQuantParamsWrapper& output_quant_param,
+                                            std::vector<uint32_t> output_shape,
+                                            bool is_graph_output,
+                                            const std::string& qnn_op_type,
+                                            bool do_op_validation) {
+  TensorInfo output_info = {};
+  output_info.shape = output_shape;
+  output_info.qnn_data_type = qnn_data_type;
+  output_info.quant_param = output_quant_param.Copy();
+
+  const Qnn_TensorType_t output_tensor_type =
+      is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+
+  if (!NeedsBoundedOutputSplit(node_unit.OpType(), output_info, qnn_model_wrapper.GetQnnBackendType())) {
+    // No split: single Softmax node writing directly to output_name. Reached only for the
+    // reshape/transpose-path intermediate tensors (the direct path's no-split case goes through
+    // ProcessOutputs in the caller)
+    QnnTensorWrapper output_tensorwrapper(output_name, output_tensor_type, qnn_data_type,
+                                          output_quant_param.Copy(), std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                  "Failed to add (Log)Softmax output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  qnn_op_type,
+                                                  std::move(input_names),
+                                                  {output_name},
+                                                  std::move(param_tensor_names),
+                                                  do_op_validation),
+                  "Failed to add (Log)Softmax node.");
+    return Ort::Status();
+  }
+
+  // Split path: Softmax (natural encoding) -> Convert -> output_name (original encoding)
+  QnnQuantParamsWrapper natural_quant_param = BuildUnitRangeQuantParams(qnn_data_type);
+  const std::string natural_name = utils::UniqueNameGenerator().New(output_name, "_natural");
+
+  // 1) Intermediate softmax output with the natural zero-point=0 encoding.
+  QnnTensorWrapper natural_tensor_wrapper(natural_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
+                                          natural_quant_param.Copy(), std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(natural_tensor_wrapper)),
+                "Failed to add natural-encoding (Log)Softmax output tensor.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                qnn_op_type,
+                                                std::move(input_names),
+                                                {natural_name},
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
+                "Failed to add (Log)Softmax node (split path).");
+
+  // 2) Output tensor with the original encoding
+  QnnTensorWrapper output_tensor_wrapper(output_name, output_tensor_type, qnn_data_type,
+                                         output_quant_param.Copy(), std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
+                "Failed to add (Log)Softmax converted output tensor.");
+
+  // 3) Convert: natural encoding -> original encoding. Single in/out, no params
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_CONVERT),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_CONVERT,
+                                                {natural_name},
+                                                {output_name},
+                                                {},
+                                                do_op_validation),
+                "Failed to add Convert node for (Log)Softmax bounded-output split.");
+
+  return Ort::Status();
+}
+
 std::vector<uint32_t> FlattenShapeFromAxis(const std::vector<uint32_t>& input_shape, int32_t axis) {
   /*
   Return the shape with all dimensions multiplied onward from the specified axis. If axis is 0, the returned shape
@@ -182,16 +311,19 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
-    QnnTensorWrapper output_tensorwrapper(reshape_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
-                                          output_info.quant_param.Copy(), std::vector<uint32_t>(reshape_input_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  GetQnnOpType(node_unit.OpType()),
-                                                  std::move(input_names),
-                                                  {reshape_input_name},
-                                                  std::move(param_tensor_names)),
-                  "Failed to add node.");
+    // Softmax writes the (flattened) result to reshape_input_name; the subsequent Reshape restores
+    // the original shape. The bounded-output split (if needed) is applied here on reshape_input_name,
+    // which is never a graph output (the Reshape produces the graph output).
+    RETURN_IF_ERROR(CreateSoftmaxOutputNodes(qnn_model_wrapper, node_unit,
+                                             std::move(input_names),
+                                             std::move(param_tensor_names),
+                                             reshape_input_name,
+                                             output_info.qnn_data_type,
+                                             output_info.quant_param,
+                                             reshape_input_shape,
+                                             /*is_graph_output*/ false,
+                                             GetQnnOpType(node_unit.OpType()),
+                                             do_op_validation));
 
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(reshape_input_name,
@@ -218,16 +350,19 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
-    QnnTensorWrapper output_tensorwrapper(transpose_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
-                                          output_info.quant_param.Copy(), std::vector<uint32_t>(transpose_input_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  GetQnnOpType(node_unit.OpType()),
-                                                  std::move(input_names),
-                                                  {transpose_input_name},
-                                                  std::move(param_tensor_names)),
-                  "Failed to add node.");
+    // Softmax writes the result (axis transposed to last) to transpose_input_name; the subsequent
+    // Transpose restores the original layout. The bounded-output split (if needed) is applied here
+    // on transpose_input_name, which is never a graph output (the Transpose produces the output).
+    RETURN_IF_ERROR(CreateSoftmaxOutputNodes(qnn_model_wrapper, node_unit,
+                                             std::move(input_names),
+                                             std::move(param_tensor_names),
+                                             transpose_input_name,
+                                             output_info.qnn_data_type,
+                                             output_info.quant_param,
+                                             transpose_input_shape,
+                                             /*is_graph_output*/ false,
+                                             GetQnnOpType(node_unit.OpType()),
+                                             do_op_validation));
 
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
     std::vector<uint32_t> transpose_perm;
@@ -252,10 +387,27 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
-    return ProcessOutputs(qnn_model_wrapper, node_unit,
-                          std::move(input_names),
-                          std::move(param_tensor_names),
-                          logger, do_op_validation, GetQnnOpType(op_type));
+    // Direct path: Softmax output is the node's ONNX output. When the bounded-output split is not
+    // needed, defer to ProcessOutputs() which handles graph-output wiring and other generic logic.
+    // When the split is needed, emit Softmax(natural) -> Convert -> output directly.
+    if (!NeedsBoundedOutputSplit(op_type, output_info, qnn_model_wrapper.GetQnnBackendType())) {
+      return ProcessOutputs(qnn_model_wrapper, node_unit,
+                            std::move(input_names),
+                            std::move(param_tensor_names),
+                            logger, do_op_validation, GetQnnOpType(op_type));
+    }
+
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
+    RETURN_IF_ERROR(CreateSoftmaxOutputNodes(qnn_model_wrapper, node_unit,
+                                             std::move(input_names),
+                                             std::move(param_tensor_names),
+                                             orig_output_name,
+                                             output_info.qnn_data_type,
+                                             output_info.quant_param,
+                                             output_info.shape,
+                                             is_graph_output,
+                                             GetQnnOpType(op_type),
+                                             do_op_validation));
   }
 
   return Ort::Status();
