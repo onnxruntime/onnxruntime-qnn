@@ -406,6 +406,26 @@ TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_NameCollision_DeclinesFusion) {
             ExpectedEPNodeAssignment::None);
 }
 
+// Negative: branches reuse the same internal tensor name (the const initializer).
+// EP must decline — flattening into one QNN graph would silently mis-wire.
+TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_SharedInternalName_DeclinesFusion) {
+  auto build = [](ModelTestBuilder& builder) {
+    const std::vector<int64_t> shape = {4};
+    builder.MakeInput<float>("x", shape, {1.f, 2.f, 3.f, 4.f});
+    builder.MakeInputBool("cond", {1});
+    builder.MakeOutput<float>("if_out", shape);
+    // Both branches reuse "shared_const" as the initializer name.
+    GraphProto then_g = MakeMulBranchSubgraph(
+        "then_branch", "x", "then_out", shape, TensorProto::FLOAT, 2.0f, "shared_const");
+    GraphProto else_g = MakeMulBranchSubgraph(
+        "else_branch", "x", "else_out", shape, TensorProto::FLOAT, -1.0f, "shared_const");
+    builder.AddNode("if_node", "If", {"cond"}, {"if_out"}, "",
+                    {MakeBranchAttribute("then_branch", std::move(then_g)),
+                     MakeBranchAttribute("else_branch", std::move(else_g))});
+  };
+  RunIfTest(build, ExpectedEPNodeAssignment::None);
+}
+
 // Then branch is pure constant (0 nodes, 1 initializer); else branch is dynamic.
 TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_ThenConstant_ElseDynamic) {
   RunIfTest(BuildIfMixedTestCase(/*then_constant=*/true, /*else_constant=*/false),

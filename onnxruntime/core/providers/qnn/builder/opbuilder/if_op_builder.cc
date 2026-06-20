@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
+#include <unordered_set>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
@@ -28,7 +29,7 @@ class BranchGraphScopeGuard {
 };
 
 // Build a minimal OrtNodeUnitIODef from a plain OrtValueInfo*.
-// Returns non-OK status if the value info cannot be read.
+// quant_param is left default-constructed (non-quantized); QDQ branches are not yet supported.
 Ort::Status MakeIODefFromValueInfo(const OrtApi& ort_api,
                                    const OrtValueInfo* vi,
                                    OrtNodeUnitIODef& def) {
@@ -184,8 +185,54 @@ Ort::Status EnsureBranchOutputRegistered(QnnModelWrapper& qmw,
   return Ort::Status();
 }
 
+// Collect every name a branch registers in the QnnModelWrapper:
+// compute-node outputs + branch initializers. Used to reject branches that
+// share an internal name (TranslateBranch flattens both into one QNN graph
+// keyed by ONNX name, so a collision would silently mis-wire).
+Ort::Status CollectBranchInternalNames(const OrtApi& ort_api,
+                                       const OrtGraph* branch,
+                                       std::unordered_set<std::string>& out_names) {
+  size_t num_nodes = 0;
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(branch, &num_nodes));
+  std::vector<const OrtNode*> nodes(num_nodes);
+  if (num_nodes > 0) {
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(branch, nodes.data(), num_nodes));
+  }
+  for (const OrtNode* node : nodes) {
+    size_t num_outputs = 0;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumOutputs(node, &num_outputs));
+    std::vector<const OrtValueInfo*> outs(num_outputs);
+    if (num_outputs > 0) {
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOutputs(node, outs.data(), num_outputs));
+    }
+    for (const OrtValueInfo* vi : outs) {
+      if (vi == nullptr) continue;
+      const char* n = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(vi, &n));
+      if (n && *n) out_names.emplace(n);
+    }
+  }
+
+  size_t num_inits = 0;
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumInitializers(branch, &num_inits));
+  std::vector<const OrtValueInfo*> inits(num_inits);
+  if (num_inits > 0) {
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetInitializers(branch, inits.data(), num_inits));
+  }
+  for (const OrtValueInfo* vi : inits) {
+    if (vi == nullptr) continue;
+    const char* n = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(vi, &n));
+    if (n && *n) out_names.emplace(n);
+  }
+  return Ort::Status();
+}
+
 }  // namespace
 
+// No IsOpSupported override: validation recurses into both branches via
+// AddToModelBuilder(do_op_validation=true). Safe — validate and compose use separate
+// QnnModelWrapper instances, so branch tensors added during validation never reach compose.
 class IfOpBuilder : public BaseOpBuilder {
  public:
   IfOpBuilder() : BaseOpBuilder("IfOpBuilder") {}
@@ -270,6 +317,7 @@ Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
                 "If cond input must have BOOL dtype.");
   std::vector<uint32_t> cond_shape;
   RETURN_IF_NOT(qmw.GetOnnxShape(cond_def.shape, cond_shape), "Cannot get cond shape.");
+  // Looser than ONNX (rank-0); any all-1s shape is accepted since ElementWiseSelect broadcasts.
   bool cond_is_scalar = cond_shape.empty() ||
                         std::all_of(cond_shape.begin(), cond_shape.end(),
                                     [](uint32_t d) { return d == 1u; });
@@ -297,6 +345,18 @@ Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
   const std::string& if_out_name = node_unit.Outputs()[0].name;
   RETURN_IF_NOT(then_name != if_out_name && else_name != if_out_name,
                 "If branch terminus name collides with If output name; rename not supported.");
+
+  // ONNX subgraphs are independent namespaces, but TranslateBranch flattens both
+  // branches into one QNN graph keyed by ONNX name. Decline on internal-name overlap.
+  std::unordered_set<std::string> then_internal, else_internal;
+  RETURN_IF_ERROR(CollectBranchInternalNames(ort_api, then_graph, then_internal));
+  RETURN_IF_ERROR(CollectBranchInternalNames(ort_api, else_graph, else_internal));
+  for (const auto& n : then_internal) {
+    RETURN_IF_NOT(else_internal.find(n) == else_internal.end(),
+                  ("If branches share internal tensor name `" + n +
+                   "`; rename not supported.")
+                      .c_str());
+  }
 
   // Translate both branches.
   RETURN_IF_ERROR(TranslateBranch(qmw, logger, then_graph, do_op_validation));

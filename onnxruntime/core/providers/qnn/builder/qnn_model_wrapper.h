@@ -159,7 +159,7 @@ class QnnModelWrapper {
 
   // Push the given branch graph onto the scope stack. While pushed, FindInitializer (and
   // therefore IsConstantInput / GetConstantTensor) will also consider this graph's
-  // initializers. Used by IfFusion when recursively translating branch nodes so that
+  // initializers. Used by IfOpBuilder when recursively translating branch nodes so that
   // ORT-folded branch-internal Constants (which live as initializers on the branch graph)
   // resolve as STATIC tensors during op-builder dispatch.
   void PushBranchGraphScope(const OrtGraph* branch_graph) {
