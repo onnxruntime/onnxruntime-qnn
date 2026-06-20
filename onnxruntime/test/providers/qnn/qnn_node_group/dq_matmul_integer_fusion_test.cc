@@ -217,7 +217,7 @@ void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "MatMul", /*count=*/1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", expected_dequantize_count);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseAdd", expected_add_count);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", expected_add_count);
   AssertOpInQnnGraph(json_qnn_graph_dir, "MatMulInteger", /*count=*/0);
   AssertOpInQnnGraph(json_qnn_graph_dir, "DynamicQuantizeLinear", /*count=*/0);
 }

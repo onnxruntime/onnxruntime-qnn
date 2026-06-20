@@ -220,12 +220,8 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // Handle keepdims param.
   //
   auto onnx_keepdims = node_attr_helper.Get("keepdims", (int32_t)1);
-  Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
-  scalar_param.dataType = QNN_DATATYPE_BOOL_8;
-  scalar_param.bool8Value = static_cast<uint8_t>(onnx_keepdims == 0 ? 0 : 1);
-  QnnParamWrapper keep_dims_param(node_unit.Index(), node_unit.Name(), QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, scalar_param);
-  param_tensor_names.push_back(keep_dims_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(keep_dims_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
+                                     QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, param_tensor_names));
 
   if (node_unit.OpType() == "ReduceL2") {
     // If ReduceL2, QNN doesn't have a single Op for it, we need to add a
@@ -248,12 +244,17 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     QnnTensorWrapper pow2_tensorwrapper(pow2_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
                                         std::move(input_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pow2_tensorwrapper)), "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
+    std::string pow2_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
+    std::vector<std::string> pow2_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), pow2_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, pow2_param_names));
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(pow2_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
+                                                  QNN_OP_ELEMENT_WISE_BINARY,
                                                   {input_name, input_name},
                                                   {pow2_output_name},
-                                                  {},
+                                                  std::move(pow2_param_names),
                                                   do_op_validation),
                   "CreateQnnNode failed");
 
@@ -277,12 +278,20 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
                                         QnnQuantParamsWrapper(), std::move(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+    std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_UNARY);
+    Qnn_Scalar_t sqrt_op_scalar = QNN_SCALAR_INIT;
+    sqrt_op_scalar.dataType = QNN_DATATYPE_UINT_32;
+    sqrt_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT;
+    QnnParamWrapper sqrt_op_param(node_unit.Index(), sqrt_node_name,
+                                  QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sqrt_op_scalar);
+    std::string sqrt_op_param_name = sqrt_op_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sqrt_op_param)), "AddParamWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sqrt_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                                                  QNN_OP_ELEMENT_WISE_UNARY,
                                                   {reduce_output_name},
                                                   {output.name},
-                                                  {},
+                                                  {sqrt_op_param_name},
                                                   do_op_validation),
                   "CreateQnnNode failed");
   } else {

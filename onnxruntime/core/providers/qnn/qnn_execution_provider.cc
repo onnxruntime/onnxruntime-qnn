@@ -34,8 +34,9 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -347,6 +348,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       name_{name},
       logger_{Ort::Logger(logger)},
       session_options_{session_options} {
+  ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
   GetCapability = GetCapabilityImpl;
   Compile = CompileImpl;
@@ -1646,6 +1648,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
     ep->CreateHtpPowerConfigId();
+
+    ep->WarnIfHnrdPathActive();
   }
 
   // Report error if QNN CPU backend is loaded while CPU fallback is disabled
@@ -1789,6 +1793,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   // Collect graph and fused nodes names.
   std::vector<std::pair<std::string, std::string>> names;
   names.reserve(count);
+  std::vector<std::unordered_map<std::string, std::string>> io_name_overrides_per_graph(count);
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const char* graph_name = nullptr;
@@ -1821,6 +1826,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
 
     names.push_back(std::pair<std::string, std::string>(graph_name, ep_context_node_name));
+    io_name_overrides_per_graph[graph_idx] = qnn::ParseIoNameOverrides(ep_context_node);
   }
 
   // Get QnnModel from EP shared contexts
@@ -1854,7 +1860,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
             /*onnx_output_names=*/nullptr,
             /*model_settings=*/nullptr,
             /*graph_configs=*/nullptr,
-            /*tensor_name_overrides=*/nullptr,
+            /*tensor_name_overrides=*/io_name_overrides_per_graph[graph_idx].empty()
+                ? nullptr
+                : &io_name_overrides_per_graph[graph_idx],
             /*json_qnn_graph_path=*/{}};
         RETURN_IF_NOT_OK(qnn_model_shared->SetGraphInputOutputInfo(context));
         RETURN_IF_NOT_OK(qnn_model_shared->SetupQnnInputOutput(logger_));
@@ -1954,7 +1962,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
         /*onnx_output_names=*/nullptr,
         /*model_settings=*/nullptr,
         /*graph_configs=*/nullptr,
-        /*tensor_name_overrides=*/nullptr,
+        /*tensor_name_overrides=*/io_name_overrides_per_graph[graph_idx].empty()
+            ? nullptr
+            : &io_name_overrides_per_graph[graph_idx],
         /*json_qnn_graph_path=*/{}};
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(context));
     RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
@@ -2020,7 +2030,8 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              logger_,
                                              share_ep_contexts_,
                                              stop_share_ep_contexts_,
-                                             name_));
+                                             name_,
+                                             tensor_name_overrides_));
 
   // Get compatibility info for later query in GetCompiledModelCompatibilityInfo.
   Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(compatibility_info_);
@@ -2292,8 +2303,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 #endif  // _WIN32
 
   // Clean up transient GetCapability→Compile state.
+  // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
+  // below to serialize the io_name_overrides attribute into the EPContext model.
   ep->onnx_graph_io_names_.reset();
-  ep->tensor_name_overrides_.clear();
 
   // Framework op trace: serialize and write JSON.
   // When multiple graphs are compiled, all subgraph traces are collected into a single file.
@@ -2304,6 +2316,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->context_cache_enabled_) {
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
+
+  // Clear only after CreateEPContextNodes has serialized the map into the EPContext model.
+  ep->tensor_name_overrides_.clear();
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   end = std::chrono::steady_clock::now();
@@ -2751,6 +2766,33 @@ void QnnEp::CreateHtpPowerConfigId() const {
   } else {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to create HTP power config id.");
   }
+}
+
+void QnnEp::WarnIfHnrdPathActive() {
+  if (hnrd_warning_emitted_) {
+    return;
+  }
+  hnrd_warning_emitted_ = true;
+  const uint32_t htp_arch = static_cast<uint32_t>(qnn_backend_manager_->GetHtpArch());
+  if (htp_arch == static_cast<uint32_t>(QNN_HTP_DEVICE_ARCH_NONE)) {
+    return;
+  }
+  bool hnrd_enabled = false;
+  Ort::Status status = qnn::htp_usr_drv::IsHtpUsrDrvEnabled(
+      qnn_backend_manager_->GetBackendLibDir(), htp_arch, hnrd_enabled);
+  if (!status.IsOK()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("HNRD detection skipped: " + status.GetErrorMessage()).c_str());
+    return;
+  }
+  if (!hnrd_enabled) {
+    return;
+  }
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING,
+              "QNN EP fell back to HTP user-driver (HNRD) path; "
+              "QnnHtpPrepare/Stub/Skel libs missing from backend lib dir.");
 }
 
 QnnEp::QnnNodeComputeInfo::QnnNodeComputeInfo(QnnEp& ep) : ep(ep) {

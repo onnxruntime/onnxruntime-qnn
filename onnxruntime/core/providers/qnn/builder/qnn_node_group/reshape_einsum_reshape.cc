@@ -134,16 +134,12 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(block_size_param)), "Failed to add param.");
 
   // Add attribute mode fixed to DCR which is guaranteed previously.
-  Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
-  mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  mode_qnn_scalar.uint32Value = QNN_OP_DEPTH_TO_SPACE_MODE_DCR;
-
-  QnnParamWrapper mode_param(einsum_node_unit.Index(),
-                             einsum_node_unit.Name(),
-                             QNN_OP_DEPTH_TO_SPACE_PARAM_MODE,
-                             mode_qnn_scalar);
-  const std::string mode_param_name = mode_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mode_param)), "Failed to add param.");
+  std::vector<std::string> mode_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, einsum_node_unit.Index(),
+                                         einsum_node_unit.Name(),
+                                         static_cast<uint32_t>(QNN_OP_DEPTH_TO_SPACE_MODE_DCR),
+                                         QNN_OP_DEPTH_TO_SPACE_PARAM_MODE, mode_param_names));
+  const std::string mode_param_name = std::move(mode_param_names.back());
 
   const OrtNodeUnitIODef& einsum_output = einsum_node_unit.Outputs()[0];
   TensorInfo einsum_output_info = {};
