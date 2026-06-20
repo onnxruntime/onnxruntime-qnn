@@ -21,6 +21,7 @@ import hashlib
 import logging
 import re
 import shutil
+import subprocess
 import tarfile
 import zipfile
 from dataclasses import dataclass
@@ -178,6 +179,17 @@ def main() -> int:
     if len(children) != 1:
         raise RuntimeError(f"Unexpected layout in ort_core extraction: {children}")
     ort_core_src = children[0]
+
+    # Apply all ort_core patches to the freshly extracted source so the testdata archive
+    # contains the patched files (e.g. the gelu_default_2 tolerance override).
+    patches_dir = REPO_ROOT / "cmake" / "patches" / "ort_core"
+    for patch_file in sorted(patches_dir.glob("*.patch")):
+        logging.info("Applying patch to ort_core_src: %s", patch_file.name)
+        subprocess.run(
+            ["patch", "--binary", "--ignore-whitespace", "-p1", "-N", "-i", str(patch_file)],
+            cwd=ort_core_src,
+            check=False,  # -N exits 1 if already applied; treat as success
+        )
 
     onnx_src = REPO_ROOT / "cmake" / "external" / "onnx" / "onnx"
 

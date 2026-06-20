@@ -228,28 +228,6 @@ ExternalProject_Add(
     USES_TERMINAL_BUILD ON
 )
 
-# FetchContent's PATCH_COMMAND only runs on the initial populate, so a cached _deps/ort_core-src
-# skips it on incremental CI builds. Re-apply all ort_core patches idempotently on every build by
-# iterating over the patch list with patch -N (skip-if-already-applied). Uses execute_process
-# so a non-zero exit code from an already-applied patch does not fail the build.
-if(Patch_FOUND)
-  file(GLOB _ort_core_patches
-    LIST_DIRECTORIES false
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/*.patch")
-  list(SORT _ort_core_patches)
-  ExternalProject_Add_Step(ort_core_target apply_ort_core_patches
-    COMMAND ${CMAKE_COMMAND}
-            -DPATCH_EXECUTABLE=${Patch_EXECUTABLE}
-            "-DPATCH_FILES=${_ort_core_patches}"
-            -DWORKING_DIR=${ORT_SOURCE_DIR}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/apply_patches_idempotent.cmake
-    DEPENDEES download
-    DEPENDERS build
-    ALWAYS ON
-    LOG ON
-  )
-endif()
-
 # Create imported target for ONNX Runtime
 add_library(onnxruntime SHARED IMPORTED GLOBAL)
 add_dependencies(onnxruntime ort_core_target)
