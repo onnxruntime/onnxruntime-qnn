@@ -297,13 +297,18 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_Float16Scale) {
     builder.MakeScalarInitializer<uint8_t>("b_zp", 64u);
     builder.MakeScalarInitializer<uint8_t>("y_zp", 128u);
 
-    builder.MakeOutput("y");
+    // Dequantize the quantized output to float so accuracy is compared with tolerance (HTP and CPU
+    // EP can differ by 1 LSB; VerifyOutput uses exact EXPECT_EQ for integer outputs). y_scale is
+    // float16 here, which DequantizeLinear does not accept, so use a float32 scale for the DQ.
+    builder.MakeScalarInitializer<float>("y_scale_f32", 0.04f);
     builder.AddNode("QLinearMatMul", "QLinearMatMul",
                     {"a", "a_scale", "a_zp", "b", "b_scale", "b_zp", "y_scale", "y_zp"},
-                    {"y"}, kOnnxDomain);
+                    {"y_q"}, kOnnxDomain);
+    builder.MakeOutput("y");
+    builder.AddNode("DequantizeLinear", "DequantizeLinear", {"y_q", "y_scale_f32", "y_zp"}, {"y"}, kOnnxDomain);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 21, ExpectedEPNodeAssignment::All, 1e-2f);
+  RunQnnModelTest(model_fn, provider_options, 21, ExpectedEPNodeAssignment::All, /*fp32_abs_err=*/0.02f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -341,13 +346,18 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
     builder.MakeScalarInitializer<uint8_t>("b_zp", 64u);
     builder.MakeScalarInitializer<uint8_t>("y_zp", 128u);
 
-    builder.MakeOutput("y");
+    // Dequantize the quantized output to float so accuracy is compared with tolerance (HTP and CPU
+    // EP can differ by 1 LSB; VerifyOutput uses exact EXPECT_EQ for integer outputs). y_scale is
+    // bfloat16 here, which DequantizeLinear does not accept, so use a float32 scale for the DQ.
+    builder.MakeScalarInitializer<float>("y_scale_f32", 0.04f);
     builder.AddNode("QLinearMatMul", "QLinearMatMul",
                     {"a", "a_scale", "a_zp", "b", "b_scale", "b_zp", "y_scale", "y_zp"},
-                    {"y"}, kOnnxDomain);
+                    {"y_q"}, kOnnxDomain);
+    builder.MakeOutput("y");
+    builder.AddNode("DequantizeLinear", "DequantizeLinear", {"y_q", "y_scale_f32", "y_zp"}, {"y"}, kOnnxDomain);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 21, ExpectedEPNodeAssignment::All, 1e-2f);
+  RunQnnModelTest(model_fn, provider_options, 21, ExpectedEPNodeAssignment::All, /*fp32_abs_err=*/0.02f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)

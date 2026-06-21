@@ -1,5 +1,5 @@
-// Copyright (c) Qualcomm. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include <functional>
 #include <limits>
@@ -31,6 +31,13 @@ static constexpr size_t kIdxBScale = 4;
 static constexpr size_t kIdxBZeroPoint = 5;
 static constexpr size_t kIdxYScale = 6;
 static constexpr size_t kIdxYZeroPoint = 7;
+
+namespace {
+inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
+}
+}  // namespace
+
 
 /**
  * Translates ONNX QLinearMatMul into a QNN MatMul or FullyConnected node.
@@ -82,6 +89,17 @@ class QLinearMatMulOpBuilder : public BaseOpBuilder {
   // Validates that all scale/zp inputs are scalar initializers (required for static graph compilation).
   static Ort::Status ValidateQuantInputs(const QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit);
+
+  // Decides whether to translate to QNN FullyConnected (vs MatMul). Mirrors MatMulOpBuilder::CheckInputs
+  // so ProcessInputs and ProcessAttributesAndOutputs make the identical decision. quant_a is A's
+  // quantization params (used to disable FC for per-channel A with rank > 2).
+  static bool DecideUseFullyConnected(const QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnit& node_unit,
+                                      const std::vector<uint32_t>& shape_a,
+                                      const std::vector<uint32_t>& shape_b,
+                                      Qnn_DataType_t qnn_dtype_a,
+                                      Qnn_DataType_t qnn_dtype_b,
+                                      const QnnQuantParamsWrapper& quant_a);
 };
 
 // ---------------------------------------------------------------------------
@@ -205,6 +223,41 @@ Ort::Status QLinearMatMulOpBuilder::ValidateQuantInputs(const QnnModelWrapper& q
   return Ort::Status();
 }
 
+bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_model_wrapper,
+                                                     const OrtNodeUnit& node_unit,
+                                                     const std::vector<uint32_t>& shape_a,
+                                                     const std::vector<uint32_t>& shape_b,
+                                                     Qnn_DataType_t qnn_dtype_a,
+                                                     Qnn_DataType_t qnn_dtype_b,
+                                                     const QnnQuantParamsWrapper& quant_a) {
+#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
+  // Validation crashes if QNN FullyConnected is used in QNN SDK versions 2.26 - 2.27.
+  // Just use QNN MatMul for these older QNN SDK versions.
+  ORT_UNUSED_PARAMETER(qnn_model_wrapper);
+  ORT_UNUSED_PARAMETER(node_unit);
+  ORT_UNUSED_PARAMETER(shape_a);
+  ORT_UNUSED_PARAMETER(shape_b);
+  ORT_UNUSED_PARAMETER(qnn_dtype_a);
+  ORT_UNUSED_PARAMETER(qnn_dtype_b);
+  ORT_UNUSED_PARAMETER(quant_a);
+  return false;
+#else
+  const auto& inputs = node_unit.Inputs();
+  const bool b_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxB].name);
+  const bool a_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxA].name);
+
+  // Use FullyConnected if B is a rank-2 initializer or a rank-1 tensor.
+  bool use_fully_connected = (shape_b.size() == 2 && b_is_initializer) || shape_b.size() == 1;
+  // FullyConnected cannot set output quant params for a reshaped rank-2 tensor when A is
+  // per-channel quantized with rank > 2.
+  use_fully_connected = use_fully_connected && !(quant_a.IsPerChannel() && shape_a.size() > 2);
+  // Don't use FullyConnected if both inputs are dynamic and 16-bit quantized (QNN validation fails).
+  use_fully_connected = use_fully_connected && !(IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
+                                                 IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
+  return use_fully_connected;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // ProcessInputs
 // ---------------------------------------------------------------------------
@@ -244,12 +297,10 @@ Ort::Status QLinearMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wra
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(inputs[kIdxA].shape, shape_a), "QLinearMatMul: cannot get shape of A.");
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(inputs[kIdxB].shape, shape_b), "QLinearMatMul: cannot get shape of B.");
 
-  // Decide MatMul vs FullyConnected (same rule as MatMulOpBuilder):
-  //   Use FullyConnected when B is a rank-2 initializer or rank-1.
+  // Decide MatMul vs FullyConnected (same rule as MatMulOpBuilder).
   const bool b_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxB].name);
-  bool use_fully_connected = (shape_b.size() == 2 && b_is_initializer) || shape_b.size() == 1;
-  // FullyConnected cannot handle per-channel quant on A when A rank > 2.
-  use_fully_connected = use_fully_connected && !(quant_a.IsPerChannel() && shape_a.size() > 2);
+  const bool use_fully_connected =
+      DecideUseFullyConnected(qnn_model_wrapper, node_unit, shape_a, shape_b, qnn_dtype_a, qnn_dtype_b, quant_a);
 
   // ---- Process input A ----
   const std::string& org_a_name = inputs[kIdxA].name;
@@ -290,11 +341,9 @@ Ort::Status QLinearMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wra
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(actual_a_name)) {
       Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(org_a_name);
       std::vector<uint8_t> unpacked;
-      if (b_is_initializer) {  // b_is_initializer used as proxy; check A specifically
-        if (qnn_model_wrapper.IsEffectivelyConstantInput(org_a_name)) {
-          RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
-              qnn_model_wrapper.GetConstantTensor(org_a_name), unpacked));
-        }
+      if (qnn_model_wrapper.IsEffectivelyConstantInput(org_a_name)) {
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+            qnn_model_wrapper.GetConstantTensor(org_a_name), unpacked));
       }
       QnnTensorWrapper tw(actual_a_name, tensor_type, qnn_dtype_a, quant_a.Copy(),
                           std::vector<uint32_t>(shape_a), std::move(unpacked));
@@ -399,10 +448,19 @@ Ort::Status QLinearMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper&
                                                                 bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
 
-  // Re-derive use_fully_connected to determine QNN op type and output shape.
+  // Re-derive shapes, quant params, and the FullyConnected decision. ProcessInputs already computed
+  // these, but the builder is stateless across the two phases (BaseOpBuilder calls them separately),
+  // so we recompute here to keep the QNN op type, output shape, and reshape handling consistent with
+  // the tensors emitted in ProcessInputs. DecideUseFullyConnected is the single source of truth for
+  // the MatMul-vs-FullyConnected choice.
   std::vector<uint32_t> shape_a, shape_b;
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(inputs[kIdxA].shape, shape_a), "QLinearMatMul: cannot get shape of A.");
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(inputs[kIdxB].shape, shape_b), "QLinearMatMul: cannot get shape of B.");
+
+  Qnn_DataType_t qnn_dtype_a = QNN_DATATYPE_UNDEFINED;
+  Qnn_DataType_t qnn_dtype_b = QNN_DATATYPE_UNDEFINED;
+  RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxA].type, qnn_dtype_a));
+  RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxB].type, qnn_dtype_b));
 
   QnnQuantParamsWrapper quant_a;
   RETURN_IF_ERROR(BuildQuantParam(qnn_model_wrapper, inputs[kIdxAScale],
@@ -410,9 +468,8 @@ Ort::Status QLinearMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper&
                                                                  : OrtNodeUnitIODef{},
                                   quant_a));
 
-  const bool b_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxB].name);
-  bool use_fully_connected = (shape_b.size() == 2 && b_is_initializer) || shape_b.size() == 1;
-  use_fully_connected = use_fully_connected && !(quant_a.IsPerChannel() && shape_a.size() > 2);
+  const bool use_fully_connected =
+      DecideUseFullyConnected(qnn_model_wrapper, node_unit, shape_a, shape_b, qnn_dtype_a, qnn_dtype_b, quant_a);
 
   const bool a_is_rank1 = shape_a.size() == 1;
   const bool b_is_rank1 = shape_b.size() == 1;
