@@ -175,6 +175,9 @@ Write-Host "--=-=-=- Running ONNX model tests -=--=-=-"
 
 # Overlay patched overrides file from extracted testdata onto onnx_models testdata
 $OverridesSource = Join-Path $RootDir "testdata\onnx_backend_test_series_overrides.jsonc"
+if (-not (Test-Path $OverridesSource)) {
+    $OverridesSource = Join-Path $RootDir (Join-Path $Config "testdata\onnx_backend_test_series_overrides.jsonc")
+}
 if (Test-Path $OverridesSource) {
     Copy-Item $OverridesSource (Join-Path $OnnxModelsRoot "testdata\onnx_backend_test_series_overrides.jsonc") -Force
 }
