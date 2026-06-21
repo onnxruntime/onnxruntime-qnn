@@ -38,7 +38,6 @@ inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
 }
 }  // namespace
 
-
 /**
  * Translates ONNX QLinearMatMul into a QNN MatMul or FullyConnected node.
  *
