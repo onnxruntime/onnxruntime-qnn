@@ -1,7 +1,7 @@
 From ee1c81b3c9ddfe0d5568173ac6ace9988ffd7c09 Mon Sep 17 00:00:00 2001
 From: qti-hungjuiw <hungjuiw@qti.qualcomm.com>
 Date: Mon, 9 Mar 2026 12:03:21 +0800
-Subject: [PATCH 2/5] Add Roialign Op to HTP
+Subject: [PATCH 2/4] Add Roialign Op to HTP
 
 ---
  onnxruntime/test/onnx/TestCase.cc | 2 ++

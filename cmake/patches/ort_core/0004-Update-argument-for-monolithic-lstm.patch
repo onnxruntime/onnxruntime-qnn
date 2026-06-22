@@ -1,7 +1,7 @@
 From c60a332e9a65dbae2920914adb8537de60f566e7 Mon Sep 17 00:00:00 2001
 From: "Cheng-Hsin Weng (Brian)" <chenweng@qti.qualcomm.com>
 Date: Fri, 13 Mar 2026 15:57:10 +0800
-Subject: [PATCH 4/5] Update argument for monolithic lstm
+Subject: [PATCH 4/4] Update argument for monolithic lstm
 
 ---
  onnxruntime/test/onnx/main.cc | 2 +-
