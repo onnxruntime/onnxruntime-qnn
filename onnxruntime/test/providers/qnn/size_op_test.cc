@@ -20,7 +20,7 @@ template <typename DataType>
 static GetTestModelFn BuildSizeTestCase(const std::vector<int64_t>& shape,
                                         const std::vector<DataType>& data) {
   return [shape, data](ModelTestBuilder& builder) {
-    builder.MakeInput<DataType>("X", shape, data);
+    builder.MakeInitializer<DataType>("X", shape, data);
     builder.AddNode("size_node", "Size", {"X"}, {"Y"}, kOnnxDomain);
     builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{});  // 0-D scalar output
   };

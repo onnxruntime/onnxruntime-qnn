@@ -44,8 +44,16 @@ class SizeOpBuilder : public BaseOpBuilder {
 Ort::Status SizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
-  // Require a fully static input shape. GetOnnxShape returns false if any dim is dynamic.
+  // Size is implemented as compile-time constant folding: no QNN node is emitted.
+  // QNN requires every APP_WRITE tensor (live graph input) to have at least one consumer node.
+  // Since Size emits no QNN node, a live input would become an unconsumed APP_WRITE tensor,
+  // causing QNN execute error 6004. Only accept constant initializer inputs.
   const auto& input_def = node_unit.Inputs()[0];
+  const std::string& input_name = input_def.name;
+  RETURN_IF_NOT(qnn_model_wrapper.IsEffectivelyConstantInput(input_name),
+                "QNN EP Size op requires a constant initializer input; live input will fall back to CPU EP.");
+
+  // Require a fully static input shape. GetOnnxShape returns false if any dim is dynamic.
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(input_def.shape, input_shape),
                 "QNN EP: Size op requires a fully static input shape (no dynamic dimensions).");
