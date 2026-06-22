@@ -35,6 +35,10 @@ from requests.auth import HTTPBasicAuth
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Repo root, computed once so a future move of this script touches a single line
+# rather than every '../../..' walk-up scattered through the file.
+_REPO_ROOT = Path(SCRIPT_DIR).resolve().parents[2]
+
 ARTIFACTORY_CERTS_FILE = os.path.join(SCRIPT_DIR, "certs", "artifactory-ca.pem")
 PYPI_RC_FILE = os.path.join(SCRIPT_DIR, ".pypirc")
 INI_FILE = os.path.join(SCRIPT_DIR, "config.ini")
@@ -1072,14 +1076,14 @@ class ZipUpleveler(ArtifactUpleveler):
             logging.info(f"Version update completed for {zip_file}, updated to {updated_zip_path}")
 
     @staticmethod
-    def _read_release_notes() -> tuple:
+    def _read_release_notes() -> tuple[str, str]:
         """Return (title, body) from the first section of docs/release-notes.md.
 
         title — text of the first H1 line (without the leading '# ').
         body  — all lines after that H1 up to (not including) the next H1.
         Both are empty strings if the file is missing or has no H1.
         """
-        notes_path = os.path.join(SCRIPT_DIR, "..", "..", "..", "docs", "release-notes.md")
+        notes_path = _REPO_ROOT / "docs" / "release-notes.md"
         try:
             with open(notes_path, encoding="utf-8") as f:
                 lines = f.readlines()
@@ -1146,8 +1150,10 @@ class ZipUpleveler(ArtifactUpleveler):
                     )
                 logging.info(f"Git tag {tag} was pushed concurrently by another job; reusing it")
         # Create the draft GitHub Release only if it does not already exist.
-        # Check with `gh release view` first so that parallel zip/tgz jobs never
-        # race on `gh release create` and accidentally produce two draft releases.
+        # `gh release view` is a fast-path: when zip/tgz jobs run sequentially the second
+        # one short-circuits without invoking `gh release create`. The view+create pair
+        # is still TOCTOU under true parallelism — the `"already exists"` fallback below
+        # is what actually guarantees no duplicate drafts; keep it intact.
         release_exists = (
             subprocess.run(["gh", "release", "view", tag], check=False, capture_output=True).returncode == 0
         )
@@ -1155,7 +1161,20 @@ class ZipUpleveler(ArtifactUpleveler):
             logging.info(f"GitHub Release {tag} already exists, reusing it")
         else:
             release_title, release_notes = self._read_release_notes()
-            release_title = release_title or tag
+            # Guard against a stale docs/release-notes.md: the parsed H1 title must carry the exact
+            # version being released. Match the vMAJOR.MINOR.PATCH token in the title and compare it
+            # to --version_to; a substring check would let 2.4.0 spuriously match e.g. 12.4.0 or
+            # 2.4.00. Refuse to publish a release whose title/body version disagrees with the tag
+            # rather than silently emit one.
+            if release_title:
+                title_versions = re.findall(r"\bv?(\d+\.\d+\.\d+)\b", release_title)
+                if self.args.version_to not in title_versions:
+                    raise RuntimeError(
+                        f"docs/release-notes.md top H1 ({release_title!r}) does not match "
+                        f"--version_to={self.args.version_to}; refusing to publish a tag/title-mismatch release. "
+                        f"Bump docs/release-notes.md before re-running."
+                    )
+            release_title = release_title or f"ONNX Runtime QNN Execution Provider {tag}"
             create_result = subprocess.run(
                 ["gh", "release", "create", tag, "--title", release_title, "--notes", release_notes, "--draft"],
                 check=False,
