@@ -63,10 +63,14 @@ class HtpPowerStateGuard {
   // Explicitly sets HTP performance after work is done and returns its status.
   // After this call the destructor will not invoke SetState again.
   Ort::Status SetPostRunHtpPerf() {
-    finalized_ = true;
     if (power_manager_ && valid_power_config_id_) {
-      return power_manager_->SetState(done_state_, config_, logger_);
+      Ort::Status status = power_manager_->SetState(done_state_, config_, logger_);
+      // Only mark finalized on success; on failure leave finalized_ false so the
+      // destructor retries the done-state transition and the HTP perf state is relaxed.
+      finalized_ = status.IsOK();
+      return status;
     }
+    finalized_ = true;
     return Ort::Status();
   }
   HtpPowerStateGuard(const HtpPowerStateGuard&) = delete;
