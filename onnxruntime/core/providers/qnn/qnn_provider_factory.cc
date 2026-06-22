@@ -12,7 +12,8 @@
 #include <optional>
 
 #if !defined(_WIN32)
-#include <glob.h>
+#include <cstring>
+#include <dirent.h>
 #endif
 
 #include "onnxruntime_c_api.h"
@@ -194,11 +195,15 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 #if !defined(_WIN32) && defined(__aarch64__)
     // Qualcomm Linux/Android arm64: ORT Core doesn't enumerate Hexagon NPUs.
     // Detect via any fastRPC compute-DSP char device.
-    glob_t g{};
-    if (glob("/dev/fastrpc-cdsp*", 0, nullptr, &g) == 0 && g.gl_pathc > 0) {
-      synthesize_npu = true;
+    if (DIR* d = opendir("/dev")) {
+      while (dirent* e = readdir(d)) {
+        if (std::strncmp(e->d_name, "fastrpc-cdsp", 12) == 0) {
+          synthesize_npu = true;
+          break;
+        }
+      }
+      closedir(d);
     }
-    globfree(&g);
 #endif
 
     if (synthesize_npu) {
