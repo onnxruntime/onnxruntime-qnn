@@ -366,10 +366,16 @@ TEST_F(QnnHTPBackendTests, PadConstantValue_FP16_0) {
 // is correctly processed by ProcessConstantValue, which converts QNN_DATATYPE_FLOAT_16 to
 // QNN_DATATYPE_FLOAT_32 before passing the scalar to QNN.
 TEST_F(QnnHTPBackendTests, PadHasConstantValueFloat16) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
 
   auto data_def = TestInputDef<float>({1, 4, 4, 8}, false, GetFloatDataInRange(-1.0f, 1.0f, 128));
   auto constant_def = TestInputDef<float>({1}, true, {1.0f});
