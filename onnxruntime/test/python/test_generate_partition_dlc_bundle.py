@@ -16,7 +16,8 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper
 
-HERE = Path(__file__).parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
+HELPER = REPO_ROOT / "onnxruntime" / "python" / "tools" / "qnn" / "partition_dlc_bundle" / "generate_partition_dlc_bundle.py"
 
 
 def _make_two_partition_model(path: Path):
@@ -76,7 +77,7 @@ def test_bundle_fill():
         rc = subprocess.call(
             [
                 sys.executable,
-                str(HERE / "generate_partition_dlc_bundle.py"),
+                str(HELPER),
                 "--bundle-dir",
                 str(bundle),
                 "--model",
