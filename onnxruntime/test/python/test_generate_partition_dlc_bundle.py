@@ -17,7 +17,9 @@ import onnx
 from onnx import TensorProto, helper
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-HELPER = REPO_ROOT / "onnxruntime" / "python" / "tools" / "qnn" / "partition_dlc_bundle" / "generate_partition_dlc_bundle.py"
+HELPER = (
+    REPO_ROOT / "onnxruntime" / "python" / "tools" / "qnn" / "partition_dlc_bundle" / "generate_partition_dlc_bundle.py"
+)
 
 
 def _make_two_partition_model(path: Path):
