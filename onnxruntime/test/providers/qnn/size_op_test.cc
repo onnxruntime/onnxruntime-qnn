@@ -70,7 +70,6 @@ TEST_F(QnnCPUBackendTests, Size_ZeroDim_Float) {
   RunSizeTest<float>({3, 0, 4}, std::vector<float>{}, ExpectedEPNodeAssignment::All);
 }
 
-
 }  // namespace test
 }  // namespace onnxruntime
 
