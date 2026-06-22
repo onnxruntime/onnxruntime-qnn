@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <cmath>
+#include <numeric>
 
 #include "QnnOpDef.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -238,6 +239,38 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   }
 
   const std::string node_name = utils::UniqueNameGenerator().New(node_unit);
+
+  const size_t num_inputs = node_unit.Inputs().size();
+  const auto& inputs = node_unit.Inputs();
+  RETURN_IF_NOT(num_inputs > 5 && inputs[5].Exists(), "Required input tensor seqlens_k not provided");
+
+  TensorInfo seqlens_k_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[5], seqlens_k_info));
+  if (seqlens_k_info.shape.size() > 1) {
+    // The op def for com.microsoft.GroupQueryAttention requires seqlens_k to have rank 1,
+    // but ORT does not enforce it. And the Olive AttentionMaskToSequenceLengths graph
+    // surgery generates a seqlens_k with shape [batch_size, 1]. QNN's GQA op def does enforce
+    // seqlens_k to have rank 1 and will fail during op validation otherwise. So handle
+    // the technically out-of-spec rank > 1 seqlens_k by inserting a reshape to [batch_size].
+    uint32_t seqlens_k_total_size = std::accumulate(seqlens_k_info.shape.begin(),
+                                                    seqlens_k_info.shape.end(),
+                                                    1u,
+                                                    std::multiplies<uint32_t>());
+
+    RETURN_IF_NOT(seqlens_k_info.shape[0] == seqlens_k_total_size, "Unexpected shape for seqlens_k");
+    const auto& seqlens_k_input_name = input_names[1];
+    bool is_seqlens_k_graph_input = qnn_model_wrapper.IsGraphInput(seqlens_k_input_name);
+    std::string seqlens_k_reshaped = seqlens_k_input_name + "_reshaped";
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(seqlens_k_input_name,
+                                                     seqlens_k_reshaped,
+                                                     seqlens_k_info.shape,
+                                                     {seqlens_k_total_size},
+                                                     seqlens_k_info.qnn_data_type,
+                                                     seqlens_k_info.quant_param.Copy(),
+                                                     do_op_validation,
+                                                     is_seqlens_k_graph_input));
+    input_names[1] = seqlens_k_reshaped;
+  }
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
