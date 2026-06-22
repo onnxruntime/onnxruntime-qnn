@@ -111,6 +111,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
   CreateSimpleOpBuilder("Sin", *this);
+  CreateSizeOpBuilder("Size", *this);
   CreateSimpleOpBuilder("Softplus", *this);
   CreateSimpleOpBuilder("SpaceToDepth", *this);
   CreateSimpleOpBuilder("Sqrt", *this);

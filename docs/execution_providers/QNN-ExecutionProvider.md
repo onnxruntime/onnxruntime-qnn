@@ -431,6 +431,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
+|ai.onnx:Size||
 |ai.onnx:Slice||
 |ai.onnx:Softmax||
 |ai.onnx:Softplus||
