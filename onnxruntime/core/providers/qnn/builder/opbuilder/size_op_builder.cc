@@ -53,12 +53,16 @@ Ort::Status SizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, /*do_op_validation=*/true);
 }
 
-Ort::Status SizeOpBuilder::ProcessInputs(QnnModelWrapper& /*qnn_model_wrapper*/,
-                                         const OrtNodeUnit& /*node_unit*/,
-                                         const Ort::Logger& /*logger*/,
-                                         std::vector<std::string>& /*input_names*/,
+Ort::Status SizeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         const Ort::Logger& logger,
+                                         std::vector<std::string>& input_names,
                                          bool /*do_op_validation*/) const {
-  // No-op: Size reads only shape metadata; the input tensor is never consumed by a QNN node.
+  // Register the input tensor in the QNN model's tensor map so that SetupQnnInputOutput
+  // can find it. Size does not pass this tensor to any QNN node, but skipping registration
+  // causes "Model input or output name not exist: X" at runtime.
+  const auto& input_0 = node_unit.Inputs()[0];
+  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
   return Ort::Status();
 }
 

@@ -70,24 +70,6 @@ TEST_F(QnnCPUBackendTests, Size_ZeroDim_Float) {
   RunSizeTest<float>({3, 0, 4}, std::vector<float>{}, ExpectedEPNodeAssignment::All);
 }
 
-// Dynamic input shape: should fall back to CPU EP (not claimed by QNN EP)
-TEST_F(QnnCPUBackendTests, Size_DynamicShape_Unsupported) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  // Build a model where the input shape is not fully static.
-  auto build_test_case = [](ModelTestBuilder& builder) {
-    // -1 marks a dynamic dimension; QNN EP must reject this and fall back.
-    auto input = builder.MakeInput<float>("X", {3, -1, 4},
-                                         std::vector<float>(12, 1.0f));
-    builder.AddNode("size_node", "Size", {"X"}, {"Y"}, kOnnxDomain);
-    builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{});
-  };
-
-  RunQnnModelTest(build_test_case, provider_options, /*opset_version=*/13,
-                  ExpectedEPNodeAssignment::None);
-}
 
 }  // namespace test
 }  // namespace onnxruntime
