@@ -7,9 +7,6 @@ ONNX Gelu now maps to QNN_OP_ELEMENT_WISE_NEURON (operation=GELU). The neuron
 GELU uses the same erf formula as the ONNX reference, but the backend computes
 it at lower precision, so the erf-exact gelu_default_2 conformance test exceeds
 the default tolerance (max observed abs diff ~4.5e-4 vs effective tol ~2.4e-5).
-
-Also include QDQ model tolerances (previously only in the onnx_models package)
-so that the testdata archive overrides file is self-contained.
 ---
  .../testdata/onnx_backend_test_series_overrides.jsonc       | 13 ++++++++++++-
  1 file changed, 12 insertions(+), 1 deletion(-)
@@ -25,16 +22,6 @@ index 1111111111..2222222222 100644
 -        "test_stft_with_window": 1e-4
 +        "test_stft_with_window": 1e-4,
 +        "test_gelu_default_2": 1e-3,
-+        "bvlcalexnet-12-qdq": 0.01,
-+        "caffenet-12-qdq": 0.001,
-+        "efficientnet-lite4-11-qdq": 0.005,
-+        "googlenet-12-qdq": 0.035,
-+        "mobilenetv2-12-qdq": 0.964796,
-+        "resnet50-v1-12-qdq": 1,
-+        "squeezenet1.0-13-qdq": 0.15,
-+        "shufflenet-v2-12-qdq": 4,
-+        "vgg16-12": 0.01,
-+        "zfnet512-12-qdq": 0.005
      },
      // Key: str, the name of the test as defined by ONNX without any device suffix.
      // Val: float, max relative difference between expected and actual.

@@ -122,12 +122,6 @@ count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args
 
 log_info "-=-=-=- Running ONNX model tests -=-=-=-"
 
-# Overlay patched overrides file from extracted testdata onto onnx_models testdata
-if [ -f "${build_dir}/testdata/onnx_backend_test_series_overrides.jsonc" ]; then
-    cp "${build_dir}/testdata/onnx_backend_test_series_overrides.jsonc" \
-       "${onnx_models_root}/testdata/onnx_backend_test_series_overrides.jsonc"
-fi
-
 cd "${onnx_models_root}"
 
 declare -a model_test_runners=("run_model_test")
