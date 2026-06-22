@@ -184,6 +184,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'69'|HTP v69.|
 |'73'|HTP v73.|
 |'75'|HTP v75.|
+|'81'|HTP v81.|
 
 Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
 
@@ -195,6 +196,11 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |---|---|
 |'0'|Disabled. Inference with fp32 precision if it's fp32 model.|
 |'1'|Default. Enable the float32 model to be inferenced with fp16 precision.|
+
+|`"disable_htp_monolithic_lstm"`|Description|
+|---|---|
+|'0'|Default. HTP uses the monolithic LSTM graph configuration.|
+|'1'|Disable the monolithic LSTM graph configuration on HTP.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
@@ -263,7 +269,7 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 |`"num_graph_prepare_threads"`|Description|
 |---|---|
-|Number (string)|The number of threads to use during model compilation. Must be greater than 1 and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
+|Number (string)|The number of threads to use during model compilation. Must be at least 1 (a value of 1 disables the feature) and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
 
 For more information, see the [Parallel Graph Preparation](#parallel-graph-preparation) section below.
 
