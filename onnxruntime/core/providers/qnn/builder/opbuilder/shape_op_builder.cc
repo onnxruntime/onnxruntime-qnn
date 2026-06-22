@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/shape_op_builder.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -45,6 +46,12 @@ Qnn_DataType_t ShapeOpBuilder::GetSupportedOutputDataType(size_t index, Qnn_Data
   return qnn_data_type;
 }
 
+// Resolves the ONNX Shape `start`/`end` attributes against the input rank per the ONNX spec
+// (opset >= 15). Mirrors `data.shape[start:end]`: negative values count from the end (add rank),
+// then both are clamped to [0, rank]. Returns the resolved (start, end, output_length) where
+// output_length = max(0, end - start).
+// Defined inline in shape_op_builder.h for unit-test visibility.
+
 Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                         const OrtNodeUnit& node_unit,
                                                         std::vector<std::string>&& input_names,
@@ -57,22 +64,14 @@ Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   const int64_t rank = static_cast<int64_t>(input_shape.size());
   RETURN_IF(rank < 1, "QNN Shape requires an input of rank >= 1.");
 
-  // Step 1: Resolve `start`/`end` per the ONNX Shape spec (opset >= 15). The reference op is
-  // `data.shape[start:end]`: negative values count from the end (add rank), then both are clamped
-  // to [0, rank]. The resolved output length is max(0, end - start) (start >= end => empty shape).
+  // Step 1: Resolve `start`/`end` per the ONNX Shape spec (opset >= 15).
   OrtNodeAttrHelper node_helper(node_unit);
-  int64_t start = node_helper.Get("start", static_cast<int64_t>(0));
-  int64_t end = node_helper.Get("end", rank);
-
-  if (start < 0) {
-    start += rank;
-  }
-  if (end < 0) {
-    end += rank;
-  }
-  start = std::min<int64_t>(std::max<int64_t>(start, 0), rank);
-  end = std::min<int64_t>(std::max<int64_t>(end, 0), rank);
-  const int64_t output_length = std::max<int64_t>(0, end - start);
+  const int64_t start_attr = node_helper.Get("start", static_cast<int64_t>(0));
+  const int64_t end_attr = node_helper.Get("end", rank);
+  int64_t start = 0;
+  int64_t end = 0;
+  int64_t output_length = 0;
+  ResolveShapeBounds(rank, start_attr, end_attr, start, end, output_length);
 
   // Step 2: Postprocess to match the QNN op definition. Per QnnOpDef (MasterOpDef "Shape"), the
   // output is a 1-D tensor of shape [M] with M = end - start, and QNN constrains `end` to
