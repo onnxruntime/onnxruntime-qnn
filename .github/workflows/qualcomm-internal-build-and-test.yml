@@ -146,7 +146,9 @@ jobs:
       target_py_vsn: ${{ inputs.target_py_vsn }}
       upload_test_archive: true
       upload_wheel: true
-      test_wheel: false  # Fails because the HTP is not discovered
+      # HTP NPU is discovered by qnn_provider_factory's fastRPC probe (/dev/fastrpc-cdsp);
+      # ORT Core's Linux discovery doesn't see Qualcomm NPUs.
+      test_wheel: true
       run_tests: true
       build_test_same_runner: false
       test_runner_arch: arm64
