@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: MIT
 #
 # Generate a per-day coverage snapshot Excel from a Cobertura XML report.
-# Each nightly run creates an independent file; historical aggregation across
-# days is handled by merge_coverage_excel.py and the aggregate CI workflow
-# (future work, tracked in PR 2).
+# Each nightly run creates an independent file.
+# TODO: enable the aggregate CI workflow to merge daily snapshots into a 30-day history report.
 #
 # Usage:
 #   python3 update_coverage_excel.py \

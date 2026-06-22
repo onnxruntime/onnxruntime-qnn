@@ -261,10 +261,10 @@ class GenerateFileCoverageExcelTask(RunExecutablesWithVenvTask):
 
     Calls update_coverage_excel.py with the coverage.xml produced by
     GenerateCoverageTask and writes a fresh Excel file containing today's
-    line% and branch% for every QNN EP source file.  Each nightly run
-    produces an independent snapshot; historical aggregation across days is
-    handled by merge_coverage_excel.py and the aggregate CI workflow
-    (future work, tracked in PR 2).
+    line% and branch% for every QNN EP source file.
+
+    # TODO: enable the aggregate CI workflow to merge daily snapshots into
+    # a 30-day history report.
 
     Prerequisite: coverage.xml must already exist under
     <build_dir>/<config>/coverage/ (enforced via @depends in build_and_test.py).
