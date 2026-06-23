@@ -23,7 +23,6 @@
 #endif
 
 #include "HTP/QnnHtpGraph.h"
-#include "nlohmann/json.hpp"
 
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -2275,38 +2274,8 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
 
     if (dump_partition_dlc_bundle_) {
-      PartitionBundleRecord record;
-      auto safe_dtype = [](int32_t data_type) -> std::string {
-        try {
-          return std::string(qnn::utils::GetElementNameByType(static_cast<ONNXTensorElementDataType>(data_type)));
-        } catch (...) {
-          return "elem_type_" + std::to_string(data_type);
-        }
-      };
-      record.name = fused_node_name;
-      const auto& inputs_info = qnn_model->GetInputsInfo();
-      for (const auto& input_name : qnn_model->GetInputNames()) {
-        auto it = inputs_info.find(input_name);
-        PartitionBundleTensor t;
-        t.name = input_name;
-        if (it != inputs_info.end()) {
-          t.dtype = safe_dtype(it->second.data_type_);
-          t.shape = it->second.shape_;
-        }
-        record.inputs.push_back(std::move(t));
-      }
-      const auto& outputs_info = qnn_model->GetOutputsInfo();
-      for (const auto& output_name : qnn_model->GetOutputNames()) {
-        auto it = outputs_info.find(output_name);
-        PartitionBundleTensor t;
-        t.name = output_name;
-        if (it != outputs_info.end()) {
-          t.dtype = safe_dtype(it->second.data_type_);
-          t.shape = it->second.shape_;
-        }
-        record.outputs.push_back(std::move(t));
-      }
-      partition_bundle_records_.push_back(std::move(record));
+      partition_bundle_records_.push_back(
+          qnn::RecordPartitionBundle(*qnn_model, fused_node_name));
     }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     if (use_multithreaded_prepare) {
@@ -2828,68 +2797,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   }
 
   if (ep->dump_partition_dlc_bundle_ && !ep->partition_bundle_records_.empty()) {
-    namespace fs = std::filesystem;
-    fs::path bundle_dir(ep->partition_dlc_bundle_dir_);
-    std::error_code ec;
-    fs::create_directories(bundle_dir, ec);
-
-    auto tensor_to_json = [](const QnnEp::PartitionBundleTensor& t) {
-      nlohmann::json j;
-      j["name"] = t.name;
-      j["dtype"] = t.dtype;
-      j["shape"] = t.shape;
-      return j;
-    };
-
-    nlohmann::json manifest;
-    manifest["bundle_version"] = 1;
-    manifest["partitions"] = nlohmann::json::array();
-
-    std::unordered_map<std::string, std::string> producer_of;
-    for (const auto& rec : ep->partition_bundle_records_) {
-      nlohmann::json p;
-      p["name"] = rec.name;
-      p["dlc_path"] = (fs::path("partitions") / (rec.name + ".dlc")).generic_string();
-      p["inputs"] = nlohmann::json::array();
-      for (const auto& in : rec.inputs) {
-        p["inputs"].push_back(tensor_to_json(in));
-      }
-      p["outputs"] = nlohmann::json::array();
-      for (const auto& out : rec.outputs) {
-        p["outputs"].push_back(tensor_to_json(out));
-      }
-      manifest["partitions"].push_back(std::move(p));
-      for (const auto& out : rec.outputs) {
-        producer_of[out.name] = rec.name;
-      }
-    }
-
-    manifest["edges"] = nlohmann::json::array();
-    for (const auto& rec : ep->partition_bundle_records_) {
-      for (const auto& in : rec.inputs) {
-        auto it = producer_of.find(in.name);
-        if (it != producer_of.end()) {
-          nlohmann::json edge;
-          edge["producer_partition"] = it->second;
-          edge["consumer_partition"] = rec.name;
-          edge["tensor_name"] = in.name;
-          manifest["edges"].push_back(std::move(edge));
-        }
-      }
-    }
-
-    fs::path manifest_path = bundle_dir / "manifest.json";
-    std::ofstream ofs(manifest_path);
-    if (ofs) {
-      ofs << manifest.dump(2);
-      ORT_CXX_LOG(ep->logger_,
-                  ORT_LOGGING_LEVEL_INFO,
-                  ("Wrote partition DLC bundle manifest: " + manifest_path.string()).c_str());
-    } else {
-      ORT_CXX_LOG(ep->logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  ("Failed to write partition DLC bundle manifest: " + manifest_path.string()).c_str());
-    }
+    qnn::WritePartitionBundleManifest(ep->partition_dlc_bundle_dir_,
+                                      ep->partition_bundle_records_,
+                                      ep->logger_);
     ep->partition_bundle_records_.clear();
   }
 

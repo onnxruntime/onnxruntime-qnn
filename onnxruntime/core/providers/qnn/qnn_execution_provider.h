@@ -15,6 +15,7 @@
 #include "HTP/QnnHtpGraph.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/partition_dlc_bundle.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -259,18 +260,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool dump_partition_dlc_bundle_ = false;
   std::string partition_dlc_bundle_dir_ = "";
-
-  struct PartitionBundleTensor {
-    std::string name;
-    std::string dtype;
-    std::vector<int64_t> shape;
-  };
-  struct PartitionBundleRecord {
-    std::string name;
-    std::vector<PartitionBundleTensor> inputs;
-    std::vector<PartitionBundleTensor> outputs;
-  };
-  std::vector<PartitionBundleRecord> partition_bundle_records_;
+  std::vector<qnn::PartitionBundleRecord> partition_bundle_records_;
 
   // === Framework op trace ===
   bool enable_framework_op_trace_ = false;
