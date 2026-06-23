@@ -1,0 +1,997 @@
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+//
+// Function-level unit tests for qnn_utils.cc — pure utility functions that
+// have no dependency on a real QNN backend or OrtApi at runtime.
+
+#include "gtest/gtest.h"
+
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
+
+#include <cmath>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <gsl/gsl>
+
+#include "QnnInterface.h"
+#include "QnnTypes.h"
+
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+
+// Forward declarations for operator<< overloads defined in qnn_utils.cc
+// but not declared in qnn_utils.h. These exist in the EP shared library.
+namespace onnxruntime {
+namespace qnn {
+namespace utils {
+std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar);
+std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type);
+std::ostream& operator<<(std::ostream& out, const Qnn_Definition_t& definition);
+std::ostream& operator<<(std::ostream& out, const Qnn_QuantizationEncoding_t& encoding);
+std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize_params);
+std::ostream& operator<<(std::ostream& out, const Qnn_TensorType_t& tensor_type);
+std::ostream& operator<<(std::ostream& out, const Qnn_TensorMemType_t& mem_type);
+std::ostream& operator<<(std::ostream& out, const Qnn_ParamType_t& param_type);
+}  // namespace utils
+}  // namespace qnn
+}  // namespace onnxruntime
+
+// Bring everything into scope at file level so TEST() bodies can use them.
+using namespace onnxruntime::qnn;
+using namespace onnxruntime::qnn::utils;
+using namespace onnxruntime::test;
+
+// =============================================================================
+// GetElementSizeByType(Qnn_DataType_t)
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetElementSizeByType_Qnn_KnownTypes) {
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_INT_8), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_INT_16), 2u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_INT_32), 4u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_INT_64), 8u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UINT_8), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UINT_16), 2u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UINT_32), 4u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UINT_64), 8u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_FLOAT_16), 2u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_FLOAT_32), 4u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_FLOAT_64), 8u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_BFLOAT_16), 2u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_BOOL_8), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_SFIXED_POINT_8), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_SFIXED_POINT_16), 2u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_SFIXED_POINT_32), 4u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_8), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_16), 2u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_32), 4u);
+}
+
+TEST(QnnUnit_UtilsTest, GetElementSizeByType_Qnn_UnknownThrows) {
+  EXPECT_THROW(GetElementSizeByType(static_cast<Qnn_DataType_t>(9999)), Ort::Exception);
+}
+
+// =============================================================================
+// GetElementSizeByType(ONNXTensorElementDataType)
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetElementSizeByType_OnnxElem_UnknownThrows) {
+  EXPECT_THROW(
+      GetElementSizeByType(static_cast<ONNXTensorElementDataType>(9999)),
+      Ort::Exception);
+}
+
+// =============================================================================
+// GetElementNameByType
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetElementNameByType_AllKnownTypes) {
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2), "int2_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2), "uint2_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4), "int4_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4), "uint4_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8), "int8_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16), "int16_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32), "int32_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64), "int64_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8), "uint8_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16), "uint16_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32), "uint32_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64), "uint64_t");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16), "float16");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT), "float32");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE), "double");
+  EXPECT_EQ(GetElementNameByType(ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL), "bool");
+}
+
+TEST(QnnUnit_UtilsTest, GetElementNameByType_UnknownThrows) {
+  EXPECT_THROW(
+      GetElementNameByType(static_cast<ONNXTensorElementDataType>(9999)),
+      Ort::Exception);
+}
+
+// =============================================================================
+// GetQnnTensorDataSizeInBytes
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_4BitRoundsUp) {
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(4u, QNN_DATATYPE_SFIXED_POINT_4), 2u);
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(5u, QNN_DATATYPE_SFIXED_POINT_4), 3u);
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(1u, QNN_DATATYPE_UFIXED_POINT_4), 1u);
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(6u, QNN_DATATYPE_UFIXED_POINT_4), 3u);
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_RegularTypes) {
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(4u, QNN_DATATYPE_SFIXED_POINT_8), 4u);
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(3u, QNN_DATATYPE_SFIXED_POINT_16), 6u);
+  EXPECT_EQ(GetQnnTensorDataSizeInBytes(2u, QNN_DATATYPE_FLOAT_32), 8u);
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_SpanEmptyThrows) {
+  EXPECT_THROW(
+      GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t>{}, QNN_DATATYPE_FLOAT_32),
+      Ort::Exception);
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_SpanMultiDim) {
+  std::vector<uint32_t> shape = {2, 3, 4};
+  gsl::span<const uint32_t> shape_span(shape.data(), shape.size());
+  EXPECT_EQ(
+      GetQnnTensorDataSizeInBytes(shape_span, QNN_DATATYPE_FLOAT_32),
+      2u * 3u * 4u * sizeof(float));
+}
+
+// =============================================================================
+// QnnTensorHasDynamicShape
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, QnnTensorHasDynamicShape_V1TensorAlwaysFalse) {
+  Qnn_Tensor_t tensor = QNN_TENSOR_INIT;
+  EXPECT_FALSE(QnnTensorHasDynamicShape(tensor));
+}
+
+#ifdef QNN_TENSOR_V2_INIT
+TEST(QnnUnit_UtilsTest, QnnTensorHasDynamicShape_V2AllStaticDims) {
+  Qnn_Tensor_t tensor;
+  std::memset(&tensor, 0, sizeof(tensor));
+  tensor.version = QNN_TENSOR_VERSION_2;
+  std::vector<uint8_t> is_dynamic = {0, 0, 0};
+  std::vector<uint32_t> dims = {1, 2, 3};
+  tensor.v2.rank = static_cast<uint32_t>(dims.size());
+  tensor.v2.dimensions = dims.data();
+  tensor.v2.isDynamicDimensions = is_dynamic.data();
+  EXPECT_FALSE(QnnTensorHasDynamicShape(tensor));
+}
+
+TEST(QnnUnit_UtilsTest, QnnTensorHasDynamicShape_V2OneDynamicDim) {
+  Qnn_Tensor_t tensor;
+  std::memset(&tensor, 0, sizeof(tensor));
+  tensor.version = QNN_TENSOR_VERSION_2;
+  std::vector<uint8_t> is_dynamic = {0, 1, 0};
+  std::vector<uint32_t> dims = {1, 2, 3};
+  tensor.v2.rank = static_cast<uint32_t>(dims.size());
+  tensor.v2.dimensions = dims.data();
+  tensor.v2.isDynamicDimensions = is_dynamic.data();
+  EXPECT_TRUE(QnnTensorHasDynamicShape(tensor));
+}
+#endif  // QNN_TENSOR_V2_INIT
+
+// =============================================================================
+// operator<< for Qnn types
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_INT64PrintsNotSupported) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_INT_64;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_UINT64PrintsNotSupported) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_UINT_64;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_FLOAT16DoesNotCrash) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_FLOAT_16;
+  std::ostringstream oss;
+  oss << s;  // no output in the switch case, just verifying no crash
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_SFixedPointVariants) {
+  for (auto dt : {QNN_DATATYPE_SFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_16,
+                  QNN_DATATYPE_SFIXED_POINT_32, QNN_DATATYPE_UFIXED_POINT_8,
+                  QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_32}) {
+    Qnn_Scalar_t s{};
+    s.dataType = dt;
+    std::ostringstream oss;
+    oss << s;
+    EXPECT_FALSE(oss.str().empty()) << "for dataType=" << static_cast<int>(dt);
+  }
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_INT8PrintsValue) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_INT_8;
+  s.int8Value = -42;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_EQ(oss.str(), "-42");
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_INT16PrintsValue) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_INT_16;
+  s.int16Value = 1234;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_EQ(oss.str(), "1234");
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_UINT8PrintsValue) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_UINT_8;
+  s.uint8Value = 200;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_EQ(oss.str(), "200");
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_UINT16PrintsValue) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_UINT_16;
+  s.uint16Value = 50000;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_EQ(oss.str(), "50000");
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_FLOAT64PrintsValue) {
+  Qnn_Scalar_t s{};
+  s.dataType = QNN_DATATYPE_FLOAT_64;
+  s.doubleValue = 3.14;
+  std::ostringstream oss;
+  oss << s;
+  EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnScalar_UnknownThrows) {
+  Qnn_Scalar_t s{};
+  s.dataType = static_cast<Qnn_DataType_t>(9999);
+  std::ostringstream oss;
+  EXPECT_THROW(oss << s, Ort::Exception);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_UnknownThrows) {
+  Qnn_DataType_t dt = static_cast<Qnn_DataType_t>(9999);
+  std::ostringstream oss;
+  EXPECT_THROW(oss << dt, Ort::Exception);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_VariousUncoveredTypes) {
+  auto check = [](Qnn_DataType_t dt, std::string_view expected_substr) {
+    std::ostringstream oss;
+    oss << dt;
+    EXPECT_NE(oss.str().find(expected_substr), std::string::npos)
+        << "for dt=" << static_cast<int>(dt);
+  };
+  check(QNN_DATATYPE_INT_8, "INT_8");
+  check(QNN_DATATYPE_INT_16, "INT_16");
+  check(QNN_DATATYPE_UINT_16, "UINT_16");
+  check(QNN_DATATYPE_INT_64, "INT_64");
+  check(QNN_DATATYPE_UINT_64, "UINT_64");
+  check(QNN_DATATYPE_FLOAT_64, "FLOAT_64");
+  check(QNN_DATATYPE_SFIXED_POINT_8, "SFIXED_POINT_8");
+  check(QNN_DATATYPE_SFIXED_POINT_16, "SFIXED_POINT_16");
+  check(QNN_DATATYPE_SFIXED_POINT_32, "SFIXED_POINT_32");
+  check(QNN_DATATYPE_UFIXED_POINT_8, "UFIXED_POINT_8");
+  check(QNN_DATATYPE_UFIXED_POINT_16, "UFIXED_POINT_16");
+  check(QNN_DATATYPE_UFIXED_POINT_32, "UFIXED_POINT_32");
+  check(QNN_DATATYPE_BFLOAT_16, "BFLOAT_16");
+  check(QNN_DATATYPE_BOOL_8, "BOOL_8");
+  check(QNN_DATATYPE_SFIXED_POINT_4, "SFIXED_POINT_4");
+  check(QNN_DATATYPE_UFIXED_POINT_4, "UFIXED_POINT_4");
+  check(QNN_DATATYPE_UNDEFINED, "UNDEFINED");
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDefinition_AllBranches) {
+  auto check = [](Qnn_Definition_t def, std::string_view expected_substr) {
+    std::ostringstream oss;
+    oss << def;
+    EXPECT_NE(oss.str().find(expected_substr), std::string::npos);
+  };
+  check(QNN_DEFINITION_IMPL_GENERATED, "IMPL_GENERATED");
+  check(QNN_DEFINITION_DEFINED, "DEFINED");
+  check(QNN_DEFINITION_UNDEFINED, "UNDEFINED");
+  std::ostringstream oss;
+  oss << static_cast<Qnn_Definition_t>(999);
+  EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnQuantEncoding_AllBranches) {
+  auto check = [](Qnn_QuantizationEncoding_t enc, std::string_view expected_substr) {
+    std::ostringstream oss;
+    oss << enc;
+    EXPECT_NE(oss.str().find(expected_substr), std::string::npos);
+  };
+  check(QNN_QUANTIZATION_ENCODING_SCALE_OFFSET, "SCALE_OFFSET");
+  check(QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET, "AXIS_SCALE_OFFSET");
+  check(QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET, "BW_SCALE_OFFSET");
+  check(QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET, "BW_AXIS_SCALE_OFFSET");
+  check(QNN_QUANTIZATION_ENCODING_UNDEFINED, "UNDEFINED");
+  std::ostringstream oss;
+  oss << static_cast<Qnn_QuantizationEncoding_t>(999);
+  EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnQuantizeParams_BwScaleOffset) {
+  Qnn_QuantizeParams_t qp{};
+  qp.encodingDefinition = QNN_DEFINITION_DEFINED;
+  qp.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET;
+  qp.bwScaleOffsetEncoding.bitwidth = 8;
+  qp.bwScaleOffsetEncoding.scale = 0.01f;
+  qp.bwScaleOffsetEncoding.offset = 0;
+  std::ostringstream oss;
+  oss << qp;
+  EXPECT_NE(oss.str().find("bitwidth"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnTensorType_AllBranches) {
+  auto check = [](Qnn_TensorType_t tt, std::string_view expected_substr) {
+    std::ostringstream oss;
+    oss << tt;
+    EXPECT_NE(oss.str().find(expected_substr), std::string::npos);
+  };
+  check(QNN_TENSOR_TYPE_APP_WRITE, "APP_WRITE");
+  check(QNN_TENSOR_TYPE_APP_READ, "APP_READ");
+  check(QNN_TENSOR_TYPE_APP_READWRITE, "APP_READWRITE");
+  check(QNN_TENSOR_TYPE_NATIVE, "NATIVE");
+  check(QNN_TENSOR_TYPE_STATIC, "STATIC");
+  check(QNN_TENSOR_TYPE_NULL, "NULL");
+  std::ostringstream oss;
+  oss << static_cast<Qnn_TensorType_t>(999);
+  EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnTensorMemType_AllBranches) {
+  {
+    std::ostringstream oss;
+    oss << QNN_TENSORMEMTYPE_RAW;
+    EXPECT_NE(oss.str().find("RAW"), std::string::npos);
+  }
+  {
+    std::ostringstream oss;
+    oss << QNN_TENSORMEMTYPE_MEMHANDLE;
+    EXPECT_NE(oss.str().find("MEMHANDLE"), std::string::npos);
+  }
+  {
+    std::ostringstream oss;
+    oss << static_cast<Qnn_TensorMemType_t>(999);
+    EXPECT_FALSE(oss.str().empty());
+  }
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnParamType_DefaultBranch) {
+  std::ostringstream oss;
+  oss << static_cast<Qnn_ParamType_t>(999);
+  EXPECT_NE(oss.str().find("Unknown"), std::string::npos);
+}
+
+// =============================================================================
+// QnnJSONGraph — exercises AppendQnnElemsToJSONArray data-type branches.
+// TensorFixture owns the shape vector and raw data so Qnn_Tensor_t pointers
+// remain valid throughout the test.
+// =============================================================================
+
+struct TensorFixture {
+  std::string name;
+  std::vector<uint32_t> shape;
+  std::vector<uint8_t> raw_bytes;
+  Qnn_Tensor_t tensor = QNN_TENSOR_INIT;
+
+  template <typename T>
+  void Init(std::string tensor_name, Qnn_DataType_t dt, std::vector<T> typed_data) {
+    name = std::move(tensor_name);
+    shape = {static_cast<uint32_t>(typed_data.size())};
+    raw_bytes.resize(typed_data.size() * sizeof(T));
+    std::memcpy(raw_bytes.data(), typed_data.data(), raw_bytes.size());
+    tensor = QNN_TENSOR_INIT;
+    SetQnnTensorName(tensor, name.c_str());
+    SetQnnTensorType(tensor, QNN_TENSOR_TYPE_STATIC);
+    SetQnnTensorDataType(tensor, dt);
+    SetQnnTensorDim(tensor, shape);
+    SetQnnTensorMemType(tensor, QNN_TENSORMEMTYPE_RAW);
+    SetQnnTensorClientBuf(tensor, raw_bytes.data(),
+                          static_cast<uint32_t>(raw_bytes.size()));
+  }
+
+  void InitIO(std::string tensor_name, Qnn_DataType_t dt, std::vector<uint32_t> dims) {
+    name = std::move(tensor_name);
+    shape = std::move(dims);
+    tensor = QNN_TENSOR_INIT;
+    SetQnnTensorName(tensor, name.c_str());
+    SetQnnTensorDataType(tensor, dt);
+    SetQnnTensorDim(tensor, shape);
+  }
+};
+
+template <typename DataT>
+static void RunJsonGraphParamTest(const char* op_name, Qnn_DataType_t param_dt,
+                                  Qnn_DataType_t io_dt, std::vector<DataT> data) {
+  TensorFixture param_fix, in_fix, out_fix;
+  param_fix.Init<DataT>(std::string(op_name) + "_p", param_dt, std::move(data));
+  in_fix.InitIO(std::string(op_name) + "_in", io_dt,
+                {static_cast<uint32_t>(param_fix.shape[0])});
+  out_fix.InitIO(std::string(op_name) + "_out", io_dt, in_fix.shape);
+
+  Qnn_Param_t param{};
+  param.paramType = QNN_PARAMTYPE_TENSOR;
+  param.name = "w";
+  param.tensorParam = param_fix.tensor;
+
+  QnnOpConfigWrapper op(op_name, "qti.aisw", "Relu",
+                        {in_fix.tensor}, {out_fix.tensor}, {param});
+  QnnJSONGraph json_graph;
+  json_graph.AddOp(op);
+  EXPECT_FALSE(json_graph.Finalize().dump().empty()) << "for op=" << op_name;
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_CoversManyDataTypeBranches) {
+  RunJsonGraphParamTest<int8_t>("op_i8", QNN_DATATYPE_SFIXED_POINT_8,
+                                QNN_DATATYPE_SFIXED_POINT_8, {-1, 0, 1, 2});
+  RunJsonGraphParamTest<int16_t>("op_i16", QNN_DATATYPE_SFIXED_POINT_16,
+                                 QNN_DATATYPE_SFIXED_POINT_16, {-100, 0, 100});
+  RunJsonGraphParamTest<int32_t>("op_i32", QNN_DATATYPE_INT_32,
+                                 QNN_DATATYPE_INT_32, {1, 2});
+  RunJsonGraphParamTest<int64_t>("op_i64", QNN_DATATYPE_INT_64,
+                                 QNN_DATATYPE_INT_64, {100000LL});
+  RunJsonGraphParamTest<uint8_t>("op_u8", QNN_DATATYPE_UFIXED_POINT_8,
+                                 QNN_DATATYPE_UFIXED_POINT_8, {10u, 20u, 30u});
+  RunJsonGraphParamTest<uint16_t>("op_u16", QNN_DATATYPE_UFIXED_POINT_16,
+                                  QNN_DATATYPE_UFIXED_POINT_16, {1u, 2u});
+  RunJsonGraphParamTest<uint32_t>("op_u32", QNN_DATATYPE_UFIXED_POINT_32,
+                                  QNN_DATATYPE_UFIXED_POINT_32, {5u});
+  RunJsonGraphParamTest<uint64_t>("op_u64", QNN_DATATYPE_UINT_64,
+                                  QNN_DATATYPE_UINT_64, {999999ULL});
+  RunJsonGraphParamTest<float>("op_f32", QNN_DATATYPE_FLOAT_32,
+                               QNN_DATATYPE_FLOAT_32, {0.5f, -0.5f});
+  RunJsonGraphParamTest<Ort::Float16_t>("op_f16", QNN_DATATYPE_FLOAT_16,
+                                        QNN_DATATYPE_FLOAT_16,
+                                        {Ort::Float16_t(1.0f)});
+  RunJsonGraphParamTest<int8_t>("op_i8_raw", QNN_DATATYPE_INT_8,
+                                QNN_DATATYPE_INT_8, {-1, 0, 1, 2});
+  RunJsonGraphParamTest<int16_t>("op_i16_raw", QNN_DATATYPE_INT_16,
+                                 QNN_DATATYPE_INT_16, {-100, 0, 100});
+  RunJsonGraphParamTest<uint8_t>("op_u8_raw", QNN_DATATYPE_UINT_8,
+                                 QNN_DATATYPE_UINT_8, {10u, 20u, 30u});
+  RunJsonGraphParamTest<uint16_t>("op_u16_raw", QNN_DATATYPE_UINT_16,
+                                  QNN_DATATYPE_UINT_16, {1u, 2u});
+  RunJsonGraphParamTest<uint32_t>("op_u32_raw", QNN_DATATYPE_UINT_32,
+                                  QNN_DATATYPE_UINT_32, {5u, 10u});
+}
+
+// =============================================================================
+// QnnJSONGraph — exercises GetQnnScalarParamJSON via SCALAR params.
+// =============================================================================
+
+static void RunJsonGraphScalarParamTest(const char* op_name, Qnn_DataType_t scalar_dt) {
+  TensorFixture in_fix, out_fix;
+  in_fix.InitIO(std::string(op_name) + "_in", QNN_DATATYPE_FLOAT_32, {4});
+  out_fix.InitIO(std::string(op_name) + "_out", QNN_DATATYPE_FLOAT_32, {4});
+
+  Qnn_Scalar_t scalar_val{};
+  scalar_val.dataType = scalar_dt;
+
+  Qnn_Param_t param{};
+  param.paramType = QNN_PARAMTYPE_SCALAR;
+  param.name = "axis";
+  param.scalarParam = scalar_val;
+
+  QnnOpConfigWrapper op(op_name, "qti.aisw", "Relu",
+                        {in_fix.tensor}, {out_fix.tensor}, {param});
+  QnnJSONGraph json_graph;
+  json_graph.AddOp(op);
+  EXPECT_FALSE(json_graph.Finalize().dump().empty()) << "for op=" << op_name;
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_ScalarParam_Int16CoversBranch) {
+  RunJsonGraphScalarParamTest("op_sp_i16", QNN_DATATYPE_INT_16);
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_ScalarParam_Uint8CoversBranch) {
+  RunJsonGraphScalarParamTest("op_sp_u8", QNN_DATATYPE_UINT_8);
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_ScalarParam_Uint16CoversBranch) {
+  RunJsonGraphScalarParamTest("op_sp_u16", QNN_DATATYPE_UINT_16);
+}
+
+// =============================================================================
+// OnnxDataTypeToQnnDataType — quantized path + GPU backend
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_QuantizedPath) {
+  Qnn_DataType_t qnn_type = QNN_DATATYPE_UNDEFINED;
+  bool ok = OnnxDataTypeToQnnDataType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
+                                      qnn_type, /*is_quantized=*/true);
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(qnn_type, QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_UnquantizedPath) {
+  Qnn_DataType_t qnn_type = QNN_DATATYPE_UNDEFINED;
+  bool ok = OnnxDataTypeToQnnDataType(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                                      qnn_type, /*is_quantized=*/false);
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(qnn_type, QNN_DATATYPE_FLOAT_32);
+}
+
+TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_UnknownReturnsFalse) {
+  Qnn_DataType_t qnn_type = QNN_DATATYPE_UNDEFINED;
+  bool ok = OnnxDataTypeToQnnDataType(
+      static_cast<ONNXTensorElementDataType>(9999), qnn_type);
+  EXPECT_FALSE(ok);
+}
+
+TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_GpuBackendInt4) {
+  Qnn_DataType_t qnn_type = QNN_DATATYPE_UNDEFINED;
+  bool ok = OnnxDataTypeToQnnDataType(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                                      qnn_type, /*is_quantized=*/false,
+                                      QnnBackendType::GPU);
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(qnn_type, QNN_DATATYPE_SFIXED_POINT_4);
+}
+
+// =============================================================================
+// Quantize
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, Quantize_Int8_BasicValue) {
+  int qval = 0;
+  Ort::Status st = Quantize(0.5, 0.01f, 0, QNN_DATATYPE_SFIXED_POINT_8, qval);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(qval, 50);
+}
+
+TEST(QnnUnit_UtilsTest, Quantize_Int8_ClampedToMax) {
+  int qval = 0;
+  Ort::Status st = Quantize(1000.0, 0.01f, 0, QNN_DATATYPE_SFIXED_POINT_8, qval);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(qval, 127);
+}
+
+TEST(QnnUnit_UtilsTest, Quantize_UnsupportedTypeFails) {
+  int qval = 0;
+  Ort::Status st = Quantize(1.0, 1.0f, 0, QNN_DATATYPE_FLOAT_32, qval);
+  EXPECT_FALSE(st.IsOK());
+}
+
+// =============================================================================
+// CheckMinMax
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, CheckMinMax_NormalRange) {
+  auto [rmin, rmax] = CheckMinMax(-1.0f, 2.0f);
+  EXPECT_FLOAT_EQ(rmin, -1.0f);
+  EXPECT_FLOAT_EQ(rmax, 2.0f);
+}
+
+TEST(QnnUnit_UtilsTest, CheckMinMax_ForceIncludeZero) {
+  auto [rmin, rmax] = CheckMinMax(1.0f, 2.0f);
+  EXPECT_FLOAT_EQ(rmin, 0.0f);
+}
+
+TEST(QnnUnit_UtilsTest, CheckMinMax_EnsureMinRange) {
+  auto [rmin, rmax] = CheckMinMax(0.0f, 0.0f);
+  EXPECT_FLOAT_EQ(rmin, 0.0f);
+  EXPECT_GE(rmax, 0.0001f);
+}
+
+// =============================================================================
+// ShapeSizeCalc
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, ShapeSizeCalc_BasicProduct) {
+  std::vector<uint32_t> shape = {2, 3, 4};
+  EXPECT_EQ(ShapeSizeCalc(shape, 0, 3), 24u);
+  EXPECT_EQ(ShapeSizeCalc(shape, 0, 2), 6u);
+  EXPECT_EQ(ShapeSizeCalc(shape, 1, 3), 12u);
+  EXPECT_EQ(ShapeSizeCalc(shape, 2, 3), 4u);
+  EXPECT_EQ(ShapeSizeCalc(shape, 0, 0), 1u);
+}
+
+// =============================================================================
+// DequantizePerChannel — INT16 / UINT16 / INT32 switch branches + error
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_Int8PerTensor) {
+  std::vector<int8_t> quant = {-10, 0, 10};
+  std::vector<uint32_t> shape = {3};
+  std::vector<float> scales = {0.1f};
+  std::vector<int32_t> offsets = {0};
+  std::vector<float> out(3);
+  auto quant_bytes = gsl::make_span(
+      reinterpret_cast<const uint8_t*>(quant.data()), quant.size());
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_SFIXED_POINT_8);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(out[0], -1.0f, 1e-4f);
+  EXPECT_NEAR(out[2], 1.0f, 1e-4f);
+}
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_Uint8PerTensor) {
+  std::vector<uint8_t> quant = {100, 128, 200};
+  std::vector<uint32_t> shape = {3};
+  std::vector<float> scales = {0.01f};
+  std::vector<int32_t> offsets = {0};
+  std::vector<float> out(3);
+  auto quant_bytes = gsl::make_span(quant.data(), quant.size());
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_UFIXED_POINT_8);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(out[0], 1.0f, 1e-4f);
+}
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_Int16CoversBranch) {
+  std::vector<int16_t> quant = {-1000, 0, 1000};
+  std::vector<uint32_t> shape = {3};
+  std::vector<float> scales = {0.001f};
+  std::vector<int32_t> offsets = {0};
+  std::vector<float> out(3);
+  auto quant_bytes = gsl::make_span(
+      reinterpret_cast<const uint8_t*>(quant.data()), quant.size() * sizeof(int16_t));
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_SFIXED_POINT_16);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(out[0], -1.0f, 1e-3f);
+  EXPECT_NEAR(out[2], 1.0f, 1e-3f);
+}
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_Uint16CoversBranch) {
+  std::vector<uint16_t> quant = {0, 32768, 65535};
+  std::vector<uint32_t> shape = {3};
+  std::vector<float> scales = {1.0f / 65535.0f};
+  std::vector<int32_t> offsets = {0};
+  std::vector<float> out(3);
+  auto quant_bytes = gsl::make_span(
+      reinterpret_cast<const uint8_t*>(quant.data()), quant.size() * sizeof(uint16_t));
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_UFIXED_POINT_16);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(out[0], 0.0f, 1e-4f);
+  EXPECT_NEAR(out[2], 1.0f, 1e-4f);
+}
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_Int32CoversBranch) {
+  std::vector<int32_t> quant = {-100000, 0, 100000};
+  std::vector<uint32_t> shape = {3};
+  std::vector<float> scales = {1e-5f};
+  std::vector<int32_t> offsets = {0};
+  std::vector<float> out(3);
+  auto quant_bytes = gsl::make_span(
+      reinterpret_cast<const uint8_t*>(quant.data()), quant.size() * sizeof(int32_t));
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_SFIXED_POINT_32);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(out[0], -1.0f, 1e-3f);
+  EXPECT_NEAR(out[2], 1.0f, 1e-3f);
+}
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_UnsupportedTypeReturnsError) {
+  std::vector<float> dummy(3, 0.5f);
+  std::vector<uint32_t> shape = {3};
+  std::vector<float> scales = {1.0f};
+  std::vector<int32_t> offsets = {0};
+  std::vector<float> out(3);
+  auto quant_bytes = gsl::make_span(
+      reinterpret_cast<const uint8_t*>(dummy.data()), dummy.size() * sizeof(float));
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_FLOAT_32);
+  EXPECT_FALSE(st.IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, DequantizePerChannel_PerChannelAxis) {
+  // shape = {2, 3} with axis=0: 2 channels of 3 elements each
+  std::vector<int8_t> quant = {-1, 0, 1, 2, 3, 4};
+  std::vector<uint32_t> shape = {2, 3};
+  std::vector<float> scales = {0.1f, 0.1f};
+  std::vector<int32_t> offsets = {0, 0};
+  std::vector<float> out(6);
+  auto quant_bytes = gsl::make_span(
+      reinterpret_cast<const uint8_t*>(quant.data()), quant.size());
+  Ort::Status st = DequantizePerChannel(quant_bytes, shape, scales, offsets, out,
+                                        QNN_DATATYPE_SFIXED_POINT_8, 0LL);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(out[0], -0.1f, 1e-4f);
+  EXPECT_NEAR(out[3], 0.2f, 1e-4f);
+}
+
+// =============================================================================
+// QuantizeData — per-channel axis path
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, QuantizeData_PerChannelAxis_Int8) {
+  std::vector<float> data = {-0.1f, 0.1f, 0.2f, 0.4f};
+  std::vector<uint32_t> shape = {2, 2};
+  std::vector<float> scales = {0.01f, 0.01f};
+  std::vector<int32_t> offsets = {0, 0};
+  std::vector<uint8_t> quant_bytes(4);
+  Ort::Status st = QuantizeData(data, shape, scales, offsets, quant_bytes,
+                                QNN_DATATYPE_SFIXED_POINT_8, 0LL);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(static_cast<int8_t>(quant_bytes[0]), -10);
+  EXPECT_EQ(static_cast<int8_t>(quant_bytes[1]), 10);
+}
+
+TEST(QnnUnit_UtilsTest, QuantizeData_PerChannelAxis_Int16) {
+  std::vector<float> data = {-0.1f, 0.1f, 0.2f, 0.4f};
+  std::vector<uint32_t> shape = {2, 2};
+  std::vector<float> scales = {0.001f, 0.001f};
+  std::vector<int32_t> offsets = {0, 0};
+  std::vector<uint8_t> quant_bytes(4 * sizeof(int16_t));
+  Ort::Status st = QuantizeData(data, shape, scales, offsets, quant_bytes,
+                                QNN_DATATYPE_SFIXED_POINT_16, 0LL);
+  EXPECT_TRUE(st.IsOK());
+  int16_t val0 = 0;
+  std::memcpy(&val0, quant_bytes.data(), sizeof(int16_t));
+  EXPECT_EQ(val0, static_cast<int16_t>(-100));
+}
+
+TEST(QnnUnit_UtilsTest, QuantizeData_PerChannelAxis_Uint16) {
+  std::vector<float> data = {0.0f, 0.1f, 0.5f, 1.0f};
+  std::vector<uint32_t> shape = {2, 2};
+  std::vector<float> scales = {1.0f / 65535.0f, 1.0f / 65535.0f};
+  std::vector<int32_t> offsets = {0, 0};
+  std::vector<uint8_t> quant_bytes(4 * sizeof(uint16_t));
+  Ort::Status st = QuantizeData(data, shape, scales, offsets, quant_bytes,
+                                QNN_DATATYPE_UFIXED_POINT_16, 0LL);
+  EXPECT_TRUE(st.IsOK());
+  uint16_t val0 = 1;
+  std::memcpy(&val0, quant_bytes.data(), sizeof(uint16_t));
+  EXPECT_EQ(val0, static_cast<uint16_t>(0));
+}
+
+// =============================================================================
+// GetDataQuantParams — per-channel axis path
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetDataQuantParams_PerChannelAxis) {
+  std::vector<float> data = {
+      -1.0f,
+      0.0f,
+      0.5f,
+      1.0f,
+      -0.5f,
+      0.0f,
+      0.0f,
+      0.5f,
+      0.0f,
+      0.0f,
+      0.0f,
+      1.0f,
+  };
+  std::vector<uint32_t> shape = {3, 4};
+  std::vector<float> scales(3);
+  std::vector<int32_t> offsets(3);
+  Ort::Status st = GetDataQuantParams(data, shape, scales, offsets,
+                                      QNN_DATATYPE_SFIXED_POINT_8, false, 0LL);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_GT(scales[0], 0.0f);
+  EXPECT_GT(scales[1], 0.0f);
+  EXPECT_GT(scales[2], 0.0f);
+}
+
+// =============================================================================
+// UniqueNameGenerator — uniqueness contract and Reset()
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, UniqueNameGenerator_FirstCallReturnsBaseName) {
+  UniqueNameGenerator().Reset();
+  EXPECT_EQ(UniqueNameGenerator().New("tensor"), "tensor");
+}
+
+TEST(QnnUnit_UtilsTest, UniqueNameGenerator_DuplicateGetsCounter) {
+  UniqueNameGenerator().Reset();
+  UniqueNameGenerator().New("tensor");
+  EXPECT_EQ(UniqueNameGenerator().New("tensor"), "tensor_2");
+}
+
+TEST(QnnUnit_UtilsTest, UniqueNameGenerator_ResetClearsCounter) {
+  UniqueNameGenerator().Reset();
+  UniqueNameGenerator().New("tensor");
+  UniqueNameGenerator().Reset();
+  EXPECT_EQ(UniqueNameGenerator().New("tensor"), "tensor");
+}
+
+TEST(QnnUnit_UtilsTest, UniqueNameGenerator_WithSuffix) {
+  UniqueNameGenerator().Reset();
+  EXPECT_EQ(UniqueNameGenerator().New("conv", "_weight"), "conv_weight");
+}
+
+// =============================================================================
+// GetPermToLastAxis — permutation correctness and error path
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetPermToLastAxis_MoveFirstToLast) {
+  std::vector<uint32_t> perm;
+  Ort::Status st = GetPermToLastAxis(0u, 4u, perm);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(perm, (std::vector<uint32_t>{3u, 1u, 2u, 0u}));
+}
+
+TEST(QnnUnit_UtilsTest, GetPermToLastAxis_MoveMiddleToLast) {
+  std::vector<uint32_t> perm;
+  Ort::Status st = GetPermToLastAxis(2u, 4u, perm);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(perm, (std::vector<uint32_t>{0u, 1u, 3u, 2u}));
+}
+
+TEST(QnnUnit_UtilsTest, GetPermToLastAxis_LastAxisIsIdentity) {
+  std::vector<uint32_t> perm;
+  Ort::Status st = GetPermToLastAxis(3u, 4u, perm);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(perm, (std::vector<uint32_t>{0u, 1u, 2u, 3u}));
+}
+
+TEST(QnnUnit_UtilsTest, GetPermToLastAxis_AxisOutOfRangeFails) {
+  std::vector<uint32_t> perm;
+  Ort::Status st = GetPermToLastAxis(4u, 4u, perm);
+  EXPECT_FALSE(st.IsOK());
+}
+
+// =============================================================================
+// CheckBiasScaleMatch — tolerance logic
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_ExactMatchReturnsTrue) {
+  EXPECT_TRUE(CheckBiasScaleMatch(0.006f, 0.02f, 0.3f));
+}
+
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_WithinToleranceReturnsTrue) {
+  // expected = 0.02f * 0.3f = 0.006f; diff = 1e-6f < default 1e-5f
+  EXPECT_TRUE(CheckBiasScaleMatch(0.006001f, 0.02f, 0.3f));
+}
+
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_OutsideToleranceReturnsFalse) {
+  // expected = 0.006f; diff = 0.001f >> 1e-5f
+  EXPECT_FALSE(CheckBiasScaleMatch(0.007f, 0.02f, 0.3f));
+}
+
+// =============================================================================
+// TransposeFromNchwToHwcn(raw) / TransposeFromCnhwToHwcn(raw)
+// =============================================================================
+
+// NCHW {N=1,C=2,H=2,W=2} → HWCN: each (h,w) slot gets [C0,C1] interleaved
+TEST(QnnUnit_UtilsTest, TransposeFromNchwToHwcn_Raw_HappyPath) {
+  std::vector<int64_t> shape = {1, 2, 2, 2};
+  std::vector<uint8_t> input = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<uint8_t> output(input.size());
+  Ort::Status st = TransposeFromNchwToHwcn(std::move(shape), /*elem_byte_size=*/1,
+                                           input, output);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(output, (std::vector<uint8_t>{0, 4, 1, 5, 2, 6, 3, 7}));
+}
+
+TEST(QnnUnit_UtilsTest, TransposeFromNchwToHwcn_Raw_WrongRankFails) {
+  std::vector<int64_t> shape = {2, 3, 4};
+  std::vector<uint8_t> input(24, 0);
+  std::vector<uint8_t> output(24);
+  EXPECT_FALSE(TransposeFromNchwToHwcn(std::move(shape), 1, input, output).IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, TransposeFromNchwToHwcn_Raw_OutputSizeMismatchFails) {
+  std::vector<int64_t> shape = {1, 2, 2, 2};
+  std::vector<uint8_t> input = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<uint8_t> output(4);  // too small
+  EXPECT_FALSE(TransposeFromNchwToHwcn(std::move(shape), 1, input, output).IsOK());
+}
+
+// CNHW {C=2,N=1,H=2,W=2} → HWCN
+TEST(QnnUnit_UtilsTest, TransposeFromCnhwToHwcn_Raw_HappyPath) {
+  std::vector<int64_t> shape = {2, 1, 2, 2};
+  std::vector<uint8_t> input = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<uint8_t> output(input.size());
+  Ort::Status st = TransposeFromCnhwToHwcn(std::move(shape), 1, input, output);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(output, (std::vector<uint8_t>{0, 4, 1, 5, 2, 6, 3, 7}));
+}
+
+TEST(QnnUnit_UtilsTest, TransposeFromCnhwToHwcn_Raw_WrongRankFails) {
+  std::vector<int64_t> shape = {2, 3, 4};
+  std::vector<uint8_t> input(24, 0);
+  std::vector<uint8_t> output(24);
+  EXPECT_FALSE(TransposeFromCnhwToHwcn(std::move(shape), 1, input, output).IsOK());
+}
+
+// =============================================================================
+// RequantizeBiasTensor — per-tensor and per-channel round-trip
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerTensor_RoundTrip) {
+  std::vector<int32_t> int32_vals = {10, -20};
+  std::vector<uint8_t> bias_data(int32_vals.size() * sizeof(int32_t));
+  std::memcpy(bias_data.data(), int32_vals.data(), bias_data.size());
+
+  std::vector<uint32_t> bias_shape = {2};
+  std::vector<float> current_scales = {0.0001f};
+  std::vector<int32_t> current_offsets = {0};
+  std::vector<float> weights_scales = {0.01f};
+  float activation_scale = 0.01f;  // new_scale = 0.01 * 0.01 = 0.0001 == current
+
+  std::vector<uint8_t> requantized;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  Ort::Status st = RequantizeBiasTensor(bias_data, bias_shape,
+                                        current_scales, current_offsets,
+                                        weights_scales, activation_scale,
+                                        QNN_DATATYPE_SFIXED_POINT_32,
+                                        requantized, new_scales, new_offsets);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_FLOAT_EQ(new_scales[0], 0.0001f);
+  EXPECT_EQ(new_offsets[0], 0);
+  std::vector<int32_t> out_vals(2);
+  std::memcpy(out_vals.data(), requantized.data(), requantized.size());
+  EXPECT_EQ(out_vals[0], 10);
+  EXPECT_EQ(out_vals[1], -20);
+}
+
+TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ScalesUpdated) {
+  std::vector<int32_t> int32_vals = {5, -10};
+  std::vector<uint8_t> bias_data(int32_vals.size() * sizeof(int32_t));
+  std::memcpy(bias_data.data(), int32_vals.data(), bias_data.size());
+
+  std::vector<uint32_t> bias_shape = {2};
+  std::vector<float> current_scales = {0.0002f, 0.0002f};
+  std::vector<int32_t> current_offsets = {0, 0};
+  std::vector<float> weights_scales = {0.02f, 0.02f};
+  float activation_scale = 0.01f;  // new_scale[i] = 0.02 * 0.01 = 0.0002 == current
+
+  std::vector<uint8_t> requantized;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  Ort::Status st = RequantizeBiasTensor(bias_data, bias_shape,
+                                        current_scales, current_offsets,
+                                        weights_scales, activation_scale,
+                                        QNN_DATATYPE_SFIXED_POINT_32,
+                                        requantized, new_scales, new_offsets,
+                                        /*axis=*/0LL);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(new_scales.size(), 2u);
+  EXPECT_FLOAT_EQ(new_scales[0], 0.0002f);
+  EXPECT_FLOAT_EQ(new_scales[1], 0.0002f);
+  std::vector<int32_t> out_vals(2);
+  std::memcpy(out_vals.data(), requantized.data(), requantized.size());
+  EXPECT_EQ(out_vals[0], 5);
+  EXPECT_EQ(out_vals[1], -10);
+}
+
+// =============================================================================
+// GetQnnErrorMessage / GetVerboseQnnErrorMessage
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetQnnErrorMessage_ReturnsNonEmptyString) {
+  QnnRealHtpBackendContext backend;
+  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available";
+  std::string msg = GetQnnErrorMessage(backend.qnn_interface,
+                                       static_cast<Qnn_ErrorHandle_t>(1));
+  EXPECT_FALSE(msg.empty());
+}
+
+TEST(QnnUnit_UtilsTest, GetVerboseQnnErrorMessage_ReturnsNonEmptyString) {
+  QnnRealHtpBackendContext backend;
+  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available";
+  std::string msg = GetVerboseQnnErrorMessage(backend.qnn_interface,
+                                              static_cast<Qnn_ErrorHandle_t>(1));
+  EXPECT_FALSE(msg.empty());
+}
+
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
