@@ -72,7 +72,7 @@ _DECL_RE = re.compile(
 def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
     """Walk every .h under header_root, pair each /** ... */ doc block with the
     next declaration that follows it, and record the highest version found per
-    member name. Members without a \\since are treated as 1.0 (predate the
+    member name. Members without a \\since are treated as version 0 (predate the
     annotation convention)."""
     result: dict[str, int] = {}
     for path in header_root.rglob("*.h"):
@@ -142,15 +142,14 @@ def compute_floor(ort_header_root: pathlib.Path, ep_source_root: pathlib.Path) -
     used = scan_ep_source(ep_source_root)
     if not used:
         raise RuntimeError(f"No ORT API calls found under {ep_source_root}. Path looks wrong.")
-    versions = [since_map[n] for n in used if n in since_map]
-    if not versions:
+    unknown = sorted(n for n in used if n not in since_map)
+    if unknown:
         raise RuntimeError(
-            "EP source references API methods that are not in the \\since map. "
-            "Either the regex missed a declaration form (check qcom/scripts/all/"
-            "compute_min_ort_api_version.py) or those methods come from a header "
-            "outside --ort-header-root."
+            f"EP source calls API methods not found in \\since map: {unknown}. "
+            "Either _DECL_RE missed a declaration form, or these come from "
+            "headers outside --ort-header-root."
         )
-    return max(versions)
+    return max(since_map[n] for n in used)
 
 
 def find_ort_header_root(repo_root: pathlib.Path) -> pathlib.Path | None:

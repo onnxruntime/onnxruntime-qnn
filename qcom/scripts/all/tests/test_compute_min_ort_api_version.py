@@ -332,6 +332,17 @@ def test_unknown_call_raises(tmp_path: Path) -> None:
         compute_floor(headers, ep)
 
 
+def test_partial_unknown_raises(tmp_path: Path) -> None:
+    headers = tmp_path / "include"
+    headers.mkdir()
+    _h(headers, "api.h", "/** \\since Version 1.5 */\nORT_API2_STATUS(Known, int);")
+    ep = tmp_path / "ep"
+    ep.mkdir()
+    (ep / "u.cc").write_text("void f() { ort_api->Known(1); ort_api->NotInHeaders(2); }")
+    with pytest.raises(RuntimeError, match="not found in"):
+        compute_floor(headers, ep)
+
+
 # ---------------------------------------------------------------------------
 # parse_deps_txt + fetch_ort_headers: header fetch from cmake/deps.txt
 # ---------------------------------------------------------------------------

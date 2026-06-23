@@ -165,6 +165,7 @@ include_patterns = [
     'qcom/linters/check_min_ort_api_version.py',
     'qcom/packages.yml',
     'cmake/deps.txt',
+    'cmake/onnxruntime_providers_qnn.cmake',
 ]
 command = [
     'python',
