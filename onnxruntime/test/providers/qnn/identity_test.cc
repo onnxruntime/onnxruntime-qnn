@@ -5,7 +5,6 @@
 
 #include <string>
 
-#include "core/graph/graph.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -29,7 +28,7 @@ static GetTestQDQModelFn<QuantType> BuildQDQIdentityTestCase(const TestInputDef<
                                                              float output_scale_perturbation = 1.0f) {
   return [input_def, output_scale_perturbation](ModelTestBuilder& builder,
                                                 std::vector<QuantParams<QuantType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(output_qparams);
+    QNN_TEST_UNUSED_PARAMETER(output_qparams);
     MakeTestInput(builder, "input", input_def);
     const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
     const std::string input_qdq =

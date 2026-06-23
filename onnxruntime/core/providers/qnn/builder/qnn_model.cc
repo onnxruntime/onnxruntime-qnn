@@ -12,6 +12,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -171,33 +172,73 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
                                    std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
   }
 
-  // DLC tensors may carry overridden names that differ from the fused node I/O names.
+  // QNN tensors deserialized from the context binary may carry overridden names (produced by
+  // offload_graph_io_quantization) that differ from the fused-node I/O names. Alias each QNN name
+  // onto the correct fused-node entry so GetOutputIndex resolves to the right ORT index/type.
   if (graph_info_) {
-    auto add_qnn_name_aliases = [](GraphInputOutputInfo& io_info,
-                                   const std::vector<QnnTensorWrapper>& qnn_tensors,
-                                   const std::vector<std::string>& fused_order) {
-      for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
-        const std::string& qnn_name = qnn_tensors[i].GetName();
-        const std::string& fused_name = fused_order[i];
-        if (qnn_name != fused_name && io_info.indices.find(qnn_name) == io_info.indices.end()) {
-          auto idx_it = io_info.indices.find(fused_name);
-          if (idx_it != io_info.indices.end()) {
-            io_info.indices.emplace(qnn_name, idx_it->second);
-          }
-          auto tensor_it = io_info.tensors.find(fused_name);
-          if (tensor_it != io_info.tensors.end()) {
-            const OnnxTensorInfo& info = tensor_it->second;
-            io_info.tensors.emplace(std::piecewise_construct,
-                                    std::forward_as_tuple(qnn_name),
-                                    std::forward_as_tuple(info.index_, info.data_type_,
-                                                          std::vector<int64_t>(info.shape_)));
-          }
-        }
+    auto alias_entry = [](GraphInputOutputInfo& io_info,
+                          const std::string& qnn_name,
+                          const std::string& fused_name) {
+      if (qnn_name == fused_name || io_info.indices.find(qnn_name) != io_info.indices.end()) {
+        return;
+      }
+      auto idx_it = io_info.indices.find(fused_name);
+      if (idx_it != io_info.indices.end()) {
+        io_info.indices.emplace(qnn_name, idx_it->second);
+      }
+      auto tensor_it = io_info.tensors.find(fused_name);
+      if (tensor_it != io_info.tensors.end()) {
+        const OnnxTensorInfo& info = tensor_it->second;
+        io_info.tensors.emplace(std::piecewise_construct,
+                                std::forward_as_tuple(qnn_name),
+                                std::forward_as_tuple(info.index_, info.data_type_,
+                                                      std::vector<int64_t>(info.shape_)));
       }
     };
 
-    add_qnn_name_aliases(graph_inputs_, graph_info_->InputTensors(), fused_input_order);
-    add_qnn_name_aliases(graph_outputs_, graph_info_->OutputTensors(), fused_output_order);
+    if (context.tensor_name_overrides && !context.tensor_name_overrides->empty()) {
+      // Preferred: resolve by the persisted map (order-independent).
+      // The bin tensor name is the `external` (e.g. "sep_cls_score"); the fused-node edge is
+      // the `internal` (e.g. "sep_cls_score_QuantizeLinear_Output").
+      auto alias_by_name = [&](GraphInputOutputInfo& io_info,
+                               const std::vector<QnnTensorWrapper>& qnn_tensors) {
+        std::unordered_set<std::string> qnn_names;
+        for (const auto& t : qnn_tensors) {
+          qnn_names.insert(t.GetName());
+        }
+        for (const auto& [internal, external] : *context.tensor_name_overrides) {
+          if (qnn_names.count(external)) {
+            alias_entry(io_info, external, internal);
+          }
+        }
+      };
+      alias_by_name(graph_inputs_, graph_info_->InputTensors());
+      alias_by_name(graph_outputs_, graph_info_->OutputTensors());
+    } else {
+      // Legacy fallback for context binaries generated before the io_name_overrides attribute
+      // existed. Pairs by position, which is unreliable when QNN reorders graph I/O outputs.
+      auto alias_by_position = [&](GraphInputOutputInfo& io_info,
+                                   const std::vector<QnnTensorWrapper>& qnn_tensors,
+                                   const std::vector<std::string>& fused_order) {
+        bool any_alias = false;
+        for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
+          const std::string& qnn_name = qnn_tensors[i].GetName();
+          if (qnn_name != fused_order[i] && io_info.indices.find(qnn_name) == io_info.indices.end()) {
+            alias_entry(io_info, qnn_name, fused_order[i]);
+            any_alias = true;
+          }
+        }
+        return any_alias;
+      };
+      bool aliased = alias_by_position(graph_inputs_, graph_info_->InputTensors(), fused_input_order);
+      aliased |= alias_by_position(graph_outputs_, graph_info_->OutputTensors(), fused_output_order);
+      if (aliased) {
+        ORT_CXX_LOG(context.logger, ORT_LOGGING_LEVEL_WARNING,
+                    "QNN context binary has renamed graph I/O but no io_name_overrides attribute; "
+                    "falling back to positional name aliasing, which may misbind reordered I/O. "
+                    "Regenerate the context model with the current EP to embed the name mapping.");
+      }
+    }
   }
 
   return Ort::Status();
@@ -238,14 +279,24 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
   RETURN_IF_ERROR(SetGraphInputOutputInfo(context));
 
+  // Framework op trace: create collector before QnnModelWrapper so it can be
+  // passed at construction time. nullptr when tracing is disabled.
+  std::unique_ptr<OpTraceCollector> trace_collector;
+  if (context.op_trace_output) {
+    trace_collector = std::make_unique<OpTraceCollector>();
+  }
+
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
                                                       qnn_backend_manager_->GetQnnBackendHandle(),
+                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
+                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
                                                       graph_inputs_,
                                                       graph_outputs_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
-                                                      context.tensor_name_overrides);
+                                                      context.tensor_name_overrides,
+                                                      trace_collector.get());
 
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -278,6 +329,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                         node_unit_holder.size(), logger));
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
+    NodeGroupGuard guard(trace_collector.get(), qnn_node_group.get());
+
     Ort::Status status = qnn_node_group->AddToModelBuilder(qnn_model_wrapper, logger);
 
     if (!status.IsOK()) {
@@ -292,6 +345,15 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
   RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+
+  // Collect framework op trace after graph composition
+  if (trace_collector) {
+    OpTraceLookup per_graph_lookup;
+    trace_collector->Finalize(graph_name, qnn_model_wrapper, *context.op_trace_output, per_graph_lookup);
+    // Hand the per-graph lookup off to the backend manager, which holds the
+    // session-wide lookup that ExtractBackendProfilingInfo reads from.
+    qnn_backend_manager_->MergeOpTraceLookup(std::move(per_graph_lookup));
+  }
 
   LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
 

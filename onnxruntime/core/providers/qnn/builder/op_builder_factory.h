@@ -68,15 +68,19 @@ void CreateEinsumOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateExpandOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateFusedMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGatherOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateGatherBlockQuantizedOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGatherNDOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGemmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGroupNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateGRUOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateHardSigmoidOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIdentityOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInstanceNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateIsInfOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLayerNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateLpPoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -84,6 +88,7 @@ void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistratio
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

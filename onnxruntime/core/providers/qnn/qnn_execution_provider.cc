@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -25,6 +26,7 @@
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
@@ -32,7 +34,9 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
+#include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -226,53 +230,6 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string,
   }
 }
 
-static void ParseOpPackages(const std::string& op_packages_string,
-                            std::vector<onnxruntime::qnn::OpPackage>& op_packages,
-                            const Ort::Logger& logger) {
-  for (const auto& op_package : qnn::utils::SplitString(op_packages_string, ",", true)) {
-    auto splitStrings = qnn::utils::SplitString(op_package, ":", true);
-    if (splitStrings.size() < 3 || splitStrings.size() > 4) {
-      std::string msg =
-          "Invalid op_package passed, "
-          "expected <OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>], "
-          "got ";
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, (msg + std::string(op_package)).c_str());
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Skip registration.");
-      continue;
-    }
-
-    std::string op_type = std::string(splitStrings[0]);
-    std::string op_package_path = std::string(splitStrings[1]);
-    std::string op_package_interface = std::string(splitStrings[2]);
-    std::string op_package_target;
-
-    if (op_type.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op type is empty. Skip registration.");
-      continue;
-    }
-
-    if (op_package_path.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op package path is empty. Skip registration");
-      continue;
-    }
-
-    if (op_package_interface.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Op package interface is empty. Skip registration");
-      continue;
-    }
-
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Loading op package from path: " + op_package_path + " for op " + op_type).c_str());
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op package interface " + op_package_interface).c_str());
-    if (splitStrings.size() > 3 && splitStrings[3].size()) {
-      op_package_target = std::string(splitStrings[3]);
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op package target: " + op_package_target).c_str());
-    }
-    op_packages.push_back({op_type, op_package_path, op_package_interface, op_package_target});
-  }
-}
-
 static bool ParseBoolOption(const OrtApi& ort_api,
                             const OrtSessionOptions& session_options,
                             const std::string& key,
@@ -391,6 +348,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       name_{name},
       logger_{Ort::Logger(logger)},
       session_options_{session_options} {
+  ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
   GetCapability = GetCapabilityImpl;
   Compile = CompileImpl;
@@ -508,6 +466,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
+
+    if (prepare_only_ && !context_cache_enabled_) {
+      throw std::runtime_error(
+          "enable_htp_prepare_only=1 requires ep.context_enable=1. "
+          "prepare_only mode only generates the context model for ahead-of-time compilation.");
+    }
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -774,7 +738,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_HTP_FP16_precision_ = false;
   } else {
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
+                ORT_LOGGING_LEVEL_ERROR,
                 ("Invalid enable_htp_fp16_precision: " +
                  enable_htp_fp16_precision_str +
                  " only 0 or 1 allowed. Set to 0.")
@@ -783,6 +747,29 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
+
+  // HTP monolithic lstm
+  std::string disable_htp_monolithic_lstm_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("disable_htp_monolithic_lstm"),
+                                 "0",
+                                 disable_htp_monolithic_lstm_str);
+  if (disable_htp_monolithic_lstm_str == "1") {
+    disable_htp_monolithic_lstm_ = true;
+  } else if (disable_htp_monolithic_lstm_str == "0") {
+    disable_htp_monolithic_lstm_ = false;
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_ERROR,
+                ("Invalid disable_htp_monolithic_lstm: " +
+                 disable_htp_monolithic_lstm_str +
+                 " only 0 or 1 allowed. Set to 0.")
+                    .c_str());
+  }
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified disable_htp_monolithic_lstm: " + disable_htp_monolithic_lstm_str).c_str());
 
   std::string num_graph_prepare_threads_str;
   GetSessionConfigEntryOrDefault(ort_api,
@@ -986,6 +973,63 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
+  // Framework op trace options
+  static constexpr const char* kEnableFrameworkOpTrace = "enable_framework_op_trace";
+  static constexpr const char* kFrameworkOpTraceDir = "framework_op_trace_dir";
+
+  enable_framework_op_trace_ = ParseBoolOption(ort_api,
+                                               session_options_,
+                                               FormatEPConfigKey(kEnableFrameworkOpTrace),
+                                               false,
+                                               logger_);
+
+  std::string trace_dir_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey(kFrameworkOpTraceDir),
+                                 "",
+                                 trace_dir_str);
+  if (!trace_dir_str.empty()) {
+    framework_op_trace_dir_ = trace_dir_str;
+  }
+
+  if (enable_framework_op_trace_) {
+    if (framework_op_trace_dir_.empty()) {
+      framework_op_trace_dir_ = std::filesystem::current_path().string();
+    }
+    // Probe writability up-front. A non-writable path (read-only Android mount,
+    // read-only network share, missing parent permissions) would otherwise only
+    // surface as a WARNING after the entire compile + in-memory trace build
+    // finishes. Disabling tracing here lets us skip all the per-graph collection
+    // work when the trace can never be written.
+    std::filesystem::path probe_dir(framework_op_trace_dir_);
+    std::error_code ec;
+    std::filesystem::create_directories(probe_dir, ec);
+    bool probe_ok = !ec;
+    if (probe_ok) {
+      std::filesystem::path probe_file = probe_dir / ".qnn_op_trace_probe";
+      {
+        std::ofstream ofs(probe_file);
+        probe_ok = ofs.is_open() && (ofs << "1").good();
+      }
+      std::filesystem::remove(probe_file, ec);
+    }
+    if (!probe_ok) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("Framework op trace directory not writable: " + probe_dir.string() +
+                   "; framework op tracing will be disabled.")
+                      .c_str());
+      enable_framework_op_trace_ = false;
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("Framework op tracing enabled. Output dir: " + framework_op_trace_dir_).c_str());
+    }
+  } else if (!framework_op_trace_dir_.empty()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "Provided a directory for framework op trace, but did not enable framework op tracing.");
+  }
+
   static const std::string QNN_HTP_EXTENDED_UDMA_MODE = "extended_udma";
   enable_htp_extended_udma_mode_ = ParseBoolOption(ort_api,
                                                    session_options_,
@@ -1000,6 +1044,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                 FormatEPConfigKey(SKIP_QNN_VERSION_CHECK),
                                                 false,
                                                 logger_);
+
+  // When dumping to DLC on a device-less host, the target backend validates op configs against an
+  // arch-agnostic op table and over-rejects arch-specific (v73+) ops. This option skips that
+  // validation, falling back to the serializer's generic checks. Default false keeps validation on.
+  static const std::string SKIP_BACKEND_OP_VALIDATION = "skip_backend_op_validation";
+  auto skip_backend_op_validation = ParseBoolOption(ort_api,
+                                                    session_options,
+                                                    FormatEPConfigKey(SKIP_BACKEND_OP_VALIDATION),
+                                                    false,
+                                                    logger_);
 
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
@@ -1026,7 +1080,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      htp_arch,
                                      soc_model,
                                      op_packages,
-                                     skip_qnn_version_check},
+                                     skip_qnn_version_check,
+                                     enable_framework_op_trace_,
+                                     skip_backend_op_validation},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
@@ -1153,7 +1209,8 @@ static void LogNodeSupport(const Ort::Logger& logger,
 OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const size_t node_unit_size,
-                                    std::vector<const OrtNode*>& supported_nodes) const {
+                                    std::vector<const OrtNode*>& supported_nodes,
+                                    std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
   size_t num_graph_inputs = 0;
   size_t num_graph_outputs = 0;
   RETURN_IF_NOT_NULL(ort_api.Graph_GetNumInputs(graph, &num_graph_inputs));
@@ -1195,6 +1252,8 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                                 logger_,
                                                 qnn_backend_manager_->GetQnnInterface(),
                                                 qnn_backend_manager_->GetQnnBackendHandle(),
+                                                qnn_backend_manager_->GetQnnValidatorInterface(),
+                                                qnn_backend_manager_->GetQnnValidatorBackendHandle(),
                                                 model_inputs,
                                                 model_outputs,
                                                 qnn_backend_manager_->GetQnnBackendType(),
@@ -1219,6 +1278,24 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
         for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
           supported_nodes.push_back(node);
         }
+      }
+    } else if (enable_framework_op_trace_) {
+      std::vector<qnn::UnsupportedNodeInfo> batch;
+      for (const OrtNodeUnit* node_unit : qnn_node_group->GetNodeUnits()) {
+        for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
+          Ort::ConstNode const_node(node);
+          batch.push_back({
+              std::string(const_node.GetName()),
+              std::string(const_node.GetOperatorType()),
+              const_node.GetId(),
+              std::string(support_status.GetErrorMessage()),
+          });
+        }
+      }
+      if (!batch.empty()) {
+        unsupported_nodes.insert(unsupported_nodes.end(),
+                                 std::make_move_iterator(batch.begin()),
+                                 std::make_move_iterator(batch.end()));
       }
     }
   }
@@ -1257,6 +1334,16 @@ void QnnEp::InitQnnHtpGraphConfigs(
       gsl::not_null<QnnGraph_Config_t*> graph_precision_config = configs_builder.PushConfig();
       graph_precision_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_precision_config->customConfig = htp_graph_precision_config;
+    }
+
+    if (!disable_htp_monolithic_lstm_) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_monolithic_lstm_config = configs_builder.PushCustomConfig();
+      htp_graph_monolithic_lstm_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM;
+      htp_graph_monolithic_lstm_config->monolithicLstm = true;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = htp_graph_monolithic_lstm_config;
     }
   }
 }
@@ -1430,16 +1517,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
-    std::string genie_path = kDefaultGenieBackendPath;
-    std::string backend_path_option;
-    GetSessionConfigEntryOrDefault(ep->ort_api, ep->session_options_,
-                                   ep->FormatEPConfigKey("backend_path"), "",
-                                   backend_path_option);
-    if (!backend_path_option.empty()) {
-      genie_path = backend_path_option;
-    }
     ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{genie_path}, ep->logger_);
+        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
     auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
@@ -1478,13 +1557,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
-
-  if (ep->prepare_only_ && !ep->context_cache_enabled_) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_prepare_only=1 requires ep.context_enable=1. "
-                "Disabling enable_htp_prepare_only since context cache is not enabled.");
-    ep->prepare_only_ = false;
-  }
 
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
@@ -1576,6 +1648,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
     ep->CreateHtpPowerConfigId();
+
+    ep->WarnIfHnrdPathActive();
   }
 
   // Report error if QNN CPU backend is loaded while CPU fallback is disabled
@@ -1623,7 +1697,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;
-  ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes);
+  ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes,
+                        ep->trace_.unsupported_nodes);
 
   // Helper function that returns a string that lists all unsupported nodes.
   // Ex: { name: mul_123, type: Mul }, {}, ...
@@ -1648,6 +1723,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // If no supported nodes, return empty
   if (supported_nodes.empty()) {
+    // ORT does not invoke CompileImpl when no nodes are supported, so the
+    // unsupported list collected in GetSupportedNodes would otherwise be
+    // discarded. Flush a trace here so the diagnostic record (why every node
+    // was rejected) is preserved.
+    if (ep->enable_framework_op_trace_ && !ep->trace_.unsupported_nodes.empty()) {
+      ep->CollectAndWriteFrameworkOpTrace(graph);
+    }
     return nullptr;
   }
 
@@ -1702,9 +1784,16 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
                                       const OrtNode** fused_nodes,
                                       size_t count,
                                       OrtNodeComputeInfo** node_compute_infos) {
+  if (enable_framework_op_trace_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                "Framework op tracing requested but graph is loaded from EPContext "
+                "(no fresh ComposeGraph) - no trace file will be written.");
+  }
+
   // Collect graph and fused nodes names.
   std::vector<std::pair<std::string, std::string>> names;
   names.reserve(count);
+  std::vector<std::unordered_map<std::string, std::string>> io_name_overrides_per_graph(count);
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const char* graph_name = nullptr;
@@ -1737,6 +1826,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
 
     names.push_back(std::pair<std::string, std::string>(graph_name, ep_context_node_name));
+    io_name_overrides_per_graph[graph_idx] = qnn::ParseIoNameOverrides(ep_context_node);
   }
 
   // Get QnnModel from EP shared contexts
@@ -1770,7 +1860,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
             /*onnx_output_names=*/nullptr,
             /*model_settings=*/nullptr,
             /*graph_configs=*/nullptr,
-            /*tensor_name_overrides=*/nullptr,
+            /*tensor_name_overrides=*/io_name_overrides_per_graph[graph_idx].empty()
+                ? nullptr
+                : &io_name_overrides_per_graph[graph_idx],
             /*json_qnn_graph_path=*/{}};
         RETURN_IF_NOT_OK(qnn_model_shared->SetGraphInputOutputInfo(context));
         RETURN_IF_NOT_OK(qnn_model_shared->SetupQnnInputOutput(logger_));
@@ -1808,6 +1900,28 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ort_api);
   std::basic_string<ORTCHAR_T> context_model_path;
   GetContextOnnxModelFilePath(context_cache_path_cfg_, model_path, context_model_path);
+
+  // AOT Phase 2 sidecar discovery for profiling enrichment. Loaded here
+  // (before any context binary is restored) so the lookup is on the backend
+  // manager when the first profile extraction runs, ensuring InitCsvFile()
+  // emits the `ONNX Source Ops` column and every NODE event row is annotated.
+  if (enable_framework_op_trace_) {
+    auto trace_path = qnn::DeriveTracePathFromContextModel(std::filesystem::path(context_model_path));
+    std::error_code ec;
+    if (std::filesystem::exists(trace_path, ec) && !ec) {
+      qnn::OpTraceLookup loaded;
+      if (qnn::LoadTraceLookupFromFile(trace_path, loaded, logger_)) {
+        qnn_backend_manager_->SetOpTraceLookup(std::move(loaded));
+      }
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("No sidecar op trace found at: " + trace_path.string() +
+                   " - the `ONNX Source Ops` profiling CSV column will be present "
+                   "(framework op trace was requested) but every NODE row's annotation "
+                   "will be empty.")
+                      .c_str());
+    }
+  }
 
   for (auto main_context_pos : main_context_pos_list) {
     // Create QNN context from the cached binary, deserialize the QNN graph from the binary
@@ -1848,7 +1962,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
         /*onnx_output_names=*/nullptr,
         /*model_settings=*/nullptr,
         /*graph_configs=*/nullptr,
-        /*tensor_name_overrides=*/nullptr,
+        /*tensor_name_overrides=*/io_name_overrides_per_graph[graph_idx].empty()
+            ? nullptr
+            : &io_name_overrides_per_graph[graph_idx],
         /*json_qnn_graph_path=*/{}};
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(context));
     RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
@@ -1914,7 +2030,8 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              logger_,
                                              share_ep_contexts_,
                                              stop_share_ep_contexts_,
-                                             name_));
+                                             name_,
+                                             tensor_name_overrides_));
 
   // Get compatibility info for later query in GetCompiledModelCompatibilityInfo.
   Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(compatibility_info_);
@@ -1941,6 +2058,12 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
                                          size_t count,
                                          OrtNodeComputeInfo** node_compute_infos) {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  if (ep->enable_framework_op_trace_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "Framework op tracing requested but graph is loaded from EPContext "
+                "(no fresh ComposeGraph) - no trace file will be written.");
+  }
+
   std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ep->ort_api);
   std::basic_string<ORTCHAR_T> context_model_path;
   GetContextOnnxModelFilePath(ep->context_cache_path_cfg_, model_path, context_model_path);
@@ -1969,6 +2092,40 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
     node_compute_infos[graph_idx] = node_compute_info.release();
   }
   return nullptr;
+}
+
+void QnnEp::CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph) {
+  trace_.model_name = std::filesystem::path(GetModelPathString(primary_graph, ort_api)).filename().u8string();
+  if (trace_.model_name.empty()) {
+    trace_.model_name = "<in-memory>";
+  }
+  trace_.backend_type = qnn::QnnBackendTypeToString(qnn_backend_manager_->GetQnnBackendType());
+  trace_.compilation_target.device_id = device_id_;
+
+  if (qnn::IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
+    uint32_t soc_model = qnn_backend_manager_->GetSocModel();
+    if (soc_model != QNN_SOC_MODEL_UNKNOWN) {
+      trace_.compilation_target.soc_model = soc_model;
+    }
+    QnnHtpDevice_Arch_t htp_arch = qnn_backend_manager_->GetHtpArch();
+    if (htp_arch != QNN_HTP_DEVICE_ARCH_NONE) {
+      trace_.compilation_target.htp_arch = "V" + std::to_string(htp_arch);
+    }
+  }
+
+  qnn::ComputeTraceSummary(trace_);
+
+  // Write when either compiled subgraphs or unsupported nodes are present.
+  // The unsupported-only branch covers the "entire model is unsupported"
+  // case, where ORT may not invoke CompileImpl at all but the trace still
+  // has diagnostic value (it records why every node was rejected).
+  // A wholly empty trace can still occur on EPContext cached runs
+  // - skip the file write there.
+  if (!trace_.subgraph_traces.empty() || !trace_.unsupported_nodes.empty()) {
+    qnn::WriteTraceToFile(trace_,
+                          std::filesystem::path(framework_op_trace_dir_) / "qnn_op_trace.json",
+                          logger_);
+  }
 }
 
 OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
@@ -2072,6 +2229,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
         /*tensor_name_overrides=*/&ep->tensor_name_overrides_,
         /*json_qnn_graph_path=*/std::string{}};
 
+    // Each ComposeGraph writes its mappings into a slot in ep->trace_.subgraph_traces.
+    if (ep->enable_framework_op_trace_) {
+      ep->trace_.subgraph_traces.push_back(qnn::OpTraceInfo{});
+      context.op_trace_output = &ep->trace_.subgraph_traces.back();
+    }
+
     if (ep->dump_json_qnn_graph_) {
       namespace fs = std::filesystem;
       context.json_qnn_graph_path =
@@ -2140,12 +2303,22 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 #endif  // _WIN32
 
   // Clean up transient GetCapability→Compile state.
+  // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
+  // below to serialize the io_name_overrides attribute into the EPContext model.
   ep->onnx_graph_io_names_.reset();
-  ep->tensor_name_overrides_.clear();
+
+  // Framework op trace: serialize and write JSON.
+  // When multiple graphs are compiled, all subgraph traces are collected into a single file.
+  if (ep->enable_framework_op_trace_) {
+    ep->CollectAndWriteFrameworkOpTrace(graphs[0]);
+  }
 
   if (ep->context_cache_enabled_) {
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
+
+  // Clear only after CreateEPContextNodes has serialized the map into the EPContext model.
+  ep->tensor_name_overrides_.clear();
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   end = std::chrono::steady_clock::now();
@@ -2209,6 +2382,12 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
 
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "RoiAlign") {
     // RoiAlign is translated to QNN's RoiAlign, which requires the NHWC layout for processing.
+    *should_convert = 1;
+  }
+
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "LpPool") {
+    // LpPool is translated to a QNN AvgPool-based decomposition, which requires the NHWC layout
+    // for processing.
     *should_convert = 1;
   }
 
@@ -2587,6 +2766,33 @@ void QnnEp::CreateHtpPowerConfigId() const {
   } else {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to create HTP power config id.");
   }
+}
+
+void QnnEp::WarnIfHnrdPathActive() {
+  if (hnrd_warning_emitted_) {
+    return;
+  }
+  hnrd_warning_emitted_ = true;
+  const uint32_t htp_arch = static_cast<uint32_t>(qnn_backend_manager_->GetHtpArch());
+  if (htp_arch == static_cast<uint32_t>(QNN_HTP_DEVICE_ARCH_NONE)) {
+    return;
+  }
+  bool hnrd_enabled = false;
+  Ort::Status status = qnn::htp_usr_drv::IsHtpUsrDrvEnabled(
+      qnn_backend_manager_->GetBackendLibDir(), htp_arch, hnrd_enabled);
+  if (!status.IsOK()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("HNRD detection skipped: " + status.GetErrorMessage()).c_str());
+    return;
+  }
+  if (!hnrd_enabled) {
+    return;
+  }
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING,
+              "QNN EP fell back to HTP user-driver (HNRD) path; "
+              "QnnHtpPrepare/Stub/Skel libs missing from backend lib dir.");
 }
 
 QnnEp::QnnNodeComputeInfo::QnnNodeComputeInfo(QnnEp& ep) : ep(ep) {

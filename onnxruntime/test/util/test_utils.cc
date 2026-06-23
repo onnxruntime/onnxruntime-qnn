@@ -8,21 +8,12 @@
 #include <string>
 #include <vector>
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wshorten-64-to-32"
-#endif
-#include <onnx/onnx_pb.h>
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
+#include "gmock/gmock.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "test/util/include/asserts.h"
 #include "test/util/include/test/test_environment.h"
-
-#include "gmock/gmock.h"
 
 namespace onnxruntime {
 namespace test {
@@ -246,7 +237,8 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                std::string_view log_id,
                                const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
-                               bool verify_outputs) {
+                               bool verify_outputs,
+                               Ort::CustomOpDomain* custom_op_domain) {
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
@@ -254,6 +246,9 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   // get expected output from CPU EP using public API
   //
   Ort::SessionOptions cpu_so;
+  if (custom_op_domain != nullptr) {
+    cpu_so.Add(*custom_op_domain);
+  }
   Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
 
   // fetch all outputs using public API
@@ -294,26 +289,6 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
 
   if (params.graph_verifier) {
     (*params.graph_verifier)(ort_session);
-  }
-}
-
-void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
-                        const ONNX_NAMESPACE::TensorShapeProto* shape2) {
-  EXPECT_NE(shape1, nullptr);
-  EXPECT_NE(shape2, nullptr);
-  EXPECT_EQ(shape1->dim_size(), shape2->dim_size()) << "Shapes do not have same rank";
-  auto min_dims = std::min(shape1->dim_size(), shape2->dim_size());
-  for (int i = 0; i < min_dims; ++i) {
-    auto dim1 = shape1->dim(i);
-    auto dim2 = shape2->dim(i);
-    EXPECT_EQ(dim1.has_dim_value(), dim2.has_dim_value());
-    if (dim1.has_dim_value()) {
-      EXPECT_EQ(dim1.dim_value(), dim2.dim_value());
-    }
-    EXPECT_EQ(dim1.has_dim_param(), dim2.has_dim_param());
-    if (dim1.has_dim_param()) {
-      EXPECT_EQ(dim1.dim_param(), dim2.dim_param());
-    }
   }
 }
 

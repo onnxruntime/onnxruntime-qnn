@@ -80,6 +80,7 @@ manylinux_tags = [
     "manylinux_2_28_x86_64",
     "manylinux_2_34_aarch64",
     "manylinux_2_34_x86_64",
+    "manylinux_2_35_x86_64",
 ]
 is_manylinux = environ.get("AUDITWHEEL_PLAT", None) in manylinux_tags
 
@@ -150,7 +151,6 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     qnn_deps = [
         "libGenie.so",
         "libHtpPrepare.so",
-        "libQnnCpu.so",
         "libQnnGpu.so",
         "libQnnHtp.so",
         "libQnnHtpNetRunExtensions.so",
@@ -179,7 +179,6 @@ else:
     qnn_deps = [
         "Genie.dll",
         "HtpPrepare.dll",
-        "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",
         "QnnHtpNetRunExtensions.dll",
@@ -198,7 +197,7 @@ else:
     ]
     libs.extend(qnn_deps)
 
-if is_manylinux:
+if is_manylinux or platform.system() == "Linux":
     data = list(dl_libs)
 else:
     data = list(libs)

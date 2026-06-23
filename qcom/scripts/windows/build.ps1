@@ -136,9 +136,9 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-# Use static MSVC runtime for ARM64 builds to eliminate MSVCP140.dll and
+# Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
-if ($Arch -in @("aarch64", "arm64", "arm64ec")) {
+if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
     $CommonArgs += "--enable_msvc_static_runtime"
 }
 
@@ -218,6 +218,15 @@ if ($BuildArchive) {
     $BuildArchiveArgs += "--build_archive_asset"
 }
 
+$BuildWheelArgs = @()
+if ($BuildWheel) {
+    $BuildWheelArgs += "--build_wheel"
+    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
+        $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
+        $BuildWheelArgs += "--nightly_build"
+    }
+}
+
 switch ($Mode) {
     "build" {
         if ($BuildIsDirty) {
@@ -277,7 +286,9 @@ else {
 
     if ($GenerateBuild -or $DoBuild) {
         try {
-            python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
+                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            }
             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
             if ($GenerateBuild) {
@@ -300,37 +311,12 @@ else {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
                 Use-PyVenv -PyVenv $BuildVEnv {
                     Assert-Success -ErrorMessage "Failed to build" {
-                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs $BuildWheelArgs
                     }
                 }
 
                 if ($CMakeGenerator -in @("Visual Studio 17 2022", "Visual Studio 18 2026")) {
                     $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
-                }
-
-                if ($BuildWheel) {
-                    $PyNightlyArg = ""
-                    $WheelNameSuffix = ""
-                    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
-                        $PyNightlyArg = "--nightly_build"
-                        $WheelNameSuffix = "--wheel_name_suffix=qcom_internal"
-                    }
-                    $PyVersionSuffixArg = ""
-                    if ($env:ORT_VERSION_SUFFIX) {
-                        $PyVersionSuffixArg = "--version_suffix=$env:ORT_VERSION_SUFFIX"
-                    }
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
-                                python.exe (Join-Path $RepoRoot "setup.py") `
-                                    bdist_wheel `
-                                    $WheelNameSuffix `
-                                    --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg `
-                                    $PyVersionSuffixArg
-                            }
-                        }
-                    }
                 }
 
                 if ($BuildNuget) {
@@ -347,7 +333,10 @@ else {
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
             # very cheap to regenerate.
-            Remove-Item -Recurse -Force (Join-Path $RepoRoot "mirror")
+            $mirrorDir = Join-Path $RepoRoot "mirror"
+            if (Test-Path $mirrorDir) {
+                Remove-Item -Recurse -Force $mirrorDir
+            }
         }
     }
 
