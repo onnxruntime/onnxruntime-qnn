@@ -21,6 +21,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
 - [QNN EP Framework Op Tracing](#qnn-ep-framework-op-tracing)
+- [QNN EP Input Graph Dump](#qnn-ep-input-graph-dump)
 - [QNN EP Profiling](#qnn-ep-profiling)
 - [QNN EP weight sharing](#qnn-ep-weight-sharing)
 - [Usage](#usage)
@@ -234,6 +235,15 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |`"json_qnn_graph_dir"`|Description|
 |---|---|
 |Directory path (string)|Directory path for dumping QNN JSON graphs. Only effective when `dump_json_qnn_graph` is enabled.|
+
+|`"dump_qnn_ep_input_graph"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Dump the ONNX graph the QNN EP receives at compile time (after ORT Level 1 optimizations, before partitioning) as a JSON file. The output uses the same schema as `dump_json_qnn_graph`, so it opens in QNN Netron. Unlike `dump_json_qnn_graph` (which dumps the post-compile QNN graph), this captures the pre-compile ONNX graph. See `dump_qnn_ep_input_graph_dir` to control the output location.|
+
+|`"dump_qnn_ep_input_graph_dir"`|Description|
+|---|---|
+|Directory path (string)|Directory path for the QNN EP input graph dump. Only effective when `dump_qnn_ep_input_graph` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to, the dump is disabled with a WARNING log. Output files use the pattern `<graph_name>.<n>_qnn_ep_input_graph.json`, where `<n>` is a per-EP counter that increments for each dumped graph. When the source graph has no name, `<graph_name>` is the literal `graph`.|
 
 |`"dump_qnn_ir_dlc"`|Description|
 |---|---|
@@ -806,6 +816,96 @@ ort.unregister_execution_provider_library(ep_registration_name)
 ```
 
 For an out-of-the-box example, see [`qcom/samples/test_genie.py`](../../qcom/samples/test_genie.py).
+
+## QNN EP Input Graph Dump
+
+Setting `dump_qnn_ep_input_graph` to `'1'` writes the ONNX graph the QNN EP
+receives at compile time — after ORT Level 1 optimizations, before partitioning
+and EP compile — to a JSON file (one per graph, named
+`<graph_name>.<n>_qnn_ep_input_graph.json`, where `<n>` is a per-EP counter
+that disambiguates collisions when two graph names sanitize to the same
+string). Use `dump_qnn_ep_input_graph_dir` to
+choose the output directory (defaults to the current working directory).
+
+This is useful for inspecting exactly what the EP sees: that graph is **not** the
+user's source `.onnx` (ORT has run constant folding, QDQ duplication via
+`EnsureUniqueDQForNodeUnit`, Transpose optimization, etc.), and it is otherwise
+hard to observe — `SessionOptions::optimized_model_filepath` refuses to serialize
+a graph once an EP has compiled part of it into opaque compiled nodes ("Unable to
+serialize model as it contains compiled nodes").
+
+### Why the dump is QNN-Netron JSON, not an ONNX model
+
+Netron is the open-source neural-net viewer that already understands the
+JSON shape produced by QNN's existing `dump_json_qnn_graph`
+(the post-compile QNN graph). The schema is not formally specified,
+but it is stable and observable in this repository at
+`onnxruntime/core/providers/qnn/builder/qnn_utils.cc` (`QnnJSONGraph`). The
+EP-input dump deliberately reuses that schema rather than emitting a real
+`.onnx`.
+
+The QNN EP ships as a **standalone ABI plugin** that
+links only the public ONNX Runtime C/C++ API, Abseil, and nlohmann/json — it does
+**not** link protobuf or the ONNX proto definitions. Constructing or serializing
+an `onnx::ModelProto` therefore is not possible from the EP without adding a
+protobuf dependency to every shipped `onnxruntime_providers_qnn` binary, which
+would break the plugin's minimal-dependency contract.
+
+Reusing the QNN-Netron JSON schema instead means:
+
+- **No new dependencies** — nlohmann/json is already used by the EP.
+- **Opens directly in QNN Netron** — same schema Netron already understands.
+- **One graph-dump format** across the EP: `dump_json_qnn_graph` for the
+  post-compile QNN graph, `dump_qnn_ep_input_graph` for the pre-compile ONNX graph.
+- **Consumable by tooling** — the offline `qcom/tools/op_trace_matcher/source_to_optimized_matcher.py`
+  reads this JSON directly as its `--optimized-model`, recovering
+  `original ONNX -> EP-input -> QNN op` provenance.
+
+The schema carries node name/op_type/input_names/output_names and a tensor table
+flagging each tensor's role (graph input / output / intermediate / initializer),
+which is everything downstream consumers need.
+
+**Known limitation:** the dump does **not** include initializer tensor data
+bytes. Only the tensor name, dtype, shape, and role are recorded. Tools
+consuming the dump (for example `source_to_optimized_matcher.py`'s
+`--optimized-model` input) must therefore rely on initializer **names** or
+graph **topology** — not data hashes — when correlating tensors across the
+source and the EP-input graph. The matcher uses a name-derived sentinel hash
+for initializers from this input so name-based and topology-based matching
+work unchanged.
+
+### Multiple dumps per graph name
+
+A single inference session can produce **more than one** dump for the same
+graph name, because ORT may invoke `GetCapability` more than once:
+
+- **Layout transformation 2-pass cycle.** When the graph contains
+  layout-sensitive ops (Conv, Resize, Pool, …), ORT runs a 1st pass to
+  collect EP claims, applies an NCHW->NHWC rewrite for nodes the EP
+  accepted, and runs a 2nd pass on the transformed graph. The two dumps
+  differ — the 2nd has Conv in `kMSInternalNHWCDomain` and includes
+  inserted Transpose ops.
+- **Control-flow subgraphs.** Each `If` / `Loop` / `Scan` subgraph is a
+  separate `OrtGraph*` and gets its own `GetCapability` invocation, so
+  models with control flow legitimately produce multiple dumps with
+  different graph names.
+- **EPContext model loads.** Loading a previously-cached EPContext model
+  triggers another `GetCapability` pass on that context graph.
+
+Filenames append a per-EP atomic counter (`<graph_name>.<n>_…json`) so each
+pass gets a distinct file, and an explicit overwrite warning is logged if
+the same name is ever about to be rewritten.
+
+**Rule for the offline matcher (`source_to_optimized_matcher.py`):** for
+each unique `<graph_name>` in the dump directory, feed the file with the
+**highest `<n>`** as `--optimized-model`. That is the graph the EP actually
+compiled, and its node names are exactly the names that appear in
+`qnn_op_trace.json`'s `sources[]`. Lower-numbered files are intermediate
+snapshots (useful for debugging the layout transformer itself, not for
+matcher input).
+
+If a model has subgraphs (different graph names), pick the highest-numbered
+file *per unique graph name* and run the matcher per graph.
 
 ## QNN context binary cache feature
 There's a QNN context which contains QNN graphs after converting, compiling, finalizing the model. QNN can serialize the context into binary file, so that user can use it for futher inference directly (without the QDQ model) to improve the model loading cost.
