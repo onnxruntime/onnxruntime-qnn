@@ -609,6 +609,11 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   // The input/output binding vectors are re-created on each attempt because after SSR recovery
   // the QNN context (and its memory handles) has been replaced.
   for (int attempt = 0; attempt <= 1; ++attempt) {
+    // Hold graph_exec_mutex_ for the entire attempt (tensor binding, proactive check,
+    // graphExecute, and recovery) to prevent data races on qnn_input_infos_/qnn_output_infos_
+    // when multiple threads call session.Run() on the same session.
+    std::lock_guard<std::mutex> lock(graph_exec_mutex_);
+
     std::vector<Qnn_Tensor_t> qnn_inputs;
     qnn_inputs.reserve(qnn_input_infos_.size());
 
@@ -708,9 +713,6 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
     {
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-
-      // Acquire mutex before calling QNN APIs to support calling session.Run() from multiple threads.
-      std::lock_guard<std::mutex> lock(graph_exec_mutex_);
 
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
 
