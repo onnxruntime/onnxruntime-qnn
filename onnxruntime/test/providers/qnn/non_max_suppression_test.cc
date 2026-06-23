@@ -22,10 +22,10 @@ namespace test {
 
 // NonMaxSuppression model configuration.
 struct NmsTestConfig {
-  std::vector<float> boxes_data;     // Flat row-major [B, S, 4]
-  std::vector<int64_t> boxes_shape;  // [B, S, 4]
-  std::vector<float> scores_data;    // Flat row-major [B, C, S]
-  std::vector<int64_t> scores_shape; // [B, C, S]
+  std::vector<float> boxes_data;      // Flat row-major [B, S, 4]
+  std::vector<int64_t> boxes_shape;   // [B, S, 4]
+  std::vector<float> scores_data;     // Flat row-major [B, C, S]
+  std::vector<int64_t> scores_shape;  // [B, C, S]
   int64_t max_output_boxes = 0;
   float iou_threshold = 0.0f;
   float score_threshold = 0.0f;
@@ -182,11 +182,11 @@ static void RunNmsTest(const GetTestModelFn& build_test_case,
 // 1-batch, 1-class, 6 boxes; iou=0.5, max_boxes=3 — basic suppression.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_Basic) {
   std::vector<float> boxes = {
-      0.0f, 0.0f,   1.0f, 1.0f,    // box 0
-      0.0f, 0.1f,   1.0f, 1.1f,    // box 1 (overlaps box 0 at iou>0.5)
-      0.0f, -0.1f,  1.0f, 0.9f,    // box 2 (overlaps box 0 at iou>0.5)
-      0.0f, 10.0f,  1.0f, 11.0f,   // box 3 (no overlap)
-      0.0f, 10.1f,  1.0f, 11.1f,   // box 4 (overlaps box 3)
+      0.0f, 0.0f, 1.0f, 1.0f,      // box 0
+      0.0f, 0.1f, 1.0f, 1.1f,      // box 1 (overlaps box 0 at iou>0.5)
+      0.0f, -0.1f, 1.0f, 0.9f,     // box 2 (overlaps box 0 at iou>0.5)
+      0.0f, 10.0f, 1.0f, 11.0f,    // box 3 (no overlap)
+      0.0f, 10.1f, 1.0f, 11.1f,    // box 4 (overlaps box 3)
       0.0f, 100.0f, 1.0f, 101.0f,  // box 5 (no overlap)
   };
   std::vector<float> scores = {0.9f, 0.75f, 0.6f, 0.95f, 0.5f, 0.3f};
@@ -208,9 +208,9 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Basic) {
 // center_point_box=1: boxes are [x_center, y_center, width, height].
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_CenterPointBox) {
   std::vector<float> boxes = {
-      0.5f, 0.5f,  1.0f, 1.0f,   // box 0
-      0.5f, 0.6f,  1.0f, 1.0f,   // box 1 (overlaps box 0)
-      0.5f, 10.5f, 1.0f, 1.0f,   // box 2 (no overlap)
+      0.5f, 0.5f, 1.0f, 1.0f,   // box 0
+      0.5f, 0.6f, 1.0f, 1.0f,   // box 1 (overlaps box 0)
+      0.5f, 10.5f, 1.0f, 1.0f,  // box 2 (no overlap)
   };
   std::vector<float> scores = {0.9f, 0.75f, 0.85f};
 
@@ -235,10 +235,10 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_CenterPointBox) {
 // output capacity matches the total candidate count.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_IouThresholdLow) {
   std::vector<float> boxes = {
-      0.0f, 0.0f, 1.0f, 1.0f,   // box 0
-      0.0f, 0.4f, 1.0f, 1.4f,   // box 1 (moderate overlap — suppressed at 0.3)
-      0.0f, 5.0f, 1.0f, 6.0f,   // box 2 (no overlap)
-      0.0f, 5.5f, 1.0f, 6.5f,   // box 3 (overlaps box 2 — suppressed at 0.3)
+      0.0f, 0.0f, 1.0f, 1.0f,  // box 0
+      0.0f, 0.4f, 1.0f, 1.4f,  // box 1 (moderate overlap — suppressed at 0.3)
+      0.0f, 5.0f, 1.0f, 6.0f,  // box 2 (no overlap)
+      0.0f, 5.5f, 1.0f, 6.5f,  // box 3 (overlaps box 2 — suppressed at 0.3)
   };
   std::vector<float> scores = {0.9f, 0.85f, 0.8f, 0.75f};
 
@@ -259,9 +259,9 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_IouThresholdLow) {
 // iou_threshold=0.7: looser suppression preserves more boxes.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_IouThresholdHigh) {
   std::vector<float> boxes = {
-      0.0f, 0.0f, 1.0f, 1.0f,   // box 0
-      0.0f, 0.4f, 1.0f, 1.4f,   // box 1 (IOU ~0.43 — not suppressed at 0.7)
-      0.0f, 5.0f, 1.0f, 6.0f,   // box 2 (no overlap)
+      0.0f, 0.0f, 1.0f, 1.0f,  // box 0
+      0.0f, 0.4f, 1.0f, 1.4f,  // box 1 (IOU ~0.43 — not suppressed at 0.7)
+      0.0f, 5.0f, 1.0f, 6.0f,  // box 2 (no overlap)
   };
   std::vector<float> scores = {0.9f, 0.85f, 0.8f};
 
@@ -282,10 +282,10 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_IouThresholdHigh) {
 // score_threshold=0.5: boxes below score 0.5 are discarded before IOU suppression.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_ScoreThreshold) {
   std::vector<float> boxes = {
-      0.0f, 0.0f, 1.0f, 1.0f,   // box 0, score=0.9 (kept)
-      0.0f, 0.0f, 1.0f, 1.0f,   // box 1, score=0.4 (filtered by score_threshold)
-      0.0f, 5.0f, 1.0f, 6.0f,   // box 2, score=0.8 (kept)
-      0.0f, 5.0f, 1.0f, 6.0f,   // box 3, score=0.2 (filtered by score_threshold)
+      0.0f, 0.0f, 1.0f, 1.0f,  // box 0, score=0.9 (kept)
+      0.0f, 0.0f, 1.0f, 1.0f,  // box 1, score=0.4 (filtered by score_threshold)
+      0.0f, 5.0f, 1.0f, 6.0f,  // box 2, score=0.8 (kept)
+      0.0f, 5.0f, 1.0f, 6.0f,  // box 3, score=0.2 (filtered by score_threshold)
   };
   std::vector<float> scores = {0.9f, 0.4f, 0.8f, 0.2f};
 
@@ -306,8 +306,8 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_ScoreThreshold) {
 // max_output_boxes_per_class=1: only the top-scoring box per class is returned.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_MaxBoxesLimit) {
   std::vector<float> boxes = {
-      0.0f, 0.0f,  1.0f, 1.0f,   // box 0
-      0.0f, 5.0f,  1.0f, 6.0f,   // box 1 (no overlap)
+      0.0f, 0.0f, 1.0f, 1.0f,    // box 0
+      0.0f, 5.0f, 1.0f, 6.0f,    // box 1 (no overlap)
       0.0f, 10.0f, 1.0f, 11.0f,  // box 2 (no overlap)
   };
   std::vector<float> scores = {0.9f, 0.85f, 0.8f};
@@ -404,10 +404,10 @@ static ProviderOptions HtpNmsProviderOptions() {
 // Coordinates are ≤ 2.0 so they fit within uint8 range at boxes_scale=0.01.
 TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint8) {
   std::vector<float> boxes = {
-      0.0f, 0.0f, 0.5f, 0.5f,   // box 0
-      0.0f, 0.1f, 0.5f, 0.6f,   // box 1 (overlaps box 0, suppressed)
-      1.0f, 1.0f, 1.5f, 1.5f,   // box 2 (no overlap)
-      1.0f, 1.1f, 1.5f, 1.6f,   // box 3 (overlaps box 2, suppressed)
+      0.0f, 0.0f, 0.5f, 0.5f,  // box 0
+      0.0f, 0.1f, 0.5f, 0.6f,  // box 1 (overlaps box 0, suppressed)
+      1.0f, 1.0f, 1.5f, 1.5f,  // box 2 (no overlap)
+      1.0f, 1.1f, 1.5f, 1.6f,  // box 3 (overlaps box 2, suppressed)
   };
   std::vector<float> scores = {0.9f, 0.75f, 0.95f, 0.5f};
 
@@ -429,10 +429,10 @@ TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint8) {
 // HTP QDQ uint16: same test with uint16 Q/DQ ops (MS contrib domain).
 TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint16) {
   std::vector<float> boxes = {
-      0.0f, 0.0f, 0.5f, 0.5f,   // box 0
-      0.0f, 0.1f, 0.5f, 0.6f,   // box 1 (overlaps box 0, suppressed)
-      1.0f, 1.0f, 1.5f, 1.5f,   // box 2 (no overlap)
-      1.0f, 1.1f, 1.5f, 1.6f,   // box 3 (overlaps box 2, suppressed)
+      0.0f, 0.0f, 0.5f, 0.5f,  // box 0
+      0.0f, 0.1f, 0.5f, 0.6f,  // box 1 (overlaps box 0, suppressed)
+      1.0f, 1.0f, 1.5f, 1.5f,  // box 2 (no overlap)
+      1.0f, 1.1f, 1.5f, 1.6f,  // box 3 (overlaps box 2, suppressed)
   };
   std::vector<float> scores = {0.9f, 0.75f, 0.95f, 0.5f};
 

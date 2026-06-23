@@ -51,9 +51,8 @@ class NonMaxSuppressionOpBuilder : public BaseOpBuilder {
 
   // QNN GPU backend does not list NonMaxSuppression in its supported ops.
   Ort::Status CheckGpuDataTypes(const std::vector<Qnn_DataType_t>,
-                                 const std::vector<Qnn_DataType_t>) const override {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                           "NonMaxSuppression is not supported on QNN GPU backend.");
+                                const std::vector<Qnn_DataType_t>) const override {
+    return MAKE_EP_FAIL("NonMaxSuppression is not supported on QNN GPU backend.");
   }
 
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -120,10 +119,10 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model
 }
 
 Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                                     const OrtNodeUnit& node_unit,
-                                                                     std::vector<std::string>&& input_names,
-                                                                     const Ort::Logger& logger,
-                                                                     bool do_op_validation) const {
+                                                                    const OrtNodeUnit& node_unit,
+                                                                    std::vector<std::string>&& input_names,
+                                                                    const Ort::Logger& logger,
+                                                                    bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
@@ -199,13 +198,25 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
   SafeInt<uint32_t> max_selected = SafeInt<uint32_t>(batch) * num_classes * max_boxes_selected;
   std::vector<uint32_t> qnn_output_shape = {static_cast<uint32_t>(max_selected), 3u};
 
-  // ── 5. Build output tensor(s) and QNN node ────────────────────────────────
-  // Pattern mirrors nonzero_op_builder.cc:
-  //   graph_output=true:  NMS -> NATIVE INT_32 -> Cast -> APP_READ INT_64
-  //   graph_output=false: NMS -> NATIVE INT_32 directly (no Cast)
   const std::string& output_name = outputs[0].name;
   bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 
+  // ── 5. Wire QNN out[1] (valid count) to a NATIVE UINT_32 sink tensor ─────
+  // QNN NMS out[1] is optional per the spec, but some backends (e.g. HTP) require
+  // all op outputs to be connected to a tensor even when the caller doesn't read them.
+  // Omitting it causes QNN_COMMON_ERROR_MEM_ALLOC (error 1002) at graphFinalize.
+  const std::string valid_count_name = output_name + "_valid_count";
+  QnnTensorWrapper valid_count_tensor(valid_count_name,
+                                      QNN_TENSOR_TYPE_NATIVE,
+                                      QNN_DATATYPE_UINT_32,
+                                      QnnQuantParamsWrapper(),
+                                      std::vector<uint32_t>{batch});
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(valid_count_tensor)),
+                "NonMaxSuppression: failed to add valid count tensor.");
+
+  // ── 6. Build output tensor(s) and QNN node ────────────────────────────────
+  // graph_output=true:  NMS -> NATIVE INT_32 -> Cast -> APP_READ INT_64
+  // graph_output=false: NMS -> NATIVE INT_32 directly (no Cast)
   if (is_graph_output) {
     // Intermediate INT_32 NMS output tensor.
     const std::string nms_out_name = output_name + "_nms_int32";
@@ -217,12 +228,12 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(nms_out_tensor)),
                   "NonMaxSuppression: failed to add NMS INT_32 output tensor.");
 
-    // Create the NMS QNN node.
+    // Create the NMS QNN node with both outputs.
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_NON_MAX_SUPPRESSION,
                                                   std::move(input_names),
-                                                  {nms_out_name},
+                                                  {nms_out_name, valid_count_name},
                                                   std::move(param_tensor_names),
                                                   do_op_validation),
                   "NonMaxSuppression: failed to create QNN node.");
@@ -258,7 +269,7 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_NON_MAX_SUPPRESSION,
                                                   std::move(input_names),
-                                                  {output_name},
+                                                  {output_name, valid_count_name},
                                                   std::move(param_tensor_names),
                                                   do_op_validation),
                   "NonMaxSuppression: failed to create QNN node.");
