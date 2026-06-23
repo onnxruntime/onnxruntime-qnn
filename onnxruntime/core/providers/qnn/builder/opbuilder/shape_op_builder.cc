@@ -13,10 +13,9 @@ namespace onnxruntime {
 namespace qnn {
 
 // Shape op builder.
-// Maps ONNX Shape -> QNN Shape. ONNX Shape produces an int64 1-D tensor; QNN requires the
-// output to be int32, so the int64 output is downcast to int32 (BaseOpBuilder::ProcessOutputs
-// inserts a Cast back to int64 when the output is a graph output). For intermediate outputs,
-// the QNN tensor type remains INT_32 and downstream ops consume it directly.
+// Maps ONNX Shape -> QNN Shape. ONNX Shape produces an int64 1-D tensor; QNN generates output
+// in int32. If the output is not an intermediate tensor in the graph, then a Cast op is
+// inserted to convert to int64.
 // The ONNX `start`/`end` attributes are mapped to the QNN `start`/`end` scalar params (uint32).
 class ShapeOpBuilder : public BaseOpBuilder {
  public:
@@ -46,12 +45,6 @@ Qnn_DataType_t ShapeOpBuilder::GetSupportedOutputDataType(size_t index, Qnn_Data
   return qnn_data_type;
 }
 
-// Resolves the ONNX Shape `start`/`end` attributes against the input rank per the ONNX spec
-// (opset >= 15). Mirrors `data.shape[start:end]`: negative values count from the end (add rank),
-// then both are clamped to [0, rank]. Returns the resolved (start, end, output_length) where
-// output_length = max(0, end - start).
-// Defined inline in shape_op_builder.h for unit-test visibility.
-
 Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                         const OrtNodeUnit& node_unit,
                                                         std::vector<std::string>&& input_names,
@@ -68,10 +61,8 @@ Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   OrtNodeAttrHelper node_helper(node_unit);
   const int64_t start_attr = node_helper.Get("start", static_cast<int64_t>(0));
   const int64_t end_attr = node_helper.Get("end", rank);
-  int64_t start = 0;
-  int64_t end = 0;
-  int64_t output_length = 0;
-  ResolveShapeBounds(rank, start_attr, end_attr, start, end, output_length);
+  const auto [start, end] = ResolveShapeBounds(rank, start_attr, end_attr);
+  const int64_t output_length = std::max<int64_t>(0, end - start);
 
   // Step 2: Postprocess to match the QNN op definition. Per QnnOpDef (MasterOpDef "Shape"), the
   // output is a 1-D tensor of shape [M] with M = end - start, and QNN constrains `end` to
@@ -98,7 +89,7 @@ Ort::Status ShapeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
                                  std::move(input_names),
                                  std::move(param_tensor_names),
-                                 logger, do_op_validation, QNN_OP_SHAPE));
+                                 logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
 
   return Ort::Status();
 }

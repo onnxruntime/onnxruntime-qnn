@@ -3,6 +3,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,10 @@ struct ResolvedBounds {
 
 ResolvedBounds Resolve(int64_t rank, int64_t start_attr, int64_t end_attr) {
   ResolvedBounds r{};
-  qnn::ResolveShapeBounds(rank, start_attr, end_attr, r.start, r.end, r.output_length);
+  const auto [start, end] = qnn::ResolveShapeBounds(rank, start_attr, end_attr);
+  r.start = start;
+  r.end = end;
+  r.output_length = std::max<int64_t>(0, end - start);
   return r;
 }
 
@@ -410,10 +414,14 @@ static void RunShapeCompositionTest(const GetTestModelFn& build_model, int opset
 
   ASSERT_EQ(expected.size(), actual.size());
   for (size_t out_idx = 0; out_idx < expected.size(); ++out_idx) {
-    auto exp_shape = expected[out_idx].GetTensorTypeAndShapeInfo().GetShape();
-    auto act_shape = actual[out_idx].GetTensorTypeAndShapeInfo().GetShape();
+    auto exp_info = expected[out_idx].GetTensorTypeAndShapeInfo();
+    auto act_info = actual[out_idx].GetTensorTypeAndShapeInfo();
+    ASSERT_EQ(exp_info.GetElementType(), act_info.GetElementType())
+        << "Element type mismatch for output " << out_idx;
+    auto exp_shape = exp_info.GetShape();
+    auto act_shape = act_info.GetShape();
     ASSERT_EQ(exp_shape, act_shape) << "Shape mismatch for output " << out_idx;
-    const size_t element_count = expected[out_idx].GetTensorTypeAndShapeInfo().GetElementCount();
+    const size_t element_count = exp_info.GetElementCount();
     const int64_t* exp_data = expected[out_idx].GetTensorData<int64_t>();
     const int64_t* act_data = actual[out_idx].GetTensorData<int64_t>();
     for (size_t i = 0; i < element_count; ++i) {
