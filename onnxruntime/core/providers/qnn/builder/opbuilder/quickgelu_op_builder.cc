@@ -85,19 +85,16 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 
     // Step 1: Create Mul node for alpha * x
     std::string alpha_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul");
-    Qnn_Scalar_t alpha_mul_scalar = QNN_SCALAR_INIT;
-    alpha_mul_scalar.dataType = QNN_DATATYPE_UINT_32;
-    alpha_mul_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    QnnParamWrapper alpha_mul_param(node_unit.Index(), alpha_mul_name,
-                                    QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, alpha_mul_scalar);
-    std::string alpha_mul_param_name = alpha_mul_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(alpha_mul_param)), "Failed to add operation param.");
+    std::vector<std::string> alpha_mul_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), alpha_mul_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, alpha_mul_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(alpha_mul_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   {alpha_tensor_name, input_name},
                                                   {alpha_mul_output_name},
-                                                  {alpha_mul_param_name},
+                                                  std::move(alpha_mul_param_names),
                                                   do_op_validation),
                   "Failed to create alpha_mul node.");
   }
@@ -131,19 +128,16 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 
   // Step 3: Create Mul node for x * sigmoid(alpha * x) or x * sigmoid(x)
   std::string final_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul");
-  Qnn_Scalar_t final_mul_scalar = QNN_SCALAR_INIT;
-  final_mul_scalar.dataType = QNN_DATATYPE_UINT_32;
-  final_mul_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  QnnParamWrapper final_mul_param(node_unit.Index(), final_mul_name,
-                                  QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, final_mul_scalar);
-  std::string final_mul_param_name = final_mul_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(final_mul_param)), "Failed to add operation param.");
+  std::vector<std::string> final_mul_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), final_mul_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, final_mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(final_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {input_name, sigmoid_output_name},
                                                 {output_name},
-                                                {final_mul_param_name},
+                                                std::move(final_mul_param_names),
                                                 do_op_validation),
                 "Failed to create final_mul node.");
 

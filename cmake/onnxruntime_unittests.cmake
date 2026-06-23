@@ -199,6 +199,7 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
   include(onnxruntime_unittests_udo.cmake)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/unit/*)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
@@ -381,6 +382,22 @@ block()
   # there are some in builds where sizeof(size_t) != sizeof(int64_t), e.g., in 'ONNX Runtime Web CI Pipeline'
   if (HAS_SHORTEN_64_TO_32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
+  endif()
+
+  # Coverage build: link against the SHARED QNN EP library so tests can call
+  # EP-internal functions directly. Coverage is recorded in the .so's .gcda files and
+  # collected by lcov --directory <build_dir> (recursive search finds them automatically).
+  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
+    # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
+    # It tracks whether the test binary is link-time bound to the SHARED EP library
+    # (i.e., the cmake conditions above hold), not whether any production source is
+    # under #if. When the macro is off, the test bodies under unit/ compile to empty
+    # translation units, so non-coverage builds do not see undefined references.
+    # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
+    # stabilises, the gate can be widened to other CI build configurations without
+    # touching the test code.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()
 
 endblock()

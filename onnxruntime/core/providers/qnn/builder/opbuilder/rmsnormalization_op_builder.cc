@@ -139,15 +139,8 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
 
   // Process epsilon attribute
   const float epsilon = node_helper.Get("epsilon", 1e-05f);
-  Qnn_Scalar_t epsilon_param = QNN_SCALAR_INIT;
-  epsilon_param.dataType = QNN_DATATYPE_FLOAT_32;
-  epsilon_param.floatValue = epsilon;
-  QnnParamWrapper epsilon_param_wrapper(node_unit.Index(),
-                                        node_unit.Name(),
-                                        QNN_OP_RMS_NORM_PARAM_EPSILON,
-                                        epsilon_param);
-  param_tensor_names.push_back(epsilon_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(epsilon_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), epsilon,
+                                      QNN_OP_RMS_NORM_PARAM_EPSILON, param_tensor_names));
 
   // Process axis attribute and create axes parameter
   std::vector<uint32_t> input_shape;
