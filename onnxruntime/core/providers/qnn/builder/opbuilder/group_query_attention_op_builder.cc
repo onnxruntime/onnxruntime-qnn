@@ -260,7 +260,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
     RETURN_IF_NOT(seqlens_k_info.shape[0] == seqlens_k_total_size, "Unexpected shape for seqlens_k");
     const auto& seqlens_k_input_name = input_names[1];
     bool is_seqlens_k_graph_input = qnn_model_wrapper.IsGraphInput(seqlens_k_input_name);
-    std::string seqlens_k_reshaped = seqlens_k_input_name + "_reshaped";
+    std::string seqlens_k_reshaped = onnxruntime::qnn::utils::UniqueNameGenerator().New(seqlens_k_input_name, "_reshaped");
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(seqlens_k_input_name,
                                                      seqlens_k_reshaped,
                                                      seqlens_k_info.shape,
