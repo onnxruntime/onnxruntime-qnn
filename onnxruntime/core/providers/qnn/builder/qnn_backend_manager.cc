@@ -643,13 +643,9 @@ Ort::Status QnnBackendManager::InitializeBackend(bool enable_gpu_weight_sharing)
     return Ort::Status();
   }
 
-  QnnGpuBackend_CustomConfig_t gpu_backend_custom_config_;
-  QnnBackend_Config_t backend_config_wrapper_;
-  QnnBackend_Config_t* backend_configs_ptr_[2];
-
-  if (IsGpuBackend(GetQnnBackendType())) {
+  if (IsGpuBackend(GetQnnBackendType()) && enable_gpu_weight_sharing) {
     gpu_backend_custom_config_.option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
-    gpu_backend_custom_config_.weightSharingEnabled = enable_gpu_weight_sharing ? 1 : 0;
+    gpu_backend_custom_config_.weightSharingEnabled = 1;
 
     backend_config_wrapper_.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
     backend_config_wrapper_.customConfig = &gpu_backend_custom_config_;
@@ -1939,6 +1935,12 @@ Ort::Status QnnBackendManager::SetupBackend(
 #if defined(__aarch64__) || defined(_M_ARM64)
     enable_gpu_weight_sharing = true;
 #endif
+  }
+
+  if (IsGpuBackend(GetQnnBackendType())) {
+    const std::string msg = std::string("GPU weight sharing: ") +
+                            (enable_gpu_weight_sharing ? "enabled" : "disabled");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, msg.c_str());
   }
 
   if (status.IsOK()) {
