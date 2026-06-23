@@ -28,6 +28,8 @@ jobs:
           du -h -d1 "$(dirname "${{ github.workspace }}")" 2>/dev/null | sort -h | tail -20
           echo "===== Top dirs under HOME ====="
           du -h -d1 "$HOME" 2>/dev/null | sort -h | tail -20
+          echo "===== ort-build-tools versions ====="
+          du -h -d1 "$HOME/ort-build-tools" 2>/dev/null | sort -h | tail -40
 
       - name: Clean previous build directory
         run: |
