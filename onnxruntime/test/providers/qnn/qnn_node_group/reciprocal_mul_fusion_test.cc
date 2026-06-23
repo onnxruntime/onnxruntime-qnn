@@ -85,8 +85,6 @@ GetTestModelFn BuildReciprocalMulFP16TestCase(const TestInputDef<float>& numerat
     builder.MakeOutput("output");
   };
 }
-
-
 // No-fusion case: QDQ-wrapped Reciprocal with two Mul consumers.
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQReciprocalMulNoFusionTestCase(
@@ -266,8 +264,6 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", 1);
 }
-
-
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "uint16 QDQ requires HTP arch > v68";
