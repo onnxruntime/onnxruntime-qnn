@@ -559,8 +559,10 @@ inline Ort::Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF(true, "QNN EP: Unsupported scalar dtype");
   }
   QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
-  param_names.push_back(qnn_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
+  std::string param_tensor_name = qnn_param_wrapper.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper)),
+                ("QNN EP: Failed to add scalar param " + qnn_scalar_param_name).c_str());
+  param_names.push_back(std::move(param_tensor_name));
   return Ort::Status();
 }
 
@@ -574,8 +576,10 @@ inline Ort::Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
   qnn_scalar.dataType = QNN_DATATYPE_STRING;
   qnn_scalar.stringValue = scalar.c_str();
   QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
-  param_names.push_back(qnn_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
+  std::string param_tensor_name = qnn_param_wrapper.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper)),
+                ("QNN EP: Failed to add scalar param " + qnn_scalar_param_name).c_str());
+  param_names.push_back(std::move(param_tensor_name));
   return Ort::Status();
 }
 

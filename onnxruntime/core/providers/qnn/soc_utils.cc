@@ -6,6 +6,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#if !defined(_WIN32) && defined(__aarch64__)
+#include <cstring>
+#include <dirent.h>
+#endif
 
 #include "core/providers/qnn/soc_utils.h"
 
@@ -178,6 +182,28 @@ int getSocId() {
 int GetSocId() {
   static int cached_soc_id = getSocId();
   return cached_soc_id;
+}
+
+bool HasFastRpcCdspDevice() {
+#if !defined(_WIN32) && defined(__aarch64__)
+  // Qualcomm Linux/Android arm64: ORT Core doesn't enumerate Hexagon NPUs.
+  // Detect via any fastRPC compute-DSP char device.
+  DIR* d = opendir("/dev");
+  if (!d) {
+    return false;
+  }
+  bool found = false;
+  while (dirent* e = readdir(d)) {
+    if (std::strncmp(e->d_name, "fastrpc-cdsp", 12) == 0) {
+      found = true;
+      break;
+    }
+  }
+  closedir(d);
+  return found;
+#else
+  return false;
+#endif
 }
 
 }  // namespace soc

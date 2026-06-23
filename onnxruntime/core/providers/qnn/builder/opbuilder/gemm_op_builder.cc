@@ -588,19 +588,16 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::string bias_name = input_names[2];
 
     std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
-    op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD;
-    QnnParamWrapper op_param(node_unit.Index(), add_node_name,
-                             QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
-    std::string param_name = op_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(op_param)), "Failed to add operation param.");
+    std::vector<std::string> add_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), add_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_BINARY,
                                                   {fc_output_name, bias_name},
                                                   {org_output_name},
-                                                  {param_name},
+                                                  std::move(add_param_names),
                                                   do_op_validation),
                   "Failed to add ElementWiseAdd node.");
   } else {

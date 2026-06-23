@@ -362,8 +362,35 @@ TEST_F(QnnHTPBackendTests, PadConstantValue_FP16_0) {
                                2e-3f);
 }
 
-// Test MLFlaot 16 Constant = 1
-// Should not be assigned to htp since HTP only support fp16 with constant = 0.
+// Verifies that a Pad node with a float16 constant_value initializer (non-zero value = 1.0)
+// is correctly processed by ProcessConstantValue, which converts QNN_DATATYPE_FLOAT_16 to
+// QNN_DATATYPE_FLOAT_32 before passing the scalar to QNN.
+TEST_F(QnnHTPBackendTests, PadHasConstantValueFloat16) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  auto data_def = TestInputDef<float>({1, 4, 4, 8}, false, GetFloatDataInRange(-1.0f, 1.0f, 128));
+  auto constant_def = TestInputDef<float>({1}, true, {1.0f});
+  auto pads_def = TestInputDef<int64_t>({8}, true, {0, 0, 0, 0, 0, 0, 1, 0});
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {test::MakeAttribute("mode", "constant")};
+
+  TestFp16ModelAccuracy(
+      BuildPadTestCase<float>(data_def, pads_def, constant_def, attrs),
+      BuildPadTestCase<Ort::Float16_t>(ConvertToFP16InputDef(data_def), pads_def,
+                                       ConvertToFP16InputDef(constant_def), attrs),
+      provider_options, 18, ExpectedEPNodeAssignment::All, 0.004f);
+}
+
+// Test MLFloat16 Constant = 1
+// FP16 constant_value is now converted to FP32 inside ProcessConstantValue, so HTP can execute this.
 TEST_F(QnnHTPBackendTests, PadConstantValue_FP16_1) {
   bool has_constant_value_input = true;
   bool enable_fp16_precision = true;
@@ -376,7 +403,7 @@ TEST_F(QnnHTPBackendTests, PadConstantValue_FP16_1) {
                                TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
                                input_fp16_constant,
                                {test::MakeAttribute("mode", "constant")},
-                               ExpectedEPNodeAssignment::None,  // Should not be assigned to htp
+                               ExpectedEPNodeAssignment::All,
                                "htp",
                                has_constant_value_input,
                                18,  // opset

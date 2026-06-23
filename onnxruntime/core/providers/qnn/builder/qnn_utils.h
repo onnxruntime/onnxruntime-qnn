@@ -120,6 +120,7 @@ size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
 bool QnnTensorHasDynamicShape(const Qnn_Tensor_t& tensor);
 
 // TODO: make these work with Wrappers?
+std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type);
 std::ostream& operator<<(std::ostream& out, const Qnn_Param_t& qnn_param);
 std::ostream& operator<<(std::ostream& out, const Qnn_Tensor_t& tensor);
 std::ostream& operator<<(std::ostream& out, const QnnOpConfigWrapper& op_conf_wrapper);
