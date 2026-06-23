@@ -19,6 +19,10 @@ on:
         description: "Set to true to upload the per-file coverage Excel to Artifactory"
         type: boolean
         default: false
+      qa_tag:
+        description: "Pre-computed QA tag from the caller; leave blank to auto-generate from today's date + SHA"
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       target_py_vsn:
@@ -29,6 +33,10 @@ on:
         description: "Set to true to upload the per-file coverage Excel to Artifactory"
         type: boolean
         default: false
+      qa_tag:
+        description: "Pre-computed QA tag from the caller; leave blank to auto-generate from today's date + SHA"
+        type: string
+        default: ''
 
 jobs:
   coverage-linux-x86_64:
@@ -116,11 +124,34 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
+      - name: Set QA Build Tag
+        # Use the caller-provided qa_tag if present so coverage shares the exact same
+        # Artifactory directory as the nightly release upload. Falls back to auto-compute
+        # for standalone runs (workflow_dispatch / PR CI). Mirrors qualcomm-internal-release.yml.
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        run: |
+          if [ -z "${{ inputs.qa_tag }}" ]; then
+            run_date="$(date --rfc-3339=date)"
+            echo "QA_TAG=nightly-${run_date}-${GITHUB_SHA:0:10}" >> ${GITHUB_ENV}
+            echo "COVERAGE_RUN_DATE=${run_date}" >> ${GITHUB_ENV}
+          else
+            echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
+            # Extract date portion from the canonical "nightly-YYYY-MM-DD-{sha}" format
+            # so the Excel's date column matches the directory name.
+            echo "COVERAGE_RUN_DATE=$(echo '${{ inputs.qa_tag }}' | sed -n 's/^nightly-\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)-.*/\1/p')" >> ${GITHUB_ENV}
+          fi
+
       - name: Update per-file coverage Excel
         # !cancelled(): run even when the coverage step failed due to UT failure.
         # coverage.xml is still produced by generate_coverage.sh before it propagates the exit code.
+        # File guard: build-stage failures (cmake, link, submodule) can leave coverage.xml absent — skip cleanly.
+        # update_coverage_excel.py picks up $COVERAGE_RUN_DATE for the Excel's date column.
         if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
         run: |
+          [ -f "${COVERAGE_DIR}/coverage.xml" ] || {
+            echo "::warning::coverage.xml missing — skipping nightly Excel generation"
+            exit 0
+          }
           python3 qcom/build_and_test.py \
             --target-py-version ${{ inputs.target_py_vsn }} \
             --only \
@@ -129,9 +160,13 @@ jobs:
       - name: Upload per-file coverage Excel to Artifactory
         if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
         run: |
+          [ -f "${COVERAGE_DIR}/per_file_coverage.xlsx" ] || {
+            echo "::warning::per_file_coverage.xlsx missing — skipping nightly Artifactory upload"
+            exit 0
+          }
           jf rt upload \
             "${COVERAGE_DIR}/per_file_coverage.xlsx" \
-            "${{ secrets.BUILD_ARTIFACTORY_REPO }}/qa/nightly-$(date -u +%Y-%m-%d)-${GITHUB_SHA:0:10}/" \
+            "${{ secrets.BUILD_ARTIFACTORY_REPO }}/qa/${{ env.QA_TAG }}/" \
             --flat=true
 
       - name: Post Diff Coverage to PR

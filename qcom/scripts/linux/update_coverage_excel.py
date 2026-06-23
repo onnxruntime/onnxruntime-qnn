@@ -14,6 +14,7 @@
 #       [--date        YYYY-MM-DD]         # default: today (UTC)
 
 import argparse
+import os
 import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -37,7 +38,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--coverage-xml", required=True, type=Path, help="Path to Cobertura XML (coverage.xml)")
     p.add_argument("--excel", required=True, type=Path, help="Output Excel path (overwritten if exists)")
     p.add_argument("--commit-sha", required=True, help="Current commit SHA (full 40-char)")
-    p.add_argument("--date", default=None, help="Override date as YYYY-MM-DD (default: today UTC)")
+    p.add_argument(
+        "--date",
+        default=None,
+        help="Override date as YYYY-MM-DD (default: $COVERAGE_RUN_DATE if set, else today UTC)",
+    )
     return p.parse_args()
 
 
@@ -91,7 +96,10 @@ def create_workbook(run_date: str, commit_sha: str, file_rows: list[dict]) -> Wo
 def main() -> None:
     args = parse_args()
 
-    run_date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Date source-of-truth order: CLI --date > $COVERAGE_RUN_DATE env > today UTC.
+    # The env var lets CI pass a date computed once upstream so multiple consumers
+    # (this script + downstream upload path) agree even across UTC midnight.
+    run_date = args.date or os.environ.get("COVERAGE_RUN_DATE") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     print(f"Coverage XML : {args.coverage_xml}")
     print(f"Excel        : {args.excel}")
