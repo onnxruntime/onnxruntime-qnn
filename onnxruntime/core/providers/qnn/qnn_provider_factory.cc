@@ -11,11 +11,6 @@
 #include <iostream>
 #include <optional>
 
-#if !defined(_WIN32)
-#include <cstring>
-#include <dirent.h>
-#endif
-
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "QnnCommon.h"
@@ -190,21 +185,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
-    bool synthesize_npu = qnn::soc::GetSocId() != 0;
-
-#if !defined(_WIN32) && defined(__aarch64__)
-    // Qualcomm Linux/Android arm64: ORT Core doesn't enumerate Hexagon NPUs.
-    // Detect via any fastRPC compute-DSP char device.
-    if (DIR* d = opendir("/dev")) {
-      while (dirent* e = readdir(d)) {
-        if (std::strncmp(e->d_name, "fastrpc-cdsp", 12) == 0) {
-          synthesize_npu = true;
-          break;
-        }
-      }
-      closedir(d);
-    }
-#endif
+    bool synthesize_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
