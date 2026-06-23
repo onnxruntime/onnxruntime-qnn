@@ -7,9 +7,13 @@
 #include <string>
 #include <vector>
 
+#include <filesystem>
+
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
+#include "gsl/gsl"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -272,16 +276,39 @@ static void RunQDQSoftmaxSymmetricOutputTest(const TestInputDef<float>& input_de
                                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                              int opset_version,
                                              ExpectedEPNodeAssignment expected_ep_assignment,
-                                             bool use_contrib_qdq = false) {
+                                             bool use_contrib_qdq = false,
+                                             bool assert_convert_in_graph = false) {
+  namespace fs = std::filesystem;
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+
+  // When asserting, dump the lowered QNN graph JSON so we can check it contains exactly one
+  // Convert, i.e. the bounded-output split emitted Softmax(natural) -> Convert -> output(symmetric).
+
+  const bool check_graph = assert_convert_in_graph;
+  const auto* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
+  const fs::path graph_dir = fs::temp_directory_path() /
+                             (std::string("softmax_split_qnn_graph_") + test_info->name());
+  if (check_graph) {
+    fs::remove_all(graph_dir);
+    fs::create_directories(graph_dir);
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+  }
+  auto cleanup = gsl::finally([&]() {
+    if (check_graph) fs::remove_all(graph_dir);
+  });
 
   TestQDQModelAccuracy(BuildOpTestCase<float>("Softmax_node", "Softmax", {input_def}, {}, attrs),
                        BuildQDQSoftmaxSymmetricOutputTestCase<QType>(input_def, attrs, use_contrib_qdq),
                        provider_options,
                        opset_version,
                        expected_ep_assignment);
+
+  if (check_graph && !::testing::Test::IsSkipped()) {
+    AssertOpInQnnGraph(graph_dir, "Convert", 1);
+  }
 }
 }  // namespace
 
@@ -292,7 +319,9 @@ TEST_F(QnnHTPBackendTests, Softmax_SymmetricOutput_U8_Split) {
   RunQDQSoftmaxSymmetricOutputTest<uint8_t>({TestInputDef<float>({1, 2, 3}, false, input_data)},
                                             {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                             13,
-                                            ExpectedEPNodeAssignment::All);
+                                            ExpectedEPNodeAssignment::All,
+                                            /*use_contrib_qdq*/ false,
+                                            /*assert_convert_in_graph*/ true);
 }
 
 // (2) Symmetric uint8 Softmax output that is also a graph output -> split path with the converted
@@ -302,7 +331,9 @@ TEST_F(QnnHTPBackendTests, Softmax_SymmetricOutput_U8_GraphOutput_Split) {
   RunQDQSoftmaxSymmetricOutputTest<uint8_t>({TestInputDef<float>({1, 2, 3, 4}, false, input_data)},
                                             {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                             13,
-                                            ExpectedEPNodeAssignment::All);
+                                            ExpectedEPNodeAssignment::All,
+                                            /*use_contrib_qdq*/ false,
+                                            /*assert_convert_in_graph*/ true);
 }
 
 // (3) Natural (zero-point 0) uint8 Softmax output -> NO split. Standard QDQ harness derives a
