@@ -317,8 +317,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoF
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/2);
 }
 
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion) {
@@ -345,8 +344,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers
       /*opset_version=*/13,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/2);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/3);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
