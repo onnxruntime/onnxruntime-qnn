@@ -185,11 +185,11 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
-    if (qnn::soc::GetSocId() != 0) {
-      // If ORT Core does not detect NPU hardware but we recognize the device as WoS (through qnn::soc::GetSocId),
-      // exploit virtual hardware device to create an NPU hardware device for user to select from.
-      // Such case happens for older WoS devices (e.g., Makena) that ORT Core's device discovery logic could not detect
-      // NPU through DXCore.
+    bool synthesize_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+
+    if (synthesize_npu) {
+      // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
+      // Triggers: WoS without DXCore enumeration (Makena), or Qualcomm Linux/Android arm64.
       OrtHardwareDevice* undetected_npu_hw_device = nullptr;
       RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
       factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
