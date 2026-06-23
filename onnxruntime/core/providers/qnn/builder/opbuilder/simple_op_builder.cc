@@ -328,7 +328,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // Add attribute
   if (op_type == "LpNormalization") {
     int32_t axis = 0;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
+    RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                            static_cast<uint32_t>(axis), QNN_OP_L2_NORM_PARAM_AXIS, param_tensor_names));
 

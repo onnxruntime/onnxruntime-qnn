@@ -70,7 +70,7 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                                                         bool do_op_validation) const {
   std::vector<std::string> param_tensor_names;
   int32_t axis_normalized = 0;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis_normalized));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis_normalized));
   uint32_t axis_value = static_cast<uint32_t>(axis_normalized);
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                          axis_value, QNN_OP_SPLIT_PARAM_AXIS, param_tensor_names));

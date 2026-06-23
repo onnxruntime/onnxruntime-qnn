@@ -401,11 +401,11 @@ Ort::Status BaseOpBuilder::SetOutputQParamEqualToInputIfNearlyEqual(QnnModelWrap
   return Ort::Status();
 }
 
-Ort::Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                                const OrtNodeUnit& node_unit,
-                                                const std::string& attr_name,
-                                                int32_t default_axis,
-                                                int32_t& axis_out) const {
+Ort::Status BaseOpBuilder::GetCanonicalizedAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnit& node_unit,
+                                                         const std::string& attr_name,
+                                                         int32_t default_axis,
+                                                         int32_t& axis_out) const {
   const auto& inputs = node_unit.Inputs();
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");

@@ -65,7 +65,7 @@ Ort::Status RMSNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
     int32_t axis = 0;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
+    RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
     RETURN_IF(static_cast<size_t>(axis) != input_rank - 1,
               "QNN RMSNorm for NPU backend only supports axis with last input dimension");
   }
@@ -146,7 +146,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape of Input 0");
   const size_t input_rank = input_shape.size();
   int32_t axis = -1;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
   size_t axes_rank = input_rank - static_cast<size_t>(axis);
   std::vector<uint32_t> axes(axes_rank, 0);
   std::vector<uint32_t> axes_shape{SafeInt<uint32_t>(axes_rank)};

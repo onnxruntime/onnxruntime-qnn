@@ -263,7 +263,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // axis_value is kept in scope as uint32_t for the GatherElements output shape computation below.
   std::vector<std::string> param_tensor_names;
   int32_t axis_normalized = 0;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis_normalized));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis_normalized));
   const uint32_t axis_value = static_cast<uint32_t>(axis_normalized);
   if (is_gather_elems) {
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),

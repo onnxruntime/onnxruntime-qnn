@@ -204,7 +204,7 @@ Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
     int32_t ln_axis = -1;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
+    RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
     RETURN_IF(static_cast<size_t>(ln_axis) != input_rank - 1,
               "QNN LayerNorm on HTP only supports normalization along the last axis.");
   }
@@ -256,8 +256,8 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape of input 0");
   const size_t input_rank = input_shape.size();
   int32_t ln_axis = -1;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
-  // ProcessAxisAttribute normalizes ln_axis into [0, input_rank); range-check before
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
+  // GetCanonicalizedAxisAttribute normalizes ln_axis into [0, input_rank); range-check before
   // the subtract so a malformed axis fails loudly instead of underflowing axes_rank to ~SIZE_MAX.
   RETURN_IF(ln_axis < 0 || static_cast<size_t>(ln_axis) >= input_rank,
             "QNN LayerNorm: axis out of range after normalization.");

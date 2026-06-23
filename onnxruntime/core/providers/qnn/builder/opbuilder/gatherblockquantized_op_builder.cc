@@ -363,7 +363,7 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessAttributesAndOutputs(QnnModelW
   // Creating axis param wrapper — GatherBlockQuantized uses "gather_axis", dtype INT_32.
   std::vector<std::string> param_tensor_names;
   int32_t axis = 0;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "gather_axis", 0, axis));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "gather_axis", 0, axis));
   RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                         axis, QNN_OP_GATHER_PARAM_AXIS, param_tensor_names));
 

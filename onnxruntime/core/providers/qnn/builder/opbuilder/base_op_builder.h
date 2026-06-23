@@ -246,11 +246,11 @@ class BaseOpBuilder : public IOpBuilder {
   // Reads the named axis attribute, normalizes negative values against the input rank,
   // and range-checks. Call this before AddQnnScalar<T> — T and the QNN param name are
   // the caller's responsibility since they depend on the QNN op definition.
-  Ort::Status ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                   const OrtNodeUnit& node_unit,
-                                   const std::string& attr_name,
-                                   int32_t default_axis,
-                                   int32_t& axis_out) const;
+  Ort::Status GetCanonicalizedAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            const std::string& attr_name,
+                                            int32_t default_axis,
+                                            int32_t& axis_out) const;
 
   size_t GetInputCountQnnRequired(const OrtNodeUnit& node_unit) const {
     auto input_output_cout = GetInputOutputCountQnnRequired(node_unit.OpType());

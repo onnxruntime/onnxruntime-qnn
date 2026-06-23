@@ -68,7 +68,7 @@ Ort::Status SoftmaxOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   const int opset_version = node_unit.SinceVersion();
   int32_t axis = GetDefaultAxisAttribute(opset_version);
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", axis, axis));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", axis, axis));
 
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
@@ -160,7 +160,7 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
 
   const int opset_version = node_unit.SinceVersion();
   int32_t axis = GetDefaultAxisAttribute(opset_version);
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, "axis", axis, axis));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", axis, axis));
 
   TensorInfo output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
