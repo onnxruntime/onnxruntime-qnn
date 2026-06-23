@@ -123,10 +123,22 @@ python qcom/build_and_test.py build_ort_windows_x86_64
 python qcom/build_and_test.py build
 ```
 
-#### Build for x86-64 Linux
+#### Build for x86-64 Linux on Docker
+
+```bash
+python qcom/build_and_test.py build_ort_linux_x86_64_ubuntu_22_04
+```
+
+#### Build for x86-64 Linux outside Docker
 
 ```bash
 python qcom/build_and_test.py build_ort_linux_x86_64
+```
+
+#### Build for ARM64 Linux
+
+```bash
+python qcom/build_and_test.py test_ort_linux_aarch64_manylinux_2_34
 ```
 
 #### Build for AArch64 Linux (OpenEmbedded GCC 11.2)
@@ -180,8 +192,14 @@ python qcom/build_and_test.py test_ort_windows_arm64ec
 # Test on host
 python qcom/build_and_test.py test
 
-# Test x86-64 build
+# Test x86-64 build inside docker
+python qcom/build_and_test.py test_ort_linux_x86_64_ubuntu_22_04
+
+# Test x86-64 build outside docker
 python qcom/build_and_test.py test_ort_linux_x86_64
+
+# Test ARM64 build
+python qcom/build_and_test.py test_ort_linux_aarch64_manylinux_2_34
 ```
 
 ### Device Testing
@@ -247,7 +265,8 @@ Located in `build/Release/Release/dist/` (Windows) or `build/Release/dist/` (Lin
 
 * Windows ARM64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_arm64.whl`
 * Windows x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_amd64.whl`
-* Linux x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-linux_x86_64.whl`
+* Linux x86-64 (Preview): `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_35_x86_64.whl`
+* Linux x86-64 (built outside the docker container): `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-linux_x86_64.whl`
 * Linux AArch64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_34_aarch64.whl`
 
 #### NuGet Packages
@@ -341,7 +360,8 @@ python qcom/build_and_test.py lint_and_fix
 * Visual Studio 2022 with C++ development tools is required
 
 **Linux**:
-* Docker is required for manylinux builds
+* Docker is required for manylinux builds and Ubuntu 22.04 builds
+* The Dockerfile for Ubuntu 22.04 builds uses a Jammy 22.04 base image hosted in an internal Qualcomm mirror. External users must replace the base image with the equivalent image from `docker.io` for the build to succeed. Use the [`ubuntu:jammy`](https://hub.docker.com/_/ubuntu) image (digest: `sha256:4f838adc`).
 * For Android builds, set `ANDROID_HOME` and `ANDROID_NDK_HOME`
 
 ### Getting Help

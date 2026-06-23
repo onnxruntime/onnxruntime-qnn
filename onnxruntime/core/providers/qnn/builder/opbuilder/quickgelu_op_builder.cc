@@ -84,12 +84,17 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                   "Failed to add alpha_mul_output tensor.");
 
     // Step 1: Create Mul node for alpha * x
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul"),
+    std::string alpha_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul");
+    std::vector<std::string> alpha_mul_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), alpha_mul_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, alpha_mul_param_names));
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(alpha_mul_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
+                                                  QNN_OP_ELEMENT_WISE_BINARY,
                                                   {alpha_tensor_name, input_name},
                                                   {alpha_mul_output_name},
-                                                  {},
+                                                  std::move(alpha_mul_param_names),
                                                   do_op_validation),
                   "Failed to create alpha_mul node.");
   }
@@ -122,12 +127,17 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                 "Failed to create sigmoid node.");
 
   // Step 3: Create Mul node for x * sigmoid(alpha * x) or x * sigmoid(x)
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul"),
+  std::string final_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul");
+  std::vector<std::string> final_mul_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), final_mul_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, final_mul_param_names));
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(final_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_MULTIPLY,
+                                                QNN_OP_ELEMENT_WISE_BINARY,
                                                 {input_name, sigmoid_output_name},
                                                 {output_name},
-                                                {},
+                                                std::move(final_mul_param_names),
                                                 do_op_validation),
                 "Failed to create final_mul node.");
 

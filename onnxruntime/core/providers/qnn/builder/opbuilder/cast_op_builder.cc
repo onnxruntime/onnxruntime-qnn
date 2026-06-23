@@ -181,15 +181,31 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
                 "Failed to add output tensor for QNN Cast node.");
 
-  const std::string qnn_op_type = IsFpToBoolCast(node_unit)
-                                      ? QNN_OP_ELEMENT_WISE_NOT_EQUAL
+  const bool is_fp_to_bool_cast = IsFpToBoolCast(node_unit);
+  const std::string qnn_op_type = is_fp_to_bool_cast
+                                      ? QNN_OP_ELEMENT_WISE_BINARY
                                       : GetQnnOpType(node_unit.OpType());
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+
+  // FP->bool cast is implemented as ElementWiseBinary(NOT_EQUAL) against a zero tensor, which
+  // requires the mandatory 'operation' scalar param. Plain Cast takes no params.
+  std::vector<std::string> param_tensor_names;
+  const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
+  if (is_fp_to_bool_cast) {
+    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
+    op_scalar.dataType = QNN_DATATYPE_UINT_32;
+    op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL;
+    QnnParamWrapper op_param(node_unit.Index(), cast_node_name,
+                             QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
+    param_tensor_names.push_back(op_param.GetParamTensorName());
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(op_param)),
+                  "Failed to add NotEqual operation param for FP-to-bool Cast.");
+  }
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 qnn_op_type,
                                                 std::move(input_names),
                                                 {output_name},
-                                                {},
+                                                std::move(param_tensor_names),
                                                 do_op_validation),
                 ("Failed to create " + qnn_op_type + " node.").c_str());
 

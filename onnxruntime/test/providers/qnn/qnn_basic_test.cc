@@ -14,6 +14,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
+#include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -1085,6 +1086,86 @@ TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   }
   EXPECT_EQ(file_count, 1);
 }
+
+#if defined(__linux__) && !defined(__aarch64__)
+// Dumps a single ScatterElements(reduction=max) model -- a v73+ op the device-less HTP validator
+// rejects -- to DLC. Rejection is silent (the op drops to CPU, no throw), so the .dlc count is the
+// only signal: 0 = rejected, 1 = accepted onto QNN.
+static int CountScatterElementsMaxDlcFiles(const std::filesystem::path& qnn_dlc_dir,
+                                           bool skip_backend_op_validation) {
+  std::filesystem::remove_all(qnn_dlc_dir);
+
+  ModelTestBuilder helper;
+  // `data` must be a runtime input, else ORT constant-folds ScatterElements away before the EP sees it.
+  std::vector<float> data(8, 0.0f);
+  helper.MakeInput<float>("data", {8}, data);
+  helper.MakeInitializer<int64_t>("indices", {1}, {0});
+  helper.MakeInitializer<float>("updates", {1}, {1.0f});
+  helper.AddNode("scatter", "ScatterElements", {"data", "indices", "updates"}, {"Y"}, kOnnxDomain,
+                 {test::MakeAttribute("reduction", std::string("max"))});
+  helper.MakeOutput("Y");
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 18}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  ProviderOptions options;
+  options["backend_path"] = "libQnnHtp.so";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ir_dlc"] = "1";
+  options["dump_qnn_ir_dlc_dir"] = qnn_dlc_dir.string();
+  options["qnn_ir_backend_path"] = "libQnnIr.so";
+  if (skip_backend_op_validation) {
+    options["skip_backend_op_validation"] = "1";
+  }
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
+
+  if (!std::filesystem::exists(qnn_dlc_dir)) {
+    return 0;
+  }
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".dlc") {
+      ++file_count;
+    }
+  }
+  return file_count;
+}
+
+// Real A/B regression test for skip_backend_op_validation, valid ONLY on a device-less x86_64 Linux
+// host. There the HTP backend validates op configs against a static, arch-agnostic op table (no NPU
+// bound) and over-rejects v73+ ops such as ScatterElements(reduction=max) -- the #438 regression.
+// On real HTP hardware the validator is device-bound and accepts the op, so flag-off and flag-on
+// would behave identically; hence the x86_64-only guard.
+TEST_F(QnnHTPBackendTests, QnnIr_ScatterElementsMax_SkipBackendOpValidation_AB) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Flag off (#438 regression): backend validator rejects the op -> no QNN partition -> no DLC.
+  EXPECT_EQ(CountScatterElementsMaxDlcFiles(qnn_dlc_dir, /*skip_backend_op_validation*/ false), 0);
+
+  // Flag on (the fix): generic validation accepts the op -> it stays on QNN -> one DLC.
+  EXPECT_EQ(CountScatterElementsMaxDlcFiles(qnn_dlc_dir, /*skip_backend_op_validation*/ true), 1);
+}
+#endif  // defined(__linux__) && !defined(__aarch64__)
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN HTP backend.
 TEST_F(QnnHTPBackendTests, DISABLED_QnnSaver_OutputFiles) {
@@ -2756,6 +2837,269 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
                   0.008f);
 }
 #endif  // defined(_WIN32)
+
+// ============================ QNN EP input graph dump ============================
+//
+// `dump_qnn_ep_input_graph` writes the ONNX graph the EP receives at compile
+// time (after ORT Level 1 optimizations, before partitioning) as a JSON file in
+// the same QNN-Netron schema used by `dump_json_qnn_graph`. These tests run a
+// small model on the CPU backend, then parse and validate the emitted JSON.
+//
+// Why JSON (QNN Netron schema) and not a real .onnx: the QNN EP is a standalone
+// ABI plugin that links only the public ORT C/C++ API + Abseil + nlohmann/json
+// (see cmake/onnxruntime_providers_qnn.cmake) and intentionally does NOT link
+// protobuf / onnx proto, so it cannot construct or serialize an onnx::ModelProto.
+// nlohmann/json is already a plugin dependency and the schema is Netron-openable,
+// so reusing it adds zero dependencies. (The test binary itself DOES link onnx
+// proto, which is why these tests can build real models to feed the EP.)
+
+namespace {
+
+// Returns the first "*_qnn_ep_input_graph.json" file in `dir`, or {} if none.
+std::filesystem::path FindQnnEpInputGraphDump(const std::filesystem::path& dir) {
+  if (!std::filesystem::exists(dir)) return {};
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (entry.path().extension() == ".json" &&
+        entry.path().stem().string().find("_qnn_ep_input_graph") != std::string::npos) {
+      return entry.path();
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
+// Pure-function tests for SanitizeGraphNameForFilename. These do not need to
+// drive the EP because the helper is exposed in the dumper header. The intent
+// is to lock down: (a) path-separator characters cannot escape the dump
+// directory, (b) Windows-illegal characters are replaced, (c) parent-dir
+// references (`..`) cannot survive, (d) Windows-reserved device names get
+// suffixed so they do not collide with the device-name handler, and
+// (e) sanitized output combined with `<dump_dir> / sanitized` always lands
+// inside `<dump_dir>` (lexical containment check).
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_ReplacesPathSeparators) {
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("model/encoder/layer.0/Add"),
+            "model_encoder_layer.0_Add");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_ReplacesWindowsIllegal) {
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("a:b*c?d|e<f>g\"h"),
+            "a_b_c_d_e_f_g_h");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_StripsLeadingDotsAndDashes) {
+  // `..foo` must not survive as a parent-dir reference. Leading `-` is
+  // stripped so the result cannot resemble an argument flag if it ever
+  // round-trips through a CLI.
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("..foo"), "foo");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("-rf"), "rf");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename(".."), "graph");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("."), "graph");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_DropsTrailingDot) {
+  // Trailing dots are explicitly stripped because Windows treats them as
+  // ignorable. Trailing space is already replaced with `_` by the safe-set
+  // pass before the trim runs, so it never reaches the trim — the
+  // `"foo. "` case below documents that contract.
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo. "), "foo._");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo.bar."), "foo.bar");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo..."), "foo");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_AvoidsWindowsReservedNames) {
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("CON"), "CON_");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("nul"), "nul_");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("COM1"), "COM1_");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("CON.json"), "CON_.json");
+  // A reserved-looking stem inside a longer name is fine.
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("CONSOLE"), "CONSOLE");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_LandsInsideDumpDir) {
+  // For any sanitized name N, `dump_dir / (N + suffix)`.lexically_normal()
+  // must remain a child of `dump_dir`. This is the containment invariant
+  // the dumper relies on so a hostile graph name (path separators, parent
+  // refs, drive prefixes) cannot redirect output outside the configured
+  // dump directory.
+  std::filesystem::path dump_dir = std::filesystem::temp_directory_path() / "qnn_dump_root";
+  for (const char* raw : {"model/encoder/Add",
+                          "../../etc/passwd",
+                          "C:\\Windows\\System32",
+                          "..",
+                          "CON",
+                          "graph.with.dots",
+                          ""}) {
+    std::string sanitized = qnn::SanitizeGraphNameForFilename(raw);
+    std::filesystem::path joined =
+        (dump_dir / (sanitized + "_qnn_ep_input_graph.json")).lexically_normal();
+    auto dump_root = dump_dir.lexically_normal();
+    auto joined_str = joined.string();
+    auto root_str = dump_root.string();
+    EXPECT_EQ(joined_str.rfind(root_str, 0), 0u)
+        << "graph name '" << raw << "' produced path '" << joined_str
+        << "' which escapes dump root '" << root_str << "'";
+    EXPECT_EQ(joined.parent_path().lexically_normal(), dump_root)
+        << "graph name '" << raw << "' produced parent != dump root";
+  }
+}
+
+// Run a tiny float model with the dump enabled and validate the emitted JSON
+// structure: the 8 top-level QNN-Netron keys, node entries keyed by name with
+// type/input_names/output_names, and tensor entries keyed by name with
+// id/type/data_type/dims.
+TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_BasicStructure) {
+  const std::filesystem::path dump_dir =
+      std::filesystem::temp_directory_path() / "qnn_ep_input_graph_basic";
+  std::error_code ec;
+  std::filesystem::remove_all(dump_dir, ec);
+  std::filesystem::create_directories(dump_dir);
+
+  ProviderOptions options;
+  options["backend_type"] = "cpu";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ep_input_graph"] = "1";
+  options["dump_qnn_ep_input_graph_dir"] = dump_dir.string();
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  RunQnnModelTest(BuildOpTestCase<float>("add_node", "Add",
+                                         {TestInputDef<float>({1, 2, 3}, false, data),
+                                          TestInputDef<float>({1, 2, 3}, false, data)},
+                                         {}, {}, kOnnxDomain),
+                  options, 13, ExpectedEPNodeAssignment::All);
+
+  if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
+    std::filesystem::remove_all(dump_dir, ec);
+    return;
+  }
+
+  std::filesystem::path dump_file = FindQnnEpInputGraphDump(dump_dir);
+  ASSERT_FALSE(dump_file.empty()) << "No *_qnn_ep_input_graph.json written in " << dump_dir;
+
+  std::ifstream ifs(dump_file);
+  ASSERT_TRUE(ifs.is_open());
+  nlohmann::json j = nlohmann::json::parse(ifs, nullptr, false);
+  ASSERT_FALSE(j.is_discarded()) << "dump is not valid JSON: " << dump_file;
+
+  // 8 top-level QNN-Netron keys.
+  for (const char* key : {"model.cpp", "model.bin", "converter_command", "copyright_str",
+                          "op_types", "Total parameters", "Total MACs per inference", "graph"}) {
+    EXPECT_TRUE(j.contains(key)) << "missing top-level key: " << key;
+  }
+  ASSERT_TRUE(j["graph"].contains("nodes"));
+  ASSERT_TRUE(j["graph"].contains("tensors"));
+  EXPECT_GE(j["graph"]["nodes"].size(), 1u);
+  EXPECT_GE(j["graph"]["tensors"].size(), 1u);
+
+  // Every node entry carries the Netron-required fields.
+  for (auto it = j["graph"]["nodes"].begin(); it != j["graph"]["nodes"].end(); ++it) {
+    const auto& node = it.value();
+    EXPECT_TRUE(node.contains("type"));
+    EXPECT_TRUE(node.contains("input_names"));
+    EXPECT_TRUE(node.contains("output_names"));
+    EXPECT_TRUE(node["input_names"].is_array());
+    EXPECT_TRUE(node["output_names"].is_array());
+  }
+
+  // Every tensor entry carries id/type/data_type/dims.
+  for (auto it = j["graph"]["tensors"].begin(); it != j["graph"]["tensors"].end(); ++it) {
+    const auto& tensor = it.value();
+    EXPECT_TRUE(tensor.contains("id"));
+    EXPECT_TRUE(tensor.contains("type"));
+    EXPECT_TRUE(tensor.contains("data_type"));
+    EXPECT_TRUE(tensor.contains("dims"));
+    EXPECT_TRUE(tensor["dims"].is_array());
+  }
+
+  std::filesystem::remove_all(dump_dir, ec);
+}
+
+// Validate that graph inputs, outputs, and initializers are classified with the
+// QNN tensor-type integers Netron expects (APP_WRITE=0, APP_READ=1, STATIC=4).
+TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_TensorClassification) {
+  const std::filesystem::path dump_dir =
+      std::filesystem::temp_directory_path() / "qnn_ep_input_graph_classify";
+  std::error_code ec;
+  std::filesystem::remove_all(dump_dir, ec);
+  std::filesystem::create_directories(dump_dir);
+
+  ProviderOptions options;
+  options["backend_type"] = "cpu";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ep_input_graph"] = "1";
+  options["dump_qnn_ep_input_graph_dir"] = dump_dir.string();
+
+  // Add with a constant initializer as the second input, so the dump contains
+  // a graph input (APP_WRITE), a graph output (APP_READ), and an initializer
+  // (STATIC).
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> init_data = GetFloatDataInRange(-1.0f, 1.0f, 6);
+  RunQnnModelTest(BuildOpTestCase<float, float>("add_node", "Add",
+                                                {TestInputDef<float>({1, 2, 3}, false, input_data)},
+                                                {TestInputDef<float>({1, 2, 3}, true, init_data)},
+                                                {}, kOnnxDomain),
+                  options, 13, ExpectedEPNodeAssignment::All);
+
+  if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
+    std::filesystem::remove_all(dump_dir, ec);
+    return;
+  }
+
+  std::filesystem::path dump_file = FindQnnEpInputGraphDump(dump_dir);
+  ASSERT_FALSE(dump_file.empty()) << "No dump written in " << dump_dir;
+  std::ifstream ifs(dump_file);
+  nlohmann::json j = nlohmann::json::parse(ifs, nullptr, false);
+  ASSERT_FALSE(j.is_discarded());
+
+  // Collect the set of tensor-type integers present. We expect at least one
+  // graph input (0), one graph output (1), and one initializer (4).
+  std::unordered_set<int> seen_types;
+  for (auto it = j["graph"]["tensors"].begin(); it != j["graph"]["tensors"].end(); ++it) {
+    seen_types.insert(it.value()["type"].get<int>());
+  }
+  EXPECT_TRUE(seen_types.count(0)) << "expected an APP_WRITE (graph input) tensor";
+  EXPECT_TRUE(seen_types.count(1)) << "expected an APP_READ (graph output) tensor";
+  EXPECT_TRUE(seen_types.count(4)) << "expected a STATIC (initializer) tensor";
+
+  std::filesystem::remove_all(dump_dir, ec);
+}
+
+// With the option disabled (default), no dump file is written.
+TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_DisabledByDefault) {
+  const std::filesystem::path dump_dir =
+      std::filesystem::temp_directory_path() / "qnn_ep_input_graph_disabled";
+  std::error_code ec;
+  std::filesystem::remove_all(dump_dir, ec);
+  std::filesystem::create_directories(dump_dir);
+
+  ProviderOptions options;
+  options["backend_type"] = "cpu";
+  options["offload_graph_io_quantization"] = "0";
+  // Pin the dump directory to a scoped temp dir while leaving
+  // dump_qnn_ep_input_graph unset. Setting only the directory makes the
+  // assertion below catch a regression that flips the default to enabled:
+  // such a regression would write into this directory and trip the empty()
+  // check, instead of silently writing into the test's CWD where the helper
+  // would never look.
+  options["dump_qnn_ep_input_graph_dir"] = dump_dir.string();
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  RunQnnModelTest(BuildOpTestCase<float>("add_node", "Add",
+                                         {TestInputDef<float>({1, 2, 3}, false, data),
+                                          TestInputDef<float>({1, 2, 3}, false, data)},
+                                         {}, {}, kOnnxDomain),
+                  options, 13, ExpectedEPNodeAssignment::All);
+
+  if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
+    std::filesystem::remove_all(dump_dir, ec);
+    return;
+  }
+
+  EXPECT_TRUE(FindQnnEpInputGraphDump(dump_dir).empty())
+      << "dump file written even though dump_qnn_ep_input_graph was not enabled";
+
+  std::filesystem::remove_all(dump_dir, ec);
+}
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
 

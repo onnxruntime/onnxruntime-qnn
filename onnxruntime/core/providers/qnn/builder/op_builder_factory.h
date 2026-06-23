@@ -68,6 +68,7 @@ void CreateEinsumOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateExpandOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateFusedMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGatherOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateGatherBlockQuantizedOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGatherNDOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGemmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGroupNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -104,6 +105,7 @@ void CreateRotaryEmbeddingOpBuilder(const std::string& op_type, OpBuilderRegistr
 void CreateScatterElementsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateScatterNDOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateShapeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSimpleOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSliceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSoftmaxOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

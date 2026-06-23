@@ -1,7 +1,10 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-// EP-internal header: OpTraceCollector class definition and WriteTraceToFile.
+// EP-internal header: OpTraceCollector / NodeGroupGuard, and the
+// EP-side wrappers WriteTraceToFile and LoadTraceLookupFromFile (the latter
+// adds Ort logger plumbing on top of the test-safe ParseTraceLookupFromFile
+// declared in qnn_op_tracing_types.h).
 // Test TUs should include qnn_op_tracing_types.h (which also declares
 // SerializeFrameworkOpTrace via nlohmann/json_fwd.hpp) and add
 // nlohmann/json.hpp directly if they use the return value.
@@ -34,10 +37,15 @@ class OpTraceCollector {
   void RecordOpMapping(const std::string& qnn_op_name, const std::string& qnn_op_type,
                        gsl::span<const std::string> output_tensor_names);
 
-  // Finalize the subgraph trace: record tensor mappings from the wrapper and
-  // populate `out` with the collected op_mappings, tensor_mappings, and the
-  // graph name. Call once after ComposeQnnGraph().
-  void Finalize(const std::string& graph_name, const QnnModelWrapper& wrapper, OpTraceInfo& out);
+  // Finalize the subgraph trace: record tensor mappings from the wrapper, populate
+  // `out_info` with the collected op_mappings, tensor_mappings, and graph name,
+  // and also populate `out_lookup` with the dst_name->sources projection of
+  // op_mappings (used for profiling enrichment at execute time).
+  // Call once after ComposeQnnGraph().
+  void Finalize(const std::string& graph_name,
+                const QnnModelWrapper& wrapper,
+                OpTraceInfo& out_info,
+                OpTraceLookup& out_lookup);
 
  private:
   // Set/clear the current node group context. Only NodeGroupGuard may call these
@@ -79,6 +87,13 @@ class NodeGroupGuard {
 bool WriteTraceToFile(const FrameworkOpTrace& trace,
                       const std::filesystem::path& output_path,
                       const Ort::Logger& logger);
+
+// Loads an OpTraceLookup from a trace JSON sidecar file.
+// Iterates all subgraph_traces[*].op_mappings and builds a flat dst_name->sources map.
+// Returns true on success; logs a warning and returns false on any parse error.
+bool LoadTraceLookupFromFile(const std::filesystem::path& trace_path,
+                             OpTraceLookup& out_lookup,
+                             const Ort::Logger& logger);
 
 }  // namespace qnn
 }  // namespace onnxruntime

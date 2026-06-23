@@ -89,7 +89,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
@@ -111,7 +111,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
@@ -133,7 +133,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
@@ -155,7 +155,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
@@ -178,7 +178,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
@@ -201,7 +201,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
@@ -224,7 +224,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
                   /*fp32_abs_err=*/1e-2f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -25,6 +25,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateFusedMatMulOpBuilder("FusedMatMul", *this);
   CreateGatherOpBuilder("Gather", *this);
   CreateGatherOpBuilder("GatherElements", *this);
+  CreateGatherBlockQuantizedOpBuilder("GatherBlockQuantized", *this);
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
@@ -108,6 +109,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateScatterElementsOpBuilder("ScatterElements", *this);
   CreateScatterNDOpBuilder("ScatterND", *this);
   CreateSeluOpBuilder("Selu", *this);
+  CreateShapeOpBuilder("Shape", *this);
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
   CreateSimpleOpBuilder("Sin", *this);

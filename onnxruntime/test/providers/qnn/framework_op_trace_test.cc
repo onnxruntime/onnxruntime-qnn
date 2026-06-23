@@ -3,10 +3,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 #include "gtest/gtest.h"
@@ -287,6 +289,141 @@ TEST_F(QnnFrameworkOpTraceUnit, SrcInfoMixedOpTensor) {
   const auto& relu_sources = trace.subgraph_traces[0].op_mappings[1].sources;
   ASSERT_EQ(relu_sources.size(), 1u);
   EXPECT_EQ(relu_sources[0].type, qnn::TraceTargetType::kOp);
+}
+
+// Test DeriveTracePathFromContextModel path derivation (test-safe: no backend needed).
+// Phase 1 writes qnn_op_trace.json; Phase 2 looks in the same directory.
+TEST_F(QnnFrameworkOpTraceUnit, DeriveTracePathFromContextModel_Basic) {
+  // Any context model path → {parent}/qnn_op_trace.json (constant filename)
+  {
+    fs::path ctx = fs::path("/some/dir") / "model_ctx.onnx";
+    fs::path expected = fs::path("/some/dir") / "qnn_op_trace.json";
+    EXPECT_EQ(qnn::DeriveTracePathFromContextModel(ctx), expected);
+  }
+  // Stem-only (no directory component): sibling of the ctx file
+  {
+    fs::path ctx = "mymodel.onnx";
+    fs::path derived = qnn::DeriveTracePathFromContextModel(ctx);
+    EXPECT_EQ(derived.filename().string(), "qnn_op_trace.json");
+  }
+  // No extension — still returns qnn_op_trace.json in the same directory
+  {
+    fs::path ctx = fs::path("/tmp") / "model_ctx";
+    fs::path derived = qnn::DeriveTracePathFromContextModel(ctx);
+    EXPECT_EQ(derived.filename().string(), "qnn_op_trace.json");
+  }
+  // Underscore in stem — filename is always constant, stem of ctx is irrelevant
+  {
+    fs::path ctx = fs::path("/out") / "my_model_ctx.onnx";
+    fs::path expected = fs::path("/out") / "qnn_op_trace.json";
+    EXPECT_EQ(qnn::DeriveTracePathFromContextModel(ctx), expected);
+  }
+}
+
+// ParseTraceLookupFromFile is the test-safe core of LoadTraceLookupFromFile.
+// These tests exercise every TraceLoadStatus branch and the OP/TENSOR type decode
+// without linking the EP library or needing a backend.
+TEST_F(QnnFrameworkOpTraceUnit, ParseTraceLookupFromFile_CannotOpen) {
+  ScopedTempDir tmp;
+  qnn::OpTraceLookup lookup;
+  EXPECT_EQ(qnn::ParseTraceLookupFromFile(tmp.path() / "does_not_exist.json", lookup),
+            qnn::TraceLoadStatus::kCannotOpen);
+  EXPECT_TRUE(lookup.empty());
+}
+
+TEST_F(QnnFrameworkOpTraceUnit, ParseTraceLookupFromFile_ParseError) {
+  ScopedTempDir tmp;
+  fs::path p = tmp.path() / "malformed.json";
+  {
+    std::ofstream ofs(p);
+    ofs << "{ this is not valid json ]";
+  }
+  qnn::OpTraceLookup lookup;
+  EXPECT_EQ(qnn::ParseTraceLookupFromFile(p, lookup), qnn::TraceLoadStatus::kParseError);
+  EXPECT_TRUE(lookup.empty());
+}
+
+TEST_F(QnnFrameworkOpTraceUnit, ParseTraceLookupFromFile_MissingSubgraphTraces) {
+  ScopedTempDir tmp;
+  fs::path p = tmp.path() / "no_key.json";
+  {
+    std::ofstream ofs(p);
+    ofs << R"({"model_name": "m.onnx", "summary": {}})";
+  }
+  qnn::OpTraceLookup lookup;
+  EXPECT_EQ(qnn::ParseTraceLookupFromFile(p, lookup),
+            qnn::TraceLoadStatus::kMissingSubgraphTraces);
+  EXPECT_TRUE(lookup.empty());
+}
+
+TEST_F(QnnFrameworkOpTraceUnit, ParseTraceLookupFromFile_OkWithOpAndTensorSources) {
+  ScopedTempDir tmp;
+  fs::path p = tmp.path() / "trace.json";
+  {
+    // dst "qnn_add" has one OP source and one TENSOR source; dst "qnn_mul"
+    // has a single OP source and the "type" field omitted (defaults to OP).
+    std::ofstream ofs(p);
+    ofs << R"({
+      "subgraph_traces": [
+        {
+          "op_mappings": [
+            {"dst_name": "qnn_add",
+             "sources": [
+               {"name": "onnx_add", "type": "OP"},
+               {"name": "tensor_x", "type": "TENSOR"}
+             ]},
+            {"dst_name": "qnn_mul",
+             "sources": [{"name": "onnx_mul"}]}
+          ]
+        }
+      ]
+    })";
+  }
+  qnn::OpTraceLookup lookup;
+  EXPECT_EQ(qnn::ParseTraceLookupFromFile(p, lookup), qnn::TraceLoadStatus::kOk);
+  ASSERT_EQ(lookup.size(), 2u);
+
+  ASSERT_EQ(lookup.count("qnn_add"), 1u);
+  const auto& add_sources = lookup.at("qnn_add");
+  ASSERT_EQ(add_sources.size(), 2u);
+  EXPECT_EQ(add_sources[0].name, "onnx_add");
+  EXPECT_EQ(add_sources[0].type, qnn::TraceTargetType::kOp);
+  EXPECT_EQ(add_sources[1].name, "tensor_x");
+  EXPECT_EQ(add_sources[1].type, qnn::TraceTargetType::kTensor);
+
+  ASSERT_EQ(lookup.count("qnn_mul"), 1u);
+  const auto& mul_sources = lookup.at("qnn_mul");
+  ASSERT_EQ(mul_sources.size(), 1u);
+  EXPECT_EQ(mul_sources[0].name, "onnx_mul");
+  EXPECT_EQ(mul_sources[0].type, qnn::TraceTargetType::kOp)
+      << "omitted `type` field must default to OP";
+}
+
+TEST_F(QnnFrameworkOpTraceUnit, ParseTraceLookupFromFile_SkipsMalformedEntries) {
+  ScopedTempDir tmp;
+  fs::path p = tmp.path() / "trace.json";
+  {
+    // One subgraph lacks op_mappings (skipped); entries with empty/absent
+    // dst_name or absent sources are skipped; one valid entry survives.
+    std::ofstream ofs(p);
+    ofs << R"({
+      "subgraph_traces": [
+        {"graph_name": "no_op_mappings_here"},
+        {
+          "op_mappings": [
+            {"dst_name": "", "sources": [{"name": "x", "type": "OP"}]},
+            {"dst_name": "missing_sources"},
+            {"dst_name": "good", "sources": [{"name": "onnx_good", "type": "OP"}]}
+          ]
+        }
+      ]
+    })";
+  }
+  qnn::OpTraceLookup lookup;
+  EXPECT_EQ(qnn::ParseTraceLookupFromFile(p, lookup), qnn::TraceLoadStatus::kOk);
+  ASSERT_EQ(lookup.size(), 1u);
+  ASSERT_EQ(lookup.count("good"), 1u);
+  EXPECT_EQ(lookup.at("good").at(0).name, "onnx_good");
 }
 
 // ========================= CPU Backend Integration Tests =========================
@@ -809,7 +946,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase1_TraceWritten) {
   EXPECT_EQ(j["backend_type"], "htp");
 
   // Phase 1 writes only to framework_op_trace_dir; no sidecar alongside the context model.
-  fs::path sidecar_path = ctx_file.parent_path() / "model_ctx_op_trace.json";
+  fs::path sidecar_path = ctx_file.parent_path() / "qnn_op_trace.json";
   EXPECT_FALSE(fs::exists(sidecar_path)) << "No sidecar should be written alongside context model";
 }
 
@@ -844,7 +981,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase1_DisabledNoTrace) {
 
   // No trace file should exist (no trace_dir created, no sidecar)
   EXPECT_TRUE(FindTraceFile(trace_dir).empty()) << "Trace file should not be generated when tracing disabled";
-  fs::path sidecar_path = ctx_file.parent_path() / "model_ctx_op_trace.json";
+  fs::path sidecar_path = ctx_file.parent_path() / "qnn_op_trace.json";
   EXPECT_FALSE(fs::exists(sidecar_path)) << "Sidecar should not be written when tracing disabled";
 }
 
@@ -906,6 +1043,126 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase1_MatchesJIT) {
   // Summary should match
   EXPECT_EQ(jit_j["summary"]["total_qnn_ops"], aot_j["summary"]["total_qnn_ops"]);
   EXPECT_EQ(jit_j["summary"]["supported_nodes"], aot_j["summary"]["supported_nodes"]);
+}
+
+// Test AOT Phase 2 sidecar discovery:
+// when a Phase 1 trace JSON exists alongside the context model,
+// Phase 2 loads it into op_trace_lookup_ without crashing.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase2_SidecarDiscovery) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path ctx_file = tmp.path() / "model_ctx.onnx";
+  // DeriveTracePathFromContextModel returns {parent}/qnn_op_trace.json — use the
+  // production filename so CompileContextModel actually finds the sidecar.
+  fs::path sidecar_path = tmp.path() / "qnn_op_trace.json";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::string model_data = BuildModelData(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data), TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain));
+
+  // Phase 1: generate context model + trace JSON
+  fs::path phase1_trace_dir = tmp.path() / "phase1_trace";
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+    opts["enable_framework_op_trace"] = "1";
+    opts["framework_op_trace_dir"] = phase1_trace_dir.string();
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+  }
+
+  ASSERT_TRUE(fs::exists(ctx_file)) << "Context model not generated in Phase 1";
+  auto phase1_trace_file = FindTraceFile(phase1_trace_dir);
+  ASSERT_FALSE(phase1_trace_file.empty()) << "No Phase 1 trace file found";
+
+  // Place sidecar trace file alongside context model (DeriveTracePathFromContextModel convention)
+  std::error_code ec;
+  fs::copy_file(phase1_trace_file, sidecar_path, ec);
+  ASSERT_FALSE(ec) << "Failed to copy trace sidecar: " << ec.message();
+  ASSERT_TRUE(fs::exists(sidecar_path));
+
+  // Phase 2: load context model with tracing enabled; the sidecar is discovered
+  // and loaded. framework_op_trace_dir points at a dedicated, initially-empty
+  // directory so the "no new trace file" check below is unambiguous — tmp.path()
+  // already holds the sidecar (qnn_op_trace.json), whose stem FindTraceFile matches.
+  fs::path phase2_trace_dir = tmp.path() / "phase2_trace";
+  fs::create_directories(phase2_trace_dir);
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+    opts["enable_framework_op_trace"] = "1";
+    opts["framework_op_trace_dir"] = phase2_trace_dir.string();
+    opts["disable_file_mapped_weights"] = "1";
+
+    Ort::SessionOptions so;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    // Should not throw — sidecar is found and loaded without error
+    ASSERT_NO_THROW(Ort::Session session(*ort_env, ctx_file.c_str(), so));
+  }
+
+  // Loading a pre-compiled context model runs no ComposeGraph, so Phase 2 writes
+  // no new trace file. The dedicated Phase 2 directory therefore stays empty.
+  EXPECT_TRUE(FindTraceFile(phase2_trace_dir).empty())
+      << "Phase 2 (context-model load) should not write a new trace file";
+}
+
+// Test AOT Phase 2 with tracing enabled but NO sidecar file — should work fine (no crash).
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase2_NoSidecar_StillWorks) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path ctx_file = tmp.path() / "model_ctx.onnx";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::string model_data = BuildModelData(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data), TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain));
+
+  // Phase 1: generate context model WITHOUT trace
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+  }
+
+  ASSERT_TRUE(fs::exists(ctx_file));
+  // Verify no sidecar was auto-created
+  fs::path sidecar_path = tmp.path() / "qnn_op_trace.json";
+  ASSERT_FALSE(fs::exists(sidecar_path)) << "No sidecar should exist when Phase 1 had tracing disabled";
+
+  // Phase 2: load context model with tracing enabled but no sidecar present
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+    opts["enable_framework_op_trace"] = "1";
+    opts["disable_file_mapped_weights"] = "1";
+
+    Ort::SessionOptions so;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    // Should not throw even though no sidecar exists
+    ASSERT_NO_THROW(Ort::Session session(*ort_env, ctx_file.c_str(), so));
+  }
 }
 
 // ========================= Mixed EPContext Model Integration Tests =========================
@@ -1410,6 +1667,450 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_ReshapeEinsumReshape) {
         << "Each N:M fusion entry should reference all 3 ONNX source ops "
            "(reshape1, einsum, reshape2)";
   }
+}
+
+// ========================= Profiling + Tracing Combination Tests =========================
+//
+// These tests verify the interaction between qnn.profiling_level and qnn.enable_framework_op_trace.
+//
+// Design notes:
+// - The ONNX Source Ops field only appears in the CSV when profiling_level is
+//   DETAILED or OPTRACE (per-NODE events emitted) AND tracing is on.
+// - At BASIC level profiling, no QNN_PROFILE_EVENTTYPE_NODE events are emitted,
+//   so annotation would always be empty — the field is suppressed entirely.
+// - CSV header is written once when the file is first created; its field count
+//   is the reliable indicator because it is set unconditionally at file creation.
+
+// Helper: return the first line (header) of a CSV file.
+static std::string ReadCsvHeader(const fs::path& csv_path) {
+  std::ifstream ifs(csv_path);
+  if (!ifs.is_open()) return {};
+  std::string line;
+  std::getline(ifs, line);
+  return line;
+}
+
+// Helper: count comma-separated fields in a CSV line.
+static size_t CountCsvColumns(const std::string& csv_line) {
+  if (csv_line.empty()) return 0;
+  return static_cast<size_t>(std::count(csv_line.begin(), csv_line.end(), ',')) + 1;
+}
+
+// Helper: count rows (excluding header) of a given event type string.
+static size_t CountCsvRowsByMessage(const fs::path& csv_path, const std::string& message) {
+  std::ifstream ifs(csv_path);
+  if (!ifs.is_open()) return 0;
+  std::string line;
+  std::getline(ifs, line);  // skip header
+  size_t count = 0;
+  while (std::getline(ifs, line)) {
+    if (line.find(message) != std::string::npos) ++count;
+  }
+  return count;
+}
+
+// Helper: collect non-empty ONNX Source Ops values from NODE rows.
+static std::vector<std::string> CollectOnnxSourcesFromNodeRows(const fs::path& csv_path) {
+  std::vector<std::string> result;
+  std::ifstream ifs(csv_path);
+  if (!ifs.is_open()) return result;
+  std::string header;
+  std::getline(ifs, header);
+  // Check for "ONNX Source Ops" field in header
+  if (header.find("ONNX Source Ops") == std::string::npos) return result;
+  std::string line;
+  while (std::getline(ifs, line)) {
+    if (line.find("NODE") == std::string::npos) continue;
+    // Last field (after the last comma)
+    auto pos = line.rfind(',');
+    if (pos == std::string::npos) continue;
+    std::string onnx_col = line.substr(pos + 1);
+    if (!onnx_col.empty()) result.push_back(onnx_col);
+  }
+  return result;
+}
+
+// Test: profiling_level=detailed + enable_framework_op_trace=1
+// Expect: CSV header includes "ONNX Source Ops" field.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_With_Trace) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path csv_path = tmp.path() / "profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["profiling_level"] = "detailed";
+  opts["profiling_file_path"] = csv_path.string();
+  opts["enable_framework_op_trace"] = "1";
+  opts["framework_op_trace_dir"] = tmp.path().string();
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  RunQnnModelTest(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data),
+                              TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain),
+      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+
+  ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
+  std::string header = ReadCsvHeader(csv_path);
+  EXPECT_FALSE(header.empty()) << "CSV header is empty";
+  EXPECT_EQ(CountCsvColumns(header), 8u)
+      << "Expected 8 columns (with ONNX Source Ops) but got: " << header;
+  EXPECT_NE(header.find("ONNX Source Ops"), std::string::npos)
+      << "ONNX Source Ops column missing from header: " << header;
+}
+
+// Test: profiling_level=basic + enable_framework_op_trace=1
+// Expect: CSV header has no "ONNX Source Ops" field — basic has no NODE events.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Basic_With_Trace) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path csv_path = tmp.path() / "profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["profiling_level"] = "basic";
+  opts["profiling_file_path"] = csv_path.string();
+  opts["enable_framework_op_trace"] = "1";
+  opts["framework_op_trace_dir"] = tmp.path().string();
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  RunQnnModelTest(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data),
+                              TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain),
+      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+
+  ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
+  std::string header = ReadCsvHeader(csv_path);
+  EXPECT_FALSE(header.empty()) << "CSV header is empty";
+  EXPECT_EQ(CountCsvColumns(header), 7u)
+      << "Expected 7 columns (no ONNX Source Ops at basic level) but got: " << header;
+  EXPECT_EQ(header.find("ONNX Source Ops"), std::string::npos)
+      << "ONNX Source Ops column should not appear at basic level";
+}
+
+// Test: profiling_level=detailed WITHOUT enable_framework_op_trace
+// Expect: CSV header has no "ONNX Source Ops" field — tracing disabled.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_Without_Trace) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path csv_path = tmp.path() / "profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["profiling_level"] = "detailed";
+  opts["profiling_file_path"] = csv_path.string();
+  // enable_framework_op_trace intentionally NOT set
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  RunQnnModelTest(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data),
+                              TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain),
+      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+
+  ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
+  std::string header = ReadCsvHeader(csv_path);
+  EXPECT_FALSE(header.empty()) << "CSV header is empty";
+  EXPECT_EQ(CountCsvColumns(header), 7u)
+      << "Expected 7 columns (no tracing) but got: " << header;
+  EXPECT_EQ(header.find("ONNX Source Ops"), std::string::npos)
+      << "ONNX Source Ops column should not appear when tracing is disabled";
+}
+
+// Test: profiling_level=detailed + enable_framework_op_trace=1 + inference run
+// Expect: NODE rows in the CSV have ONNX Source Ops populated (non-empty).
+// This verifies the end-to-end join: trace op name == profiling event identifier.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_With_Trace_NodeRowsAnnotated) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path csv_path = tmp.path() / "profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["profiling_level"] = "detailed";
+  opts["profiling_file_path"] = csv_path.string();
+  opts["enable_framework_op_trace"] = "1";
+  opts["framework_op_trace_dir"] = tmp.path().string();
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  RunQnnModelTest(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data),
+                              TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain),
+      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+
+  ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
+
+  // Verify header has the ONNX annotation field.
+  std::string header = ReadCsvHeader(csv_path);
+  ASSERT_EQ(CountCsvColumns(header), 8u) << "Expected 8 columns: " << header;
+
+  // DETAILED profiling emits per-NODE events,
+  // and every NODE row carries an ONNX source annotation. Assert the NODE count
+  // is non-zero first, then that the rows are annotated.
+  size_t node_row_count = CountCsvRowsByMessage(csv_path, ",NODE,");
+  ASSERT_GT(node_row_count, 0u)
+      << "DETAILED profiling expected to emit NODE events but CSV has none";
+  auto annotated = CollectOnnxSourcesFromNodeRows(csv_path);
+  EXPECT_GT(annotated.size(), 0u)
+      << "NODE rows exist but none have ONNX Source Ops annotation";
+}
+
+// Test: profiling_level=optrace + enable_framework_op_trace=1
+// Expect: CSV header includes "ONNX Source Ops" field and NODE rows are annotated (same as detailed).
+// optrace is the highest-value profiling level: hardware-level cycles/bandwidth per op.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_OpTrace_With_Trace) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path csv_path = tmp.path() / "profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["profiling_level"] = "optrace";
+  opts["profiling_file_path"] = csv_path.string();
+  opts["enable_framework_op_trace"] = "1";
+  opts["framework_op_trace_dir"] = tmp.path().string();
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  RunQnnModelTest(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data),
+                              TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain),
+      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+
+  ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
+
+  // optrace triggers per-NODE events to be emitted, same as detailed.
+  std::string header = ReadCsvHeader(csv_path);
+  EXPECT_FALSE(header.empty()) << "CSV header is empty";
+  EXPECT_EQ(CountCsvColumns(header), 8u)
+      << "Expected 8 columns (ONNX Source Ops present) but got: " << header;
+  EXPECT_NE(header.find("ONNX Source Ops"), std::string::npos)
+      << "ONNX Source Ops column missing from header: " << header;
+
+  // OPTRACE profiling emits per-NODE events,
+  // and every NODE row carries an ONNX source annotation.
+  size_t node_row_count = CountCsvRowsByMessage(csv_path, ",NODE,");
+  ASSERT_GT(node_row_count, 0u)
+      << "OPTRACE profiling expected to emit NODE events but CSV has none";
+  auto annotated = CollectOnnxSourcesFromNodeRows(csv_path);
+  EXPECT_GT(annotated.size(), 0u)
+      << "NODE rows exist but none have ONNX Source Ops annotation";
+}
+
+// Test: AOT Phase 2 (pre-compiled context model) end-to-end profiling join.
+// In Phase 1 a context model and its sidecar (qnn_op_trace.json) are generated.
+// In Phase 2 the sidecar is discovered next to the context model, loaded via
+// LoadTraceLookupFromFile, and used to annotate the profiling CSV produced by an
+// inference run. With profiling_level=detailed + profiling_file_path set, the
+// test asserts the loaded sidecar annotates the NODE rows with ONNX sources.
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase2_SidecarAnnotatesProfiling) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path ctx_file = tmp.path() / "model_ctx.onnx";
+  fs::path csv_path = tmp.path() / "phase2_profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::string model_data = BuildModelData(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data), TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain));
+
+  // Phase 1: generate context model + sidecar trace. framework_op_trace_dir is
+  // set to the context model's directory so the sidecar is written as
+  // {tmp}/qnn_op_trace.json — exactly where DeriveTracePathFromContextModel
+  // looks in Phase 2 (no manual copy needed).
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+    opts["enable_framework_op_trace"] = "1";
+    opts["framework_op_trace_dir"] = tmp.path().string();
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+  }
+
+  ASSERT_TRUE(fs::exists(ctx_file)) << "Context model not generated in Phase 1";
+  fs::path sidecar_path = tmp.path() / "qnn_op_trace.json";
+  ASSERT_TRUE(fs::exists(sidecar_path))
+      << "Phase 1 should write the sidecar next to the context model";
+
+  // Phase 2: load context model with tracing + detailed profiling, run inference.
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+    opts["enable_framework_op_trace"] = "1";
+    opts["framework_op_trace_dir"] = tmp.path().string();
+    opts["profiling_level"] = "detailed";
+    opts["profiling_file_path"] = csv_path.string();
+    opts["disable_file_mapped_weights"] = "1";  // avoid DMA path crash with App Verifier
+
+    Ort::SessionOptions so;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    Ort::Session session(*ort_env, ctx_file.c_str(), so);
+
+    auto input_names = session.GetInputNames();
+    auto output_names = session.GetOutputNames();
+
+    std::vector<float> input_data(6, 1.0f);
+    std::vector<int64_t> input_shape = {1, 2, 3};
+
+    Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    std::vector<Ort::Value> inputs;
+    for (size_t i = 0; i < input_names.size(); ++i) {
+      inputs.push_back(Ort::Value::CreateTensor<float>(
+          mem_info, input_data.data(), input_data.size(), input_shape.data(), input_shape.size()));
+    }
+
+    std::vector<const char*> input_name_ptrs;
+    for (const auto& name : input_names) input_name_ptrs.push_back(name.c_str());
+    std::vector<const char*> output_name_ptrs;
+    for (const auto& name : output_names) output_name_ptrs.push_back(name.c_str());
+
+    auto outputs = session.Run(Ort::RunOptions{nullptr},
+                               input_name_ptrs.data(), inputs.data(), inputs.size(),
+                               output_name_ptrs.data(), output_name_ptrs.size());
+    EXPECT_GT(outputs.size(), 0u) << "Phase 2 inference should produce output";
+  }
+
+  // The sidecar must have been discovered and joined to the Phase 2 profiling CSV.
+  ASSERT_TRUE(fs::exists(csv_path)) << "Phase 2 profiling CSV not created";
+  std::string header = ReadCsvHeader(csv_path);
+  EXPECT_NE(header.find("ONNX Source Ops"), std::string::npos)
+      << "ONNX Source Ops column missing — sidecar lookup not applied: " << header;
+
+  size_t node_row_count = CountCsvRowsByMessage(csv_path, ",NODE,");
+  ASSERT_GT(node_row_count, 0u)
+      << "Detailed profiling expected to emit NODE events but Phase 2 CSV has none";
+  auto annotated = CollectOnnxSourcesFromNodeRows(csv_path);
+  EXPECT_GT(annotated.size(), 0u)
+      << "Phase 2 NODE rows exist but none annotated — sidecar→profiling join failed";
+}
+
+// AOT Phase 2 with framework op trace + detailed profiling enabled, but no
+// sidecar next to the context model. Verifies the column-stability contract:
+//   - the `ONNX Source Ops` column appears in the CSV header (the gate is the
+//     session-stable enable_framework_op_trace_ flag, not lookup emptiness, so
+//     header and per-row column counts always agree),
+//   - every NODE row's annotation cell is empty (the lookup is empty, so every
+//     LookupOnnxSources() returns ""),
+// distinguishing "trace requested but no source data" from "trace not requested".
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase2_NoSidecar_EmitsEmptyColumn) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  fs::path ctx_file = tmp.path() / "model_ctx.onnx";
+  fs::path csv_path = tmp.path() / "phase2_no_sidecar_profiling.csv";
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::string model_data = BuildModelData(
+      BuildOpTestCase<float>("add_node", "Add",
+                             {TestInputDef<float>({1, 2, 3}, false, data), TestInputDef<float>({1, 2, 3}, false, data)},
+                             {}, {}, kOnnxDomain));
+
+  // Phase 1: generate context model WITHOUT trace, so no sidecar is produced.
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+  }
+  ASSERT_TRUE(fs::exists(ctx_file));
+  ASSERT_FALSE(fs::exists(tmp.path() / "qnn_op_trace.json"))
+      << "Phase 1 had tracing disabled, so no sidecar should exist";
+
+  // Phase 2: load context model with tracing + detailed profiling, run inference.
+  // No sidecar exists → lookup stays empty.
+  {
+    ProviderOptions opts;
+    opts["backend_type"] = "htp";
+    opts["offload_graph_io_quantization"] = "0";
+    opts["enable_framework_op_trace"] = "1";
+    opts["framework_op_trace_dir"] = tmp.path().string();
+    opts["profiling_level"] = "detailed";
+    opts["profiling_file_path"] = csv_path.string();
+    opts["disable_file_mapped_weights"] = "1";
+
+    Ort::SessionOptions so;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", opts);
+    Ort::Session session(*ort_env, ctx_file.c_str(), so);
+
+    auto input_names = session.GetInputNames();
+    auto output_names = session.GetOutputNames();
+    std::vector<float> input_data(6, 1.0f);
+    std::vector<int64_t> input_shape = {1, 2, 3};
+    Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    std::vector<Ort::Value> inputs;
+    for (size_t i = 0; i < input_names.size(); ++i) {
+      inputs.push_back(Ort::Value::CreateTensor<float>(
+          mem_info, input_data.data(), input_data.size(), input_shape.data(), input_shape.size()));
+    }
+    std::vector<const char*> input_name_ptrs;
+    for (const auto& name : input_names) input_name_ptrs.push_back(name.c_str());
+    std::vector<const char*> output_name_ptrs;
+    for (const auto& name : output_names) output_name_ptrs.push_back(name.c_str());
+    auto outputs = session.Run(Ort::RunOptions{nullptr},
+                               input_name_ptrs.data(), inputs.data(), inputs.size(),
+                               output_name_ptrs.data(), output_name_ptrs.size());
+    EXPECT_GT(outputs.size(), 0u);
+  }
+
+  ASSERT_TRUE(fs::exists(csv_path)) << "Phase 2 profiling CSV not created";
+  std::string header = ReadCsvHeader(csv_path);
+  // Column IS present — gate is session-stable enable_framework_op_trace_ flag.
+  EXPECT_NE(header.find("ONNX Source Ops"), std::string::npos)
+      << "ONNX Source Ops column should still be in header (column-stability invariant): " << header;
+
+  size_t node_row_count = CountCsvRowsByMessage(csv_path, ",NODE,");
+  ASSERT_GT(node_row_count, 0u)
+      << "Detailed profiling expected to emit NODE events but CSV has none";
+  // No sidecar means the lookup is empty → every NODE row's annotation cell is empty.
+  auto annotated = CollectOnnxSourcesFromNodeRows(csv_path);
+  EXPECT_EQ(annotated.size(), 0u)
+      << "Without a sidecar the annotation column should be present but every cell empty; "
+      << "got " << annotated.size() << " non-empty annotations";
 }
 
 }  // namespace test

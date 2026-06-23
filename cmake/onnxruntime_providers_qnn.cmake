@@ -38,7 +38,17 @@
     list(APPEND onnxruntime_providers_qnn_all_srcs "${ONNXRUNTIME_ROOT}/core/providers/qnn/onnxruntime_providers_qnn.rc")
   endif()
 
-  onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
+  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    # Coverage build: build as SHARED library so onnxruntime_provider_test can
+    # call EP-internal functions directly via target_link_libraries(). On Linux, SHARED and
+    # MODULE both produce .so files; SHARED additionally allows linking at build time.
+    message(WARNING
+            "QNN EP coverage build: using SHARED library + version_script_coverage.lds "
+            "(exports ALL symbols). DO NOT use the resulting binary in production.")
+    onnxruntime_add_shared_library(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
+  else()
+    onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
+  endif()
   onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json)
 
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
@@ -65,11 +75,20 @@
 
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
-    target_link_options(onnxruntime_providers_qnn PRIVATE
-                        "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds"
-                        "LINKER:--gc-sections"
-                        "LINKER:-rpath=\$ORIGIN"
-    )
+    if(ENABLE_COVERAGE AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+      # Coverage build: export all symbols so the test binary can call EP-internal functions.
+      # --gc-sections is intentionally omitted to preserve all gcov-instrumented sections.
+      target_link_options(onnxruntime_providers_qnn PRIVATE
+                          "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script_coverage.lds"
+                          "LINKER:-rpath=\$ORIGIN"
+      )
+    else()
+      target_link_options(onnxruntime_providers_qnn PRIVATE
+                          "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds"
+                          "LINKER:--gc-sections"
+                          "LINKER:-rpath=\$ORIGIN"
+      )
+    endif()
   elseif(WIN32)
     set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
                   "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
