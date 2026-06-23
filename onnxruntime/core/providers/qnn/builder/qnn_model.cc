@@ -172,33 +172,73 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
                                    std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
   }
 
-  // DLC tensors may carry overridden names that differ from the fused node I/O names.
+  // QNN tensors deserialized from the context binary may carry overridden names (produced by
+  // offload_graph_io_quantization) that differ from the fused-node I/O names. Alias each QNN name
+  // onto the correct fused-node entry so GetOutputIndex resolves to the right ORT index/type.
   if (graph_info_) {
-    auto add_qnn_name_aliases = [](GraphInputOutputInfo& io_info,
-                                   const std::vector<QnnTensorWrapper>& qnn_tensors,
-                                   const std::vector<std::string>& fused_order) {
-      for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
-        const std::string& qnn_name = qnn_tensors[i].GetName();
-        const std::string& fused_name = fused_order[i];
-        if (qnn_name != fused_name && io_info.indices.find(qnn_name) == io_info.indices.end()) {
-          auto idx_it = io_info.indices.find(fused_name);
-          if (idx_it != io_info.indices.end()) {
-            io_info.indices.emplace(qnn_name, idx_it->second);
-          }
-          auto tensor_it = io_info.tensors.find(fused_name);
-          if (tensor_it != io_info.tensors.end()) {
-            const OnnxTensorInfo& info = tensor_it->second;
-            io_info.tensors.emplace(std::piecewise_construct,
-                                    std::forward_as_tuple(qnn_name),
-                                    std::forward_as_tuple(info.index_, info.data_type_,
-                                                          std::vector<int64_t>(info.shape_)));
-          }
-        }
+    auto alias_entry = [](GraphInputOutputInfo& io_info,
+                          const std::string& qnn_name,
+                          const std::string& fused_name) {
+      if (qnn_name == fused_name || io_info.indices.find(qnn_name) != io_info.indices.end()) {
+        return;
+      }
+      auto idx_it = io_info.indices.find(fused_name);
+      if (idx_it != io_info.indices.end()) {
+        io_info.indices.emplace(qnn_name, idx_it->second);
+      }
+      auto tensor_it = io_info.tensors.find(fused_name);
+      if (tensor_it != io_info.tensors.end()) {
+        const OnnxTensorInfo& info = tensor_it->second;
+        io_info.tensors.emplace(std::piecewise_construct,
+                                std::forward_as_tuple(qnn_name),
+                                std::forward_as_tuple(info.index_, info.data_type_,
+                                                      std::vector<int64_t>(info.shape_)));
       }
     };
 
-    add_qnn_name_aliases(graph_inputs_, graph_info_->InputTensors(), fused_input_order);
-    add_qnn_name_aliases(graph_outputs_, graph_info_->OutputTensors(), fused_output_order);
+    if (context.tensor_name_overrides && !context.tensor_name_overrides->empty()) {
+      // Preferred: resolve by the persisted map (order-independent).
+      // The bin tensor name is the `external` (e.g. "sep_cls_score"); the fused-node edge is
+      // the `internal` (e.g. "sep_cls_score_QuantizeLinear_Output").
+      auto alias_by_name = [&](GraphInputOutputInfo& io_info,
+                               const std::vector<QnnTensorWrapper>& qnn_tensors) {
+        std::unordered_set<std::string> qnn_names;
+        for (const auto& t : qnn_tensors) {
+          qnn_names.insert(t.GetName());
+        }
+        for (const auto& [internal, external] : *context.tensor_name_overrides) {
+          if (qnn_names.count(external)) {
+            alias_entry(io_info, external, internal);
+          }
+        }
+      };
+      alias_by_name(graph_inputs_, graph_info_->InputTensors());
+      alias_by_name(graph_outputs_, graph_info_->OutputTensors());
+    } else {
+      // Legacy fallback for context binaries generated before the io_name_overrides attribute
+      // existed. Pairs by position, which is unreliable when QNN reorders graph I/O outputs.
+      auto alias_by_position = [&](GraphInputOutputInfo& io_info,
+                                   const std::vector<QnnTensorWrapper>& qnn_tensors,
+                                   const std::vector<std::string>& fused_order) {
+        bool any_alias = false;
+        for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
+          const std::string& qnn_name = qnn_tensors[i].GetName();
+          if (qnn_name != fused_order[i] && io_info.indices.find(qnn_name) == io_info.indices.end()) {
+            alias_entry(io_info, qnn_name, fused_order[i]);
+            any_alias = true;
+          }
+        }
+        return any_alias;
+      };
+      bool aliased = alias_by_position(graph_inputs_, graph_info_->InputTensors(), fused_input_order);
+      aliased |= alias_by_position(graph_outputs_, graph_info_->OutputTensors(), fused_output_order);
+      if (aliased) {
+        ORT_CXX_LOG(context.logger, ORT_LOGGING_LEVEL_WARNING,
+                    "QNN context binary has renamed graph I/O but no io_name_overrides attribute; "
+                    "falling back to positional name aliasing, which may misbind reordered I/O. "
+                    "Regenerate the context model with the current EP to embed the name mapping.");
+      }
+    }
   }
 
   return Ort::Status();
