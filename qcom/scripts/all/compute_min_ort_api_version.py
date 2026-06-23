@@ -60,13 +60,16 @@ _SINCE_RE = re.compile(r"\\since\s+Version\s+1\.(\d+)")
 # OrtModelEditorApi / OrtCompileApi. Extend if upstream adds a new macro.
 _DECL_RE = re.compile(
     r"(?:"
-    r"\w+\s*\(\s*ORT_API_CALL\s*\*?\s*(\w+)\s*\)"  # RetType(ORT_API_CALL* Name)
+    r"[\w\s\*]+\(\s*ORT_API_CALL\s*\*?\s*(\w+)\s*\)"  # [const] RetType[*](ORT_API_CALL* Name)
     r"|ORT_API2_STATUS\s*\(\s*(\w+)\s*[,)]"  # ORT_API2_STATUS(Name, ...)
     r"|ORT_API_STATUS\s*\(\s*(\w+)\s*[,)]"  # ORT_API_STATUS(Name, ...)
     r"|ORT_API_T\s*\(\s*[^,]+,\s*(\w+)\s*[,)]"  # ORT_API_T(rettype, Name, ...)
     r"|ORT_CLASS_RELEASE\s*\(\s*(\w+)\s*\)"  # ORT_CLASS_RELEASE(Foo) -> ReleaseFoo
     r")"
 )
+
+# Bare ORT_CLASS_RELEASE entries that appear outside /** */ doc blocks.
+_CLASS_RELEASE_RE = re.compile(r"\bORT_CLASS_RELEASE\s*\(\s*(\w+)\s*\)")
 
 
 def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
@@ -82,7 +85,7 @@ def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
             continue
         pos = 0
         while True:
-            cstart = text.find("/**", pos)
+            cstart = text.find("/*", pos)
             if cstart < 0:
                 break
             cend = text.find("*/", cstart)
@@ -91,7 +94,7 @@ def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
             block = text[cstart : cend + 2]
             m_since = _SINCE_RE.search(block)
             rest = text[cend + 2 :]
-            next_block = rest.find("/**")
+            next_block = rest.find("/*")
             scope = rest if next_block < 0 else rest[:next_block]
             m_decl = _DECL_RE.search(scope)
             if m_decl:
@@ -103,6 +106,12 @@ def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
                     if name not in result or result[name] < version:
                         result[name] = version
             pos = cend + 2
+        # Second pass: collect bare ORT_CLASS_RELEASE entries not inside /** */ blocks.
+        # These produce Release<X> names at version 0 (predate the \since convention).
+        for m_rel in _CLASS_RELEASE_RE.finditer(text):
+            name = "Release" + m_rel.group(1)
+            if name not in result:
+                result[name] = 0
     return result
 
 
