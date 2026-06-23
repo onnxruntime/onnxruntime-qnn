@@ -322,8 +322,9 @@ class ArtifactUpleveler(ABC):
 
     def _download_signed_libs(self, target_dir: str) -> str:
         """Download <format>.zip from artifactory into target_dir; return its path."""
-        api_key = os.environ.get("ARTIFACTORY_PASSWORD", "")
-        if not api_key:
+        artifactory_user = os.environ.get("ARTIFACTORY_USERNAME", "")
+        artifactory_password = os.environ.get("ARTIFACTORY_PASSWORD", "")
+        if not artifactory_password:
             raise RuntimeError("ARTIFACTORY_PASSWORD environment variable is required when --sign_artifact true")
 
         version_url = self.config_manager.get_repository_url(
@@ -334,7 +335,9 @@ class ArtifactUpleveler(ABC):
         target_path = os.path.join(target_dir, zip_filename)
 
         logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
-        response = requests.get(url, auth=("", api_key), verify=ARTIFACTORY_CERTS_FILE, timeout=60)
+        response = requests.get(
+            url, auth=(artifactory_user, artifactory_password), verify=ARTIFACTORY_CERTS_FILE, timeout=60
+        )
         if response.status_code != 200:
             raise RuntimeError(f"Failed to download signed libs: HTTP {response.status_code}")
 
