@@ -20,6 +20,15 @@ jobs:
           fetch-depth: 0
           # submodules omitted here; initialized below only when ASan is needed.
 
+      - name: Disk usage diagnostics
+        run: |
+          echo "===== df -h ====="
+          df -h
+          echo "===== Top dirs under workspace parent ====="
+          du -h -d1 "$(dirname "${{ github.workspace }}")" 2>/dev/null | sort -h | tail -20
+          echo "===== Top dirs under HOME ====="
+          du -h -d1 "$HOME" 2>/dev/null | sort -h | tail -20
+
       - name: Clean previous build directory
         run: |
           BUILD_DIR="${{ github.workspace }}/build/linux-x86_64/Debug"
