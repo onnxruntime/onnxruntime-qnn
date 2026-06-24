@@ -28,6 +28,8 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
+#include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
@@ -176,12 +178,20 @@ static void ParseQnnContextPriority(std::string context_priority_string,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("QNN context priority: " + context_priority_string).c_str());
   if (context_priority_string == "low") {
     context_priority = qnn::ContextPriority::LOW;
+  } else if (context_priority_string == "normal_low") {
+    context_priority = qnn::ContextPriority::NORMAL_LOW;
   } else if (context_priority_string == "normal") {
     context_priority = qnn::ContextPriority::NORMAL;
   } else if (context_priority_string == "normal_high") {
     context_priority = qnn::ContextPriority::NORMAL_HIGH;
   } else if (context_priority_string == "high") {
     context_priority = qnn::ContextPriority::HIGH;
+  } else if (context_priority_string == "high_plus") {
+    context_priority = qnn::ContextPriority::HIGH_PLUS;
+  } else if (context_priority_string == "critical") {
+    context_priority = qnn::ContextPriority::CRITICAL;
+  } else if (context_priority_string == "critical_plus") {
+    context_priority = qnn::ContextPriority::CRITICAL_PLUS;
   } else {
     context_priority = qnn::ContextPriority::UNDEFINED;
     std::string msg = "QNN context priority: " + context_priority_string + " not valid, set to undefined.";
@@ -251,6 +261,43 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Using " + key + ": " + (result ? "1" : "0")).c_str());
 
   return result;
+}
+
+// Creates `dir` (and any missing parents) and verifies it is writable by
+// round-tripping a small probe file. Returns true on success. On failure,
+// logs a WARNING tagged with `feature_name` so callers can disable the
+// associated feature flag with a clear log trail. Used by every
+// QNN-EP-side dump option whose output is written incrementally during
+// session run (so a non-writable directory should disable the feature at
+// session-start rather than mid-inference).
+static bool ProbeDumpDirectoryWritable(const std::string& dir,
+                                       const std::string& feature_name,
+                                       const Ort::Logger& logger) {
+  std::filesystem::path probe_dir(dir);
+  std::error_code ec;
+  std::filesystem::create_directories(probe_dir, ec);
+  if (ec) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                (feature_name + " directory could not be created: " + probe_dir.string() +
+                 " (" + ec.message() + "); the feature will be disabled.")
+                    .c_str());
+    return false;
+  }
+  std::filesystem::path probe_file = probe_dir / ".qnn_ep_dump_probe";
+  bool ok = false;
+  {
+    std::ofstream ofs(probe_file);
+    ok = ofs.is_open() && (ofs << "1").good();
+  }
+  std::filesystem::remove(probe_file, ec);
+  if (!ok) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                (feature_name + " directory not writable: " + probe_dir.string() +
+                 "; the feature will be disabled.")
+                    .c_str());
+    return false;
+  }
+  return true;
 }
 
 #ifdef _WIN32
@@ -921,21 +968,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     model_settings_.offload_graph_io_quantization = false;
   }
 
-  static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
-  if (ParseBoolOption(ort_api,
-                      session_options_,
-                      FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
-                      false,
-                      logger_)) {
-    // Initialize rpcmem_library_.
-    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
-    // generation stage, there is no need to load it as no allocations will be made.
-    if (!context_cache_enabled_) {
-      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-    }
-    model_settings_.htp_shared_memory = true;
-  }
-
   if (enable_file_mapped_weights_ && !rpcmem_library_) {
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
@@ -965,7 +997,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   if (!json_graph_dir_str.empty()) {
     json_qnn_graph_dir_ = json_graph_dir_str;
     if (dump_json_qnn_graph_) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("JSON graphs directory: " + json_qnn_graph_dir_).c_str());
+      if (ProbeDumpDirectoryWritable(json_qnn_graph_dir_, "QNN JSON graph dump", logger_)) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("JSON graphs directory: " + json_qnn_graph_dir_).c_str());
+      } else {
+        dump_json_qnn_graph_ = false;
+      }
     } else {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
@@ -1002,32 +1038,57 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     // surface as a WARNING after the entire compile + in-memory trace build
     // finishes. Disabling tracing here lets us skip all the per-graph collection
     // work when the trace can never be written.
-    std::filesystem::path probe_dir(framework_op_trace_dir_);
-    std::error_code ec;
-    std::filesystem::create_directories(probe_dir, ec);
-    bool probe_ok = !ec;
-    if (probe_ok) {
-      std::filesystem::path probe_file = probe_dir / ".qnn_op_trace_probe";
-      {
-        std::ofstream ofs(probe_file);
-        probe_ok = ofs.is_open() && (ofs << "1").good();
-      }
-      std::filesystem::remove(probe_file, ec);
-    }
-    if (!probe_ok) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  ("Framework op trace directory not writable: " + probe_dir.string() +
-                   "; framework op tracing will be disabled.")
-                      .c_str());
-      enable_framework_op_trace_ = false;
-    } else {
+    if (ProbeDumpDirectoryWritable(framework_op_trace_dir_,
+                                   "Framework op trace",
+                                   logger_)) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
                   ("Framework op tracing enabled. Output dir: " + framework_op_trace_dir_).c_str());
+    } else {
+      enable_framework_op_trace_ = false;
     }
   } else if (!framework_op_trace_dir_.empty()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
                 "Provided a directory for framework op trace, but did not enable framework op tracing.");
+  }
+
+  // QNN EP input graph dump options. Emits the ONNX graph the EP receives in
+  // GetCapabilityImpl (compile-time, pre-partition) as a QNN-Netron-schema JSON.
+  static constexpr const char* kDumpQnnEpInputGraph = "dump_qnn_ep_input_graph";
+  static constexpr const char* kDumpQnnEpInputGraphDir = "dump_qnn_ep_input_graph_dir";
+
+  dump_qnn_ep_input_graph_ = ParseBoolOption(ort_api,
+                                             session_options_,
+                                             FormatEPConfigKey(kDumpQnnEpInputGraph),
+                                             false,
+                                             logger_);
+
+  if (dump_qnn_ep_input_graph_) {
+    // Resolve the dump directory only when the dump itself is enabled. The
+    // session-config entry overrides the default; an unset/empty value falls
+    // back to the current working directory so the option is usable without
+    // a separate path config.
+    std::string ep_input_graph_dir_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey(kDumpQnnEpInputGraphDir),
+                                   "",
+                                   ep_input_graph_dir_str);
+    if (ep_input_graph_dir_str.empty()) {
+      ep_input_graph_dir_str = std::filesystem::current_path().string();
+    }
+    dump_qnn_ep_input_graph_dir_ = std::move(ep_input_graph_dir_str);
+
+    // Probe writability up-front so a non-writable path disables the feature
+    // before the per-graph walk runs.
+    if (ProbeDumpDirectoryWritable(dump_qnn_ep_input_graph_dir_,
+                                   "QNN EP input graph dump",
+                                   logger_)) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("QNN EP input graph dump enabled. Output dir: " + dump_qnn_ep_input_graph_dir_).c_str());
+    } else {
+      dump_qnn_ep_input_graph_ = false;
+    }
   }
 
   static const std::string QNN_HTP_EXTENDED_UDMA_MODE = "extended_udma";
@@ -1091,6 +1152,60 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+
+  // Choose EP allocator. Must be done after creating the backend manager.
+  static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
+  if (ParseBoolOption(ort_api,
+                      session_options_,
+                      FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                      false,
+                      logger_)) {
+    // Initialize rpcmem_library_.
+    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
+    // generation stage, there is no need to load it as no allocations will be made.
+    if (!context_cache_enabled_) {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+    } else {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_INFO,
+                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
+                   " as no allocations are expected to be made.",
+                   kOrtSessionOptionEpContextEnable);
+    }
+    model_settings_.htp_shared_memory = true;
+  }
+
+  static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
+  if (ParseBoolOption(ort_api,
+                      session_options_,
+                      FormatEPConfigKey(QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                      false,
+                      logger_)) {
+    if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_WARNING,
+                   "QNN allocator already set to type: %s. Option '%s' will be ignored.",
+                   qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data(),
+                   QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str());
+    } else {
+      if (qnn_backend_manager_->IsDx12SharedMemoryAllocatorSupported()) {
+        qnn_allocator_type_ = qnn::QnnAllocatorType::DX12_SHARED;
+      } else {
+        ORT_CXX_LOGF(logger_,
+                     ORT_LOGGING_LEVEL_WARNING,
+                     "Dx12SharedMemoryAllocator was requested, but it is not supported.");
+      }
+    }
+  }
+
+  qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+  if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+    ORT_CXX_LOGF(logger_,
+                 ORT_LOGGING_LEVEL_VERBOSE,
+                 "QNN allocator set to type: %s.",
+                 qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
+  }
 
 #if defined(_WIN32)
   if (qnn::QnnTelemetry::SupportsETW()) {
@@ -1557,6 +1672,29 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  // Best-effort diagnostic dump of the ONNX graph the EP just received.
+  // Fires before any subgraph / EPContext / Genie / backend-setup early
+  // return below so every GetCapability invocation produces a dump file —
+  // including subgraphs and sessions that later fail to set up a backend
+  // (precisely the cases where a "what did the EP see?" artifact is most
+  // useful). Filename is sanitized graph name + per-EP counter; the
+  // matcher's recommended consumption is "highest counter per unique
+  // sanitized name" (see docs/execution_providers/QNN-ExecutionProvider.md).
+  if (ep->dump_qnn_ep_input_graph_) {
+    Ort::ConstGraph dump_graph{graph};
+    // SanitizeGraphNameForFilename returns "graph" when the input is empty
+    // or sanitizes to empty, so a single call covers both the present-name
+    // and missing-name paths.
+    std::string graph_name = qnn::SanitizeGraphNameForFilename(std::string(dump_graph.GetName()));
+    size_t count = ep->dump_qnn_ep_input_graph_count_++;
+    std::filesystem::path out_path =
+        std::filesystem::path(ep->dump_qnn_ep_input_graph_dir_) /
+        (graph_name + "." + std::to_string(count) + "_qnn_ep_input_graph.json");
+    // Best-effort diagnostic: failures are already logged inside the dumper,
+    // so the bool return is intentionally discarded.
+    qnn::DumpQnnEpInputGraphToJson(graph, out_path, ep->logger_);
+  }
 
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
@@ -2517,12 +2655,26 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  if (ep->IsHtpSharedMemoryAllocatorAvailable()) {
+  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
 
     auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
+#ifdef _WIN32
+  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
+
+    OrtStatus* status = nullptr;
+    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, status);
+
+    if (status != nullptr) {
+      return status;
+    }
+
+    *allocator = dx12_allocator.release();
+  }
+#endif  // _WIN32
   return nullptr;
 }
 

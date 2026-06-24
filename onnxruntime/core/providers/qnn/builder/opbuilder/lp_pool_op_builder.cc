@@ -259,39 +259,32 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (p_value == 2) {
     std::string square_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    Qnn_Scalar_t square_op_scalar = QNN_SCALAR_INIT;
-    square_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    square_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    QnnParamWrapper square_op_param(node_unit.Index(), square_node_name,
-                                    QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, square_op_scalar);
-    std::string square_op_param_name = square_op_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(square_op_param)),
-                  "Failed to add square (Multiply) operation param.");
+    std::vector<std::string> square_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), square_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, square_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       square_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_BINARY,
                       {input_names[0], input_names[0]},
                       {preprocess_out_name},
-                      {square_op_param_name},
+                      std::move(square_param_names),
                       do_op_validation),
                   "Failed to create square (Multiply) node.");
   } else {
     std::string abs_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_UNARY);
-    Qnn_Scalar_t abs_op_scalar = QNN_SCALAR_INIT;
-    abs_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    abs_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ABS;
-    QnnParamWrapper abs_op_param(node_unit.Index(), abs_node_name,
-                                 QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, abs_op_scalar);
-    std::string abs_op_param_name = abs_op_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(abs_op_param)), "Failed to add Abs operation param.");
+    std::vector<std::string> abs_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), abs_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ABS),
+                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, abs_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       abs_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_UNARY,
                       {input_names[0]},
                       {preprocess_out_name},
-                      {abs_op_param_name},
+                      std::move(abs_param_names),
                       do_op_validation),
                   "Failed to create Abs node.");
   }
@@ -372,19 +365,15 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_out_tensor)),
                   "Failed to add sqrt output tensor.");
     std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_UNARY);
-    Qnn_Scalar_t sqrt_op_scalar = QNN_SCALAR_INIT;
-    sqrt_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    sqrt_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT;
-    QnnParamWrapper sqrt_op_param(node_unit.Index(), sqrt_node_name,
-                                  QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sqrt_op_scalar);
-    std::string sqrt_op_param_name = sqrt_op_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sqrt_op_param)),
-                  "Failed to add SquareRoot operation param.");
+    std::vector<std::string> sqrt_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), sqrt_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT),
+                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sqrt_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       sqrt_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_UNARY,
-                      {pool_out_name}, {sqrt_out_name}, {sqrt_op_param_name}, do_op_validation),
+                      {pool_out_name}, {sqrt_out_name}, std::move(sqrt_param_names), do_op_validation),
                   "Failed to create SquareRoot node.");
     sqrt_or_pool_out_name = sqrt_out_name;
   }
@@ -459,16 +448,12 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (!requires_rank3_reshape) {
     // Final Multiply produces the ONNX output tensor directly (handled by ProcessOutputs).
-    Qnn_Scalar_t mul_op_scalar = QNN_SCALAR_INIT;
-    mul_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    mul_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    QnnParamWrapper mul_op_param(node_unit.Index(), node_unit.Name(),
-                                 QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_op_scalar);
-    std::string mul_op_param_name = mul_op_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mul_op_param)),
-                  "Failed to add final scale (Multiply) operation param.");
+    std::vector<std::string> mul_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_param_names));
     return ProcessOutputs(qnn_model_wrapper, node_unit,
-                          {sqrt_or_pool_out_name, scale_name}, {mul_op_param_name},
+                          {sqrt_or_pool_out_name, scale_name}, std::move(mul_param_names),
                           logger, do_op_validation, QNN_OP_ELEMENT_WISE_BINARY);
   }
 
@@ -484,21 +469,17 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "Failed to add scaled intermediate tensor.");
   }
   std::string scale_mul_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-  Qnn_Scalar_t scale_mul_op_scalar = QNN_SCALAR_INIT;
-  scale_mul_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  scale_mul_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  QnnParamWrapper scale_mul_op_param(node_unit.Index(), scale_mul_node_name,
-                                     QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, scale_mul_op_scalar);
-  std::string scale_mul_op_param_name = scale_mul_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(scale_mul_op_param)),
-                "Failed to add final scale (Multiply) operation param.");
+  std::vector<std::string> scale_mul_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), scale_mul_node_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, scale_mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                     scale_mul_node_name,
                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                     QNN_OP_ELEMENT_WISE_BINARY,
                     {sqrt_or_pool_out_name, scale_name},
                     {scaled_out_name},
-                    {scale_mul_op_param_name},
+                    std::move(scale_mul_param_names),
                     do_op_validation),
                 "Failed to create final scale (Multiply) node.");
 
