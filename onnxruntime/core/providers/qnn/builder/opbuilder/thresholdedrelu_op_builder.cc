@@ -174,20 +174,16 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(greater_output)),
                 "Failed to add ThresholdRelu - Greater output tensor.");
 
-  Qnn_Scalar_t greater_op_scalar = QNN_SCALAR_INIT;
-  greater_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  greater_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER;
-  QnnParamWrapper greater_op_param(node_unit.Index(), greater_name,
-                                   QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, greater_op_scalar);
-  std::string greater_op_param_name = greater_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(greater_op_param)),
-                "Failed to add ThresholdRelu - Greater operation param.");
+  std::vector<std::string> greater_param_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), greater_name,
+                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER),
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, greater_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(greater_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_BINARY,
                                                 {input_name, alpha_tensor_name},
                                                 {greater_output_name},
-                                                {greater_op_param_name},
+                                                std::move(greater_param_names),
                                                 do_op_validation),
                 "Failed to add ThresholdRelu - Greater node.");
 

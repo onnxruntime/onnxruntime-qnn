@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <utility>
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -85,7 +86,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
-  // HOST_ACCESSIBLE memory.
+  // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
@@ -230,22 +231,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
 
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
-  // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
-  // determine whether to use HTP shared memory but they are not available until now. This workaround works since
-  // PluginExecutionProvider collects the allocator infos after creating the EP (refer to
-  // ep_plugin_provider_interfaces.cc for the detail flow).
-  std::string enable_htp_shared_memory_allocator_str;
-  GetSessionConfigEntryOrDefault(factory->ort_api,
-                                 *session_options,
-                                 provider_prefix + "enable_htp_shared_memory_allocator",
-                                 "0",
-                                 enable_htp_shared_memory_allocator_str);
-  if (enable_htp_shared_memory_allocator_str == "1") {
-    for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
-    }
-  }
-
   const auto backend_type_key = provider_prefix + "backend_type";
   const auto backend_path_key = provider_prefix + "backend_path";
   int has_backend_type = 0;
@@ -334,6 +319,13 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
+  factory->qnn_allocator_type_ = qnn_ep->qnn_allocator_type_;
+  if (factory->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+    for (OrtEpDevice* ep_device : factory->ep_devices_) {
+      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+    }
+  }
+
   factory->qnn_ep_ = qnn_ep.get();
   *ep = qnn_ep.release();
 
@@ -349,8 +341,23 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
   delete dummy_ep;
 }
 
-void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* /*this_ptr*/, OrtAllocator* allocator) noexcept {
-  delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
+void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+  if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
+    delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
+#ifdef _WIN32
+  } else if (qnn::IsDx12SharedMemoryAllocator(factory->qnn_allocator_type_)) {
+    delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
+#endif
+  } else {
+    std::ignore = factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
+                                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                                                     "Cannot release allocator of unknown type!",
+                                                     ORT_FILE,
+                                                     __LINE__,
+                                                     __FUNCTION__);
+  }
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,

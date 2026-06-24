@@ -143,14 +143,11 @@ Ort::Status ScatterElementsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
                 ("ScatterElements does not support reduction " + reduction).c_str());
 
   std::vector<std::string> param_tensor_names;
-
-  int32_t axis_value = 0;
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(),
-                             QNN_OP_SCATTER_ELEMENTS_PARAM_AXIS, axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+  int32_t axis = 0;
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         static_cast<uint32_t>(axis),
+                                         QNN_OP_SCATTER_ELEMENTS_PARAM_AXIS, param_tensor_names));
 
   uint32_t reduction_value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_NONE;
   if (reduction == "none") {

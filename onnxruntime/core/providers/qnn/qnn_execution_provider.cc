@@ -178,12 +178,20 @@ static void ParseQnnContextPriority(std::string context_priority_string,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("QNN context priority: " + context_priority_string).c_str());
   if (context_priority_string == "low") {
     context_priority = qnn::ContextPriority::LOW;
+  } else if (context_priority_string == "normal_low") {
+    context_priority = qnn::ContextPriority::NORMAL_LOW;
   } else if (context_priority_string == "normal") {
     context_priority = qnn::ContextPriority::NORMAL;
   } else if (context_priority_string == "normal_high") {
     context_priority = qnn::ContextPriority::NORMAL_HIGH;
   } else if (context_priority_string == "high") {
     context_priority = qnn::ContextPriority::HIGH;
+  } else if (context_priority_string == "high_plus") {
+    context_priority = qnn::ContextPriority::HIGH_PLUS;
+  } else if (context_priority_string == "critical") {
+    context_priority = qnn::ContextPriority::CRITICAL;
+  } else if (context_priority_string == "critical_plus") {
+    context_priority = qnn::ContextPriority::CRITICAL_PLUS;
   } else {
     context_priority = qnn::ContextPriority::UNDEFINED;
     std::string msg = "QNN context priority: " + context_priority_string + " not valid, set to undefined.";
@@ -960,21 +968,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     model_settings_.offload_graph_io_quantization = false;
   }
 
-  static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
-  if (ParseBoolOption(ort_api,
-                      session_options_,
-                      FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
-                      false,
-                      logger_)) {
-    // Initialize rpcmem_library_.
-    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
-    // generation stage, there is no need to load it as no allocations will be made.
-    if (!context_cache_enabled_) {
-      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-    }
-    model_settings_.htp_shared_memory = true;
-  }
-
   if (enable_file_mapped_weights_ && !rpcmem_library_) {
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
@@ -1159,6 +1152,60 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+
+  // Choose EP allocator. Must be done after creating the backend manager.
+  static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
+  if (ParseBoolOption(ort_api,
+                      session_options_,
+                      FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                      false,
+                      logger_)) {
+    // Initialize rpcmem_library_.
+    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
+    // generation stage, there is no need to load it as no allocations will be made.
+    if (!context_cache_enabled_) {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+    } else {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_INFO,
+                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
+                   " as no allocations are expected to be made.",
+                   kOrtSessionOptionEpContextEnable);
+    }
+    model_settings_.htp_shared_memory = true;
+  }
+
+  static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
+  if (ParseBoolOption(ort_api,
+                      session_options_,
+                      FormatEPConfigKey(QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                      false,
+                      logger_)) {
+    if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_WARNING,
+                   "QNN allocator already set to type: %s. Option '%s' will be ignored.",
+                   qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data(),
+                   QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str());
+    } else {
+      if (qnn_backend_manager_->IsDx12SharedMemoryAllocatorSupported()) {
+        qnn_allocator_type_ = qnn::QnnAllocatorType::DX12_SHARED;
+      } else {
+        ORT_CXX_LOGF(logger_,
+                     ORT_LOGGING_LEVEL_WARNING,
+                     "Dx12SharedMemoryAllocator was requested, but it is not supported.");
+      }
+    }
+  }
+
+  qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+  if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+    ORT_CXX_LOGF(logger_,
+                 ORT_LOGGING_LEVEL_VERBOSE,
+                 "QNN allocator set to type: %s.",
+                 qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
+  }
 
 #if defined(_WIN32)
   if (qnn::QnnTelemetry::SupportsETW()) {
@@ -2608,12 +2655,26 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  if (ep->IsHtpSharedMemoryAllocatorAvailable()) {
+  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
 
     auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
+#ifdef _WIN32
+  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
+
+    OrtStatus* status = nullptr;
+    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, status);
+
+    if (status != nullptr) {
+      return status;
+    }
+
+    *allocator = dx12_allocator.release();
+  }
+#endif  // _WIN32
   return nullptr;
 }
 
