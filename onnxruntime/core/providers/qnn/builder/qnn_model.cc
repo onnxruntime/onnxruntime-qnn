@@ -450,8 +450,9 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
   ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
   OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
-  const bool uses_shared_memory = (ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
-                                   ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE);
+  const bool uses_shared_memory =
+      ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
+      ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
 
   if (!uses_shared_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
