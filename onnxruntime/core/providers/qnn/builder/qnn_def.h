@@ -118,6 +118,12 @@ enum class QnnBackendType : uint8_t {
   SERIALIZER,
 };
 
+enum class QnnAllocatorType : uint8_t {
+  NONE = 0,
+  HTP_SHARED,
+  DX12_SHARED,
+};
+
 bool IsIrBackend(QnnBackendType backend_type);
 
 bool IsCpuBackend(QnnBackendType backend_type);
@@ -127,6 +133,12 @@ bool IsNpuBackend(QnnBackendType backend_type);
 bool IsGpuBackend(QnnBackendType backend_type);
 
 bool IsQpuBackend(QnnBackendType backend_type);
+
+bool IsHtpSharedMemoryAllocator(QnnAllocatorType allocator_type);
+
+bool IsDx12SharedMemoryAllocator(QnnAllocatorType allocator_type);
+
+std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type);
 
 std::string QnnBackendTypeToString(QnnBackendType backend_type);
 
