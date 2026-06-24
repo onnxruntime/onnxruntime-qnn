@@ -242,7 +242,8 @@ std::optional<SpaceToDepthPattern> MatchPattern(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reshape1,
     const MapNodeToNodeUnit& node_to_node_unit,
-    const MapNodeUnitToGroup& node_unit_to_qnn_node_group) {
+    const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
+    const Ort::Logger& logger) {
   // 1. Validate the starting node op type.
   if (reshape1.OpType() != kOpReshape) {
     return std::nullopt;
@@ -259,11 +260,14 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   const OrtNodeUnit* reshape2 = GetChildNodeUnitAllowQdq(qnn_model_wrapper, *transpose, kOpReshape,
                                                          node_to_node_unit, node_unit_to_qnn_node_group);
   if (reshape2 == nullptr) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                "SpaceToDepthFusion: no trailing Reshape2 child found after Transpose.");
     return std::nullopt;
   }
 
   // 3.1 Fast signature check for SpaceToDepth core RTR decomposition.
   if (!HasSpaceToDepthCoreSignature(qnn_model_wrapper, reshape1, *transpose, *reshape2)) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: not a S2D RTR pattern.");
     return std::nullopt;
   }
 
@@ -340,6 +344,7 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   // b) T(NHWC->NCHW) + RTR
   // c) RTR + T(NCHW->NHWC)
   if (core.node_count == 3) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: skip RTR-only pattern.");
     return std::nullopt;
   }
 
@@ -745,7 +750,7 @@ std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
 
   // 2. Match Pattern
   auto pattern = MatchPattern(qnn_model_wrapper, reshape_node_unit,
-                              node_to_node_unit, node_unit_to_qnn_node_group);
+                              node_to_node_unit, node_unit_to_qnn_node_group, logger);
   if (!pattern.has_value()) {
     return nullptr;
   }
