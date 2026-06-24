@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -52,6 +53,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                      OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
   friend struct GenieNodeComputeInfo;
+  friend class QnnEpFactory;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -217,6 +219,18 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
 
+  // === Qnn Ep Input Graph ===
+  // Dumps the ONNX graph the EP receives in GetCapabilityImpl (compile-time,
+  // pre-partition) as a QNN-Netron-schema JSON. Distinct from
+  // dump_json_qnn_graph_ above, which dumps the post-compile QNN graph.
+  bool dump_qnn_ep_input_graph_ = false;
+  std::string dump_qnn_ep_input_graph_dir_;
+  // Per-EP counter that disambiguates output filenames. Always appended to
+  // the filename so two graphs whose names sanitize to the same string still
+  // produce two distinct files. ORT calls GetCapabilityImpl sequentially
+  // from a single thread today, so plain size_t is sufficient.
+  size_t dump_qnn_ep_input_graph_count_ = 0;
+
   // === Framework op trace ===
   bool enable_framework_op_trace_ = false;
   std::string framework_op_trace_dir_;
@@ -230,6 +244,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.
   // This is potentially shared with HtpSharedMemoryAllocator which may be returned by CreatePreferredAllocators().
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
+
+  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;

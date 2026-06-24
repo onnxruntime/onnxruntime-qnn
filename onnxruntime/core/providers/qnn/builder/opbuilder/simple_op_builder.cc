@@ -327,12 +327,10 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   std::vector<std::string> param_tensor_names;
   // Add attribute
   if (op_type == "LpNormalization") {
-    int32_t default_axis = -1;
-    Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, default_axis));
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_L2_NORM_PARAM_AXIS, axis_qnn_scalar);
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+    int32_t axis = 0;
+    RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(axis), QNN_OP_L2_NORM_PARAM_AXIS, param_tensor_names));
 
     OrtNodeAttrHelper node_helper(node_unit);
     int64_t norm_p_order = node_helper.Get("p", static_cast<int64_t>(2));
@@ -415,13 +413,9 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   };
   auto binary_it = binary_op_to_operation.find(op_type);
   if (binary_it != binary_op_to_operation.end()) {
-    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
-    op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    op_scalar.uint32Value = binary_it->second;
-    QnnParamWrapper op_param(node_unit.Index(), node_unit.Name(),
-                             QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
-    param_tensor_names.push_back(op_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(op_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(binary_it->second),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, param_tensor_names));
   }
 
   static const std::unordered_map<std::string, uint32_t> unary_op_to_operation = {
@@ -442,13 +436,9 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   };
   auto unary_it = unary_op_to_operation.find(op_type);
   if (unary_it != unary_op_to_operation.end()) {
-    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
-    op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    op_scalar.uint32Value = unary_it->second;
-    QnnParamWrapper op_param(node_unit.Index(), node_unit.Name(),
-                             QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, op_scalar);
-    param_tensor_names.push_back(op_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(op_param));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(unary_it->second),
+                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, param_tensor_names));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
