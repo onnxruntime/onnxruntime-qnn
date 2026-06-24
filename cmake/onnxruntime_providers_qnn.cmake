@@ -53,6 +53,11 @@
 
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
 
+  if(WIN32)
+    # Required for D3D12CreateDevice (DX12 shared memory allocator for QNN GPU backend)
+    target_link_libraries(onnxruntime_providers_qnn PRIVATE d3d12.lib dxgi.lib)
+  endif()
+
   add_dependencies(onnxruntime_providers_qnn ort_core_target)
 
   message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: " ${ONNXRUNTIME_APPLICATION_INCLUDES})

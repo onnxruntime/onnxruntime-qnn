@@ -29,6 +29,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
+  CreateGroupQueryAttentionOpBuilder("GroupQueryAttention", *this);
   CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);
@@ -108,6 +109,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateScatterElementsOpBuilder("ScatterElements", *this);
   CreateScatterNDOpBuilder("ScatterND", *this);
   CreateSeluOpBuilder("Selu", *this);
+  CreateShapeOpBuilder("Shape", *this);
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
   CreateSimpleOpBuilder("Sin", *this);
