@@ -132,8 +132,8 @@ std::unique_ptr<IQnnNodeGroup> TanhGeluFusion::TryFusion(
   // Try both input orderings.
   constexpr float k0044715 = 0.044715f;
   const OrtNodeUnit* mul_0044715 = nullptr;  // Mul(0.044715, x³)
-  const OrtNodeUnit* mul_x2 = nullptr;        // Mul(x, x)  — produces x²
-  const OrtNodeUnit* mul_x3 = nullptr;        // Mul(x², x) — produces x³
+  const OrtNodeUnit* mul_x2 = nullptr;  // Mul(x, x)  — produces x²
+  const OrtNodeUnit* mul_x3 = nullptr;  // Mul(x², x) — produces x³
   std::string root_name;
 
   for (int i = 0; i < 2; ++i) {
@@ -179,7 +179,10 @@ std::unique_ptr<IQnnNodeGroup> TanhGeluFusion::TryFusion(
       // Also verify the other Add_inner input is root [x].
       if (add_inner_inputs[1 - i].name != root_name) {
         // Reset — different root
-        mul_0044715 = nullptr; mul_x3 = nullptr; mul_x2 = nullptr; root_name.clear();
+        mul_0044715 = nullptr;
+        mul_x3 = nullptr;
+        mul_x2 = nullptr;
+        root_name.clear();
         continue;
       }
       break;

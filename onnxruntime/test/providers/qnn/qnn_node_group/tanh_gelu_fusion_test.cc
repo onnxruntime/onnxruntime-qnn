@@ -18,11 +18,6 @@ namespace test {
 
 namespace {
 
-void ResetQnnGraphDir(const std::filesystem::path& json_qnn_graph_dir) {
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-}
-
 // Builds the tanh-GELU approximation pattern:
 //
 //  [x] --+-> Mul(x,x) -> Mul(x²,x) -> Mul(0.044715) -> Add --+-> Mul(sqrt2pi) -> Tanh -> Add(1) -> Mul(x) -> Mul(0.5) ==>
