@@ -30,7 +30,8 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
                                          int64_t block_width,
                                          const std::vector<int64_t>& perm,
                                          bool use_qdq,
-                                         bool use_contrib_qdq) {
+                                         bool use_contrib_qdq,
+                                         bool use_dynamic_batch = false) {
   return [=](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("spacetodepth_fusion_graph");
 
@@ -55,7 +56,7 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
                                                  use_contrib_qdq);
     }
 
-    const int64_t n = input_shape[0];
+    const int64_t n = use_dynamic_batch ? -1 : input_shape[0];
     const int64_t h = input_shape[2];
     const int64_t w = input_shape[3];
     const int64_t h_div = h / block_height;
@@ -261,7 +262,8 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                                bool use_qdq,
                                bool use_contrib_qdq,
                                const std::string& backend_type,
-                               float fp32_abs_err = 1e-2f) {
+                               float fp32_abs_err = 1e-2f,
+                               bool use_dynamic_batch = false) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
@@ -276,7 +278,7 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
-  RunQnnModelTest(BuildSpaceToDepthTestCase<QuantType>(input_shape, block_height, block_width, perm, use_qdq, use_contrib_qdq),
+  RunQnnModelTest(BuildSpaceToDepthTestCase<QuantType>(input_shape, block_height, block_width, perm, use_qdq, use_contrib_qdq, use_dynamic_batch),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -552,6 +554,36 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16_CRD) {
                                       /*use_qdq=*/true,
                                       /*use_contrib_qdq=*/true,
                                       /*backend_type=*/"htp");
+}
+
+// Tests for dynamic batch size (-1 in Reshape shape initializer).
+// Regression test: HasSpaceToDepthCoreSignature was rejecting -1 (ONNX dynamic batch marker).
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_DynamicBatch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_DynamicBatch",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/1e-2f,
+                            /*use_dynamic_batch=*/true);
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_DynamicBatch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_DynamicBatch",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/true,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/2.9e-2f,
+                            /*use_dynamic_batch=*/true);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
