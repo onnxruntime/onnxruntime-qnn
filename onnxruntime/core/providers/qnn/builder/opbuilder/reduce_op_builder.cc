@@ -320,7 +320,6 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape), "Cannot get input shape.");
     std::vector<uint32_t> output_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Cannot get output shape.");
-    RETURN_IF(input.quant_param.has_value(), "Input tensor must not be quantized.");
     Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(false, output.type, qnn_data_type));
     const std::string input_name = input_names[0];
