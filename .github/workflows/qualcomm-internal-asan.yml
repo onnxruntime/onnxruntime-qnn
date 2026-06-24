@@ -24,6 +24,8 @@ jobs:
         run: |
           echo "===== df -h ====="
           df -h
+          echo "===== actions-runner top-level ====="
+          du -h -d1 /local/mnt/workspace/actions-runner 2>/dev/null | sort -h | tail -20
           echo "===== Top dirs under workspace parent ====="
           du -h -d1 "$(dirname "${{ github.workspace }}")" 2>/dev/null | sort -h | tail -20
           echo "===== Top dirs under HOME ====="
