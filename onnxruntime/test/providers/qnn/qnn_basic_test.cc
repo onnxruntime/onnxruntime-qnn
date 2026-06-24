@@ -1942,7 +1942,7 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
-TEST_F(QnnGPUBackendTests, ElementWiseAbsoluteVerifier) {
+TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
   ProviderOptions options;
   options["backend_type"] = "gpu";
 
@@ -1965,7 +1965,7 @@ TEST_F(QnnGPUBackendTests, CosineSimilarityVerifier) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   options,
                   13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, CosineSimilarityVerifier(0.99)});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, CosineSimilarityVerifier(0.99f)});
 }
 
 // Returns true if QNN EP was created and QNN HTP shared memory allocator is available, false otherwise.

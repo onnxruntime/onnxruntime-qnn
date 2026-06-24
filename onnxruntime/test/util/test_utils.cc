@@ -54,6 +54,7 @@ void VerifyCosineSimilarityOutput(const std::string& output_name,
   const float denom = std::sqrt(expected_norm_sq) * std::sqrt(actual_norm_sq);
   const float cosine_similarity = denom > 0.0f
                                       ? dot / denom
+                                      // If one vector is null, let cs=1 if the other is also null and cs=0 otherwise.
                                       : ((expected_norm_sq == 0.0f && actual_norm_sq == 0.0f) ? 1.0f : 0.0f);
 
   EXPECT_GE(cosine_similarity, verifier.fp32_cs_threshold) << "Cosine similarity below threshold for " << output_name;
@@ -65,10 +66,10 @@ void VerifyFloatOutput(const std::string& output_name,
                        const T* actual_data,
                        size_t element_count,
                        const TensorVerifier& verifier) {
-  if (verifier.index() == 0) {
+  if (std::holds_alternative<ElementwiseAbsoluteVerifier>(verifier)) {
     VerifyElementwiseAbsoluteOutput(output_name, expected_data, actual_data, element_count,
                                     std::get<ElementwiseAbsoluteVerifier>(verifier));
-  } else if (verifier.index() == 1) {
+  } else if (std::holds_alternative<CosineSimilarityVerifier>(verifier)) {
     VerifyCosineSimilarityOutput(output_name, expected_data, actual_data, element_count,
                                  std::get<CosineSimilarityVerifier>(verifier));
   } else {
