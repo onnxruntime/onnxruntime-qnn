@@ -1268,8 +1268,15 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
     return qnn_status.release();
   }
 
+  bool second_resize_reached = false;
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
-    Ort::Status support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
+    // Ort::Status support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
+    Ort::Status support_status = Ort::Status();
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Node: " + qnn_node_group->GetTargetNodeUnit()->Name()).c_str());
+    second_resize_reached = second_resize_reached || qnn_node_group->GetTargetNodeUnit()->Name() == "/Resize_1";
+    if (second_resize_reached) {
+      support_status = MAKE_EP_FAIL("[DEBUG]: Deliberately fallback sub-sequent nodes after /Resize_1.");
+    }
     const bool supported = support_status.IsOK();
 
     LogNodeSupport(logger_, *qnn_node_group, support_status);
