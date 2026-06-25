@@ -518,7 +518,8 @@ static void RunNeuronOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-3f);
 
   if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
     return;

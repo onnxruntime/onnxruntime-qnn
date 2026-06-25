@@ -344,8 +344,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   if (op_type == "Elu") {
-    RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
-                                         QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, param_tensor_names));
     Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
     neuron_operation.dataType = QNN_DATATYPE_UINT_32;
     neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_ELU;
@@ -353,6 +351,9 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                     QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
     param_tensor_names.push_back(operation_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+
+    RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
+                                         QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, param_tensor_names));
   }
 
   if (op_type == "Gelu") {
