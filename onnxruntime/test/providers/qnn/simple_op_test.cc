@@ -496,10 +496,10 @@ static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
   return false;
 }
 
-// Builds a single-op float32 model (input -> <op_type> -> output), dumps the composed QNN graph,
-// and asserts the op is emitted as the unified "ElementWiseNeuron" op (and that the op's old
-// dedicated QNN op name is absent). Verifies the QNN_OP_ELEMENT_WISE_NEURON migration at the
-// op-type level, which the accuracy-only RunQDQOpTest tests above do not check.
+// Builds a uint8 QDQ model (Q -> <op_type> -> DQ), dumps the composed QNN graph, and asserts the
+// op is emitted as the unified "ElementWiseNeuron" op (and that the op's old dedicated QNN op name
+// is absent). Uses QDQ rather than a float model so the test runs on the x86 HTP emulator, where
+// float ElementWiseNeuron ops are unsupported as standalone graph outputs.
 static void RunNeuronOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
                                 const std::string& op_type,
                                 const std::string& legacy_qnn_op_name) {
@@ -514,12 +514,13 @@ static void RunNeuronOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
-  auto input_def = TestInputDef<float>({1, 2, 2, 2}, /*is_initializer=*/false, -1.0f, 1.0f);
-  RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+  std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({1, 2, 2, 2}, /*is_initializer=*/false, -1.0f, 1.0f)};
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, input_defs, {}, {}),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
   if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
     return;
