@@ -5,7 +5,6 @@
 
 #include <string>
 
-#include "core/graph/graph.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
