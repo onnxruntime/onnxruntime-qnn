@@ -784,7 +784,7 @@ static void RunQDQBlockQuantConv2DOpTest(
     int64_t block_size,
     int64_t weight_quant_axis,
     bool quantize_bias,
-    bool bias_per_channel
+    bool bias_per_channel,
     QDQTolerance tolerance = QDQTolerance(),
     ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
     int opset = 21,
