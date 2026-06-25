@@ -401,32 +401,23 @@ Ort::Status BaseOpBuilder::SetOutputQParamEqualToInputIfNearlyEqual(QnnModelWrap
   return Ort::Status();
 }
 
-Ort::Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                                const OrtNodeUnit& node_unit,
-                                                Qnn_Scalar_t& axis_qnn_scalar,
-                                                int32_t& default_axis_value) const {
+Ort::Status BaseOpBuilder::GetCanonicalizedAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnit& node_unit,
+                                                         const std::string& attr_name,
+                                                         int32_t default_axis,
+                                                         int32_t& axis_out) const {
   const auto& inputs = node_unit.Inputs();
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   auto rank = static_cast<int32_t>(input_shape.size());
   OrtNodeAttrHelper node_helper(node_unit);
-  int32_t onnx_axis = node_helper.Get("axis", default_axis_value);
-  if (onnx_axis < 0) {
-    onnx_axis += rank;
+  int32_t axis = node_helper.Get(attr_name, default_axis);
+  if (axis < 0) {
+    axis += rank;
   }
-  RETURN_IF_NOT((onnx_axis >= 0 && onnx_axis < rank), "QNN requires axis range [0, rank-1].");
-  default_axis_value = onnx_axis;
-
-  bool is_gather_op = (node_unit.OpType() == "Gather" || node_unit.OpType() == "GatherBlockQuantized");
-  if (is_gather_op) {
-    axis_qnn_scalar.dataType = QNN_DATATYPE_INT_32;
-    axis_qnn_scalar.int32Value = onnx_axis;
-  } else {
-    axis_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-    axis_qnn_scalar.uint32Value = static_cast<uint32_t>(onnx_axis);
-  }
-
+  RETURN_IF_NOT((axis >= 0 && axis < rank), "QNN requires axis range [0, rank-1].");
+  axis_out = axis;
   return Ort::Status();
 }
 

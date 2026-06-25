@@ -399,10 +399,9 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
 #endif
 
   if (QNN_GRAPH_NO_ERROR != status) {
-    std::ostringstream oss;
-    oss << "Failed to finalize QNN graph. Error code: " << status;
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    return MAKE_EP_FAIL("Failed to finalize QNN graph.");
+    return MAKE_EP_FAIL(("Failed to finalize QNN graph. " +
+                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), status))
+                            .c_str());
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
@@ -450,8 +449,9 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
   ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
   OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
-  const bool uses_shared_memory = (ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
-                                   ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE);
+  const bool uses_shared_memory =
+      ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
+      ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
 
   if (!uses_shared_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
@@ -641,7 +641,9 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   }
 
   if (QNN_GRAPH_NO_ERROR != execute_status) {
-    return MAKE_EP_FAIL(("QNN graph execute error. Error code: " + std::to_string(execute_status)).c_str());
+    return MAKE_EP_FAIL(("QNN graph execute error. " +
+                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
+                            .c_str());
   }
 
   return Ort::Status();

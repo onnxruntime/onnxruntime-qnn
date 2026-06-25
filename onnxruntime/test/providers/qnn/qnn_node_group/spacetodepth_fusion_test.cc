@@ -34,7 +34,10 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
   return [=](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("spacetodepth_fusion_graph");
 
-    const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    // input_shape[0] may be -1 (dynamic batch); replace with 1 for concrete test data allocation.
+    std::vector<int64_t> data_shape = input_shape;
+    std::replace(data_shape.begin(), data_shape.end(), static_cast<int64_t>(-1), static_cast<int64_t>(1));
+    const auto input_def = TestInputDef<float>(data_shape, false, -1.0f, 1.0f);
     MakeTestInput<float>(builder, "input", input_def);
 
     // Add layout-sensitive Conv around RTR so wrapped fusion can trigger.
@@ -55,7 +58,7 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
                                                  use_contrib_qdq);
     }
 
-    const int64_t n = input_shape[0];
+    const int64_t n = input_shape[0];  // may be -1 for dynamic batch
     const int64_t h = input_shape[2];
     const int64_t w = input_shape[3];
     const int64_t h_div = h / block_height;
@@ -552,6 +555,34 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16_CRD) {
                                       /*use_qdq=*/true,
                                       /*use_contrib_qdq=*/true,
                                       /*backend_type=*/"htp");
+}
+
+// Tests for dynamic batch size (-1 in Reshape shape initializer).
+// Regression test: HasSpaceToDepthCoreSignature was rejecting -1 (ONNX dynamic batch marker).
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_DynamicBatch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_DynamicBatch",
+                            /*input_shape=*/{-1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/1e-2f);
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_DynamicBatch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_DynamicBatch",
+                            /*input_shape=*/{-1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/true,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/2.9e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

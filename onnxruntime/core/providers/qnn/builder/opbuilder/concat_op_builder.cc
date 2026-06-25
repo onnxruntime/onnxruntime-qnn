@@ -91,12 +91,10 @@ Ort::Status ConcatOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   std::vector<std::string> param_tensor_names;
 
   // Process axis attribute
-  int32_t default_axis = 0;
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, default_axis));
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_CONCAT_PARAM_AXIS, axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+  int32_t axis = 0;
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         static_cast<uint32_t>(axis), QNN_OP_CONCAT_PARAM_AXIS, param_tensor_names));
 
   // Process outputs
   return ProcessOutputs(qnn_model_wrapper, node_unit,

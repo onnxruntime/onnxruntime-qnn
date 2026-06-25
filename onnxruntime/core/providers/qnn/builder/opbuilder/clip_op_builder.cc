@@ -187,7 +187,7 @@ Ort::Status ClipOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(ProcessClipMinMax(qnn_model_wrapper, inputs[1], min_value));
   }
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), min_value,
-                                      QNN_OP_RELU_MIN_MAX_PARAM_MIN_VALUE, param_tensor_names));
+                                      QNN_OP_ELEMENT_WISE_NEURON_PARAM_MIN_VALUE, param_tensor_names));
 
   // Set the 'max' parameter.
   float max_value = std::numeric_limits<float>::max();
@@ -195,7 +195,17 @@ Ort::Status ClipOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(ProcessClipMinMax(qnn_model_wrapper, inputs[2], max_value));
   }
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), max_value,
-                                      QNN_OP_RELU_MIN_MAX_PARAM_MAX_VALUE, param_tensor_names));
+                                      QNN_OP_ELEMENT_WISE_NEURON_PARAM_MAX_VALUE, param_tensor_names));
+
+  // Clip maps to QNN_OP_ELEMENT_WISE_NEURON with the RELU_MIN_MAX operation, which requires the
+  // mandatory 'operation' scalar param in addition to min_value/max_value.
+  Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+  neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+  neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_RELU_MIN_MAX;
+  QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+  param_tensor_names.push_back(operation_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
 
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
                                  std::move(input_names),

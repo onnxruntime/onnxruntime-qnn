@@ -9,6 +9,7 @@
 
 #include "QnnInterface.h"
 
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -19,7 +20,10 @@ namespace onnxruntime::qnn {
 // The associated QNN context is expected to be in scope for the lifetime of the QnnContextMemHandleManager.
 class QnnContextMemHandleManager {
  public:
-  QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ContextHandle_t qnn_context);
+  QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                             Qnn_ContextHandle_t qnn_context,
+                             QnnBackendType qnn_backend_type,
+                             QnnAllocatorType qnn_allocator_type);
 
   ~QnnContextMemHandleManager();
 
@@ -40,6 +44,8 @@ class QnnContextMemHandleManager {
  private:
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   Qnn_ContextHandle_t context_;
+  QnnBackendType qnn_backend_type_;
+  QnnAllocatorType qnn_allocator_type_;
 
   // assume Qnn_MemHandle_t is a pointer and able to be wrapped with std::unique_ptr
   static_assert(std::is_pointer_v<Qnn_MemHandle_t>);
