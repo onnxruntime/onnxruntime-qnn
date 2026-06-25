@@ -90,8 +90,16 @@ function get_java17_contentdir() {
   get_package_contentdir java17_$(get_host_platform)
 }
 
+function get_hexagon_sdk_contentdir() {
+    get_package_contentdir hexagon_linux_x86_64
+}
+
 function get_linux_oe_gcc112_toolchain_root() {
     get_package_contentdir "linux_oe_gcc112_toolchain"
+}
+
+function get_llvm_contentdir() {
+    get_package_contentdir llvm_linux_x86_64
 }
 
 #

@@ -401,32 +401,23 @@ Ort::Status BaseOpBuilder::SetOutputQParamEqualToInputIfNearlyEqual(QnnModelWrap
   return Ort::Status();
 }
 
-Ort::Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                                const OrtNodeUnit& node_unit,
-                                                Qnn_Scalar_t& axis_qnn_scalar,
-                                                int32_t& default_axis_value) const {
+Ort::Status BaseOpBuilder::GetCanonicalizedAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnit& node_unit,
+                                                         const std::string& attr_name,
+                                                         int32_t default_axis,
+                                                         int32_t& axis_out) const {
   const auto& inputs = node_unit.Inputs();
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   auto rank = static_cast<int32_t>(input_shape.size());
   OrtNodeAttrHelper node_helper(node_unit);
-  int32_t onnx_axis = node_helper.Get("axis", default_axis_value);
-  if (onnx_axis < 0) {
-    onnx_axis += rank;
+  int32_t axis = node_helper.Get(attr_name, default_axis);
+  if (axis < 0) {
+    axis += rank;
   }
-  RETURN_IF_NOT((onnx_axis >= 0 && onnx_axis < rank), "QNN requires axis range [0, rank-1].");
-  default_axis_value = onnx_axis;
-
-  bool is_gather_op = (node_unit.OpType() == "Gather");
-  if (is_gather_op) {
-    axis_qnn_scalar.dataType = QNN_DATATYPE_INT_32;
-    axis_qnn_scalar.int32Value = onnx_axis;
-  } else {
-    axis_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-    axis_qnn_scalar.uint32Value = static_cast<uint32_t>(onnx_axis);
-  }
-
+  RETURN_IF_NOT((axis >= 0 && axis < rank), "QNN requires axis range [0, rank-1].");
+  axis_out = axis;
   return Ort::Status();
 }
 
@@ -442,6 +433,56 @@ Ort::Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
   bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
   RETURN_IF(is_cpu_backend && onnx_tensor_data_type != float_elem_type, error_msg.c_str());
 
+  return Ort::Status();
+}
+
+Ort::Status ResolvePoolAttributes(const OrtNodeAttrHelper& node_helper,
+                                  gsl::span<const uint32_t> input_shape,
+                                  gsl::span<const uint32_t> output_shape,
+                                  std::vector<uint32_t>& filter_size,
+                                  std::vector<uint32_t>& stride,
+                                  std::vector<uint32_t>& dilations,
+                                  std::vector<uint32_t>& pad_amount,
+                                  int32_t& rounding_mode) {
+  const size_t rank = input_shape.size();
+  const size_t spatial_rank = rank - 2;
+
+  {
+    auto raw = node_helper.Get("kernel_shape", std::vector<uint32_t>(spatial_rank, 1));
+    filter_size = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
+  }
+  {
+    auto raw = node_helper.Get("strides", std::vector<uint32_t>(spatial_rank, 1));
+    stride = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
+  }
+  {
+    auto raw = node_helper.Get("dilations", std::vector<uint32_t>(spatial_rank, 1));
+    dilations = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : std::move(raw);
+  }
+  {
+    auto raw = node_helper.Get("pads", std::vector<uint32_t>(spatial_rank * 2, 0));
+    pad_amount = (raw.size() == 2) ? std::vector<uint32_t>{0, raw[0], 0, raw[1]} : std::move(raw);
+  }
+
+  const auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
+  if (auto_pad != "NOTSET") {
+    for (size_t axis = 0; axis < spatial_rank; ++axis) {
+      if (auto_pad == "SAME_UPPER" || auto_pad == "SAME_LOWER") {
+        const uint32_t total_pads = (output_shape[axis + 1] - 1) * stride[axis] +
+                                    (filter_size[axis] - 1) * dilations[axis] + 1 -
+                                    input_shape[axis + 1];
+        if (auto_pad == "SAME_LOWER") {
+          pad_amount[axis + spatial_rank] = total_pads / 2;
+          pad_amount[axis] = total_pads - pad_amount[axis + spatial_rank];
+        } else {
+          pad_amount[axis] = total_pads / 2;
+          pad_amount[axis + spatial_rank] = total_pads - pad_amount[axis];
+        }
+      }
+    }
+  }
+
+  rounding_mode = node_helper.Get("ceil_mode", rounding_mode);
   return Ort::Status();
 }
 

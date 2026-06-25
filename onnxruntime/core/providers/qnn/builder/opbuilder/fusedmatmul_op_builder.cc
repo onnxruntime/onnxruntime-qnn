@@ -150,25 +150,15 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
   // Skip using transpose_in0 param when both transA and transBatchA are present
   // Only use transpose_in0 when transA is present and transBatchA is not present
   if (!(transA && transBatchA)) {
-    Qnn_Scalar_t transpose_a_scalar = QNN_SCALAR_INIT;
-    transpose_a_scalar.dataType = QNN_DATATYPE_BOOL_8;
-    transpose_a_scalar.bool8Value = transA ? 1 : 0;
-    QnnParamWrapper transpose_a_param(node_unit.Index(), node_unit.Name(),
-                                      QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, transpose_a_scalar);
-    matmul_param_tensor_names.push_back(transpose_a_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(transpose_a_param));
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), transA,
+                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, matmul_param_tensor_names));
   }
 
   // Skip using transpose_in1 param when both transB and transBatchB are present
   // Only use transpose_in1 when transB is present and transBatchB is not present
   if (!(transB && transBatchB)) {
-    Qnn_Scalar_t transpose_b_scalar = QNN_SCALAR_INIT;
-    transpose_b_scalar.dataType = QNN_DATATYPE_BOOL_8;
-    transpose_b_scalar.bool8Value = transB ? 1 : 0;
-    QnnParamWrapper transpose_b_param(node_unit.Index(), node_unit.Name(),
-                                      QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, transpose_b_scalar);
-    matmul_param_tensor_names.push_back(transpose_b_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(transpose_b_param));
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), transB,
+                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, matmul_param_tensor_names));
   }
 
   // QNN doesn't directly support batch dimension transposition in MatMul
@@ -267,12 +257,17 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                           std::move(alpha_data));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensor_wrapper)), "Failed to add alpha tensor.");
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_scale"),
+    std::string alpha_scale_node_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_scale");
+    std::vector<std::string> alpha_mul_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), alpha_scale_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, alpha_mul_param_names));
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(alpha_scale_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
+                                                  QNN_OP_ELEMENT_WISE_BINARY,
                                                   {matmul_output_name, alpha_tensor_name},
                                                   {output_name},
-                                                  {},
+                                                  std::move(alpha_mul_param_names),
                                                   do_op_validation),
                   "Failed to create alpha scaling node for FusedMatMul.");
   }

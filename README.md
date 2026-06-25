@@ -10,7 +10,7 @@ This repository is maintained by Qualcomm. For the general ONNX Runtime project,
 
 ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)**. The QNN EP is a *plugin* EP — a separately distributed shared library that plugs into a standard ONNX Runtime installation at runtime, without requiring a custom ORT build.
 
-> **QNN EP 2.2.0 is the Plugin QNN EP.** Starting with version 2.0.0, the QNN EP ships as a standalone plugin package (`onnxruntime-qnn>=2.0.0`) that works with any standard ORT installation — no custom build required. [Learn more about Plugin EPs →](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/)
+> **QNN EP 2.3.0 is the Plugin QNN EP.** Starting with version 2.0.0, the QNN EP ships as a standalone plugin package (`onnxruntime-qnn>=2.0.0`) that works with any standard ORT installation — no custom build required. [Learn more about Plugin EPs →](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/)
 
 <br/>
 <p align="center"><img width="80%" src="docs/images/PluginEP-final.png" /></p>
@@ -21,6 +21,18 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 | Distribution | Bundled with ORT | Separate package |
 | ORT build required | Yes | No |
 | Install | `pip install onnxruntime-qnn==1.x.x` | `pip install onnxruntime-qnn==`**`2.x.x`** |
+
+---
+
+## Platform Support
+
+| Package | Windows ARM64 | Windows x64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|
+| Python Wheel | Inference | AOT compilation | Inference | AOT compilation | — |
+| NuGet | Inference | — | — | — | — |
+| ZIP | Inference | — | — | — | — |
+| tgz | — | — | Inference | — | — |
+| Maven | — | — | — | — | Inference |
 
 ---
 
@@ -39,6 +51,9 @@ The Plugin QNN EP workflow is different from the classic built-in EP. Follow the
 ```python
 import onnxruntime as ort
 import onnxruntime_qnn as qnn_ep
+
+# ORT QNN EP Version
+print(qnn_ep.__version__)
 
 # Register QNN EP library
 ep_lib_path = qnn_ep.get_library_path()
@@ -75,7 +90,7 @@ ort.unregister_execution_provider_library(lib_registration_name)
 
 ```bash
 pip install onnxruntime==1.24.4
-pip install onnxruntime-qnn==2.2.0
+pip install onnxruntime-qnn==2.3.0
 ```
 
 **Requirements:**
@@ -84,10 +99,11 @@ pip install onnxruntime-qnn==2.2.0
 - Python 3.11 – 3.14
 - Numpy 1.25.2 or >= 1.26.4
 
-For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 only)
+For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 (ARM64X))
 
 ### Linux Wheels and .tgz Files
 
+- **2.3.0+**: Linux x86_64 Wheels available (Preview)
 - **2.1.1+**: Linux ARM64 Wheels and .tgz files available
 - **2.1.0**: Linux ARM64 preview wheels available
 - **2.0.0**: No Linux ARM64 Wheels or .tgz files

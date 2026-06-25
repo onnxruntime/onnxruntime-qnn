@@ -30,6 +30,8 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/op_package/op_package.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
@@ -108,13 +110,6 @@ class QnnSerializerConfig {
   std::string graph_name_{"graph"};
 };
 
-struct OpPackage {
-  std::string op_type;
-  std::string path;
-  std::string interface;
-  std::string target;
-};
-
 // configuration values for QnnBackendManager creation
 struct QnnBackendManagerConfig {
   std::string backend_path;
@@ -128,6 +123,12 @@ struct QnnBackendManagerConfig {
   uint32_t soc_model;
   std::vector<OpPackage> op_packages;
   bool skip_qnn_version_check;
+  // When true, framework op tracing is active for the session and the profiling
+  // CSV gains the `ONNX Source Ops` column. Provided here alongside the other
+  // profiling settings so it is set once at backend-manager construction and
+  // remains constant for the manager's lifetime.
+  bool enable_framework_op_trace = false;
+  bool skip_backend_op_validation = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -152,6 +153,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         profiling_level_etw_(config.profiling_level_etw),
         profiling_level_(config.profiling_level),
         profiling_file_path_(config.profiling_file_path),
+        enable_framework_op_trace_(config.enable_framework_op_trace),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
@@ -159,6 +161,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         soc_model_(config.soc_model),
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
+        skip_backend_op_validation_(config.skip_backend_op_validation),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
@@ -207,6 +210,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const QNN_INTERFACE_VER_TYPE& GetQnnInterface() { return qnn_interface_; }
 
+  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() { return qnn_validator_interface_; }
+
   const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() { return qnn_sys_interface_; }
 
   const Qnn_ContextHandle_t& GetQnnContext(int index = 0) {
@@ -222,6 +227,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const Qnn_BackendHandle_t& GetQnnBackendHandle() { return backend_handle_; }
 
+  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() { return validator_backend_handle_; }
+
   const Qnn_DeviceHandle_t& GetQnnDeviceHandle() { return device_handle_; }
 
   const Qnn_ProfileHandle_t& GetQnnProfileHandle() { return profile_backend_handle_; }
@@ -231,7 +238,27 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status ResetQnnLogLevel(std::optional<OrtLoggingLevel> ort_log_level = std::nullopt);
 
-  Ort::Status ExtractBackendProfilingInfo(qnn::profile::ProfilingInfo& profiling_info);
+  Ort::Status ExtractBackendProfilingInfo(profile::ProfilingInfo& profiling_info);
+
+  // Framework op tracing: profiling enrichment lookup, shared across all
+  // QnnModels in this session. Populated by:
+  //   - JIT path:  ComposeGraph() merges each per-graph lookup via
+  //                MergeOpTraceLookup() after the trace collector finalizes.
+  //   - AOT path:  CompileContextModel() loads the sidecar JSON via
+  //                SetOpTraceLookup() before any context binary is loaded.
+  // Self-attached to the local ProfilingInfo inside ExtractBackendProfilingInfo
+  // when profiling is at DETAILED/OPTRACE level (per-NODE events) and op
+  // tracing is enabled.
+  void SetOpTraceLookup(OpTraceLookup&& lookup) { op_trace_lookup_ = std::move(lookup); }
+  // Merges `other` into the session-wide lookup. On key collision the entry
+  // from `other` wins (last-write-wins), matching the operator[] semantics
+  // already used by OpTraceCollector::Finalize and LoadTraceLookupFromFile
+  // when they populate a lookup. `other` is consumed.
+  void MergeOpTraceLookup(OpTraceLookup&& other) {
+    for (auto& kv : other) {
+      op_trace_lookup_[kv.first] = std::move(kv.second);
+    }
+  }
 
   Ort::Status ExtractProfilingSubEvents(QnnProfile_EventId_t profile_event_id, profile::Serializer& profile_writer,
                                         bool backendSupportsExtendedEventData);
@@ -246,11 +273,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
+  void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
+  QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
+
   Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }
 
   QnnHtpDevice_Arch_t GetHtpArch() { return htp_arch_internal_; }
+
+  uint32_t GetSocModel() const { return soc_model_; }
 
   // Get backend library directory by adopting identical logic as in LoadLib.
   std::string GetBackendLibDir() {
@@ -328,16 +360,54 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
+  bool IsDx12SharedMemoryAllocatorSupported();
+
  private:
   Ort::Status LoadBackend();
 
+  // Shared implementation for InitializeBackend / InitializeValidatorBackend.
+  Ort::Status InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                      Qnn_LogHandle_t log_handle,
+                                      Qnn_BackendHandle_t& backend_handle,
+                                      bool& initialized_flag,
+                                      const std::string& backend_label);
+
   Ort::Status InitializeBackend();
+
+  Ort::Status InitializeValidatorBackend();
+
+  // Shared implementation for CreateDevice / CreateValidatorDevice.
+  // `allow_hw_device_enumeration` controls whether to honor `device_id_` and pass
+  // platform-info configs to deviceCreate. The validator backend is a host-side shim
+  // with no real hardware to enumerate, so it always passes false.
+  Ort::Status CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                 Qnn_LogHandle_t log_handle,
+                                 Qnn_DeviceHandle_t& device_handle,
+                                 bool& device_created_flag,
+                                 bool allow_hw_device_enumeration);
 
   Ort::Status CreateDevice();
 
+  Ort::Status CreateValidatorDevice();
+
+  // Shared implementation for ReleaseDevice / ReleaseValidatorDevice.
+  Ort::Status ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                  Qnn_DeviceHandle_t& device_handle,
+                                  bool& device_created_flag);
+
   Ort::Status ReleaseDevice();
 
+  Ort::Status ReleaseValidatorDevice();
+
+  // Shared implementation for ShutdownBackend / ShutdownValidatorBackend.
+  Ort::Status ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                    Qnn_BackendHandle_t& backend_handle,
+                                    bool& initialized_flag,
+                                    const std::string& backend_label);
+
   Ort::Status ShutdownBackend();
+
+  Ort::Status ShutdownValidatorBackend();
 
   Ort::Status InitializeProfiling();
 
@@ -366,9 +436,28 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status ReleaseContext();
 
+  // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
+  Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                     Qnn_LogHandle_t& log_handle,
+                                     const std::string& backend_label);
+
   // Creates a corresponding QNN logger with the same log level.
   // NOTE: caller must lock the `logger_recursive_mutex_` before calling this function.
   Ort::Status InitializeQnnLog();
+
+  Ort::Status InitializeQnnValidatorLog();
+
+  // Shared implementation for TerminateQnnLog calls.
+  // Resets log_handle to nullptr before returning, even on failure, so other threads
+  // waiting on logger_recursive_mutex_ can observe the handle is gone.
+  Ort::Status TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                    Qnn_LogHandle_t& log_handle,
+                                    const std::string& backend_label);
+
+  Ort::Status SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                   Qnn_LogHandle_t log_handle,
+                                   QnnLog_Level_t qnn_log_level,
+                                   const std::string& label);
 
   // Terminate logging in the backend
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
@@ -404,7 +493,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       Qnn_Version_t req_version,
                                       T** interface_provider);
 
-  bool IsDevicePropertySupported();
+  bool IsDevicePropertySupported(const QNN_INTERFACE_VER_TYPE& interface);
 
   std::string GetBackendBuildId() {
     char* backend_build_id{nullptr};
@@ -547,13 +636,22 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
+  // Invariant: qnn_validator_interface_ and validator_backend_handle_ are always set together
+  // by LoadQnnSerializerBackend() (serializer flow: QnnIr). Both remain zero/null in all other flows.
+  // QnnModelWrapper::ValidateQnnNode() uses validator_backend_handle_ != nullptr as the sole signal
+  // to route backendValidateOpConfig to the validator interface rather than qnn_interface_.
+  QNN_INTERFACE_VER_TYPE qnn_validator_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
   QNN_SYSTEM_INTERFACE_VER_TYPE qnn_sys_interface_ = QNN_SYSTEM_INTERFACE_VER_TYPE_INIT;
   void* backend_lib_handle_ = nullptr;
+  void* validator_backend_lib_handle_ = nullptr;
   void* system_lib_handle_ = nullptr;
   Qnn_BackendHandle_t backend_handle_ = nullptr;
+  Qnn_BackendHandle_t validator_backend_handle_ = nullptr;
   QnnBackend_Config_t** backend_config_ = nullptr;
   Qnn_LogHandle_t log_handle_ = nullptr;
+  Qnn_LogHandle_t validator_log_handle_ = nullptr;
   Qnn_DeviceHandle_t device_handle_ = nullptr;
+  Qnn_DeviceHandle_t validator_device_handle_ = nullptr;
 
   // Map of Qnn_ContextHandle_t to QnnContextHandleRecord.
   // The QnnContextHandleRecord has ownership of the Qnn_ContextHandle_t.
@@ -574,12 +672,27 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const std::string profiling_file_path_;
   bool system_lib_loaded_ = false;
 
+  // ----------------------------------------------------------------------
+  // Framework op tracing (profiling CSV enrichment).
+  //
+  // Session-scoped state used to annotate the profiling CSV's `ONNX Source Ops`
+  // column. Read by ExtractBackendProfilingInfo() via &op_trace_lookup_.
+  //   - enable_framework_op_trace_: fixed at construction so the CSV header
+  //     and per-NODE rows agree across every graph's events.
+  //   - op_trace_lookup_: populated by SetOpTraceLookup (AOT sidecar) /
+  //     MergeOpTraceLookup (JIT, per-graph). See those accessor comments.
+  // ----------------------------------------------------------------------
+  const bool enable_framework_op_trace_ = false;
+  OpTraceLookup op_trace_lookup_;
+
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool profiling_enabled_ = false;
 #endif
 
   bool backend_initialized_ = false;
+  bool validator_backend_initialized_ = false;
   bool device_created_ = false;
+  bool validator_device_created_ = false;
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   int htp_share_resource_optimization_ = -1;
@@ -597,6 +710,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // NPU backend requires quantized model
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+  QnnAllocatorType qnn_allocator_type_ = QnnAllocatorType::NONE;
+  std::optional<bool> dx12_shared_memory_allocator_supported_ = std::nullopt;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;
   ContextPriority context_priority_;
   std::string sdk_build_version_ = "";
@@ -609,6 +724,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t soc_model_ = QNN_SOC_MODEL_UNKNOWN;
   const std::vector<OpPackage> op_packages_;
   bool skip_qnn_version_check_ = false;
+  // When true, skip wiring up the target-backend validator during DLC dump so that
+  // op validation falls back to the serializer's generic checks (see SetupBackend).
+  bool skip_backend_op_validation_ = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 

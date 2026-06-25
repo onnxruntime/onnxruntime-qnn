@@ -4,6 +4,7 @@
 #include "onnxruntime_c_api.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <gsl/gsl>
 #include <optional>
 #include <string>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -478,6 +480,72 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu) {
                         {},
                         14,
                         ExpectedEPNodeAssignment::All);
+}
+
+// Returns true if at least one QNN JSON graph file exists in `dump_dir`. Used to skip graph
+// assertions when the test was not executed (e.g., FP32 HTP unavailable on this architecture and
+// no JSON dump is produced).
+static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
+  if (!std::filesystem::exists(dump_dir)) return false;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Builds a uint8 QDQ model (Q -> <op_type> -> DQ), dumps the composed QNN graph, and asserts the
+// op is emitted as the unified "ElementWiseNeuron" op (and that the op's old dedicated QNN op name
+// is absent). Uses QDQ rather than a float model so the test runs on the x86 HTP emulator, where
+// float ElementWiseNeuron ops are unsupported as standalone graph outputs.
+static void RunNeuronOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
+                                const std::string& op_type,
+                                const std::string& legacy_qnn_op_name) {
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup =
+      gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({1, 2, 2, 2}, /*is_initializer=*/false, -1.0f, 1.0f)};
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, input_defs, {}, {}),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, legacy_qnn_op_name, /*count=*/0);
+}
+
+// Standalone Relu/Sigmoid/Tanh/Elu now map to QNN_OP_ELEMENT_WISE_NEURON. Assert the emitted op
+// type rather than just accuracy.
+TEST_F(QnnHTPBackendTests, NeuronOpType_Relu) {
+  RunNeuronOpTypeTest("NeuronOpType_Relu", "Relu", "Relu");
+}
+
+TEST_F(QnnHTPBackendTests, NeuronOpType_Sigmoid) {
+  RunNeuronOpTypeTest("NeuronOpType_Sigmoid", "Sigmoid", "Sigmoid");
+}
+
+TEST_F(QnnHTPBackendTests, NeuronOpType_Tanh) {
+  RunNeuronOpTypeTest("NeuronOpType_Tanh", "Tanh", "Tanh");
+}
+
+TEST_F(QnnHTPBackendTests, NeuronOpType_Elu) {
+  RunNeuronOpTypeTest("NeuronOpType_Elu", "Elu", "Elu");
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U8) {
@@ -1837,6 +1905,45 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU16) {
                          {},
                          21,
                          ExpectedEPNodeAssignment::All);
+}
+
+// Test that QDQ uint16 HardSigmoid -> Mul produces correct output
+// Reproduces MobileNetV3 SE block accuracy bug where HardSigmoid output scale must be
+// overridden to 1/65536 for HTP to compute Mul correctly
+TEST_F(QnnHTPBackendTests, HardSigmoidMul_QU16_ScaleOverride) {
+  // Build: input -> HardSigmoid -> Mul(input, hardsigmoid_output) -> output
+  // This mimics SE attention: x * sigmoid(fc(x))
+  auto input_def = TestInputDef<float>({1, 16, 1, 1}, false, GetFloatDataInRange(-3.0f, 3.0f, 16));
+
+  auto build_f32_model = [input_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    builder.AddNode("HardSigmoid", "HardSigmoid", {"input"}, {"hsig_out"});
+    builder.AddNode("Mul", "Mul", {"input", "hsig_out"}, {"output"});
+    builder.MakeOutput("output");
+  };
+
+  auto build_qdq_model = [input_def](ModelTestBuilder& builder,
+                                     std::vector<QuantParams<uint16_t>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<uint16_t> input_qparams = GetTestInputQuantParams<uint16_t>(input_def);
+
+    std::string input_dq = AddQDQNodePair<uint16_t>(builder, "input_qdq", "input",
+                                                    input_qparams.scale, input_qparams.zero_point, true);
+    builder.AddNode("HardSigmoid", "HardSigmoid", {input_dq}, {"hsig_out"});
+    std::string hsig_dq = AddQDQNodePair<uint16_t>(builder, "hsig_qdq", "hsig_out",
+                                                   1.0f / 65536.0f, static_cast<uint16_t>(0), true);
+    builder.AddNode("Mul", "Mul", {input_dq, hsig_dq}, {"mul_out"});
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "output_qdq", "mul_out",
+                                                    output_qparams[0].scale, output_qparams[0].zero_point, true);
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  GetTestQDQModelFn<uint16_t> qdq_fn = build_qdq_model;
+  TestQDQModelAccuracy(build_f32_model, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance());
 }
 
 // Test that QDQ HardSigmoid is supported by QNN EP.

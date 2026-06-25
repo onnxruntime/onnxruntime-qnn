@@ -16,6 +16,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/dq_conv_integer_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_matmul_integer_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/dql_dq_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
@@ -79,7 +80,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 /// The type of a function that tries to fuse NodeUnits into a IQnnNodeGroup.
 /// </summary>
 using FusionFunc = std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper& qnn_model_wrapper,
-                                                                const OrtNodeUnit& udo_node_unit,
+                                                                const OrtNodeUnit& node_unit,
                                                                 const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
                                                                 const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
                                                                 const Ort::Logger& logger)>;
@@ -87,6 +88,7 @@ using FusionFunc = std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper&
 // Maps a starting operator type to the fusion function.
 static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"DequantizeLinear", {DQQFusion::TryFusion}},
+    {"DynamicQuantizeLinear", {DqlDqFusion::TryFusion}},
     {"MatMulInteger", {DQMatMulIntegerFusion::TryFusion}},
     {"ConvInteger", {DQConvIntegerFusion::TryFusion}},
     {"Gather", {GatherTransposeReshapeFusion::TryFusion}},

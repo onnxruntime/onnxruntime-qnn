@@ -1,0 +1,15 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+#
+# LeakSanitizer suppressions for QNN EP CI ASan builds.
+#
+# Format: leak:<substring matched against any frame in the leak stack>
+# See: https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer#suppressions
+#
+# Policy: CI fails on any Direct leak; Indirect leaks are filtered out by
+# qcom/scripts/linux/asan_filter_leaks.sh. The suppressions below cover
+# Direct leaks rooted in stripped QAIRT SDK backend libraries which are
+# tracked separately with the QNN team.
+
+leak:libQnnHtp.so
+leak:libQnnCpu.so

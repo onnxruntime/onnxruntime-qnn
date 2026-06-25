@@ -64,7 +64,6 @@ def get_qnn_asset_file_list():
             "libqnnhtpv73.cat",
             "libqnnhtpv81.cat",
             "onnxruntime_providers_qnn.dll",
-            "QnnCpu.dll",
             "QnnGpu.dll",
             "QnnHtp.dll",
             "QnnHtpNetRunExtensions.dll",
@@ -80,7 +79,6 @@ def get_qnn_asset_file_list():
             "libGenie.so",
             "libHtpPrepare.so",
             "libonnxruntime_providers_qnn.so",
-            "libQnnCpu.so",
             "libQnnGpu.so",
             "libQnnHtp.so",
             "libQnnHtpNetRunExtensions.so",
@@ -105,7 +103,9 @@ def get_qnn_asset_file_list():
     return qnn_assets["windows"] if is_windows() else qnn_assets["others"]
 
 
-def _compute_archive_name(source_dir, version_suffix, archive_name_suffix, archive_ext, target_arch=None):
+def _compute_archive_name(
+    source_dir, version_suffix, archive_name_suffix, archive_ext, target_arch=None, config="Release"
+):
     """
     Build the archive filename using the shared naming rules.
 
@@ -119,6 +119,7 @@ def _compute_archive_name(source_dir, version_suffix, archive_name_suffix, archi
         target_arch: Optional explicit target architecture. When set, overrides
             platform.machine() — needed for cross-compile builds where the build
             host arch differs from the target arch (e.g. arm64ec on an x64 host).
+        config: Config for the build, default "Release"
     """
     sys_name = platform.system().lower()
     platform_name = "win" if sys_name == "windows" else sys_name
@@ -134,6 +135,8 @@ def _compute_archive_name(source_dir, version_suffix, archive_name_suffix, archi
         name += f"{version_suffix}"
     if archive_name_suffix:
         name += f"-{archive_name_suffix}"
+    if config != "Release":
+        name += f"-{config}"
     name += f"-{platform_name}-{arch}{archive_ext}"
     return name
 
@@ -187,7 +190,7 @@ def build_archive_asset(
 
         archive_ext = ".zip" if is_windows() else ".tgz"
         archive_name = _compute_archive_name(
-            source_dir, version_suffix, archive_name_suffix, archive_ext, target_arch=target_arch
+            source_dir, version_suffix, archive_name_suffix, archive_ext, target_arch=target_arch, config=config
         )
         archive_path = Path(dist_dir) / archive_name
 
@@ -320,7 +323,7 @@ def build_pdb_archive_asset(
         dist_dir = os.path.join(cwd, "dist")
         os.makedirs(dist_dir, exist_ok=True)
 
-        base_name = _compute_archive_name(source_dir, version_suffix, None, "", target_arch=target_arch)
+        base_name = _compute_archive_name(source_dir, version_suffix, None, "", target_arch=target_arch, config=config)
         archive_path = Path(dist_dir) / f"{base_name}-pdb.zip"
 
         found_files = []

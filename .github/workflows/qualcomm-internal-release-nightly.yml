@@ -21,3 +21,5 @@ jobs:
       nightly_build: true
       skip_publish_qa: false
       skip_publish_wheel: false
+      build_windows_arm64_debug: true
+      build_windows_arm64_relwithdebinfo: true

@@ -14,6 +14,9 @@ $RepoRoot= (Resolve-Path -Path ("$RootDir\..\..\.."))
 
 . (Join-Path $RootDir "utils.ps1")
 
+# QNN CPU is not advertised by default; tests use it as the x86 attach point, so opt in.
+$env:ORT_QNN_ENABLE_CPU_BACKEND = "1"
+
 if (-not $OnnxModelsRoot) {
     $OnnxModelsRoot = (Join-Path $RootDir (Join-Path "model_tests" "onnx_models"))
 }

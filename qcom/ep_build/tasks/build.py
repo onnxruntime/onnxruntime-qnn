@@ -40,6 +40,9 @@ class BuildEpDockerTask(CompositeTask):
         qairt_sdk_root: Path | None,
         ccache_root: Path | None,
         build_archive: bool = False,
+        inner_task: str = "_build_ort_linux_aarch64_manylinux_2_34",
+        docker_tag: str = MANYLINUX_2_34_AARCH64_TAG,
+        platform: str = "linux/aarch64",
     ) -> None:
         dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
 
@@ -52,14 +55,15 @@ class BuildEpDockerTask(CompositeTask):
                 ),
                 DockerBuildAndTestTask(
                     "Building ONNX Runtime inside a container",
-                    ["_build_ort_linux_aarch64_manylinux_2_34"],
+                    [inner_task],
                     target_py_version,
-                    MANYLINUX_2_34_AARCH64_TAG,
+                    docker_tag,
                     volumes={REPO_ROOT: DOCKER_REPO_ROOT},
                     venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",
                     qairt_sdk_root=qairt_sdk_root,
                     ccache_root=ccache_root,
                     build_archive=build_archive,
+                    platform=platform,
                 ),
             ],
         )
@@ -173,6 +177,29 @@ class GenerateCoverageTask(BashScriptsWithVenvTask):
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_coverage.sh"),
+            f"--build-dir={build_dir}",
+            f"--config={config}",
+        ]
+        super().__init__(group_name, venv, [cmd])
+
+
+class RunAsanTask(BashScriptsWithVenvTask):
+    """Run onnxruntime_provider_test under AddressSanitizer via run_asan.sh.
+
+    The script wraps the binary with asan_filter_leaks.sh so that only Direct
+    leaks (ORT/test-side) and ASan heap errors fail the run; Indirect leaks
+    rooted in stripped QAIRT backend libraries are treated as known noise.
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        config: str = "Debug",
+    ) -> None:
+        cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "run_asan.sh"),
             f"--build-dir={build_dir}",
             f"--config={config}",
         ]

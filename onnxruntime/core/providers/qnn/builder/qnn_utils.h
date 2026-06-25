@@ -25,6 +25,7 @@
 #include "QnnInterface.h"
 #include "QnnTypes.h"
 
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -119,13 +120,15 @@ size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
 bool QnnTensorHasDynamicShape(const Qnn_Tensor_t& tensor);
 
 // TODO: make these work with Wrappers?
+std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type);
 std::ostream& operator<<(std::ostream& out, const Qnn_Param_t& qnn_param);
 std::ostream& operator<<(std::ostream& out, const Qnn_Tensor_t& tensor);
 std::ostream& operator<<(std::ostream& out, const QnnOpConfigWrapper& op_conf_wrapper);
 
 Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
-                           Qnn_DataType_t& tensor_data_type);
+                           Qnn_DataType_t& tensor_data_type,
+                           QnnBackendType backend_type = QnnBackendType::CPU);
 
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
@@ -144,7 +147,8 @@ UniqueNameGeneratorImpl& UniqueNameGenerator();
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
-                               bool is_quantized = false);
+                               bool is_quantized = false,
+                               QnnBackendType backend_type = QnnBackendType::CPU);
 
 inline Ort::Status GetOnnxTensorElemDataType(const OrtValueInfo* value_info,
                                              /*out*/ ONNXTensorElementDataType& onnx_data_type) {
@@ -370,6 +374,34 @@ Ort::Status UnpackInt4ToInt8(size_t num_int4_elems, std::vector<uint8_t>& data_b
     auto dst = gsl::make_span(reinterpret_cast<uint8_t*>(data_bytes.data()), data_bytes.size());
     auto src = gsl::make_span(reinterpret_cast<const UInt4x2*>(packed_uint4_bytes.data()), packed_uint4_bytes.size());
     RETURN_IF_NOT(UInt4x2::Unpack(dst, src), "Failed to unpack Tensor<UInt4x2> for QNN");
+  }
+
+  return Ort::Status();
+}
+
+// Re-writes a buffer of packed 2-bit elements to a buffer of unpacked 8-bit elements.
+// QNN requires that 2-bit weights are unpacked to 8-bit (stored in lower 2 bits).
+template <bool Signed>
+Ort::Status UnpackInt2ToInt8(size_t num_int2_elems, std::vector<uint8_t>& data_bytes) {
+  if constexpr (Signed) {  // INT2
+    std::vector<uint8_t> packed_int2_bytes = std::move(data_bytes);
+    data_bytes = std::vector<uint8_t>(num_int2_elems);
+
+    auto dst = gsl::make_span(reinterpret_cast<int8_t*>(data_bytes.data()), data_bytes.size());
+    auto src = gsl::make_span(reinterpret_cast<const Int2x4*>(packed_int2_bytes.data()), packed_int2_bytes.size());
+    RETURN_IF_NOT(Int2x4::Unpack(dst, src), "Failed to unpack Tensor<Int2x4> for QNN");
+
+    // Mask off top 6 bits (keep lower 2 bits), consistent with the INT4 masking workaround for QNN.
+    for (size_t i = 0; i < dst.size(); i++) {
+      dst[i] &= 0x03;  // e.g., -1 (0b11111111) becomes 3 (0b00000011)
+    }
+  } else {  // UINT2
+    std::vector<uint8_t> packed_uint2_bytes = std::move(data_bytes);
+    data_bytes = std::vector<uint8_t>(num_int2_elems);
+
+    auto dst = gsl::make_span(reinterpret_cast<uint8_t*>(data_bytes.data()), data_bytes.size());
+    auto src = gsl::make_span(reinterpret_cast<const UInt2x4*>(packed_uint2_bytes.data()), packed_uint2_bytes.size());
+    RETURN_IF_NOT(UInt2x4::Unpack(dst, src), "Failed to unpack Tensor<UInt2x4> for QNN");
   }
 
   return Ort::Status();
@@ -713,6 +745,58 @@ Ort::Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
     return Ort::Status();                                                                                      \
   }
 
+// Analogous to CASE_UNPACK_INT4 but for 2-bit types (4 elements per byte).
+// Uses CalcNumInt2Quads instead of CalcNumInt4Pairs.
+#define CASE_UNPACK_INT2(TYPE, ELEMENT_TYPE, DATA_SIZE)                                                        \
+  case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_##TYPE: {                                      \
+    const OrtTypeInfo* type_info_##TYPE = nullptr;                                                             \
+    auto status = ort_api.GetValueInfoTypeInfo(initializer, &type_info_##TYPE);                                \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get value info type info");                                               \
+    }                                                                                                          \
+    const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info_##TYPE = nullptr;                              \
+    status = ort_api.CastTypeInfoToTensorInfo(type_info_##TYPE, &tensor_type_and_shape_info_##TYPE);           \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to cast type info to tensor info");                                          \
+    }                                                                                                          \
+    size_t num_dims_##TYPE = 0;                                                                                \
+    status = ort_api.GetDimensionsCount(tensor_type_and_shape_info_##TYPE, &num_dims_##TYPE);                  \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get dimensions count");                                                   \
+    }                                                                                                          \
+    std::vector<int64_t> dims_##TYPE(num_dims_##TYPE);                                                         \
+    status = ort_api.GetDimensions(tensor_type_and_shape_info_##TYPE, dims_##TYPE.data(), dims_##TYPE.size()); \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get dimensions");                                                         \
+    }                                                                                                          \
+                                                                                                               \
+    size_t element_count = 1;                                                                                  \
+    for (size_t i = 0; i < num_dims_##TYPE; ++i) {                                                             \
+      element_count *= static_cast<size_t>(dims_##TYPE[i]);                                                    \
+    }                                                                                                          \
+                                                                                                               \
+    /* Calculate packed element count and tensor byte size for INT2/UINT2 (4 elements per byte) */             \
+    size_t packed_element_count = ELEMENT_TYPE::CalcNumInt2Quads(element_count);                               \
+    size_t tensor_byte_size = packed_element_count * sizeof(ELEMENT_TYPE);                                     \
+                                                                                                               \
+    const OrtValue* initializer_value = nullptr;                                                               \
+    status = ort_api.ValueInfo_GetInitializerValue(initializer, &initializer_value);                           \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get initializer value");                                                  \
+    }                                                                                                          \
+    const void* data = nullptr;                                                                                \
+    status = ort_api.GetTensorData(initializer_value, &data);                                                  \
+    if (status != nullptr) {                                                                                   \
+      return MAKE_EP_FAIL("Failed to get tensor data");                                                        \
+    }                                                                                                          \
+                                                                                                               \
+    unpacked_tensor.resize(tensor_byte_size);                                                                  \
+    if (data != nullptr && tensor_byte_size > 0) {                                                             \
+      std::memcpy(unpacked_tensor.data(), data, tensor_byte_size);                                             \
+    }                                                                                                          \
+    return Ort::Status();                                                                                      \
+  }
+
 Ort::Status ReadExternalData(const OrtApi& ort_api,
                              const OrtExternalInitializerInfo* initializer,
                              const std::filesystem::path& model_path,
@@ -728,6 +812,7 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
    Intended for ORT logging
 */
 std::string PtrToString(const void* const ptr);
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

@@ -198,6 +198,8 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+  include(onnxruntime_unittests_udo.cmake)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/unit/*)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
@@ -211,6 +213,19 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 # TODO: Re-enable the recent op testcases
 list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
+
+# qnn_op_tracing_serialization.cc is compiled directly into the test binary so
+# that QnnFrameworkOpTraceUnit tests can call ComputeTraceSummary and
+# SerializeFrameworkOpTrace without linking against the EP library.
+# This translation unit intentionally does NOT include ort_api.h, avoiding
+# the ORT_API_MANUAL_INIT mismatch linker error on Windows.  It is needed in
+# both shared-lib builds (hidden symbol visibility prevents linking) and
+# static-lib builds (test binary has build-order dependency only, not a linker
+# dependency, on the EP).
+if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
+  list(APPEND onnxruntime_test_framework_src
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_tracing/qnn_op_tracing_serialization.cc")
+endif()
 
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same
@@ -310,6 +325,9 @@ block()
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
       # Stub for OrtGetRuntimePath (defined in ort_api.cc, which is EP DLL only).
       ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie_test_stubs.cc
+      # ParseOpPackages is consumed by qnn_basic_test.cc; recompile here for the same reason
+      # as the genie sources (the EP shared library is loaded via dlopen, not linked).
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_package/op_package_parser.cc
     )
   endif()
 
@@ -340,6 +358,9 @@ block()
     # uniform across all TUs in a binary. Suppress the define so the genie TUs match
     # the rest of the test binary.
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+    if(onnxruntime_BUILD_QNN_UDO_TEST)
+      target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
+    endif()
   endif()
 
   # Dependency on ORT Core public header files
@@ -363,42 +384,22 @@ block()
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
   endif()
 
-  if(onnxruntime_USE_QNN AND WIN32)
-    # ---------------------------------------------------------------------------
-    # MockGenie shared library — test double for the Genie backend.
-    # GenieBackendManager loads it via backend_path="MockGenie.dll". Currently
-    # only built on Windows because the Genie execution pathway in the QNN EP
-    # has not been validated on Linux. When Linux support is confirmed, remove
-    # the WIN32 guard and enable the version-script path for Linux.
-    # ---------------------------------------------------------------------------
-    add_library(MockGenie SHARED
-      ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/genie_mock_dll.cc
-    )
-
-    target_include_directories(MockGenie PRIVATE
-      ${onnxruntime_QNN_HOME}/include
-      ${onnxruntime_QNN_HOME}/include/QNN
-    )
-
-    set_target_properties(MockGenie PROPERTIES
-      CXX_STANDARD 17
-      CXX_STANDARD_REQUIRED ON
-      FOLDER "ONNXRuntimeTest"
-    )
-
-    target_link_options(MockGenie PRIVATE
-      "/DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
-
-    # Copy MockGenie next to the test executable so GenieBackendManager
-    # finds it by name when backend_path="MockGenie.dll".
-    add_custom_command(
-      TARGET MockGenie POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:MockGenie>
-        $<TARGET_FILE_DIR:onnxruntime_provider_test>
-      COMMENT "Copying MockGenie to test output directory"
-    )
+  # Coverage build: link against the SHARED QNN EP library so tests can call
+  # EP-internal functions directly. Coverage is recorded in the .so's .gcda files and
+  # collected by lcov --directory <build_dir> (recursive search finds them automatically).
+  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
+    # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
+    # It tracks whether the test binary is link-time bound to the SHARED EP library
+    # (i.e., the cmake conditions above hold), not whether any production source is
+    # under #if. When the macro is off, the test bodies under unit/ compile to empty
+    # translation units, so non-coverage builds do not see undefined references.
+    # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
+    # stabilises, the gate can be widened to other CI build configurations without
+    # touching the test code.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()
+
 endblock()
 endif()
 
