@@ -35,6 +35,10 @@ from requests.auth import HTTPBasicAuth
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Repo root, computed once so a future move of this script touches a single line
+# rather than every '../../..' walk-up scattered through the file.
+_REPO_ROOT = Path(SCRIPT_DIR).resolve().parents[2]
+
 ARTIFACTORY_CERTS_FILE = os.path.join(SCRIPT_DIR, "certs", "artifactory-ca.pem")
 PYPI_RC_FILE = os.path.join(SCRIPT_DIR, ".pypirc")
 INI_FILE = os.path.join(SCRIPT_DIR, "config.ini")
@@ -318,9 +322,10 @@ class ArtifactUpleveler(ABC):
 
     def _download_signed_libs(self, target_dir: str) -> str:
         """Download <format>.zip from artifactory into target_dir; return its path."""
-        api_key = os.environ.get("JFROG_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
+        artifactory_user = os.environ.get("ARTIFACTORY_USERNAME", "")
+        artifactory_password = os.environ.get("ARTIFACTORY_PASSWORD", "")
+        if not artifactory_password:
+            raise RuntimeError("ARTIFACTORY_PASSWORD environment variable is required when --sign_artifact true")
 
         version_url = self.config_manager.get_repository_url(
             _SIGNED_LIBS_INDEX, self.args.product_name, self._signed_libs_version
@@ -330,7 +335,9 @@ class ArtifactUpleveler(ABC):
         target_path = os.path.join(target_dir, zip_filename)
 
         logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
-        response = requests.get(url, auth=("", api_key), verify=ARTIFACTORY_CERTS_FILE, timeout=60)
+        response = requests.get(
+            url, auth=(artifactory_user, artifactory_password), verify=ARTIFACTORY_CERTS_FILE, timeout=60
+        )
         if response.status_code != 200:
             raise RuntimeError(f"Failed to download signed libs: HTTP {response.status_code}")
 
@@ -423,8 +430,6 @@ class WheelUpleveler(ArtifactUpleveler):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
       PYPI_API_KEY                                 — PyPI upload token (when index_server_to=pypi)
       TEST_PYPI_API_KEY                            — TestPyPI upload token (when index_server_to=testpypi)
-      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -662,8 +667,6 @@ class NugetUpleveler(ArtifactUpleveler):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
       NUGET_API_KEY                                — nuget.org API key (when index_server_to=nuget)
       TEST_NUGET_API_KEY                           — int.nugettest.org API key (when index_server_to=testnuget)
-      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     def __init__(self, args: argparse.Namespace):
@@ -938,8 +941,6 @@ class ZipUpleveler(ArtifactUpleveler):
 
     Credentials (never in argv):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
-      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -1077,6 +1078,37 @@ class ZipUpleveler(ArtifactUpleveler):
 
             logging.info(f"Version update completed for {zip_file}, updated to {updated_zip_path}")
 
+    @staticmethod
+    def _read_release_notes() -> tuple[str, str]:
+        """Return (title, body) from the first section of docs/release-notes.md.
+
+        title — text of the first H1 line (without the leading '# ').
+        body  — all lines after that H1 up to (not including) the next H1.
+        Both are empty strings if the file is missing or has no H1.
+        """
+        notes_path = _REPO_ROOT / "docs" / "release-notes.md"
+        try:
+            with open(notes_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return "", ""
+
+        title = ""
+        body_lines = []
+        in_section = False
+        for line in lines:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("# "):
+                if not in_section:
+                    title = stripped[2:].strip()
+                    in_section = True
+                else:
+                    break
+            elif in_section:
+                body_lines.append(stripped)
+
+        return title, "\n".join(body_lines).strip()
+
     def _upload_to_github(self, distribution_dir: str) -> None:
         """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
         tag = f"v{self.args.version_to}"
@@ -1120,23 +1152,45 @@ class ZipUpleveler(ArtifactUpleveler):
                         f"git push stderr: {push_result.stderr.decode(errors='replace')}"
                     )
                 logging.info(f"Git tag {tag} was pushed concurrently by another job; reusing it")
-        # Create the draft GitHub Release if it does not exist yet (tag is already pinned above).
-        # `gh release create` exits non-zero both for "already exists" (expected on re-runs and
-        # cross-format runs) and for real failures (auth, repo not found, …). Inspect stderr to
-        # tell them apart so genuine errors don't surface as a confusing upload failure later.
-        create_result = subprocess.run(
-            ["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"],
-            check=False,
-            capture_output=True,
+        # Create the draft GitHub Release only if it does not already exist.
+        # `gh release view` is a fast-path: when zip/tgz jobs run sequentially the second
+        # one short-circuits without invoking `gh release create`. The view+create pair
+        # is still TOCTOU under true parallelism — the `"already exists"` fallback below
+        # is what actually guarantees no duplicate drafts; keep it intact.
+        release_exists = (
+            subprocess.run(["gh", "release", "view", tag], check=False, capture_output=True).returncode == 0
         )
-        if create_result.returncode == 0:
-            logging.info(f"Created draft GitHub Release {tag}")
+        if release_exists:
+            logging.info(f"GitHub Release {tag} already exists, reusing it")
         else:
-            stderr = create_result.stderr.decode(errors="replace")
-            if "already exists" in stderr.lower():
-                logging.info(f"GitHub Release {tag} already exists, reusing it")
+            release_title, release_notes = self._read_release_notes()
+            # Guard against a stale docs/release-notes.md: the parsed H1 title must carry the exact
+            # version being released. Match the vMAJOR.MINOR.PATCH token in the title and compare it
+            # to --version_to; a substring check would let 2.4.0 spuriously match e.g. 12.4.0 or
+            # 2.4.00. Refuse to publish a release whose title/body version disagrees with the tag
+            # rather than silently emit one.
+            if release_title:
+                title_versions = re.findall(r"\bv?(\d+\.\d+\.\d+)\b", release_title)
+                if self.args.version_to not in title_versions:
+                    raise RuntimeError(
+                        f"docs/release-notes.md top H1 ({release_title!r}) does not match "
+                        f"--version_to={self.args.version_to}; refusing to publish a tag/title-mismatch release. "
+                        f"Bump docs/release-notes.md before re-running."
+                    )
+            release_title = release_title or f"ONNX Runtime QNN Execution Provider {tag}"
+            create_result = subprocess.run(
+                ["gh", "release", "create", tag, "--title", release_title, "--notes", release_notes, "--draft"],
+                check=False,
+                capture_output=True,
+            )
+            if create_result.returncode == 0:
+                logging.info(f"Created draft GitHub Release {tag}")
             else:
-                raise RuntimeError(f"Failed to create GitHub Release {tag}: {stderr.strip()}")
+                stderr = create_result.stderr.decode(errors="replace")
+                if "already exists" in stderr.lower():
+                    logging.info(f"GitHub Release {tag} already exists, reusing it")
+                else:
+                    raise RuntimeError(f"Failed to create GitHub Release {tag}: {stderr.strip()}")
 
         # Attach assets; --clobber replaces any existing asset with the same name (safe for re-runs).
         subprocess.run(["gh", "release", "upload", tag, "--clobber", *files], check=True)
