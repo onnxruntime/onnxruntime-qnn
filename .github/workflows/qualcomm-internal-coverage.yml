@@ -34,6 +34,9 @@ jobs:
           fetch-depth: 0
           # submodules omitted here; initialized below only when coverage is needed.
 
+      - name: Clean previous build directory
+        run: rm -rf "${{ github.workspace }}/build/linux-x86_64/RelWithDebInfo"
+
       - name: Check if coverage is needed
         id: gate
         run: |
