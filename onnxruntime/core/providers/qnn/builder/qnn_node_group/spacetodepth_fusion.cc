@@ -182,14 +182,18 @@ bool HasSpaceToDepthCoreSignature(
     return false;
   }
 
-  // check Reshape 'shape' dimensions to be positive.
-  for (int64_t v : *shape_6d) {
+  // check Reshape 'shape' dimensions to be positive (allow -1 only for the batch dim at index 0).
+  for (size_t i = 0; i < shape_6d->size(); ++i) {
+    const int64_t v = (*shape_6d)[i];
+    if (i == 0 && v == -1) continue;  // dynamic batch
     if (v <= 0) {
       return false;
     }
   }
 
-  for (int64_t v : *shape_4d) {
+  for (size_t i = 0; i < shape_4d->size(); ++i) {
+    const int64_t v = (*shape_4d)[i];
+    if (i == 0 && v == -1) continue;  // dynamic batch
     if (v <= 0) {
       return false;
     }
@@ -209,8 +213,8 @@ bool HasSpaceToDepthCoreSignature(
   const int64_t w_div = (*shape_6d)[4];
   const int64_t b1 = (*shape_6d)[5];
 
-  // r_ are expected to match input [N,C]
-  if (r_n != n || r_c != c || b0 < 1 || b1 < 1) {
+  // r_ are expected to match input [N,C]; allow r_n = -1 for dynamic batch.
+  if ((r_n != -1 && r_n != n) || r_c != c || b0 < 1 || b1 < 1) {
     return false;
   }
 
@@ -225,8 +229,12 @@ bool HasSpaceToDepthCoreSignature(
   // [N, C * b0 * b1, H / b0, W / b1]
   const int64_t expected_c = c * b0 * b1;
   const std::array<int64_t, 4> expected_shape_4d = {n, expected_c, h / b0, w / b1};
-  if (!std::equal(shape_4d->begin(), shape_4d->end(), expected_shape_4d.begin())) {
-    return false;
+  for (size_t i = 0; i < 4; ++i) {
+    // Allow -1 only for the batch dimension (index 0) in the output shape.
+    if (i == 0 && (*shape_4d)[i] == -1) continue;
+    if ((*shape_4d)[i] != expected_shape_4d[i]) {
+      return false;
+    }
   }
 
   // check transpose perm to be either {0,3,5,1,2,4} or {0,1,3,5,2,4}.

@@ -1304,6 +1304,10 @@ std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_
   return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
+std::string FormatQnnError(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t error) {
+  return "Error: " + GetQnnErrorMessage(qnn_interface, error) + ", Code: " + std::to_string(error);
+}
+
 std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                       Qnn_ErrorHandle_t qnn_error_handle) {
   const char* error_msg = nullptr;

@@ -116,13 +116,22 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
                 "Failed to add output tensor.");
 
-  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x)
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid"),
+  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x). Sigmoid maps to
+  // QNN_OP_ELEMENT_WISE_NEURON with the mandatory 'operation' scalar param set to SIGMOID.
+  std::string sigmoid_node_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid");
+  Qnn_Scalar_t sigmoid_op_scalar = QNN_SCALAR_INIT;
+  sigmoid_op_scalar.dataType = QNN_DATATYPE_UINT_32;
+  sigmoid_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SIGMOID;
+  QnnParamWrapper sigmoid_op_param(node_unit.Index(), sigmoid_node_name,
+                                   QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, sigmoid_op_scalar);
+  std::string sigmoid_op_param_name = sigmoid_op_param.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sigmoid_op_param)), "Failed to add operation param.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sigmoid_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_SIGMOID,
+                                                QNN_OP_ELEMENT_WISE_NEURON,
                                                 {sigmoid_input_name},
                                                 {sigmoid_output_name},
-                                                {},
+                                                {sigmoid_op_param_name},
                                                 do_op_validation),
                 "Failed to create sigmoid node.");
 

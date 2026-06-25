@@ -92,6 +92,7 @@ void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& 
 void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateQLinearMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomNormalLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomUniformLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

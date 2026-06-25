@@ -472,9 +472,12 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                Qnn_ErrorHandle_t qnn_error_handle);
 
-// // Gets verbose error message associated with QNN error handle value.
+// Gets verbose error message associated with QNN error handle value.
 std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                       Qnn_ErrorHandle_t qnn_error_handle);
+
+// Returns "Error: <qnn_message>, Code: <code>" suffix for error messages.
+std::string FormatQnnError(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t error);
 
 // NCHW shape to channel last
 template <typename T>

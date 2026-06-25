@@ -429,11 +429,13 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
+|ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
 |ai.onnx:RandomNormalLike||
 |ai.onnx:RandomUniformLike||
 |ai.onnx:Reciprocal||
 |ai.onnx:ReduceL2||
+|ai.onnx:ReduceLogSumExp|Decomposed into ReduceMax->Sub->Exp->ReduceSum->Log->Add. Quantized input not supported.|
 |ai.onnx:ReduceMax||
 |ai.onnx:ReduceMean||
 |ai.onnx:ReduceMin||
