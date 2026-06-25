@@ -854,6 +854,10 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
+  if (dq_nodes.size() < 2) {
+    return false;  // Conv requires at least DQ nodes for input and weight
+  }
+
   // Input and output types need to be same
   auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
   auto dt_weight = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
