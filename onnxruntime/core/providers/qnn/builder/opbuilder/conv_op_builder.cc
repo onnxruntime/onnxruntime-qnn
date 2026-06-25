@@ -3,6 +3,8 @@
 
 #include <gsl/gsl>
 
+#include <cmath>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -1061,6 +1063,41 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
   return Ort::Status();
 }
 
+// Re-encode a per-tensor quantization param at a different bitwidth, preserving the dequantized
+// range. The source encoding (scale, offset, orig_bitwidth) represents the range
+// [scale*offset, scale*(2^orig_bitwidth - 1 + offset)]; this writes a fresh per-tensor encoding
+// covering the same range at new_bitwidth. Direction-agnostic: new_bitwidth may be larger
+// (widen) or smaller (narrow) than orig_bitwidth.
+//
+// Used to build the intermediate output of a mixed-bitwidth quantized Conv whose downstream
+// consumer expects a different bitwidth (e.g. uint16 Conv output feeding a uint8 KV-cache),
+// with a Convert bridging the two encodings.
+//
+// Both bitwidths must be in (0, 32] so `(1 << bw) - 1` fits in uint64 and the result fits in
+// float; `src` must be a per-tensor encoding.
+static Ort::Status RequantizePerTensorAtBitwidth(const QnnQuantParamsWrapper& src,
+                                                 size_t orig_bitwidth,
+                                                 size_t new_bitwidth,
+                                                 /*out*/ QnnQuantParamsWrapper& out) {
+  RETURN_IF_NOT(orig_bitwidth > 0 && orig_bitwidth <= 32 &&
+                    new_bitwidth > 0 && new_bitwidth <= 32,
+                "RequantizePerTensorAtBitwidth: bitwidth must be in (0, 32].");
+  float src_scale = 0.0f;
+  int32_t src_offset = 0;
+  RETURN_IF_ERROR(src.GetPerTensorScaleOffset(src_scale, src_offset));
+  const double q_max_orig = static_cast<double>((uint64_t{1} << orig_bitwidth) - 1);
+  const double f_min = static_cast<double>(src_scale) * static_cast<double>(src_offset);
+  const double f_max = static_cast<double>(src_scale) *
+                       (q_max_orig + static_cast<double>(src_offset));
+  const double q_max_new = static_cast<double>((uint64_t{1} << new_bitwidth) - 1);
+  const float new_scale = static_cast<float>((f_max - f_min) / q_max_new);
+  const int32_t new_offset = (new_scale != 0.0f)
+                                 ? static_cast<int32_t>(std::lround(f_min / new_scale))
+                                 : 0;
+  out = QnnQuantParamsWrapper(new_scale, new_offset);
+  return Ort::Status();
+}
+
 Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                        const OrtNodeUnit& node_unit,
                                                        std::vector<std::string>&& input_names,
@@ -1306,6 +1343,18 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   const auto& output_name = outputs[0].name;
   if (is_1d_conv) {
+    // The 1D path emits Conv2d → Reshape with no Convert insertion, so it does
+    // not support mixed-bitwidth quantized I/O. The selector only loosens the
+    // matched-dtype requirement for the uint8<->uint16 case that the 2D/3D
+    // path handles below; fail loudly here if a 1D Conv reaches this branch
+    // with mismatched bitwidths, rather than silently emitting an HTP-invalid
+    // Conv2d.
+    if (is_quantized_tensor && qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0])) {
+      const Qnn_DataType_t input_qnn_data_type_1d =
+          qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+      RETURN_IF(input_qnn_data_type_1d != qnn_data_type,
+                "QNN EP: 1D quantized Conv with mismatched input/output bitwidth is not supported.");
+    }
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     std::vector<uint32_t> output_shape_2d = {
         output_shape[0],  // N
@@ -1340,6 +1389,28 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
+    // Detect a quantized Conv whose input and output activation use different unsigned
+    // bitwidths (e.g. uint16 in → uint8 out when the output feeds an 8-bit KV-cache). HTP's
+    // Conv2d itself requires matched I/O bitwidth, so we decompose into:
+    //   Conv (output @ input_bitwidth, output range re-encoded at input_bitwidth)
+    //     → Convert → output (at the user-authored output bitwidth/encoding)
+    // This mirrors the legacy QAIRT converter's lowering for the same pattern. The selector
+    // (qnn_ep_utils.cc OrtConvNodeGroupSelector) admits only uint8<->uint16 mismatch, which
+    // matches the predicate below.
+    Qnn_DataType_t input_qnn_data_type = qnn_data_type;
+    if (is_quantized_tensor && qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0])) {
+      input_qnn_data_type =
+          qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    }
+    const bool is_mixed_bitwidth_quantized =
+        is_quantized_tensor && !is_bq_conv &&
+        (input_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+         input_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
+        (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+         qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
+        input_qnn_data_type != qnn_data_type &&
+        output_quantize_param.IsPerTensor(/*include_bw*/ true);
+
     if (is_bq_conv && is_quantized_tensor) {
       // BQ Conv outputs FP16; downstream QDQ expects INT16.
       // Emit: Conv (FP16 output) → Quantize (FP16 → INT16 quantized output).
@@ -1372,6 +1443,39 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                         QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
                         {conv_fp16_out}, {output_name}, {}, do_op_validation),
                     "Failed to add FP16→INT16 Quantize node for BQ Conv output.");
+    } else if (is_mixed_bitwidth_quantized) {
+      const size_t input_bw = utils::GetElementSizeByType(input_qnn_data_type) * 8;
+      const size_t output_bw = utils::GetElementSizeByType(qnn_data_type) * 8;
+      QnnQuantParamsWrapper widened_qp;
+      RETURN_IF_ERROR(RequantizePerTensorAtBitwidth(output_quantize_param, output_bw, input_bw,
+                                                    widened_qp));
+
+      const std::string conv_widened_out =
+          utils::UniqueNameGenerator().New(output_name, "_widened");
+      QnnTensorWrapper widened_out_wrapper(conv_widened_out, QNN_TENSOR_TYPE_NATIVE,
+                                           input_qnn_data_type, std::move(widened_qp),
+                                           std::vector<uint32_t>(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(widened_out_wrapper)),
+                    "Failed to add widened Conv output tensor.");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    output_node_type,
+                                                    std::move(input_names),
+                                                    {conv_widened_out},
+                                                    std::move(param_tensor_names),
+                                                    do_op_validation),
+                    "Failed to add mixed-bitwidth Conv node.");
+
+      QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
+                                            std::move(output_quantize_param),
+                                            std::move(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                    "Failed to add narrowed Conv output tensor.");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                        utils::UniqueNameGenerator().New(node_unit, QNN_OP_CONVERT),
+                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONVERT,
+                        {conv_widened_out}, {output_name}, {}, do_op_validation),
+                    "Failed to add Convert node bridging mixed-bitwidth Conv output.");
     } else {
       QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
                                             std::move(output_quantize_param), std::move(output_shape));

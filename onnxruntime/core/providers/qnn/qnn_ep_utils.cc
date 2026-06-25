@@ -854,7 +854,6 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  // Input and output types need to be same
   auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
   auto dt_weight = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
@@ -863,7 +862,20 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
+  // Input and output activation dtypes must match, except for the specific
+  // unsigned uint8<->uint16 case that conv_op_builder lowers as
+  // Conv@input_bw + Convert(input_bw -> output_bw). HTP's Conv2d itself requires
+  // matched I/O bitwidth; any other mismatch combination (signed types,
+  // per-channel output, etc.) has no op-builder decomposition and would fail
+  // at HTP graph finalize, so reject it here.
+  const auto in_dt = dt_input.value();
+  const auto out_dt = dt_output.value();
+  const bool is_uint8_uint16_mixed =
+      (in_dt == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 &&
+       out_dt == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16) ||
+      (in_dt == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16 &&
+       out_dt == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+  if (in_dt != out_dt && !is_uint8_uint16_mixed) {
     return false;
   }
 
@@ -884,8 +896,9 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_input.value()) || Is16BitIntType(dt_weight.value()))) {
+  // 16-bit int types must be explicitly allowed.
+  if (!allow_16bit_ && (Is16BitIntType(dt_input.value()) || Is16BitIntType(dt_weight.value()) ||
+                        Is16BitIntType(dt_output.value()))) {
     return false;
   }
 
