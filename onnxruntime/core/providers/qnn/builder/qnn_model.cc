@@ -359,9 +359,8 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
 #endif
 
   if (QNN_GRAPH_NO_ERROR != status) {
-    const std::string qnn_err = utils::GetQnnErrorMessage(qnn_backend_manager_->GetQnnInterface(), status);
-    return MAKE_EP_FAIL(("Failed to finalize QNN graph. Error: " + qnn_err +
-                         ", Code: " + std::to_string(status))
+    return MAKE_EP_FAIL(("Failed to finalize QNN graph. " +
+                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), status))
                             .c_str());
   }
 
@@ -601,9 +600,8 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   }
 
   if (QNN_GRAPH_NO_ERROR != execute_status) {
-    const std::string qnn_err = utils::GetQnnErrorMessage(qnn_backend_manager_->GetQnnInterface(), execute_status);
-    return MAKE_EP_FAIL(("QNN graph execute error. Error: " + qnn_err +
-                         ", Code: " + std::to_string(execute_status))
+    return MAKE_EP_FAIL(("QNN graph execute error. " +
+                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
                             .c_str());
   }
 
