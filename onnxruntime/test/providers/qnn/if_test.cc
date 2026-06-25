@@ -383,8 +383,7 @@ static void RunIfTest(const GetTestModelFn& model_fn,
   RunQnnModelTest(model_fn,
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //
