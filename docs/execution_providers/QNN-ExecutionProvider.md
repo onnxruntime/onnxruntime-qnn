@@ -41,9 +41,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.3.0         | v2.47.0           | v1.24.4              |
+| v2.4.0         | v2.48.0           | v1.26.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.4.0 was built and tested with ORT 1.26.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -395,6 +395,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Gemm||
 |ai.onnx:GlobalAveragePool||
 |ai.onnx:GlobalMaxPool||
+|ai.onnx:GRU|Default activations only (Sigmoid/Tanh). Dynamic sequence lengths and layout=1 not supported.|
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
@@ -405,6 +406,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
+|ai.onnx:IsInf|float32 and float16 inputs only|
 |ai.onnx:IsNaN||
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
@@ -415,6 +417,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Log||
 |ai.onnx:LogSoftmax||
 |ai.onnx:LpNormalization|p == 2|
+|ai.onnx:LpPool|p=1 or p=2 only. QDQ not supported.|
 |ai.onnx:MatMul|Supported input data types on HTP backend: (uint8, uint8), (uint8, uint16), (uint16, uint8)|
 |ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
@@ -426,6 +429,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Neg||
 |ai.onnx:NonZero||
 |ai.onnx:Not||
+|ai.onnx:OneHot|depth and values inputs must be constant initializers|
 |ai.onnx:Or||
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
@@ -452,6 +456,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
+|ai.onnx:Selu||
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
@@ -473,6 +478,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Unsqueeze||
 |ai.onnx:Upsample||
 |ai.onnx:Where||
+|ai.onnx:Xor||
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
@@ -493,6 +499,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `DequantizeLinear → QuantizeLinear` | `QNN_OP_CONVERT` | Eliminates redundant re-quantization between compatible quantization schemes. Scalar scale/zero-point required. |
+| `DynamicQuantizeLinear → DequantizeLinear` | `QNN_OP_TRANSPOSE` (identity) | Fuses a quantize+dequantize round-trip into a pass-through when all three DQL outputs are consumed exclusively by a single DQ node and the DQ output is float32. |
 | `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
 | `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | ConvInteger is supported exclusively via this fusion. Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
 | `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | MatMulInteger is supported exclusively via this fusion. Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
@@ -528,6 +535,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `[DQ inputs →] Custom UDO op [→ Q outputs]` | Custom QNN UDO | Strips surrounding DQ/Q nodes and passes quantization parameters directly into the user-defined operator. |
+| `Reshape(batch-flatten) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Reshape must flatten all batch dimensions into a 2D tensor. Gemm weight must be a non-quantized constant initializer. Reshape output must be consumed exclusively by the Gemm node. |
 
 ## Running a model with QNN EP's HTP backend (Python)
 <p align="center"><img width="100%" src="../images/qnn_ep_quant_workflow.png" alt="Offline workflow for quantizing an ONNX model for use on QNN EP"/></p>
