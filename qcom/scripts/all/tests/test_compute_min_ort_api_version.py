@@ -563,49 +563,96 @@ def test_exit_code_sha1_mismatch_is_two(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Adapter routing: drift -> ort-api-floor-drift, env error -> ort-api-floor-check-error
+# --lintrunner: drift -> ort-api-floor-drift, env error -> ort-api-floor-check-error.
+# Always exits 0 and emits one JSON finding on stdout.
 # ---------------------------------------------------------------------------
 
 
-ADAPTER = Path(__file__).resolve().parents[4] / "qcom" / "linters" / "check_min_ort_api_version.py"
-
-
-def test_adapter_routes_drift_to_floor_drift(tmp_path: Path) -> None:
-    """When the compute script exits 1, the adapter's JSON must name the
-    finding 'ort-api-floor-drift'."""
-    fake = tmp_path / "compute.py"
-    fake.write_text("import sys\nsys.stderr.write('simulated drift\\n')\nsys.exit(1)\n")
-    wrapper = tmp_path / "run_adapter.py"
-    wrapper.write_text(
-        "import pathlib, sys\n"
-        f"sys.path.insert(0, {str(ADAPTER.parent)!r})\n"
-        "import check_min_ort_api_version as a\n"
-        f"a.SCRIPT = pathlib.Path({str(fake)!r})\n"
-        "a.main()\n"
+def test_lintrunner_routes_drift_to_floor_drift(tmp_path: Path) -> None:
+    """Real drift (computed != baseline) -> exit 0 with an 'ort-api-floor-drift' finding."""
+    headers, ep = _make_tree(tmp_path, floor_since=17)
+    baseline = tmp_path / "MIN_ORT_API_VERSION.txt"
+    baseline.write_text("3\n")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--lintrunner",
+            "--baseline",
+            str(baseline),
+        ]
     )
-    r = subprocess.run([sys.executable, str(wrapper)], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout.strip())
     assert payload["name"] == "ort-api-floor-drift"
-    assert "simulated drift" in payload["description"]
+    assert payload["code"] == "MIN-ORT-API-VERSION"
+    assert "computed 17" in payload["description"] or "drift" in payload["description"].lower()
 
 
-def test_adapter_routes_env_error_to_check_error(tmp_path: Path) -> None:
-    """When the compute script exits 2, the adapter's JSON must name the
-    finding 'ort-api-floor-check-error' so reviewers can tell it apart
-    from a real baseline-refresh request."""
-    fake = tmp_path / "compute.py"
-    fake.write_text("import sys\nsys.stderr.write('headers missing\\n')\nsys.exit(2)\n")
-    wrapper = tmp_path / "run_adapter.py"
-    wrapper.write_text(
-        "import pathlib, sys\n"
-        f"sys.path.insert(0, {str(ADAPTER.parent)!r})\n"
-        "import check_min_ort_api_version as a\n"
-        f"a.SCRIPT = pathlib.Path({str(fake)!r})\n"
-        "a.main()\n"
+def test_lintrunner_routes_env_error_to_check_error(tmp_path: Path) -> None:
+    """Cannot compute (missing headers) -> exit 0 with an 'ort-api-floor-check-error'
+    finding, so reviewers can tell it apart from a real baseline-refresh request."""
+    ep = tmp_path / "ep"
+    ep.mkdir()
+    (ep / "u.cc").write_text("void f() { ort_api->X(1); }")
+    baseline = tmp_path / "MIN_ORT_API_VERSION.txt"
+    baseline.write_text("3\n")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(tmp_path / "missing"),
+            "--ep-source-root",
+            str(ep),
+            "--lintrunner",
+            "--baseline",
+            str(baseline),
+        ]
     )
-    r = subprocess.run([sys.executable, str(wrapper)], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout.strip())
     assert payload["name"] == "ort-api-floor-check-error"
-    assert "headers missing" in payload["description"]
+
+
+def test_lintrunner_pass_emits_nothing(tmp_path: Path) -> None:
+    """Baseline matches -> exit 0 and no finding on stdout."""
+    headers, ep = _make_tree(tmp_path, floor_since=11)
+    baseline = tmp_path / "MIN_ORT_API_VERSION.txt"
+    baseline.write_text("11\n")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--lintrunner",
+            "--baseline",
+            str(baseline),
+        ]
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_lintrunner_ignores_trailing_paths(tmp_path: Path) -> None:
+    """Trailing file paths (lintrunner @{{PATHSFILE}} convention) are accepted
+    and ignored; the check stays project-wide."""
+    headers, ep = _make_tree(tmp_path, floor_since=6)
+    baseline = tmp_path / "MIN_ORT_API_VERSION.txt"
+    baseline.write_text("6\n")
+    r = _run(
+        [
+            "--ort-header-root",
+            str(headers),
+            "--ep-source-root",
+            str(ep),
+            "--lintrunner",
+            "--baseline",
+            str(baseline),
+            "some/file.cc",
+            "another/file.h",
+        ]
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""

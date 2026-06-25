@@ -21,6 +21,15 @@ Modes:
                            clean checkout with no build tree), download
                            ort_core from cmake/deps.txt, verify its SHA1, and
                            use the archive's include/ subtree. Cached.
+  --lintrunner             Run --check and emit a lintrunner JSON finding on
+                           stdout instead of a non-zero exit, always exiting 0.
+                           Drift (exit 1) becomes an ``ort-api-floor-drift``
+                           finding; cannot-compute (exit 2) becomes an
+                           ``ort-api-floor-check-error`` finding so reviewers
+                           can tell an environment problem apart from a real
+                           baseline-refresh request. Trailing file paths
+                           (lintrunner convention) are accepted and ignored;
+                           the check is project-wide.
 
 Exit codes:
   0  Success: floor printed/written, or --check found baseline matches.
@@ -40,7 +49,10 @@ if those become a concern, extend the patterns or wrap them.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
+import json
 import os
 import pathlib
 import re
@@ -49,6 +61,27 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+
+# Lintrunner integration: in --lintrunner mode the script emits a lintrunner
+# JSON finding instead of exiting non-zero, routing the --check exit codes to
+# distinct finding names (drift vs cannot-compute) and always exiting 0 so
+# lintrunner does not treat the check as a crashed adapter.
+LINTER_CODE = "MIN-ORT-API-VERSION"
+
+
+def _lint_json(description: str, name: str, path: str) -> dict:
+    return {
+        "path": path,
+        "line": None,
+        "char": None,
+        "code": LINTER_CODE,
+        "severity": "error",
+        "name": name,
+        "original": None,
+        "replacement": None,
+        "description": description,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Header parsing: build {api_member: minor_since_version}
@@ -254,7 +287,7 @@ def read_baseline(baseline_path: pathlib.Path) -> int | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, fromfile_prefix_chars="@")
     parser.add_argument(
         "--ort-header-root",
         type=pathlib.Path,
@@ -277,8 +310,53 @@ def main() -> int:
         action="store_true",
         help="If no header root is given/found, download ort_core from cmake/deps.txt and use its include/ tree. Caches by SHA1 under $QNN_EP_LINT_CACHE or the platform user cache dir.",
     )
+    parser.add_argument(
+        "--lintrunner",
+        action="store_true",
+        help="Emit a lintrunner JSON finding instead of a non-zero exit; implies --check and always exits 0.",
+    )
+    parser.add_argument("filenames", nargs="*", help="Ignored; accepted for lintrunner @{{PATHSFILE}} convention")
     args = parser.parse_args()
 
+    if args.lintrunner:
+        return run_lintrunner(args)
+
+    return run(args)
+
+
+def run_lintrunner(args: argparse.Namespace) -> int:
+    """Wrap run() with --check semantics, translating its exit code into a
+    lintrunner JSON finding on stdout. Always returns 0 so lintrunner treats a
+    real drift / environment failure as a finding, not as a crashed adapter."""
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    args.check = True
+    if args.baseline is None:
+        args.baseline = repo_root / "qcom" / "MIN_ORT_API_VERSION.txt"
+    if not args.fetch_from_deps_txt and args.ort_header_root is None:
+        args.fetch_from_deps_txt = True
+    try:
+        baseline_path = os.path.relpath(args.baseline, repo_root)
+    except ValueError:
+        baseline_path = str(args.baseline)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+        code = run(args)
+    captured = buf.getvalue().strip()
+
+    if code == 0:
+        return 0
+    if code == 1:
+        name = "ort-api-floor-drift"
+        description = captured or "ORT API floor drift"
+    else:
+        name = "ort-api-floor-check-error"
+        description = captured or f"cannot compute ORT API floor (exit {code})"
+    print(json.dumps(_lint_json(description, name=name, path=baseline_path)), flush=True)
+    return 0
+
+
+def run(args: argparse.Namespace) -> int:
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     ort_header_root = args.ort_header_root or find_ort_header_root(repo_root)
     ep_source_root = args.ep_source_root or (repo_root / "onnxruntime" / "core" / "providers" / "qnn")
