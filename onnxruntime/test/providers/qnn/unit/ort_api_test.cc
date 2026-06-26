@@ -13,7 +13,7 @@
 // produce UB with fake/null pointers. Those functions are NOT covered here.
 // Component-level ceiling for ort_api.cc is ~15% for this reason.
 
-#include "core/providers/qnn/ort_api.h"
+#include "gtest/gtest.h"
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-#include "gtest/gtest.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace test {

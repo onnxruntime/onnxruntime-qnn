@@ -56,12 +56,24 @@ no platform-specific `#ifdef` guards are needed inside test bodies.
 
 ## Adding new tests
 
+### Shared utilities
+
+Common helpers live in `qnn_int_test_utils.h` — include it from any integration test file
+to reuse them instead of re-defining locally:
+
+| Symbol | Purpose |
+|---|---|
+| `RegisteredQnnEp` | RAII helper that registers / unregisters the QNN EP plugin. |
+| `MakeQnnHtpSessionOptions(ep, opts)` | Build `Ort::SessionOptions` targeting the QNN HTP backend; returns `false` when the device is unavailable so the fixture can `GTEST_SKIP()`. |
+| `MakeValueInfo1D / 2D / 3D / 4D` | Build `Ort::ValueInfo` for a tensor of the given rank, element type, and dimensions. |
+
 ### File structure
 
 Add to an existing `*_test.cc` or create a new file following the same pattern. The
-only required guard is `#if !defined(ORT_MINIMAL_BUILD)` — unlike `unit/`, these files
-do **not** need `QNN_EP_INTERNAL_SYMBOL_ACCESS` because they only use the public ORT
-C++ API, not EP-internal symbols.
+required guard is `#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)` — unlike `unit/`,
+these files do **not** need `QNN_EP_INTERNAL_SYMBOL_ACCESS` because they only use the
+public ORT C++ API, not EP-internal symbols. The `defined(__linux__)` half excludes
+Windows x86-64, where the HTP backend cannot execute graphs.
 
 Minimal template:
 
@@ -69,16 +81,16 @@ Minimal template:
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#if !defined(ORT_MINIMAL_BUILD)
+#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include "onnxruntime_cxx_api.h"
 #include "gtest/gtest.h"
+#include "onnxruntime_cxx_api.h"
 
-extern std::unique_ptr<Ort::Env> ort_env;
+#include "test/providers/qnn/integration/qnn_int_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -92,7 +104,7 @@ TEST_F(QnnInt_OrtApiTest, MyFunction_MyScenario_ExpectedResult) {
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD)
+#endif  // !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
 ```
 
 ### Verification checklist before review
