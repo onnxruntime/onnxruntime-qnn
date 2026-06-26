@@ -3,9 +3,13 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
+#include <gsl/gsl>
+
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -3428,6 +3432,112 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
                   /*opset=*/21,
                   ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-2f);
+}
+
+// Mixed-bitwidth quantized Conv lowering: when input activation Q and output activation Q
+// use different unsigned bitwidths (e.g. u16 in / u8 out, as in Llama v_proj heads whose output
+// feeds an 8-bit KV-cache), the EP must emit Conv@input_bw → Convert → output@output_bw because
+// HTP Conv2d itself requires matched I/O bitwidth.
+//
+// Mirrors the exact Llama-3.2 v_proj SHA-head pattern: u16 activation in, per-channel int4
+// constant weight, u8 activation out.
+static GetTestQDQModelFn<uint8_t> BuildMixedBitwidthConvU16InU8OutPerChannelInt4Weight(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weight_def,
+    int64_t weight_quant_axis,
+    const std::vector<int64_t>& strides,
+    const std::vector<int64_t>& pads,
+    const std::vector<int64_t>& dilations,
+    int64_t group) {
+  return [input_def, weight_def, weight_quant_axis, strides, pads, dilations, group](
+             ModelTestBuilder& builder,
+             std::vector<QuantParams<uint8_t>>& output_qparams) {
+    std::vector<std::string> conv_input_names;
+
+    // input -> Q(u16) -> DQ -> (conv input)
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<uint16_t> input_qparams = GetTestInputQuantParams<uint16_t>(input_def);
+    conv_input_names.push_back(AddQDQNodePair<uint16_t>(builder, "qdq_input", "input",
+                                                        input_qparams.scale, input_qparams.zero_point));
+
+    // weight: per-channel int4 quantized constant initializer -> DQ -> (conv weight)
+    QNN_ASSERT(weight_def.IsInitializer() && weight_def.IsRawData());
+    const auto weight_shape = weight_def.GetShape();
+    int64_t pos_weight_axis = weight_quant_axis < 0
+                                  ? weight_quant_axis + static_cast<int64_t>(weight_shape.size())
+                                  : weight_quant_axis;
+    std::vector<float> weight_scales;
+    std::vector<Int4x2> weight_zps;
+    GetTestInputQuantParamsPerChannel<Int4x2>(weight_def, weight_scales, weight_zps,
+                                              static_cast<size_t>(pos_weight_axis), true);
+    std::vector<Int4x2> q_weight(Int4x2::CalcNumInt4Pairs(SizeOfShape(weight_shape)));
+    QuantizeValues<float, Int4x2>(weight_def.GetRawData(), q_weight, weight_shape, weight_scales,
+                                  weight_zps, pos_weight_axis);
+    builder.MakeInitializer<Int4x2>("weights_q", weight_shape, q_weight);
+    std::vector<ONNX_NAMESPACE::AttributeProto> wdq_attrs{
+        builder.MakeScalarAttribute("axis", weight_quant_axis)};
+    builder.AddDequantizeLinearNode("WeightDQ", "weights_q", weight_scales, weight_zps, "weights_dq",
+                                    wdq_attrs, /*use_ms_domain=*/false);
+    conv_input_names.push_back("weights_dq");
+
+    // Conv
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs{
+        builder.MakeStringAttribute("auto_pad", "NOTSET"),
+        builder.MakeScalarAttribute("group", group),
+        builder.MakeIntsAttribute("pads", pads),
+        builder.MakeIntsAttribute("strides", strides),
+        builder.MakeIntsAttribute("dilations", dilations),
+    };
+    builder.AddNode("Conv", "Conv", conv_input_names, {"conv_out"}, kOnnxDomain, conv_attrs);
+
+    // conv_out -> Q(u8) -> DQ -> graph output. The Q here uses the NARROWER (u8) bitwidth,
+    // unlike the input's u16 — this is what triggers the mixed-bitwidth Conv + Convert split.
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "conv_out",
+                                                   output_qparams[0].scale,
+                                                   output_qparams[0].zero_point);
+  };
+}
+
+// End-to-end test for the mixed-bitwidth Conv lowering. Asserts (1) the EP keeps the node on
+// HTP, (2) accuracy is within QDQ tolerance vs the f32 reference (i.e. the synthesized Convert
+// preserves semantics), and (3) the lowered QNN graph contains exactly one Convert (the bridge).
+TEST_F(QnnHTPBackendTests, ConvU16InU8OutPerChannelInt4WeightMixedBitwidthSplit) {
+  namespace fs = std::filesystem;
+
+  // u16 activation in (range covers a Llama-like activation), per-channel int4 weight,
+  // u8 activation out (range matches a Llama KV-cache value).
+  const std::vector<int64_t> input_shape = {1, 4, 4, 4};
+  const std::vector<int64_t> weight_shape = {8, 4, 1, 1};
+  TestInputDef<float> input_def(input_shape, /*is_initializer=*/false,
+                                GetFloatDataInRange(-3.5f, 4.25f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, /*is_initializer=*/true,
+                                 GetFloatDataInRange(-0.05f, 0.05f, SizeOfShape(weight_shape)));
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  const auto* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
+  const fs::path graph_dir = fs::temp_directory_path() /
+                             (std::string("ConvMixedBitwidthQnnGraph_") + test_info->name());
+  fs::remove_all(graph_dir);
+  fs::create_directories(graph_dir);
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+  auto cleanup = gsl::finally([&]() { fs::remove_all(graph_dir); });
+
+  TestQDQModelAccuracy<uint8_t>(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, TestInputDef<float>(),
+                           /*strides=*/{1, 1}, /*pads=*/{0, 0, 0, 0}, /*dilations=*/{1, 1},
+                           /*group=*/1, "NOTSET"),
+      BuildMixedBitwidthConvU16InU8OutPerChannelInt4Weight(
+          input_def, weight_def, /*weight_quant_axis=*/0,
+          /*strides=*/{1, 1}, /*pads=*/{0, 0, 0, 0}, /*dilations=*/{1, 1}, /*group=*/1),
+      provider_options, /*opset=*/21, ExpectedEPNodeAssignment::All);
+
+  if (!::testing::Test::IsSkipped()) {
+    AssertOpInQnnGraph(graph_dir, "Convert", /*count=*/1);
+  }
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

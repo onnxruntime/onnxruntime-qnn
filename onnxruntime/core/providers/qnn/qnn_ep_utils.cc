@@ -862,12 +862,8 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  // Input and output activation dtypes must match, except for the specific
-  // unsigned uint8<->uint16 case that conv_op_builder lowers as
-  // Conv@input_bw + Convert(input_bw -> output_bw). HTP's Conv2d itself requires
-  // matched I/O bitwidth; any other mismatch combination (signed types,
-  // per-channel output, etc.) has no op-builder decomposition and would fail
-  // at HTP graph finalize, so reject it here.
+  // I/O activation dtypes must match, except for unsigned uint8<->uint16 which conv_op_builder
+  // lowers as Conv + Convert (HTP Conv2d itself requires matched I/O bitwidth).
   const auto in_dt = dt_input.value();
   const auto out_dt = dt_output.value();
   const bool is_uint8_uint16_mixed =

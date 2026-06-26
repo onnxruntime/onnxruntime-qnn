@@ -1063,18 +1063,12 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
   return Ort::Status();
 }
 
-// Re-encode a per-tensor quantization param at a different bitwidth, preserving the dequantized
-// range. The source encoding (scale, offset, orig_bitwidth) represents the range
-// [scale*offset, scale*(2^orig_bitwidth - 1 + offset)]; this writes a fresh per-tensor encoding
-// covering the same range at new_bitwidth. Direction-agnostic: new_bitwidth may be larger
-// (widen) or smaller (narrow) than orig_bitwidth.
-//
-// Used to build the intermediate output of a mixed-bitwidth quantized Conv whose downstream
-// consumer expects a different bitwidth (e.g. uint16 Conv output feeding a uint8 KV-cache),
-// with a Convert bridging the two encodings.
-//
-// Both bitwidths must be in (0, 32] so `(1 << bw) - 1` fits in uint64 and the result fits in
-// float; `src` must be a per-tensor encoding.
+// Re-encode a per-tensor quantization param at `new_bitwidth` as a SYMMETRIC encoding (zero-point
+// at the unsigned mid-point) whose range covers the source's dequantized range
+// [scale*offset, scale*(2^orig_bitwidth - 1 + offset)]. A symmetric intermediate matches what the
+// legacy QAIRT converter emits for the widened Conv output and is what HTP's Conv2d expects; an
+// asymmetric intermediate is rejected at graph validation (error 3110).
+// Both bitwidths must be in (0, 32]; `src` must be a per-tensor encoding.
 static Ort::Status RequantizePerTensorAtBitwidth(const QnnQuantParamsWrapper& src,
                                                  size_t orig_bitwidth,
                                                  size_t new_bitwidth,
@@ -1089,11 +1083,12 @@ static Ort::Status RequantizePerTensorAtBitwidth(const QnnQuantParamsWrapper& sr
   const double f_min = static_cast<double>(src_scale) * static_cast<double>(src_offset);
   const double f_max = static_cast<double>(src_scale) *
                        (q_max_orig + static_cast<double>(src_offset));
-  const double q_max_new = static_cast<double>((uint64_t{1} << new_bitwidth) - 1);
-  const float new_scale = static_cast<float>((f_max - f_min) / q_max_new);
-  const int32_t new_offset = (new_scale != 0.0f)
-                                 ? static_cast<int32_t>(std::lround(f_min / new_scale))
-                                 : 0;
+  // Symmetric encoding: cover [-A, +A] where A bounds the source range, with zero-point at the
+  // unsigned mid-point (-2^(new_bw-1)). scale = A / 2^(new_bw-1).
+  const double abs_max = std::max(std::abs(f_min), std::abs(f_max));
+  const double half_levels = static_cast<double>(uint64_t{1} << (new_bitwidth - 1));
+  const float new_scale = static_cast<float>(abs_max / half_levels);
+  const int32_t new_offset = -static_cast<int32_t>(half_levels);
   out = QnnQuantParamsWrapper(new_scale, new_offset);
   return Ort::Status();
 }
@@ -1343,16 +1338,12 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   const auto& output_name = outputs[0].name;
   if (is_1d_conv) {
-    // The 1D path emits Conv2d → Reshape with no Convert insertion, so it does
-    // not support mixed-bitwidth quantized I/O. The selector only loosens the
-    // matched-dtype requirement for the uint8<->uint16 case that the 2D/3D
-    // path handles below; fail loudly here if a 1D Conv reaches this branch
-    // with mismatched bitwidths, rather than silently emitting an HTP-invalid
-    // Conv2d.
-    if (is_quantized_tensor && qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0])) {
-      const Qnn_DataType_t input_qnn_data_type_1d =
-          qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
-      RETURN_IF(input_qnn_data_type_1d != qnn_data_type,
+    // The 1D path (Conv2d → Reshape) has no Convert insertion, so reject mixed-bitwidth I/O
+    // here rather than silently emitting an HTP-invalid Conv2d.
+    if (is_quantized_tensor) {
+      TensorInfo input0_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_0, input0_info));
+      RETURN_IF(input0_info.qnn_data_type != qnn_data_type,
                 "QNN EP: 1D quantized Conv with mismatched input/output bitwidth is not supported.");
     }
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
@@ -1389,19 +1380,14 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    // Detect a quantized Conv whose input and output activation use different unsigned
-    // bitwidths (e.g. uint16 in → uint8 out when the output feeds an 8-bit KV-cache). HTP's
-    // Conv2d itself requires matched I/O bitwidth, so we decompose into:
-    //   Conv (output @ input_bitwidth, output range re-encoded at input_bitwidth)
-    //     → Convert → output (at the user-authored output bitwidth/encoding)
-    // This mirrors the legacy QAIRT converter's lowering for the same pattern. The selector
-    // (qnn_ep_utils.cc OrtConvNodeGroupSelector) admits only uint8<->uint16 mismatch, which
-    // matches the predicate below.
-    Qnn_DataType_t input_qnn_data_type = qnn_data_type;
-    if (is_quantized_tensor && qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0])) {
-      input_qnn_data_type =
-          qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
-    }
+    // Quantized Conv whose input/output activations differ in unsigned bitwidth (e.g. u16 in →
+    // u8 out feeding a KV-cache). Decomposed as Conv(@input bw) → Convert → output(@output bw)
+    // since HTP Conv2d requires matched I/O bitwidth. Predicate matches the selector gate.
+    // Read the input dtype from the node unit (not the tensor wrapper, which is absent during
+    // op validation in GetCapability).
+    TensorInfo input0_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_0, input0_info));
+    const Qnn_DataType_t input_qnn_data_type = input0_info.qnn_data_type;
     const bool is_mixed_bitwidth_quantized =
         is_quantized_tensor && !is_bq_conv &&
         (input_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
