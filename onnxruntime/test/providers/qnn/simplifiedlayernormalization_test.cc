@@ -27,7 +27,7 @@ static void RunSimplifiedLayerNormCpuTest(const TestInputDef<float>& input_def,
       BuildOpTestCase<float>("simplified_layernorm", "SimplifiedLayerNormalization", {input_def, scale_def}, {}, attrs),
       provider_options,
       17,  // opset version
-      expected_ep_assignment);
+      EPVerificationParams{expected_ep_assignment});
 }
 
 // Builds a QDQ SimplifiedLayerNormalization test case (single Y output).
@@ -102,8 +102,12 @@ static void RunSimplifiedLayerNormQDQTest(const TestInputDef<float>& input_def,
     qdq_model_fn(builder, output_qparams_vec);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 17, expected_ep_assignment,
-                  1e-5f, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, false);
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  17,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  false);
 }
 
 // Basic 2D input, axis=0.
@@ -166,9 +170,11 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_InvStdVar_Unsupported) {
 
   // QNN EP should reject this node because inv_std_var is not supported.
   // The node falls back to CPU EP.
-  RunQnnModelTest(build_model_with_inv_std_var, provider_options, 17,
-                  ExpectedEPNodeAssignment::None,
-                  1e-5f, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+  RunQnnModelTest(build_model_with_inv_std_var,
+                  provider_options,
+                  17,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(1e-5f)},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   false /* verify_outputs */);
 }
 
@@ -188,7 +194,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Axis0_Unsupported) {
                              {test::MakeAttribute("axis", static_cast<int64_t>(0))}),
       provider_options,
       17,
-      ExpectedEPNodeAssignment::None);
+      EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
 
 // Input rank > 4 must be rejected.
@@ -207,7 +213,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Rank5_Unsupported) {
                              {test::MakeAttribute("axis", static_cast<int64_t>(-1))}),
       provider_options,
       17,
-      ExpectedEPNodeAssignment::None);
+      EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
 
 // 3D input, last axis, static scale, U8 activations / U8 weights.

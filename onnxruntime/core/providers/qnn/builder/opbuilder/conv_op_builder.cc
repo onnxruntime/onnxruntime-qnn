@@ -1268,12 +1268,8 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                    (group == num_output_channels);
 
   if (!is_depthwise_conv2d) {  // DepthWiseConv2d does not need a group parameter.
-    Qnn_Scalar_t group_qnn_scalar = QNN_SCALAR_INIT;
-    group_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-    group_qnn_scalar.uint32Value = group;
-    QnnParamWrapper group_paramwrapper(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_GROUP, group_qnn_scalar);
-    param_tensor_names.push_back(group_paramwrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(group_paramwrapper));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), group,
+                                           QNN_OP_CONV_2D_PARAM_GROUP, param_tensor_names));
   } else {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,

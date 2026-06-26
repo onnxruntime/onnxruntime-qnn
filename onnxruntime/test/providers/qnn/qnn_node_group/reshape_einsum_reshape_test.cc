@@ -67,8 +67,7 @@ TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_Float) {
   RunQnnModelTest(BuildReshapeEinsumReshapeFloatTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "DepthToSpace", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Einsum", 0);

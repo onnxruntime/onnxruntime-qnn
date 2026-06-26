@@ -116,29 +116,13 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
 
   // Extract 'low' attribute
   float low = node_helper.Get("low", 0.0f);
-  Qnn_Scalar_t low_param = QNN_SCALAR_INIT;
-  low_param.dataType = QNN_DATATYPE_FLOAT_32;
-  low_param.floatValue = low;
-  QnnParamWrapper low_param_wrapper(node_unit.Index(),
-                                    node_unit.Name(),
-                                    QNN_OP_RANDOM_UNIFORM_LIKE_PARAM_LOW,
-                                    low_param);
-
-  param_names.push_back(low_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(low_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), low,
+                                      QNN_OP_RANDOM_UNIFORM_LIKE_PARAM_LOW, param_names));
 
   // Extract 'high' attribute
   float high = node_helper.Get("high", 1.0f);
-  Qnn_Scalar_t high_param = QNN_SCALAR_INIT;
-  high_param.dataType = QNN_DATATYPE_FLOAT_32;
-  high_param.floatValue = high;
-  QnnParamWrapper high_param_wrapper(node_unit.Index(),
-                                     node_unit.Name(),
-                                     QNN_OP_RANDOM_UNIFORM_LIKE_PARAM_HIGH,
-                                     high_param);
-
-  param_names.push_back(high_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(high_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), high,
+                                      QNN_OP_RANDOM_UNIFORM_LIKE_PARAM_HIGH, param_names));
 
   const auto& outputs = node_unit.Outputs();
   const std::string& output_name = outputs[0].name;

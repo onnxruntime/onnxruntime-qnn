@@ -872,7 +872,7 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
           debug_output_name,
           cpu_f32_outputs[i],
           qnn_qdq_outputs[i],
-          1e-4f);
+          ElementwiseAbsoluteVerifier(1e-4f));
     }
   }
 }
@@ -1622,19 +1622,16 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param build_test_case Function that builds a test model. See test/unittest_util/qdq_test_utils.h
  * \param provider_options Provider options for QNN EP.
  * \param opset_version The opset version.
- * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
- * \param fp32_abs_err The acceptable error between CPU EP and QNN EP.
+ * \param verification_params Describes node assignment, output verification, and graph verification.
  * \param log_severity The logger's minimum severity level.
  * \param verify_outputs True to verify that the outputs match (within tolerance).
  * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
  *                         EP assignment via public API.
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
-                     int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                     float fp32_abs_err = 1e-5f,
+                     int opset_version, const EPVerificationParams& verification_params,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
-                     std::function<void(const Ort::Session&)>* ep_graph_checker = nullptr,
                      Ort::CustomOpDomain* custom_op_domain = nullptr);
 
 enum class BackendSupport {

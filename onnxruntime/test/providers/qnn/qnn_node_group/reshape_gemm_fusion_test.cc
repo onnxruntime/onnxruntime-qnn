@@ -236,8 +236,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
   RunQnnModelTest(BuildReshapeGemmTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected is in the graph (fusion happened)
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -258,8 +257,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
   RunQnnModelTest(BuildReshapeGemmReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape (output reshape kept)
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -281,8 +279,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
   RunQnnModelTest(BuildReshapeGemmReshapeTestCase({2, 4, 8, 32}, 32, 64),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -304,8 +301,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
   RunQnnModelTest(BuildReshapeGemmReshapeReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape (only final reshape kept)
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -328,8 +324,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
   RunQnnModelTest(BuildReshapeGemmReshapeKeepFirstDimTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -352,8 +347,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
   RunQnnModelTest(BuildReshapeGemmReshapeTestCase({1, 16, 64}, 64, 64),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -504,8 +498,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransA) {
   RunQnnModelTest(BuildReshapeGemmWithTransATestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Test: Fusion should NOT happen when transB=1
@@ -515,8 +508,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransB) {
   RunQnnModelTest(BuildReshapeGemmWithTransBTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Test: Fusion should NOT happen when weight is dynamic
@@ -526,8 +518,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DynamicWeight) {
   RunQnnModelTest(BuildReshapeGemmDynamicWeightTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Test: Fusion should NOT happen when the input Reshape's input has rank 5.
@@ -549,8 +540,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_Rank5Input) {
   RunQnnModelTest(BuildReshapeGemmReshapeRank5InputTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify the fusion did NOT fire: one FullyConnected node and two Reshape nodes in the QNN graph
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -666,8 +656,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_QDQ_NoFusion) {
   RunQnnModelTest(BuildQDQReshapeGemmTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/0.5f);  // Higher tolerance for quantized
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
 }
 
 // Test: QDQ Reshape -> Gemm -> Reshape (fusion should NOT happen)
@@ -678,8 +667,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_QDQ_NoFusion) {
   RunQnnModelTest(BuildQDQReshapeGemmReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/0.5f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -481,20 +481,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 2 with float32 model (for baseline comparison)
@@ -515,20 +513,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 3 (ErfMul Pattern) with float32 model
@@ -549,20 +545,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   RunQnnModelTest(BuildGeluPattern3TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern3TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 1 with larger input shape
@@ -581,10 +575,9 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 2 with larger input shape
@@ -603,10 +596,9 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 1 with 3D input
@@ -627,20 +619,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 2 with 3D input
@@ -661,20 +651,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 1 with 2D input (typical for linear layers)
@@ -695,20 +683,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 2 with 2D input (typical for linear layers)
@@ -729,20 +715,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 1 with QDQ
@@ -764,7 +748,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   ResetQnnGraphDir(json_qnn_graph_dir);
 
@@ -774,7 +758,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 2 with QDQ
@@ -796,7 +780,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   ResetQnnGraphDir(json_qnn_graph_dir);
 
@@ -806,7 +790,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Test GELU Pattern 3 with QDQ
@@ -828,7 +812,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
   ResetQnnGraphDir(json_qnn_graph_dir);
 
@@ -838,7 +822,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
 
 // Negative test: GELU Pattern with internal QDQ nodes should NOT fuse
@@ -941,7 +925,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern_QDQ_InternalQDQ_ShouldNotFuse) {
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some);
 
   // Verify that NO fused GELU op was created (count = 0)
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", 0);
 }
 
 // Negative test: GELU Pattern with incorrect skip connection topology should NOT fuse
@@ -1027,7 +1011,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern_QDQ_WrongSkipConnection_ShouldNotFu
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some);
 
   // Verify that NO fused GELU op was created (count = 0)
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

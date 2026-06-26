@@ -37,6 +37,36 @@ _AAR_APK_RE = re.compile(r"^java/androidtest/.*\.apk$")
 # Drop __pycache__ and .pytest_cache unconditionally.
 _ALWAYS_REJECT_RE = re.compile(r".*/(__pycache__|\.pytest_cache)/")
 
+# Microsoft Visual C++ runtime DLLs that onnxruntime.dll (from upstream MS prebuilt) imports.
+# Bundled into the Windows test archive so QA machines don't need vc_redist preinstalled.
+# Verified against the v1.26.0 prebuilt PE import tables: x64 onnxruntime.dll imports all four;
+# arm64 imports msvcp140/msvcp140_1/vcruntime140 (no vcruntime140_1). The regex bundles whatever
+# the redist provides; _MSVC_REDIST_REQUIRED is the per-arch completeness floor the loader needs.
+_MSVC_REDIST_FILE_RE = re.compile(r"^(msvcp140|vcruntime140)(_1)?\.dll$", re.IGNORECASE)
+# Per-arch minimum the loader needs to bring up onnxruntime.dll on a clean machine. x64 additionally
+# imports vcruntime140_1.dll; arm64 (and arm64ec/arm64x, which load the native ARM64 CRT) does not.
+# Keys mirror _MSVC_REDIST_ARCH_SUBDIR so the guard's promise ("won't fail to load onnxruntime.dll")
+# holds per arch rather than against a lowest-common-denominator floor that under-covers x64.
+_MSVC_REDIST_REQUIRED = {
+    "windows-x86_64": ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"),
+    "windows-arm64": ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"),
+    "windows-arm64ec": ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"),
+    "windows-arm64x": ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"),
+}
+
+# Map per-arch target_platform to the redist subdirectory under VCToolsRedistDir.
+# arm64ec and arm64x both load the native ARM64 CRT (arm64ec/arm64 share the ARM64 runtime;
+# x64 code in the process is emulated), and Microsoft ships no arm64ec redist folder.
+# Keys mirror the argparse --target-platform choices for the windows-* archive targets. The
+# transient "windows-arm64-x-slice" build dir (BuildAsX + Arch=arm64) never runs archive mode
+# — only the arm64ec slice does, as windows-arm64x — so it is intentionally absent here.
+_MSVC_REDIST_ARCH_SUBDIR = {
+    "windows-x86_64": "x64",
+    "windows-arm64": "arm64",
+    "windows-arm64ec": "arm64",
+    "windows-arm64x": "arm64",
+}
+
 
 class PerArchAcceptRules:
     """Accept-list filter for per-arch test archive contents.
@@ -101,6 +131,62 @@ def _iter_qcom_scripts(repo_root: Path):
         yield p
 
 
+def _iter_msvc_redist(vc_redist_dir: Path, target_platform: str):
+    """Yield MSVC redistributable DLLs (msvcp140*.dll, vcruntime140*.dll) for the target arch.
+
+    vc_redist_dir is VCToolsRedistDir, e.g.
+    'C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Redist/MSVC/14.40.33807'.
+    Under it, each arch has a 'Microsoft.VC<NNN>.CRT' folder holding the runtime DLLs.
+    """
+    arch_subdir = _MSVC_REDIST_ARCH_SUBDIR.get(target_platform)
+    if arch_subdir is None:
+        logging.warning("No MSVC redist arch mapping for %s; no redist DLLs found.", target_platform)
+        return
+    arch_root = vc_redist_dir / arch_subdir
+    if not arch_root.is_dir():
+        logging.warning("MSVC redist arch dir not found: %s; no redist DLLs found.", arch_root)
+        return
+    crt_dirs = list(arch_root.glob("Microsoft.VC*.CRT"))
+    if not crt_dirs:
+        logging.warning("No Microsoft.VC*.CRT folder under %s; no redist DLLs found.", arch_root)
+        return
+
+    # A side-by-side toolset install can expose multiple CRT version folders. Bundle only the
+    # highest so the archive never carries duplicate-named DLL entries. Sort on the numeric VC
+    # version (e.g. Microsoft.VC143.CRT -> 143), not lexicographically, so VC9 < VC143.
+    def _crt_version(p: Path) -> int:
+        m = re.search(r"Microsoft\.VC(\d+)\.CRT", p.name)
+        return int(m.group(1)) if m else -1
+
+    crt_dir = max(crt_dirs, key=_crt_version)
+    for p in crt_dir.iterdir():
+        if p.is_file() and _MSVC_REDIST_FILE_RE.match(p.name):
+            yield p
+
+
+def _add_msvc_redist(zf: zipfile.ZipFile, vc_redist_dir: Path | None, target_platform: str, arc_root: Path) -> None:
+    """Write the target arch's MSVC redist DLLs into the zip under arc_root. No-op when unset.
+
+    Fails loudly when vc_redist_dir is supplied but the expected runtime DLLs can't be bundled:
+    a silently-incomplete archive fails to load onnxruntime.dll on a clean QA machine, which is
+    exactly what this bundling exists to prevent. This mirrors Get-VcRedistDir, which throws.
+    """
+    if vc_redist_dir is None:
+        return
+    bundled = set()
+    for p in _iter_msvc_redist(vc_redist_dir, target_platform):
+        zf.write(p, str(arc_root / p.name))
+        bundled.add(p.name.lower())
+    required = _MSVC_REDIST_REQUIRED.get(target_platform, ())
+    missing = {n.lower() for n in required} - bundled
+    if missing:
+        raise RuntimeError(
+            f"MSVC redist bundling for {target_platform} is incomplete (missing {sorted(missing)}) "
+            f"under {vc_redist_dir}. The test archive would fail to load onnxruntime.dll on a clean "
+            f"machine. Check the VC redist install and the arch mapping."
+        )
+
+
 def _select_release_entries(release_dir: Path, rules: PerArchAcceptRules, repo_root: Path = REPO_ROOT):
     """Yield (filesystem_path, arcname_relative_to_REPO_ROOT) for accepted Release/ files."""
     for p in _iter_release_files(release_dir):
@@ -131,7 +217,12 @@ def archive_linux(target_platform: str, config: str = "Release", repo_root: Path
             tf.add(p, str(p.relative_to(repo_root)))
 
 
-def archive_windows(target_platform: str, config: str = "Release", repo_root: Path = REPO_ROOT) -> None:
+def archive_windows(
+    target_platform: str,
+    config: str = "Release",
+    repo_root: Path = REPO_ROOT,
+    vc_redist_dir: Path | None = None,
+) -> None:
     build_root = repo_root / "build"
     archive_path = build_root / f"onnxruntime-tests-{target_platform}.zip"
     if config != "Release":
@@ -151,11 +242,16 @@ def archive_windows(target_platform: str, config: str = "Release", repo_root: Pa
                 if src.exists():
                     zf.write(src, str(src.relative_to(repo_root)))
             for fs, arc in _select_release_entries(nested, rules, repo_root):
-                # Drop the inner Release/ doubling so layout matches single-config.
+                # arc is repo-relative (build/<plat>/<config>/<config>/...); rebuild it from
+                # parts[3:] so entries stay rooted at build/<plat>/<config>/, preserving the
+                # doubled <config>/<config>/ dir the VS multi-config generator produces.
                 outer_arc = Path("build") / target_platform / config / Path(*arc.parts[3:])
                 zf.write(fs, str(outer_arc))
             for p in _iter_qcom_scripts(repo_root):
                 zf.write(p, str(p.relative_to(repo_root)))
+            # Binaries (incl. onnxruntime.dll) land under build/<plat>/<config>/<config>/ in this
+            # layout; the redist must co-locate there or the loader won't find it on a clean machine.
+            _add_msvc_redist(zf, vc_redist_dir, target_platform, Path("build") / target_platform / config / config)
         return
 
     archive_path.unlink(missing_ok=True)
@@ -165,6 +261,8 @@ def archive_windows(target_platform: str, config: str = "Release", repo_root: Pa
             zf.write(fs, str(arc))
         for p in _iter_qcom_scripts(repo_root):
             zf.write(p, str(p.relative_to(repo_root)))
+        # Single-config (Ninja): binaries live directly under build/<plat>/<config>/.
+        _add_msvc_redist(zf, vc_redist_dir, target_platform, Path("build") / target_platform / config)
 
 
 def archive_android(target_platform: str, config: str, qairt_sdk_root: Path, repo_root: Path = REPO_ROOT) -> None:
@@ -209,6 +307,15 @@ if __name__ == "__main__":
         ],
     )
     parser.add_argument("--qairt-sdk-root", type=Path, required=True)
+    parser.add_argument(
+        "--vc-redist-dir",
+        type=Path,
+        default=None,
+        help=(
+            "VCToolsRedistDir on Windows. When set, msvcp140*.dll and vcruntime140*.dll for the "
+            "target arch are bundled into the Windows test archive alongside onnxruntime.dll."
+        ),
+    )
     args = parser.parse_args()
 
     if args.target_platform.startswith("android-"):
@@ -216,6 +323,6 @@ if __name__ == "__main__":
     elif args.target_platform.startswith("linux-"):
         archive_linux(args.target_platform, args.config)
     elif args.target_platform.startswith("windows-"):
-        archive_windows(args.target_platform, args.config)
+        archive_windows(args.target_platform, args.config, vc_redist_dir=args.vc_redist_dir)
     else:
         raise ValueError(f"Unknown platform {args.target_platform}.")

@@ -56,8 +56,7 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_AddDownstream) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   14,
-                  ExpectedEPNodeAssignment::All,
-                  1e-5f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
 }

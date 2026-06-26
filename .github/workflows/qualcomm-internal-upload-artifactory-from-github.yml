@@ -49,7 +49,6 @@ jobs:
       build_android_aarch64: false
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: false
-      build_linux_x86_64: false
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
@@ -224,14 +223,14 @@ jobs:
           NETRC_FILE=$(mktemp -p /tmp)
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" <<EOF
-          machine artifactory-las.qualcomm.com
+          machine artifactory-qdc-global.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
           VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
             "${{ github.workspace }}/build/dist/output/unsigned_libs/wheel.zip" \
-            "wheels.zip" "$VERSION" "$NETRC_FILE"
+            "wheel.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
       - name: Publish Wheels
@@ -291,7 +290,7 @@ jobs:
         run: |
           $netrcFile = New-TemporaryFile
           @"
-          machine artifactory-las.qualcomm.com
+          machine artifactory-qdc-global.qualcomm.com
           login $env:ARTIFACTORY_USERNAME
           password $env:ARTIFACTORY_PASSWORD
           "@ | Set-Content -Path $netrcFile
@@ -463,7 +462,7 @@ jobs:
           NETRC_FILE=$(mktemp -p /tmp)
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" <<EOF
-          machine artifactory-las.qualcomm.com
+          machine artifactory-qdc-global.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
@@ -523,7 +522,7 @@ jobs:
             VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
           else
             VERSION="${{ inputs.version_suffix }}"
-            TEST_PACKAGE_VERSION = $TEST_PACKAGE_VERSION-$VERSION"
+            TEST_PACKAGE_VERSION="${TEST_PACKAGE_VERSION}${VERSION}"
           fi
           ./qcom/scripts/all/prepare_test_package.sh \
             "${{ github.workspace }}/test_archives" \
@@ -540,7 +539,7 @@ jobs:
                        mktemp -p "${{ github.workspace }}")
           chmod 600 "$NETRC_FILE"
           cat > "$NETRC_FILE" << EOF
-          machine artifactory-las.qualcomm.com
+          machine artifactory-qdc-global.qualcomm.com
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
