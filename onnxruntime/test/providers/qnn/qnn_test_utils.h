@@ -352,6 +352,49 @@ struct TestInputDef {
     return per_axis_ranges;
   }
 
+  std::vector<std::pair<T, T>> GetRangePerBlock(int64_t block_size, int64_t axis) const {
+    QNN_ASSERT(shape_.size() >= 2);
+    QNN_ASSERT(axis == 0 || axis == 1);
+    QNN_ASSERT(block_size > 0);
+
+    const int64_t axis_dim = shape_[static_cast<size_t>(axis)];
+    const int64_t non_axis_dim = shape_[static_cast<size_t>(1 - axis)];
+    const int64_t num_blocks = (axis_dim + block_size - 1) / block_size;
+    const size_t num_ranges = static_cast<size_t>(num_blocks * non_axis_dim);
+
+    // Random data: all blocks share the same range.
+    if (data_info_.index() == 1) {
+      RandomData rand_info = std::get<RandomData>(data_info_);
+      return std::vector<std::pair<T, T>>(num_ranges, std::pair<T, T>(rand_info.min, rand_info.max));
+    }
+
+    // Raw data: compute min/max per (block, channel) pair.
+    const std::vector<T>& raw_data = std::get<RawData>(data_info_).data;
+    const int64_t N = shape_[1];  // stride for row-major 2D indexing
+    std::pair<T, T> init_range(std::numeric_limits<T>::max(), std::numeric_limits<T>::lowest());
+    std::vector<std::pair<T, T>> per_block_ranges(num_ranges, init_range);
+
+    for (int64_t b = 0; b < num_blocks; ++b) {
+      const int64_t block_start = b * block_size;
+      const int64_t block_end = std::min(block_start + block_size, axis_dim);
+
+      for (int64_t c = 0; c < non_axis_dim; ++c) {
+        const int64_t range_idx = (axis == 0) ? (b * non_axis_dim + c) : (c * num_blocks + b);
+        std::pair<T, T>& range = per_block_ranges[static_cast<size_t>(range_idx)];
+
+        for (int64_t i = block_start; i < block_end; ++i) {
+          const int64_t row = (axis == 0) ? i : c;
+          const int64_t col = (axis == 0) ? c : i;
+          T val = raw_data[static_cast<size_t>(row * N + col)];
+          range.first = std::min(range.first, val);
+          range.second = std::max(range.second, val);
+        }
+      }
+    }
+
+    return per_block_ranges;
+  }
+
   bool IsOptional() const {
     return is_optional_;
   }
@@ -589,6 +632,193 @@ inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
     }
   }
   QNN_ASSERT(i == (block_count * broadcast_dim * block_size));
+}
+
+// Computes per-block quantization parameters for a weight tensor.
+template <typename QType>
+static void GetTestInputQuantParamsBlockQuant(
+    const TestInputDef<float>& input_def,
+    std::vector<float>& scales,
+    std::vector<QType>& zero_points,
+    int64_t block_size,
+    int64_t axis,
+    bool symmetric = true) {
+  const auto f32_ranges = input_def.GetRangePerBlock(block_size, axis);
+
+  scales.reserve(f32_ranges.size());
+  zero_points.reserve(f32_ranges.size());
+
+  for (const auto& range : f32_ranges) {
+    QuantParams<QType> params = QuantParams<QType>::Compute(range.first, range.second, symmetric);
+    scales.push_back(params.scale);
+    zero_points.push_back(params.zero_point);
+  }
+}
+
+// Specialization for Int4x2/UInt4x2: zero_points are packed
+#define DEF_GET_INPUT_QPARAMS_BLOCK_QUANT_INT4_FUNC(INT4x2_TYPE)                                                 \
+  template <>                                                                                                    \
+  inline void GetTestInputQuantParamsBlockQuant<INT4x2_TYPE>(const TestInputDef<float>& input_def,               \
+                                                             std::vector<float>& scales,                         \
+                                                             std::vector<INT4x2_TYPE>& zero_points,              \
+                                                             int64_t block_size, int64_t axis, bool symmetric) { \
+    using UnpackedType = typename INT4x2_TYPE::UnpackedType;                                                     \
+    const auto f32_ranges = input_def.GetRangePerBlock(block_size, axis);                                        \
+    const size_t num_ranges = f32_ranges.size();                                                                 \
+                                                                                                                 \
+    scales.resize(num_ranges);                                                                                   \
+    zero_points.resize(INT4x2_TYPE::CalcNumInt4Pairs(num_ranges));                                               \
+                                                                                                                 \
+    for (size_t i = 0; i < num_ranges; i++) {                                                                    \
+      const auto& range = f32_ranges[i];                                                                         \
+      QuantParams<UnpackedType> params = QuantParams<UnpackedType>::Compute(range.first, range.second,           \
+                                                                            INT4x2_TYPE::min_val,                \
+                                                                            INT4x2_TYPE::max_val, symmetric);    \
+      scales[i] = params.scale;                                                                                  \
+                                                                                                                 \
+      size_t r = i >> 1;                                                                                         \
+      size_t c = i & 0x1;                                                                                        \
+      zero_points[r].SetElem(c, params.zero_point);                                                              \
+    }                                                                                                            \
+  }
+
+DEF_GET_INPUT_QPARAMS_BLOCK_QUANT_INT4_FUNC(Int4x2)
+DEF_GET_INPUT_QPARAMS_BLOCK_QUANT_INT4_FUNC(UInt4x2)
+
+// Quantizes a weight tensor using per-block scales.
+template <typename FloatType, typename QType>
+static void QuantizeValuesBlockQuant(
+    gsl::span<const FloatType> input,
+    std::vector<QType>& output,
+    const std::vector<int64_t>& shape,
+    const std::vector<float>& scales,
+    const std::vector<QType>& zero_points,
+    int64_t block_size,
+    int64_t axis) {
+  QNN_ASSERT(shape.size() >= 2);
+  QNN_ASSERT(axis == 0 || axis == 1);
+
+  const int64_t K = shape[0];
+  const int64_t N = shape[1];
+  const int64_t axis_dim = shape[static_cast<size_t>(axis)];
+  const int64_t non_axis_dim = shape[static_cast<size_t>(1 - axis)];
+  const int64_t num_blocks = (axis_dim + block_size - 1) / block_size;
+
+  const size_t num_elems = static_cast<size_t>(K * N);
+  QNN_ASSERT(input.size() == num_elems);
+  output.resize(num_elems);
+
+  const float qmin = static_cast<float>(std::numeric_limits<QType>::min());
+  const float qmax = static_cast<float>(std::numeric_limits<QType>::max());
+
+  for (int64_t k = 0; k < K; ++k) {
+    for (int64_t n = 0; n < N; ++n) {
+      const float val = static_cast<float>(input[static_cast<size_t>(k * N + n)]);
+      const int64_t b = (axis == 0) ? (k / block_size) : (n / block_size);
+      const int64_t c = (axis == 0) ? n : k;
+      const int64_t scale_idx = (axis == 0) ? (b * non_axis_dim + c) : (c * num_blocks + b);
+      const float scale = scales[static_cast<size_t>(scale_idx)];
+      const QType zp = zero_points.empty() ? static_cast<QType>(0) : zero_points[static_cast<size_t>(scale_idx)];
+      const float q_unclamped = RoundHalfToEven(val / scale) + static_cast<float>(zp);
+      output[static_cast<size_t>(k * N + n)] = static_cast<QType>(std::min(qmax, std::max(qmin, q_unclamped)));
+    }
+  }
+}
+
+// Specialization for Int4x2: packed output, max_val = 7, min_val = -8.
+template <>
+inline void QuantizeValuesBlockQuant<float, Int4x2>(
+    gsl::span<const float> input,
+    std::vector<Int4x2>& output,
+    const std::vector<int64_t>& shape,
+    const std::vector<float>& scales,
+    const std::vector<Int4x2>& zero_points,
+    int64_t block_size,
+    int64_t axis) {
+  QNN_ASSERT(shape.size() >= 2);
+  QNN_ASSERT(axis == 0 || axis == 1);
+
+  const int64_t K = shape[0];
+  const int64_t N = shape[1];
+  const int64_t axis_dim = shape[static_cast<size_t>(axis)];
+  const int64_t non_axis_dim = shape[static_cast<size_t>(1 - axis)];
+  const int64_t num_blocks = (axis_dim + block_size - 1) / block_size;
+
+  const size_t num_elems = static_cast<size_t>(K * N);
+  QNN_ASSERT(input.size() == num_elems);
+  output.resize(Int4x2::CalcNumInt4Pairs(num_elems));
+  std::fill(output.begin(), output.end(), Int4x2{});
+
+  for (int64_t k = 0; k < K; ++k) {
+    for (int64_t n = 0; n < N; ++n) {
+      const size_t elem_idx = static_cast<size_t>(k * N + n);
+      const float val = input[elem_idx];
+      const int64_t b = (axis == 0) ? (k / block_size) : (n / block_size);
+      const int64_t c = (axis == 0) ? n : k;
+      const int64_t scale_idx = (axis == 0) ? (b * non_axis_dim + c) : (c * num_blocks + b);
+      const float scale = scales[static_cast<size_t>(scale_idx)];
+
+      int8_t zp = 0;
+      if (!zero_points.empty()) {
+        const auto [zp_pair_idx, zp_elem_idx] = Int4x2::GetTensorElemIndices(static_cast<size_t>(scale_idx));
+        zp = zero_points[zp_pair_idx].GetElem(zp_elem_idx);
+      }
+
+      const float q_unclamped = RoundHalfToEven(val / scale) + static_cast<float>(zp);
+      const float q_clamped = std::min(static_cast<float>(Int4x2::max_val),
+                                       std::max(static_cast<float>(Int4x2::min_val), q_unclamped));
+      const auto [out_pair_idx, out_elem_idx] = Int4x2::GetTensorElemIndices(elem_idx);
+      output[out_pair_idx].SetElem(out_elem_idx, static_cast<int8_t>(q_clamped));
+    }
+  }
+}
+
+// Specialization for UInt4x2: packed output, max_val = 15, min_val = 0.
+template <>
+inline void QuantizeValuesBlockQuant<float, UInt4x2>(
+    gsl::span<const float> input,
+    std::vector<UInt4x2>& output,
+    const std::vector<int64_t>& shape,
+    const std::vector<float>& scales,
+    const std::vector<UInt4x2>& zero_points,
+    int64_t block_size,
+    int64_t axis) {
+  QNN_ASSERT(shape.size() >= 2);
+  QNN_ASSERT(axis == 0 || axis == 1);
+
+  const int64_t K = shape[0];
+  const int64_t N = shape[1];
+  const int64_t axis_dim = shape[static_cast<size_t>(axis)];
+  const int64_t non_axis_dim = shape[static_cast<size_t>(1 - axis)];
+  const int64_t num_blocks = (axis_dim + block_size - 1) / block_size;
+
+  const size_t num_elems = static_cast<size_t>(K * N);
+  QNN_ASSERT(input.size() == num_elems);
+  output.resize(UInt4x2::CalcNumInt4Pairs(num_elems));
+  std::fill(output.begin(), output.end(), UInt4x2{});
+
+  for (int64_t k = 0; k < K; ++k) {
+    for (int64_t n = 0; n < N; ++n) {
+      const size_t elem_idx = static_cast<size_t>(k * N + n);
+      const float val = input[elem_idx];
+      const int64_t b = (axis == 0) ? (k / block_size) : (n / block_size);
+      const int64_t c = (axis == 0) ? n : k;
+      const int64_t scale_idx = (axis == 0) ? (b * non_axis_dim + c) : (c * num_blocks + b);
+      const float scale = scales[static_cast<size_t>(scale_idx)];
+
+      uint8_t zp = 0;
+      if (!zero_points.empty()) {
+        const auto [zp_pair_idx, zp_elem_idx] = UInt4x2::GetTensorElemIndices(static_cast<size_t>(scale_idx));
+        zp = zero_points[zp_pair_idx].GetElem(zp_elem_idx);
+      }
+
+      const float q_unclamped = RoundHalfToEven(val / scale) + static_cast<float>(zp);
+      const float q_clamped = std::min(static_cast<float>(UInt4x2::max_val),
+                                       std::max(static_cast<float>(UInt4x2::min_val), q_unclamped));
+      const auto [out_pair_idx, out_elem_idx] = UInt4x2::GetTensorElemIndices(elem_idx);
+      output[out_pair_idx].SetElem(out_elem_idx, static_cast<uint8_t>(q_clamped));
+    }
+  }
 }
 
 // Refer to test_autoep_utils.h for leveraging unique pointer to unregister plugin EP.

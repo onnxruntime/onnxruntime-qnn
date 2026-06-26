@@ -38,6 +38,7 @@ struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
+  bool enable_block_quant_weight_optimization = false;
 };
 
 class QnnModelWrapper {
@@ -368,6 +369,8 @@ class QnnModelWrapper {
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
+
+  const Ort::Logger& GetLogger() const { return logger_; }
 
   const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
     return model_tensors_map_;
