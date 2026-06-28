@@ -50,8 +50,7 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  /*fp32_abs_err*/ 1e-5f,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
                   /*log_severity*/ OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs*/ verify_outputs);
 }

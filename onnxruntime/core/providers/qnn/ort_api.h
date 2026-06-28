@@ -247,6 +247,7 @@ struct OrtNodeUnitIODef {
     const OrtValueInfo* scale;
     const OrtValueInfo* zero_point{nullptr};
     std::optional<int64_t> axis{std::nullopt};
+    std::optional<int64_t> block_size{std::nullopt};
   };
 
   std::string name;

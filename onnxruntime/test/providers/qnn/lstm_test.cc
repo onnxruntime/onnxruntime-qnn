@@ -315,8 +315,7 @@ static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
   RunQnnModelTest(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 // HTP QDQ

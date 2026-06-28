@@ -392,21 +392,18 @@ Ort::Status CreateReduceSumMulBroadcastX(
                 "CreateReduceSumMulBroadcastX: failed to AddTensorWrapper");
   const std::string mul_node_name =
       onnxruntime::qnn::utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-  Qnn_Scalar_t mul_op_scalar = QNN_SCALAR_INIT;
-  mul_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  mul_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-  onnxruntime::qnn::QnnParamWrapper mul_op_param(node_unit.Index(), mul_node_name,
-                                                 QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_op_scalar);
-  const std::string mul_op_param_name = mul_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper->AddParamWrapper(std::move(mul_op_param)),
-                "CreateReduceSumMulBroadcastX: failed to add Mul operation param");
+  std::vector<std::string> mul_param_names;
+  RETURN_IF_ERROR(onnxruntime::qnn::AddQnnScalar<uint32_t>(
+      *qnn_model_wrapper, node_unit.Index(), mul_node_name,
+      static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
+      QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(
                     /*qnn_node_name=*/mul_node_name,
                     /*package_name=*/QNN_OP_PACKAGE_NAME_QTI_AISW,
                     /*qnn_node_type=*/QNN_OP_ELEMENT_WISE_BINARY,
                     /*input_names=*/{reshape_out_name, input_names[1]},
                     /*output_names=*/{mul_out_name},
-                    /*param_tensor_names=*/{mul_op_param_name},
+                    /*param_tensor_names=*/std::move(mul_param_names),
                     /*do_op_validation=*/do_op_validation),
                 "CreateReduceSumMulBroadcastX: failed to create Mul node");
 
