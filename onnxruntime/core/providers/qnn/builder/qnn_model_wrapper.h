@@ -388,16 +388,17 @@ class QnnModelWrapper {
       // Validate dtype up front so an unsupported type returns before any (potentially external)
       // initializer read, mirroring the early RETURN_IF_NOT guard in the uint8_t branch below.
       RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
-                    "Expected scale initializer to be of type FLOAT or FLOAT16");
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+                    "Expected scale initializer to be of type FLOAT, FLOAT16, or BFLOAT16");
 
       std::vector<uint8_t> initializer_bytes;
       RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
       // Reinterpret the raw bytes as SrcT and append each element as a float. static_cast covers
-      // both float (identity) and Ort::Float16_t (via its float conversion operator). fp16 scale
-      // initializers are produced by quantization tools that match the scale dtype to the activation
-      // dtype (e.g. fp16 models); QNN quantization structs use float, so decode them here too.
+      // float (identity), Ort::Float16_t, and Ort::BFloat16_t (both have operator float()). fp16/bf16
+      // scale initializers are produced by quantization tools that match the scale dtype to the
+      // activation dtype (e.g. fp16 models); QNN quantization structs use float, so decode here.
       auto append_scales = [&scales, &initializer_bytes](auto src_type_tag) {
         using SrcT = decltype(src_type_tag);
         gsl::span<const SrcT> src = gsl::make_span(reinterpret_cast<const SrcT*>(initializer_bytes.data()),
@@ -410,8 +411,10 @@ class QnnModelWrapper {
 
       if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
         append_scales(float{});
-      } else {
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
         append_scales(Ort::Float16_t{});
+      } else {
+        append_scales(Ort::BFloat16_t{});
       }
     }
     // Handle uint8_t scales (for block quantization)

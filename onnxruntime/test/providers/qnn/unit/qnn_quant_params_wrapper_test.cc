@@ -939,9 +939,20 @@ TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_Float16_PerTensorScalar) {
   EXPECT_FLOAT_EQ(scales[0], 0.125f);
 }
 
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_BFloat16_DecodesToFloat) {
+  PerTensorIODefFixture fx;
+  // 0.5 and 0.25 are exactly representable in bf16 as well.
+  auto scale_vi = g_mock_init_reg.AddTensorBFloat16("scale", {2}, {0.5f, 0.25f});
+  std::vector<float> scales;
+  ASSERT_TRUE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+  ASSERT_EQ(scales.size(), 2u);
+  EXPECT_FLOAT_EQ(scales[0], 0.5f);
+  EXPECT_FLOAT_EQ(scales[1], 0.25f);
+}
+
 TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_UnsupportedDtype_ReturnsError) {
   PerTensorIODefFixture fx;
-  // INT32 is neither FLOAT nor FLOAT16 — must fall into the error branch.
+  // INT32 is none of FLOAT / FLOAT16 / BFLOAT16 — must hit the up-front guard.
   auto scale_vi = g_mock_init_reg.AddTensorInt32("scale", {1}, {1});
   std::vector<float> scales;
   EXPECT_FALSE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
