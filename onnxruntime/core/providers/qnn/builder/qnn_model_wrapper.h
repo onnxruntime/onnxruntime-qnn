@@ -385,25 +385,33 @@ class QnnModelWrapper {
 
     // Handle float scales
     if constexpr (std::is_same_v<T, float>) {
+      // Validate dtype up front so an unsupported type returns before any (potentially external)
+      // initializer read, mirroring the early RETURN_IF_NOT guard in the uint8_t branch below.
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
+                    "Expected scale initializer to be of type FLOAT or FLOAT16");
+
       std::vector<uint8_t> initializer_bytes;
       RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
-      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-        gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
-                                                    initializer_bytes.size() / sizeof(float));
-        scales.insert(scales.end(), src.begin(), src.end());
-      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-        // fp16 scale initializers are produced by quantization tools that match the scale dtype to
-        // the activation dtype (e.g. fp16 models). QNN quantization structs use float, so decode here.
-        gsl::span<const Ort::Float16_t> src =
-            gsl::make_span(reinterpret_cast<const Ort::Float16_t*>(initializer_bytes.data()),
-                           initializer_bytes.size() / sizeof(Ort::Float16_t));
+      // Reinterpret the raw bytes as SrcT and append each element as a float. static_cast covers
+      // both float (identity) and Ort::Float16_t (via its float conversion operator). fp16 scale
+      // initializers are produced by quantization tools that match the scale dtype to the activation
+      // dtype (e.g. fp16 models); QNN quantization structs use float, so decode them here too.
+      auto append_scales = [&scales, &initializer_bytes](auto src_type_tag) {
+        using SrcT = decltype(src_type_tag);
+        gsl::span<const SrcT> src = gsl::make_span(reinterpret_cast<const SrcT*>(initializer_bytes.data()),
+                                                   initializer_bytes.size() / sizeof(SrcT));
         scales.reserve(scales.size() + src.size());
-        for (const auto& fp16_val : src) {
-          scales.push_back(fp16_val.ToFloat());
+        for (const auto& val : src) {
+          scales.push_back(static_cast<float>(val));
         }
+      };
+
+      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        append_scales(float{});
       } else {
-        return MAKE_EP_FAIL("Expected scale initializer to be of type FLOAT or FLOAT16");
+        append_scales(Ort::Float16_t{});
       }
     }
     // Handle uint8_t scales (for block quantization)
