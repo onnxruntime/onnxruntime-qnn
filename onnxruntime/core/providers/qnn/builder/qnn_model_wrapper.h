@@ -413,7 +413,9 @@ class QnnModelWrapper {
         append_scales(float{});
       } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
         append_scales(Ort::Float16_t{});
-      } else {
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
+        // Spelled out (rather than a bare else) so a future dtype added to the guard above
+        // without a matching branch here fails to compile instead of silently aliasing BFLOAT16.
         append_scales(Ort::BFloat16_t{});
       }
     }
