@@ -542,7 +542,11 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(bias_name)) {
       std::vector<uint8_t> bias_bytes;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, bias_bytes));
-      QnnTensorWrapper bias_tensor(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
+      // The bias is plain int32 in ONNX, but QNN requires SFIXED_POINT_32 (quantized int32).
+      // bias_info.qnn_data_type is INT_32 (no quant on the ONNX node); force the quantized dtype.
+      Qnn_DataType_t qnn_dtype_bias = QNN_DATATYPE_UNDEFINED;
+      RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxBias].type, qnn_dtype_bias));
+      QnnTensorWrapper bias_tensor(bias_name, QNN_TENSOR_TYPE_STATIC, qnn_dtype_bias,
                                    std::move(quant_bias), std::vector<uint32_t>(bias_info.shape),
                                    std::move(bias_bytes));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor.");
