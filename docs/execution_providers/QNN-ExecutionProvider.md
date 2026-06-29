@@ -435,6 +435,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
+|ai.onnx:QLinearConv|All scale/zero-point inputs must be initializers; per-tensor activation/output quant; per-channel weight quant (1-D w_scale/w_zp) supported; input types int8 or uint8; optional int32 bias; 1D, 2D, and 3D convolution|
 |ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
 |ai.onnx:RandomNormalLike||
