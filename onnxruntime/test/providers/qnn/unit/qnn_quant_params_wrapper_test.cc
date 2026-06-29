@@ -901,6 +901,106 @@ TEST(QnnUnit_QuantParamsWrapperTest, InitFromIODef_PerTensor_Int4_MultiZp_Return
 }
 
 // =============================================================================
+// QnnModelWrapper::UnpackScales — header-defined template, exercised directly.
+// Covers the float-scale dtype dispatch: FLOAT (existing), FLOAT16 and BFLOAT16
+// (new decode paths), and an unsupported dtype (error). fp16/bf16 scale initializers appear in
+// fp16 models where the quantization tool matches the scale dtype to the
+// activation dtype; QNN quant structs store float, so UnpackScales decodes them.
+// =============================================================================
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_Float_DecodesAllValues) {
+  PerTensorIODefFixture fx;
+  auto scale_vi = g_mock_init_reg.AddTensorFloat("scale", {3}, {0.1f, 0.2f, 0.3f});
+  std::vector<float> scales;
+  ASSERT_TRUE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+  ASSERT_EQ(scales.size(), 3u);
+  EXPECT_FLOAT_EQ(scales[0], 0.1f);
+  EXPECT_FLOAT_EQ(scales[1], 0.2f);
+  EXPECT_FLOAT_EQ(scales[2], 0.3f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_Float16_DecodesToFloat) {
+  PerTensorIODefFixture fx;
+  // 0.5 and 0.25 are exactly representable in fp16, so the round-trip is exact.
+  auto scale_vi = g_mock_init_reg.AddTensorFloat16("scale", {2}, {0.5f, 0.25f});
+  std::vector<float> scales;
+  ASSERT_TRUE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+  ASSERT_EQ(scales.size(), 2u);
+  EXPECT_FLOAT_EQ(scales[0], 0.5f);
+  EXPECT_FLOAT_EQ(scales[1], 0.25f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_Float16_PerTensorScalar) {
+  PerTensorIODefFixture fx;
+  auto scale_vi = g_mock_init_reg.AddTensorFloat16("scale", {}, {0.125f});
+  std::vector<float> scales;
+  ASSERT_TRUE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+  ASSERT_EQ(scales.size(), 1u);
+  EXPECT_FLOAT_EQ(scales[0], 0.125f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_BFloat16_DecodesToFloat) {
+  PerTensorIODefFixture fx;
+  // 0.5 and 0.25 are exactly representable in bf16 as well.
+  auto scale_vi = g_mock_init_reg.AddTensorBFloat16("scale", {2}, {0.5f, 0.25f});
+  std::vector<float> scales;
+  ASSERT_TRUE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+  ASSERT_EQ(scales.size(), 2u);
+  EXPECT_FLOAT_EQ(scales[0], 0.5f);
+  EXPECT_FLOAT_EQ(scales[1], 0.25f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_BFloat16_PerTensorScalar) {
+  PerTensorIODefFixture fx;
+  auto scale_vi = g_mock_init_reg.AddTensorBFloat16("scale", {}, {0.125f});
+  std::vector<float> scales;
+  ASSERT_TRUE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+  ASSERT_EQ(scales.size(), 1u);
+  EXPECT_FLOAT_EQ(scales[0], 0.125f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_UnsupportedDtype_ReturnsError) {
+  PerTensorIODefFixture fx;
+  // INT32 is none of FLOAT / FLOAT16 / BFLOAT16 — must hit the up-front guard.
+  auto scale_vi = g_mock_init_reg.AddTensorInt32("scale", {1}, {1});
+  std::vector<float> scales;
+  EXPECT_FALSE(fx.wrapper->UnpackScales(scale_vi, scales).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, UnpackScales_NullTensor_ReturnsError) {
+  PerTensorIODefFixture fx;
+  std::vector<float> scales;
+  EXPECT_FALSE(fx.wrapper->UnpackScales(nullptr, scales).IsOK());
+}
+
+// Integration: a per-tensor fp16 scale flowing through Init(io_def) must reach
+// the SCALE_OFFSET encoding with the decoded float value.
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromIODef_PerTensor_Float16Scale_SetsScaleOffsetEncoding) {
+  PerTensorIODefFixture fx;
+  auto scale_vi = g_mock_init_reg.AddTensorFloat16("scale", {}, {0.5f});
+  auto zp_vi = g_mock_init_reg.AddTensorUint8("zp", {}, {static_cast<uint8_t>(5)});
+  auto io_def = MakeIODef("in", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 3, 4, 4}, scale_vi, zp_vi);
+  QnnQuantParamsWrapper q;
+  ASSERT_TRUE(q.Init(*fx.wrapper, io_def).IsOK());
+  EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_SCALE_OFFSET);
+  EXPECT_FLOAT_EQ(q.Get().scaleOffsetEncoding.scale, 0.5f);
+  EXPECT_EQ(q.Get().scaleOffsetEncoding.offset, -5);
+}
+
+// Same integration path as the fp16 case above, for a bf16 per-tensor scale.
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromIODef_PerTensor_BFloat16Scale_SetsScaleOffsetEncoding) {
+  PerTensorIODefFixture fx;
+  auto scale_vi = g_mock_init_reg.AddTensorBFloat16("scale", {}, {0.5f});
+  auto zp_vi = g_mock_init_reg.AddTensorUint8("zp", {}, {static_cast<uint8_t>(5)});
+  auto io_def = MakeIODef("in", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 3, 4, 4}, scale_vi, zp_vi);
+  QnnQuantParamsWrapper q;
+  ASSERT_TRUE(q.Init(*fx.wrapper, io_def).IsOK());
+  EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_SCALE_OFFSET);
+  EXPECT_FLOAT_EQ(q.Get().scaleOffsetEncoding.scale, 0.5f);
+  EXPECT_EQ(q.Get().scaleOffsetEncoding.offset, -5);
+}
+
+// =============================================================================
 // Templated handlers — header-defined, NOT counted toward .cc coverage but
 // tested for behavioural completeness.
 //
