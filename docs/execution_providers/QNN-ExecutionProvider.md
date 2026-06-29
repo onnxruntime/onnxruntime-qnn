@@ -213,6 +213,11 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |'0'|Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
 |'1'|Default. Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
 
+|`"enable_block_quant_weight_optimization"`|Description|
+|---|---|
+|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
@@ -401,6 +406,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:GroupNormalization||
 |ai.onnx:HardSigmoid||
 |ai.onnx:HardSwish||
+|ai.onnx:If|Single output per branch with identical shape+dtype; cond must be scalar bool; both branches are always executed (lowered to Where/Select)|
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
@@ -429,11 +435,13 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
+|ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
 |ai.onnx:RandomNormalLike||
 |ai.onnx:RandomUniformLike||
 |ai.onnx:Reciprocal||
 |ai.onnx:ReduceL2||
+|ai.onnx:ReduceLogSumExp|Decomposed into ReduceMax->Sub->Exp->ReduceSum->Log->Add. Quantized input not supported.|
 |ai.onnx:ReduceMax||
 |ai.onnx:ReduceMean||
 |ai.onnx:ReduceMin||
@@ -1028,7 +1036,7 @@ session = ort.InferenceSession("model.onnx", sess_options=sess_options)
 
 ### Important Considerations
 #### Feature Disabled if Number of Subgraphs is Less Than 5
-While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance. 
+While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance.
 
 #### Feature Disabled if `num_graph_prepare_threads` is 1
 This defeats the purpose of the feature, and enabling the feature will only add additional overhead from thread pool creation.

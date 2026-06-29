@@ -182,8 +182,7 @@ TEST_F(QnnHTPBackendTests, Softmax13NonLastAxisAfterMatMulAddFusion) {
   RunQnnModelTest(BuildMatMulAddSoftmaxNonLastAxisTestCase(/*K=*/128, /*N=*/1),
                   provider_options,
                   /*opset=*/18,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
 // Bounded-output split tests.

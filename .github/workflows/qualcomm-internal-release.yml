@@ -46,7 +46,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
-      nightly_build: ${{inputs.nightly_build}}
+      nightly_build: ${{ inputs.nightly_build }}
       build_android_aarch64: true
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true

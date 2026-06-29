@@ -184,7 +184,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
                                param_names));
 
   // do_rotary
-  const int64_t do_rotary = node_helper.Get("do_rotary", 0ll);
+  const int64_t do_rotary = node_helper.Get("do_rotary", static_cast<int64_t>(0));
   const uint32_t do_rotary_u32 = SafeInt<uint32_t>(do_rotary);
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
@@ -201,7 +201,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   const size_t head_size = output_tensor_info.shape[2] / num_heads.value();
   RETURN_IF(head_size == 0, "head_size can't be zero!");
 
-  const float scale_default = 1.0f / std::sqrtf(static_cast<float>(head_size));
+  const float scale_default = 1.0f / std::sqrt(static_cast<float>(head_size));
   const float scale = node_helper.Get("scale", scale_default);
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),

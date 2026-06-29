@@ -25,7 +25,7 @@ static void RunRMSNormCpuTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(BuildOpTestCase<float>("rms_norm", "RMSNormalization", {input_def, scale_def}, {}, attrs),
                   provider_options,
                   23,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 TEST_F(QnnCPUBackendTests, RMSNorm) {
@@ -125,7 +125,11 @@ static void RunRMSNormQDQTest(const TestInputDef<float>& input_def,
     qdq_model_fn(builder, output_qparams_vec);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 23, expected_ep_assignment, 1e-5, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, false);
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  23,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5)},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, false);
 }
 
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis) {

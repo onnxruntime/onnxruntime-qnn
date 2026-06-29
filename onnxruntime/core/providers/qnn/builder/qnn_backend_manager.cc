@@ -200,7 +200,10 @@ Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
 
           auto context_apply_binary_section_rt = qnn_interface_.contextApplyBinarySection(
               contexts_[cIdx], graph, QNN_CONTEXT_SECTION_UPDATABLE, &contextBuffer, profile_backend_handle_, nullptr);
-          RETURN_IF(QNN_SUCCESS != context_apply_binary_section_rt, "Failed to apply binary section.");
+          RETURN_IF(QNN_SUCCESS != context_apply_binary_section_rt,
+                    ("Failed to apply binary section. " +
+                     utils::FormatQnnError(qnn_interface_, context_apply_binary_section_rt))
+                        .c_str());
           break;
         }
         RETURN_IF_NOT(graph_retrieve_success,

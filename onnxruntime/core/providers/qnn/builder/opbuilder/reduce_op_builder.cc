@@ -23,6 +23,7 @@ enum ReduceOpType {
   REDUCE_OP_TYPE_PROD,
   REDUCE_OP_TYPE_SUM,
   REDUCE_OP_TYPE_L2,
+  REDUCE_OP_TYPE_LOG_SUM_EXP,
 
   REDUCE_OP_TYPE_COUNT,
   REDUCE_OP_TYPE_UNKNOWN,
@@ -41,6 +42,8 @@ ReduceOpType GetReduceOpType(const std::string& op_type) {
     return REDUCE_OP_TYPE_SUM;
   } else if (op_type == "ReduceL2") {
     return REDUCE_OP_TYPE_L2;
+  } else if (op_type == "ReduceLogSumExp") {
+    return REDUCE_OP_TYPE_LOG_SUM_EXP;
   } else {
     return REDUCE_OP_TYPE_UNKNOWN;
   }
@@ -81,6 +84,7 @@ const std::array<int, REDUCE_OP_TYPE_COUNT> ReduceOpBuilder::opset_with_axes_as_
     18,  // ReduceProd
     13,  // ReduceSum
     18,  // ReduceL2
+    18,  // ReduceLogSumExp
 };
 
 Ort::Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
@@ -172,6 +176,16 @@ Ort::Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, c
   RETURN_IF(reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_L2 && node_unit.Inputs()[0].quant_param.has_value(),
             "QNN EP: ReduceL2 operator does not support quantized input for now.");
 
+  if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_LOG_SUM_EXP) {
+    RETURN_IF(node_unit.Inputs()[0].quant_param.has_value(),
+              "QNN EP: ReduceLogSumExp operator does not support quantized input.");
+    ONNXTensorElementDataType input_type = node_unit.Inputs()[0].type;
+    RETURN_IF(input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+                  input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 &&
+                  input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+              "QNN EP: ReduceLogSumExp operator only supports float input dtypes.");
+  }
+
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
@@ -219,9 +233,11 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   //
   // Handle keepdims param.
   //
-  auto onnx_keepdims = node_attr_helper.Get("keepdims", (int32_t)1);
-  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
-                                     QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, param_tensor_names));
+  const int32_t onnx_keepdims = node_attr_helper.Get("keepdims", (int32_t)1);
+  if (node_unit.OpType() != "ReduceLogSumExp") {
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
+                                       QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, param_tensor_names));
+  }
 
   if (node_unit.OpType() == "ReduceL2") {
     // If ReduceL2, QNN doesn't have a single Op for it, we need to add a
@@ -291,6 +307,149 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                   std::move(sqrt_param_names),
                                                   do_op_validation),
                   "CreateQnnNode failed");
+  } else if (node_unit.OpType() == "ReduceLogSumExp") {
+    // Decompose ReduceLogSumExp(x, axes, keepdims) numerically-stably as:
+    //   m       = ReduceMax(x, axes, keepdims=True)
+    //   result  = Add(Log(ReduceSum(Exp(Sub(x, m)), axes, keepdims=True)), m)
+    //   output  = result if user keepdims=True else Reshape(result, output_shape)
+    // Subtracting per-axis max keeps Exp in (0, 1] so the chain is numerically safe on FP16.
+    // All intermediate reduce outputs use keepdims=True so shapes line up without scalar tensors.
+    const auto& input = node_unit.Inputs()[0];
+    const auto& output = node_unit.Outputs()[0];
+    std::vector<uint32_t> input_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape), "Cannot get input shape.");
+    std::vector<uint32_t> output_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Cannot get output shape.");
+    Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(false, output.type, qnn_data_type));
+    const std::string input_name = input_names[0];
+
+    // kept_shape: input shape with reduced axes set to 1 (full input rank). All internal reduce/elementwise
+    // outputs share this shape, so broadcasting and the final Add work without rank mismatches.
+    std::vector<uint32_t> kept_shape = input_shape;
+    for (auto ax : axes_set) {
+      RETURN_IF_NOT(ax >= 0 && static_cast<size_t>(ax) < input_shape.size(),
+                    "QNN EP: ReduceLogSumExp axis out of range.");
+      kept_shape[static_cast<size_t>(ax)] = 1;
+    }
+
+    // Reuse the user's axes param (already in param_tensor_names[0]) for both inner ReduceMax and ReduceSum.
+    const std::string user_axes_param_name = param_tensor_names[0];
+
+    // Build a separate keep_dims=True param for the inner reduces.
+    std::vector<std::string> kd_true_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(),
+                                       utils::UniqueNameGenerator().New(node_unit, "_inner"),
+                                       true, QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, kd_true_param_names));
+    const std::string kd_true_param_name = kd_true_param_names[0];
+
+    const bool needs_reshape = (onnx_keepdims == 0);
+
+    // Step 1: m = ReduceMax(x, axes=user, keepdims=True).
+    const std::string max_output_name = utils::UniqueNameGenerator().New(input_name, "_max");
+    QnnTensorWrapper max_tensorwrapper(max_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(kept_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(max_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_REDUCE_MAX),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_REDUCE_MAX,
+                                                  {input_name},
+                                                  {max_output_name},
+                                                  {user_axes_param_name, kd_true_param_name},
+                                                  do_op_validation),
+                  "CreateQnnNode failed");
+
+    // Step 2: d = Sub(x, m).
+    const std::string sub_output_name = utils::UniqueNameGenerator().New(input_name, "_normalized");
+    QnnTensorWrapper sub_tensorwrapper(sub_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(input_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sub_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SUBTRACT),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_SUBTRACT,
+                                                  {input_name, max_output_name},
+                                                  {sub_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "CreateQnnNode failed");
+
+    // Step 3: e = Exp(d).
+    const std::string exp_output_name = utils::UniqueNameGenerator().New(input_name, "_exp");
+    QnnTensorWrapper exp_tensorwrapper(exp_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(input_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(exp_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_EXP),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_EXP,
+                                                  {sub_output_name},
+                                                  {exp_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "CreateQnnNode failed");
+
+    // Step 4: s = ReduceSum(e, axes=user, keepdims=True).
+    const std::string reduce_sum_output_name = utils::UniqueNameGenerator().New(input_name, "_sum");
+    QnnTensorWrapper reduce_sum_tensorwrapper(reduce_sum_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
+                                              QnnQuantParamsWrapper(), std::vector<uint32_t>(kept_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reduce_sum_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_REDUCE_SUM),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_REDUCE_SUM,
+                                                  {exp_output_name},
+                                                  {reduce_sum_output_name},
+                                                  {user_axes_param_name, kd_true_param_name},
+                                                  do_op_validation),
+                  "CreateQnnNode failed");
+
+    // Step 5: l = Log(s).
+    const std::string log_output_name = utils::UniqueNameGenerator().New(input_name, "_log");
+    QnnTensorWrapper log_tensorwrapper(log_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(kept_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(log_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_LOG),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_LOG,
+                                                  {reduce_sum_output_name},
+                                                  {log_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "CreateQnnNode failed");
+
+    // Step 6: result_kept = Add(l, m). Both have kept_shape, no broadcast.
+    const std::string add_output_name = needs_reshape
+                                            ? utils::UniqueNameGenerator().New(input_name, "_kept")
+                                            : output.name;
+    Qnn_TensorType_t add_output_tensor_type =
+        (!needs_reshape && qnn_model_wrapper.IsGraphOutput(output.name)) ? QNN_TENSOR_TYPE_APP_READ
+                                                                         : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper add_tensorwrapper(add_output_name, add_output_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(kept_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_ADD,
+                                                  {log_output_name, max_output_name},
+                                                  {add_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "CreateQnnNode failed");
+
+    // Step 7 (only when user keepdims=False): squeeze the reduced axes via Reshape.
+    if (needs_reshape) {
+      Qnn_TensorType_t output_tensor_type =
+          qnn_model_wrapper.IsGraphOutput(output.name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      QnnTensorWrapper reshape_tensorwrapper(output.name, output_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
+                                             std::move(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reshape_tensorwrapper)), "AddTensorWrapper failed");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_RESHAPE,
+                                                    {add_output_name},
+                                                    {output.name},
+                                                    {},
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
+    }
   } else {
     RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
                                    std::move(param_tensor_names), logger, do_op_validation,

@@ -344,8 +344,56 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   if (op_type == "Elu") {
+    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_ELU;
+    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+    param_tensor_names.push_back(operation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+
     RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
-                                         QNN_OP_ELU_PARAM_ALPHA, param_tensor_names));
+                                         QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, param_tensor_names));
+  }
+
+  if (op_type == "Gelu") {
+    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_GELU;
+    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+    param_tensor_names.push_back(operation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+  }
+
+  if (op_type == "Relu") {
+    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_RELU;
+    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+    param_tensor_names.push_back(operation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+  }
+
+  if (op_type == "Sigmoid") {
+    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SIGMOID;
+    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+    param_tensor_names.push_back(operation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+  }
+
+  if (op_type == "Tanh") {
+    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_TANH;
+    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
+                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+    param_tensor_names.push_back(operation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
   }
 
   if (op_type == "Softplus") {
