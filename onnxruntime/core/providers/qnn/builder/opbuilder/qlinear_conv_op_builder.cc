@@ -375,8 +375,8 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
   const auto& outputs = node_unit.Outputs();
   const size_t num_inputs = inputs.size();
 
-  std::vector<uint32_t> x_shape_nchw;   // ONNX activation shape (NCHW / NCDHW / NCW)
-  std::vector<uint32_t> y_shape_nchw;   // ONNX output shape
+  std::vector<uint32_t> x_shape_nchw;  // ONNX activation shape (NCHW / NCDHW / NCW)
+  std::vector<uint32_t> y_shape_nchw;  // ONNX output shape
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[kIdxX].shape, x_shape_nchw), "Cannot get x shape");
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, y_shape_nchw), "Cannot get output shape");
 
