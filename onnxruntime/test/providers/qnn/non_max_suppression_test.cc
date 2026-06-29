@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
 #if !defined(ORT_MINIMAL_BUILD)
@@ -206,7 +206,9 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Basic) {
 }
 
 // center_point_box=1: boxes are [x_center, y_center, width, height].
-TEST_F(QnnCPUBackendTests, NonMaxSuppression_CenterPointBox) {
+// QNN's NMS op only supports the diagonal-corners format, so center_point_box != 0 must
+// fall back to the CPU EP rather than being claimed by QNN EP.
+TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_CenterPointBox) {
   std::vector<float> boxes = {
       0.5f, 0.5f, 1.0f, 1.0f,   // box 0
       0.5f, 0.6f, 1.0f, 1.0f,   // box 1 (overlaps box 0)
@@ -225,7 +227,7 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_CenterPointBox) {
   cfg.center_point_box = 1;
   cfg.output_shape = {2, 3};
 
-  RunNmsTest(BuildNmsTestCase(cfg), 11, ExpectedEPNodeAssignment::All);
+  RunNmsTest(BuildNmsTestCase(cfg), 11, ExpectedEPNodeAssignment::None);
 }
 
 // iou_threshold=0.3: stricter suppression yields fewer selected boxes.
@@ -452,6 +454,44 @@ TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint16) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
+
+// max_output_boxes_per_class == 0 must fall back.
+// 0 is legal in ONNX (selects no boxes) but produces a degenerate [0, 3] QNN output
+// that QNN rejects at compose. QNN EP must decline the node instead of hard-failing.
+TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_ZeroMaxBoxes) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("boxes", {1, 3, 4},
+                             {0.0f, 0.0f, 1.0f, 1.0f,
+                              0.0f, 5.0f, 1.0f, 6.0f,
+                              0.0f, 10.0f, 1.0f, 11.0f});
+    builder.MakeInput<float>("scores", {1, 1, 3}, {0.9f, 0.85f, 0.8f});
+    builder.MakeInitializer<int64_t>("max_boxes", {}, {0});  // 0 → no boxes selected
+    builder.AddNode("nms_node", "NonMaxSuppression",
+                    {"boxes", "scores", "max_boxes"}, {"selected_indices"}, kOnnxDomain,
+                    {test::MakeAttribute("center_point_box", int64_t{0})});
+    builder.MakeOutput<int64_t>("selected_indices", std::vector<int64_t>{0, 3});
+  };
+
+  RunNmsTest(build_model, 11, ExpectedEPNodeAssignment::None);
+}
+
+// max_output_boxes_per_class absent (only boxes + scores) must fall back.
+// Absent defaults to 0 in ONNX, which selects no boxes.
+TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_AbsentMaxBoxes) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("boxes", {1, 3, 4},
+                             {0.0f, 0.0f, 1.0f, 1.0f,
+                              0.0f, 5.0f, 1.0f, 6.0f,
+                              0.0f, 10.0f, 1.0f, 11.0f});
+    builder.MakeInput<float>("scores", {1, 1, 3}, {0.9f, 0.85f, 0.8f});
+    builder.AddNode("nms_node", "NonMaxSuppression",
+                    {"boxes", "scores"}, {"selected_indices"}, kOnnxDomain,
+                    {test::MakeAttribute("center_point_box", int64_t{0})});
+    builder.MakeOutput<int64_t>("selected_indices", std::vector<int64_t>{0, 3});
+  };
+
+  RunNmsTest(build_model, 11, ExpectedEPNodeAssignment::None);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GPU fallback test
