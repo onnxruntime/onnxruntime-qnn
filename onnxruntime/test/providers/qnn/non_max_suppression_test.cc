@@ -383,14 +383,7 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_DynamicIouThreshold) {
 // session-init time (before any EP gets a chance). Not a QNN-specific test.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTP QDQ tests (ARM64 only)
-// QNN HTP supports NMS with quantized (QDQ) inputs. The INT_32->INT_64 Cast
-// appended for graph outputs works on HTP (same pattern as NonZero op builder).
-//
-// Test data is sized to fit within uint8 quantization range:
-//   boxes_scale = 0.01  →  max representable = 255 * 0.01 = 2.55
-//   scores_scale = 0.005 → max representable = 255 * 0.005 = 1.275
-// All box coordinates and scores are within these bounds.
+// HTP tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -402,9 +395,37 @@ static ProviderOptions HtpNmsProviderOptions() {
   return opts;
 }
 
-// HTP QDQ uint8: boxes and scores quantized to uint8.
-// Coordinates are ≤ 2.0 so they fit within uint8 range at boxes_scale=0.01.
+// HTP float32: basic suppression on HTP with plain float32 inputs.
+TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_Float) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  std::vector<float> boxes = {
+      0.0f, 0.0f, 0.5f, 0.5f,  // box 0
+      0.0f, 0.1f, 0.5f, 0.6f,  // box 1 (overlaps box 0, suppressed)
+      1.0f, 1.0f, 1.5f, 1.5f,  // box 2 (no overlap)
+      1.0f, 1.1f, 1.5f, 1.6f,  // box 3 (overlaps box 2, suppressed)
+  };
+  std::vector<float> scores = {0.9f, 0.75f, 0.95f, 0.5f};
+
+  NmsTestConfig cfg;
+  cfg.boxes_data = boxes;
+  cfg.boxes_shape = {1, 4, 4};
+  cfg.scores_data = scores;
+  cfg.scores_shape = {1, 1, 4};
+  cfg.max_output_boxes = 2;
+  cfg.iou_threshold = 0.5f;
+  cfg.score_threshold = 0.0f;
+  cfg.center_point_box = 0;
+  cfg.output_shape = {2, 3};  // B * C * max_output_boxes = 1 * 1 * 2
+
+  RunNmsTest(BuildNmsTestCase(cfg), 11,
+             ExpectedEPNodeAssignment::All, HtpNmsProviderOptions());
+}
+
+// HTP QDQ uint8: boxes and scores wrapped in Q/DQ pairs (uint8).
 TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint8) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(HtpNmsProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "QDQ", uint8_t);
+
   std::vector<float> boxes = {
       0.0f, 0.0f, 0.5f, 0.5f,  // box 0
       0.0f, 0.1f, 0.5f, 0.6f,  // box 1 (overlaps box 0, suppressed)
@@ -428,8 +449,9 @@ TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint8) {
              ExpectedEPNodeAssignment::All, HtpNmsProviderOptions());
 }
 
-// HTP QDQ uint16: same test with uint16 Q/DQ ops (MS contrib domain).
 TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint16) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(HtpNmsProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "QDQ", uint16_t);
+
   std::vector<float> boxes = {
       0.0f, 0.0f, 0.5f, 0.5f,  // box 0
       0.0f, 0.1f, 0.5f, 0.6f,  // box 1 (overlaps box 0, suppressed)
