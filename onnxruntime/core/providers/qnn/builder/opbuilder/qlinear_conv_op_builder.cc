@@ -1,11 +1,12 @@
-// Copyright (c) Qualcomm. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include <gsl/gsl>
 
 #include <cstring>
 #include <functional>
 #include <numeric>
+#include <string>
 #include <vector>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -38,14 +39,23 @@ static constexpr size_t kIdxBias = 8;
  * Translates ONNX QLinearConv (opset 10) into a QNN Conv2d / DepthWiseConv2d / Conv3d node.
  *
  * QLinearConv carries quantization parameters as explicit op inputs (x/w/y scale and zero_point)
- * rather than as QDQ node metadata. Since QNN encodes quant params in tensor metadata, we read the
- * scale/zp initializers, build QnnQuantParamsWrapper objects, and attach them to the QNN tensor
- * wrappers for x, w, bias, and y. Shape/attribute handling (layout, weight OIHW->HWIO transpose,
- * pads/strides/dilations/group, depthwise detection, 1D reshape) mirrors ConvOpBuilder.
+ * rather than as QDQ node metadata, and its activation is a bare quantized integer tensor.
  *
- * The activation (input 0) arrives in NHWC layout because QLinearConv is opted into ORT core's
- * layout transformer (see ShouldConvertDataLayoutForOpImpl). The weight (input 3) stays NCHW/OIHW
- * and is transposed to HWIO here.
+ * QNN's Conv ops require channel-last layout (NHWC for 2D, NDHWC for 3D), while ONNX Conv is
+ * channel-first (NCHW). Because the activation carries no quant metadata of its own, we cannot let
+ * ORT's layout transformer insert a Transpose on it (that Transpose would be an unquantized
+ * uint8/int8 node, which HTP rejects). Instead ShouldConvertDataLayoutForOp suppresses the layout
+ * transform for QLinearConv, and this builder performs the layout conversion internally:
+ *
+ *   x (NCHW, quant_x) --Transpose--> x_nhwc (quant_x)  --\
+ *   w (OIHW)          --transpose bytes--> w_hwio (quant_w) --Conv2d--> y_nhwc (quant_y)
+ *   B (int32, quant_bias) ----------------------------/        |
+ *                                                              Transpose
+ *                                                              v
+ *                                                       y (NCHW, quant_y)
+ *
+ * Every QNN tensor gets its quant params attached, so HTP sees UFIXED_POINT_8 / SFIXED_POINT_8
+ * throughout (the same strategy DQConvIntegerFusion uses for ConvInteger).
  */
 class QLinearConvOpBuilder : public BaseOpBuilder {
  public:
@@ -57,6 +67,10 @@ class QLinearConvOpBuilder : public BaseOpBuilder {
                             const Ort::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
+  // The whole QNN subgraph (input Transpose -> Conv -> output Transpose) is emitted in ProcessInputs
+  // because the internal Transpose nodes tie input and output handling together. The base
+  // AddToModelBuilder is final, so we cannot override it; instead ProcessAttributesAndOutputs is a
+  // no-op and all work happens in ProcessInputs (which receives do_op_validation).
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
@@ -70,20 +84,9 @@ class QLinearConvOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Ort::Status ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
-                                  const OrtNodeUnit& node_unit,
-                                  const Ort::Logger& logger,
-                                  std::vector<std::string>& input_names,
-                                  bool do_op_validation) const ORT_MUST_USE_RESULT;
-  Ort::Status ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& node_unit,
-                                    const Ort::Logger& logger,
-                                    std::vector<std::string>& input_names,
-                                    bool do_op_validation) const ORT_MUST_USE_RESULT;
-
-  Ort::Status GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& node_unit,
-                                    uint32_t& input_channel_number) const;
+  Ort::Status CreateOrValidate(QnnModelWrapper& qnn_model_wrapper,
+                               const OrtNodeUnit& node_unit,
+                               bool do_op_validation) const ORT_MUST_USE_RESULT;
 
   // Reads a scalar float32 scale initializer (QLinearConv x/y scales are always float32 per spec).
   static Ort::Status ReadScalarScale(const QnnModelWrapper& qnn_model_wrapper,
@@ -206,11 +209,9 @@ Ort::Status QLinearConvOpBuilder::BuildBiasQuantParam(const QnnModelWrapper& qnn
                                                       QnnQuantParamsWrapper& out_quant_param) {
   const auto& inputs = node_unit.Inputs();
 
-  // x_scale: scalar.
   float x_scale = 0.0f;
   RETURN_IF_ERROR(ReadScalarScale(qnn_model_wrapper, inputs[kIdxXScale], x_scale));
 
-  // w_scale: scalar or per-channel.
   const OrtValueInfo* w_scale_tensor = qnn_model_wrapper.GetConstantTensor(inputs[kIdxWScale].name);
   RETURN_IF(w_scale_tensor == nullptr, "QLinearConv: could not retrieve w_scale initializer for bias.");
   std::vector<float> w_scales;
@@ -233,17 +234,55 @@ Ort::Status QLinearConvOpBuilder::BuildBiasQuantParam(const QnnModelWrapper& qnn
 }
 
 // ---------------------------------------------------------------------------
+// Layout helpers
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Channel-first -> channel-last permutation for the given rank.
+//   rank 4 (2D conv): NCHW -> NHWC          = {0, 2, 3, 1}
+//   rank 5 (3D conv): NCDHW -> NDHWC        = {0, 2, 3, 4, 1}
+std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i - 1] = static_cast<uint32_t>(i);
+  }
+  perm[rank - 1] = 1;
+  return perm;
+}
+
+// Channel-last -> channel-first permutation for the given rank (inverse of the above).
+//   rank 4: NHWC -> NCHW   = {0, 3, 1, 2}
+//   rank 5: NDHWC -> NCDHW = {0, 4, 1, 2, 3}
+std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  perm[1] = static_cast<uint32_t>(rank - 1);
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i] = static_cast<uint32_t>(i - 1);
+  }
+  return perm;
+}
+
+// Applies a permutation to a shape vector.
+std::vector<uint32_t> PermuteShape(const std::vector<uint32_t>& shape, const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out(shape.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    out[i] = shape[perm[i]];
+  }
+  return out;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
 // IsOpSupported
 // ---------------------------------------------------------------------------
 
 Ort::Status QLinearConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                 const OrtNodeUnit& node_unit,
                                                 const Ort::Logger& logger) const {
-  // Use QNN's validation API once the layout transformer has produced the NHWC node.
-  if (node_unit.Domain() == kMSInternalNHWCDomain) {
-    return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
-  }
-
   const auto& inputs = node_unit.Inputs();
   RETURN_IF(inputs.size() < 8, "QLinearConv must have at least 8 inputs.");
 
@@ -297,500 +336,366 @@ Ort::Status QLinearConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
     }
   }
 
-  return Ort::Status();
+  // Validate the full QNN graph (internal transposes + Conv) via the QNN validation API.
+  return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, /*do_op_validation=*/true);
 }
 
 // ---------------------------------------------------------------------------
-// ProcessInputs
+// ProcessInputs (emits the whole subgraph) / ProcessAttributesAndOutputs (no-op)
 // ---------------------------------------------------------------------------
-
-Ort::Status QLinearConvOpBuilder::GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
-                                                        const OrtNodeUnit& node_unit,
-                                                        uint32_t& input_channel_number) const {
-  std::vector<uint32_t> input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[kIdxX].shape, input_shape), "Cannot get shape");
-  // Activation is NHWC after layout transform: channels are the last dim.
-  input_channel_number = input_shape.back();
-  return Ort::Status();
-}
 
 Ort::Status QLinearConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                                 const OrtNodeUnit& node_unit,
                                                 const Ort::Logger& logger,
                                                 std::vector<std::string>& input_names,
                                                 bool do_op_validation) const {
-  std::vector<uint32_t> input0_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[kIdxX].shape, input0_shape),
-                "QNN EP: Cannot get shape for QLinearConv input x");
-
-  if (input0_shape.size() == 3) {
-    return ProcessConv1DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
-  } else if (input0_shape.size() == 4 || input0_shape.size() == 5) {
-    return ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
-  }
-  return MAKE_EP_FAIL("QNN QLinearConv only supports 1D (rank 3), 2D (rank 4), or 3D (rank 5) inputs.");
-}
-
-Ort::Status QLinearConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
-                                                        const OrtNodeUnit& node_unit,
-                                                        const Ort::Logger& logger,
-                                                        std::vector<std::string>& input_names,
-                                                        bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(logger);
-  const auto& inputs = node_unit.Inputs();
-  const size_t num_inputs = inputs.size();
-
-  //
-  // Input 0: activation x (NHWC). Build per-tensor quant params and attach to tensor wrapper.
-  //
-  {
-    const std::string& x_name = inputs[kIdxX].name;
-    QnnQuantParamsWrapper quant_x;
-    RETURN_IF_ERROR(BuildPerTensorQuantParam(qnn_model_wrapper, inputs[kIdxXScale],
-                                             inputs[kIdxXZeroPoint], quant_x));
-
-    Qnn_DataType_t qnn_dtype_x = QNN_DATATYPE_UNDEFINED;
-    RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxX].type, qnn_dtype_x));
-
-    std::vector<uint32_t> x_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[kIdxX].shape, x_shape), "Cannot get x shape");
-
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(x_name)) {
-      std::vector<uint8_t> unpacked;
-      if (qnn_model_wrapper.IsEffectivelyConstantInput(x_name)) {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
-            qnn_model_wrapper.GetConstantTensor(x_name), unpacked));
-      }
-      Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(x_name);
-      QnnTensorWrapper x_tensor(x_name, tensor_type, qnn_dtype_x, std::move(quant_x),
-                                std::move(x_shape), std::move(unpacked));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(x_tensor)), "Failed to add x tensor.");
-    }
-    input_names.push_back(x_name);
-  }
-
-  //
-  // Input 3: weight w (NCHW/OIHW). Build quant params (per-tensor or per-channel), transpose OIHW->HWIO.
-  //
-  {
-    const std::string& w_name = inputs[kIdxW].name;
-    TensorInfo w_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kIdxW], w_info));
-    const bool is_3d = (w_info.shape.size() == 5);
-    const uint32_t num_output_channels = w_info.shape[0];
-
-    QnnQuantParamsWrapper quant_w;
-    RETURN_IF_ERROR(BuildWeightQuantParam(qnn_model_wrapper, inputs[kIdxWScale], inputs[kIdxWZeroPoint],
-                                          num_output_channels, quant_w));
-
-    Qnn_DataType_t qnn_dtype_w = QNN_DATATYPE_UNDEFINED;
-    RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxW].type, qnn_dtype_w));
-
-    std::vector<uint32_t> hwcn_shape(w_info.shape.size());
-    RETURN_IF_ERROR(utils::NchwShapeToHwcn<uint32_t>(w_info.shape, hwcn_shape));
-
-    const std::string actual_w_name = w_info.is_initializer
-                                          ? w_name
-                                          : utils::UniqueNameGenerator().New(w_name, "_transpose");
-
-    std::vector<uint8_t> unpacked;
-    if (w_info.is_initializer) {
-      RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(qnn_model_wrapper, w_info.initializer_tensor,
-                                                     unpacked, is_3d));
-      // Move the per-channel quant axis through the OIHW->HWIO transpose.
-      if (quant_w.IsPerChannel()) {
-        const std::vector<size_t>& perm = is_3d ? nchw2hwcn_perm_3d : nchw2hwcn_perm;
-        std::vector<size_t> perm_inv(perm.size());
-        RETURN_IF_ERROR(utils::InvertPerm<size_t>(perm, perm_inv));
-        RETURN_IF_ERROR(quant_w.HandleTranspose<size_t>(perm_inv));
-      }
-    } else {
-      // Dynamic weight: only per-tensor is supported (validated in IsOpSupported).
-      RETURN_IF(quant_w.IsPerChannel(), "QLinearConv: dynamic weight only supports per-tensor quantization.");
-      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(w_name)) {
-        QnnTensorWrapper weight_src;
-        RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(inputs[kIdxW], weight_src));
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_src)), "Failed to add weight tensor.");
-      }
-      RETURN_IF_ERROR(qnn_model_wrapper.AddNchwToHwcnTranspose(node_unit.Index(),
-                                                               w_name,
-                                                               actual_w_name,
-                                                               w_info.shape,
-                                                               hwcn_shape,
-                                                               qnn_dtype_w,
-                                                               quant_w,
-                                                               do_op_validation,
-                                                               qnn_model_wrapper.IsGraphInput(w_name),
-                                                               false,
-                                                               is_3d));
-    }
-
-    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(actual_w_name);
-    QnnTensorWrapper w_tensor(actual_w_name, tensor_type, qnn_dtype_w, std::move(quant_w),
-                              std::move(hwcn_shape), std::move(unpacked));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
-    input_names.push_back(actual_w_name);
-  }
-
-  //
-  // Input 8: bias (optional, int32). Build quant params (scale = x_scale * w_scale, zp = 0).
-  //
-  const bool has_bias = num_inputs > kIdxBias && inputs[kIdxBias].Exists();
-  if (has_bias) {
-    const std::string& bias_name = inputs[kIdxBias].name;
-    TensorInfo bias_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kIdxBias], bias_info));
-    RETURN_IF(!bias_info.is_initializer, "QLinearConv: bias must be a constant initializer.");
-
-    QnnQuantParamsWrapper quant_bias;
-    RETURN_IF_ERROR(BuildBiasQuantParam(qnn_model_wrapper, node_unit, quant_bias));
-
-    std::vector<uint8_t> unpacked;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, unpacked));
-
-    QnnTensorWrapper bias_tensor(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
-                                 std::move(quant_bias), std::vector<uint32_t>(bias_info.shape),
-                                 std::move(unpacked));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor.");
-    input_names.push_back(bias_name);
-  }
-
-  return Ort::Status();
+  ORT_UNUSED_PARAMETER(input_names);
+  return CreateOrValidate(qnn_model_wrapper, node_unit, do_op_validation);
 }
-
-Ort::Status QLinearConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
-                                                      const OrtNodeUnit& node_unit,
-                                                      const Ort::Logger& logger,
-                                                      std::vector<std::string>& input_names,
-                                                      bool do_op_validation) const {
-  const auto& inputs = node_unit.Inputs();
-  const size_t num_inputs = inputs.size();
-  ORT_UNUSED_PARAMETER(logger);
-
-  //
-  // Input 0: activation x. Reshape NHWC-1D [N,W,C] -> [N,1,W,C] (insert H=1).
-  //
-  {
-    const std::string& x_name = inputs[kIdxX].name;
-    QnnQuantParamsWrapper quant_x;
-    RETURN_IF_ERROR(BuildPerTensorQuantParam(qnn_model_wrapper, inputs[kIdxXScale],
-                                             inputs[kIdxXZeroPoint], quant_x));
-
-    Qnn_DataType_t qnn_dtype_x = QNN_DATATYPE_UNDEFINED;
-    RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxX].type, qnn_dtype_x));
-
-    std::vector<uint32_t> x_shape_1d;  // [N, W, C] (NHWC, layout-transformed)
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[kIdxX].shape, x_shape_1d), "Cannot get x shape");
-    std::vector<uint32_t> x_shape_2d = {x_shape_1d[0], 1, x_shape_1d[1], x_shape_1d[2]};
-
-    const std::string conv_x_name = qnn_model_wrapper.IsEffectivelyConstantInput(x_name)
-                                        ? x_name
-                                        : utils::UniqueNameGenerator().New(x_name, "_reshape");
-
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(conv_x_name)) {
-      std::vector<uint8_t> unpacked;
-      if (qnn_model_wrapper.IsEffectivelyConstantInput(x_name)) {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
-            qnn_model_wrapper.GetConstantTensor(x_name), unpacked));
-      } else {
-        RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(x_name, conv_x_name, x_shape_1d, x_shape_2d,
-                                                         qnn_dtype_x, quant_x, do_op_validation,
-                                                         qnn_model_wrapper.IsGraphInput(x_name)));
-      }
-      Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(conv_x_name);
-      QnnTensorWrapper x_tensor(conv_x_name, tensor_type, qnn_dtype_x, std::move(quant_x),
-                                std::move(x_shape_2d), std::move(unpacked));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(x_tensor)), "Failed to add x tensor.");
-    }
-    input_names.push_back(conv_x_name);
-  }
-
-  //
-  // Input 3: weight. Reshape [M,C,W] -> [M,C,1,W], then transpose to HWIO.
-  //
-  {
-    const std::string& w_name = inputs[kIdxW].name;
-    TensorInfo w_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kIdxW], w_info));
-    RETURN_IF(w_info.shape.size() != 3, "QLinearConv 1D: weight must be rank-3 [M, C, W].");
-    const uint32_t num_output_channels = w_info.shape[0];
-
-    QnnQuantParamsWrapper quant_w;
-    RETURN_IF_ERROR(BuildWeightQuantParam(qnn_model_wrapper, inputs[kIdxWScale], inputs[kIdxWZeroPoint],
-                                          num_output_channels, quant_w));
-
-    Qnn_DataType_t qnn_dtype_w = QNN_DATATYPE_UNDEFINED;
-    RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxW].type, qnn_dtype_w));
-
-    // [M, C, W] -> [M, C, 1, W]
-    std::vector<uint32_t> shape_2d = {w_info.shape[0], w_info.shape[1], 1, w_info.shape[2]};
-    std::vector<uint32_t> hwcn_shape(4);
-    RETURN_IF_ERROR(utils::NchwShapeToHwcn<uint32_t>(shape_2d, hwcn_shape));
-
-    const std::string actual_w_name = w_info.is_initializer
-                                          ? w_name
-                                          : utils::UniqueNameGenerator().New(w_name, "_transpose");
-
-    std::vector<uint8_t> unpacked;
-    if (w_info.is_initializer) {
-      // Reshape the quant axis if per-channel, then transpose a [M,C,1,W] view to HWIO.
-      if (quant_w.IsPerChannel()) {
-        RETURN_IF_ERROR(quant_w.HandleUnsqueeze<uint32_t>(w_info.shape, shape_2d));
-      }
-      std::vector<int64_t> shape_2d_i64(shape_2d.begin(), shape_2d.end());
-
-      std::vector<uint8_t> original_bytes;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(w_info.initializer_tensor, original_bytes));
-      unpacked.resize(original_bytes.size());
-
-      const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-      const OrtTypeInfo* type_info = nullptr;
-      ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(
-          static_cast<const OrtValueInfo*>(w_info.initializer_tensor), &type_info));
-      const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
-      ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
-      ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-      ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(type_shape, &elem_type));
-      const size_t elem_byte_size = utils::GetElementSizeByType(elem_type);
-      RETURN_IF(elem_byte_size == 0,
-                ("QLinearConv 1D: can't get element byte size for weight " + w_name).c_str());
-
-      RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(std::move(shape_2d_i64), elem_byte_size,
-                                                     original_bytes, unpacked, /*is_3d=*/false));
-
-      if (quant_w.IsPerChannel()) {
-        std::vector<size_t> perm_inv(nchw2hwcn_perm.size());
-        RETURN_IF_ERROR(utils::InvertPerm<size_t>(nchw2hwcn_perm, perm_inv));
-        RETURN_IF_ERROR(quant_w.HandleTranspose<size_t>(perm_inv));
-      }
-    } else {
-      RETURN_IF(quant_w.IsPerChannel(), "QLinearConv: dynamic weight only supports per-tensor quantization.");
-      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(w_name)) {
-        QnnTensorWrapper weight_src;
-        RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(inputs[kIdxW], weight_src));
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_src)), "Failed to add weight tensor.");
-      }
-      const std::string reshape_output = utils::UniqueNameGenerator().New(w_name, "_reshape");
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(w_name, reshape_output, w_info.shape, shape_2d,
-                                                       qnn_dtype_w, quant_w, do_op_validation,
-                                                       qnn_model_wrapper.IsGraphInput(w_name)));
-      RETURN_IF_ERROR(qnn_model_wrapper.AddNchwToHwcnTranspose(node_unit.Index(), reshape_output,
-                                                               actual_w_name, shape_2d, hwcn_shape,
-                                                               qnn_dtype_w, quant_w, do_op_validation,
-                                                               false, false, /*is_3d=*/false));
-    }
-
-    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(actual_w_name);
-    QnnTensorWrapper w_tensor(actual_w_name, tensor_type, qnn_dtype_w, std::move(quant_w),
-                              std::move(hwcn_shape), std::move(unpacked));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
-    input_names.push_back(actual_w_name);
-  }
-
-  //
-  // Input 8: bias (optional). Shape [M] is layout-invariant; no reshape needed.
-  //
-  const bool has_bias = num_inputs > kIdxBias && inputs[kIdxBias].Exists();
-  if (has_bias) {
-    const std::string& bias_name = inputs[kIdxBias].name;
-    TensorInfo bias_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kIdxBias], bias_info));
-    RETURN_IF(!bias_info.is_initializer, "QLinearConv: bias must be a constant initializer.");
-
-    QnnQuantParamsWrapper quant_bias;
-    RETURN_IF_ERROR(BuildBiasQuantParam(qnn_model_wrapper, node_unit, quant_bias));
-
-    std::vector<uint8_t> unpacked;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, unpacked));
-
-    QnnTensorWrapper bias_tensor(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
-                                 std::move(quant_bias), std::vector<uint32_t>(bias_info.shape),
-                                 std::move(unpacked));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor.");
-    input_names.push_back(bias_name);
-  }
-
-  return Ort::Status();
-}
-
-// ---------------------------------------------------------------------------
-// ProcessAttributesAndOutputs
-// ---------------------------------------------------------------------------
 
 Ort::Status QLinearConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                               const OrtNodeUnit& node_unit,
                                                               std::vector<std::string>&& input_names,
                                                               const Ort::Logger& logger,
                                                               bool do_op_validation) const {
+  // All graph construction happens in ProcessInputs; nothing to do here.
+  ORT_UNUSED_PARAMETER(qnn_model_wrapper);
+  ORT_UNUSED_PARAMETER(node_unit);
+  ORT_UNUSED_PARAMETER(input_names);
+  ORT_UNUSED_PARAMETER(logger);
+  ORT_UNUSED_PARAMETER(do_op_validation);
+  return Ort::Status();
+}
+
+Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wrapper,
+                                                   const OrtNodeUnit& node_unit,
+                                                   bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
+  const size_t num_inputs = inputs.size();
 
-  std::vector<uint32_t> output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, output_shape), "Cannot get output shape");
-  const bool is_1d_conv = output_shape.size() == 3;
-  const bool is_3d_conv = output_shape.size() == 5;
+  std::vector<uint32_t> x_shape_nchw;   // ONNX activation shape (NCHW / NCDHW / NCW)
+  std::vector<uint32_t> y_shape_nchw;   // ONNX output shape
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[kIdxX].shape, x_shape_nchw), "Cannot get x shape");
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, y_shape_nchw), "Cannot get output shape");
 
+  const size_t onnx_rank = x_shape_nchw.size();
+  const bool is_1d = (onnx_rank == 3);
+  const bool is_3d = (onnx_rank == 5);
+
+  // For 1D conv we operate as 2D by inserting H=1: NCW -> NC1W, weight [M,C,W] -> [M,C,1,W].
+  // conv_rank is the spatial+2 rank used for the QNN Conv (always 4 for 1D/2D, 5 for 3D).
+  const size_t conv_rank = is_3d ? 5 : 4;
+
+  const std::string node_base = utils::UniqueNameGenerator().New(node_unit);
+
+  // -------------------------------------------------------------------------
+  // Activation x: build quant params, reshape (1D), then Transpose NCHW->NHWC.
+  // -------------------------------------------------------------------------
+  QnnQuantParamsWrapper quant_x;
+  RETURN_IF_ERROR(BuildPerTensorQuantParam(qnn_model_wrapper, inputs[kIdxXScale], inputs[kIdxXZeroPoint], quant_x));
+  Qnn_DataType_t qnn_dtype_x = QNN_DATATYPE_UNDEFINED;
+  RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxX].type, qnn_dtype_x));
+
+  const std::string& x_name = inputs[kIdxX].name;
+
+  // Channel-first shape used as the Transpose input (rank 4 or 5). For 1D, insert H=1.
+  std::vector<uint32_t> x_cf_shape;  // NCHW or NCDHW
+  if (is_1d) {
+    x_cf_shape = {x_shape_nchw[0], x_shape_nchw[1], 1, x_shape_nchw[2]};
+  } else {
+    x_cf_shape = x_shape_nchw;
+  }
+
+  // Ensure the (possibly reshaped) NCHW activation tensor exists in the QNN graph.
+  std::string x_cf_name = x_name;
+  if (is_1d) {
+    // Reshape NCW -> NC1W. For a graph input/dynamic tensor add a Reshape node; the source tensor
+    // must exist first.
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(x_name)) {
+      QnnTensorWrapper x_src;
+      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(inputs[kIdxX], x_src));
+      // MakeTensorWrapper does not attach our explicit quant params; rebuild with quant_x.
+      Qnn_TensorType_t src_type = qnn_model_wrapper.GetTensorType(x_name);
+      std::vector<uint8_t> src_bytes;
+      if (qnn_model_wrapper.IsEffectivelyConstantInput(x_name)) {
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+            qnn_model_wrapper.GetConstantTensor(x_name), src_bytes));
+      }
+      QnnTensorWrapper x_q(x_name, src_type, qnn_dtype_x, quant_x.Copy(),
+                           std::vector<uint32_t>(x_shape_nchw), std::move(src_bytes));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(x_q)), "Failed to add x tensor.");
+    }
+    x_cf_name = node_base + "_x_reshaped";
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(x_name, x_cf_name, x_shape_nchw, x_cf_shape,
+                                                     qnn_dtype_x, quant_x, do_op_validation,
+                                                     qnn_model_wrapper.IsGraphInput(x_name)));
+  } else {
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(x_name)) {
+      Qnn_TensorType_t src_type = qnn_model_wrapper.GetTensorType(x_name);
+      std::vector<uint8_t> src_bytes;
+      if (qnn_model_wrapper.IsEffectivelyConstantInput(x_name)) {
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+            qnn_model_wrapper.GetConstantTensor(x_name), src_bytes));
+      }
+      QnnTensorWrapper x_q(x_name, src_type, qnn_dtype_x, quant_x.Copy(),
+                           std::vector<uint32_t>(x_cf_shape), std::move(src_bytes));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(x_q)), "Failed to add x tensor.");
+    }
+  }
+
+  // Transpose NCHW->NHWC (or NCDHW->NDHWC). Quant params attached on both ends.
+  const std::vector<uint32_t> cf_to_cl = ChannelFirstToLastPerm(conv_rank);
+  const std::vector<uint32_t> x_cl_shape = PermuteShape(x_cf_shape, cf_to_cl);
+  const std::string x_cl_name = node_base + "_x_nhwc";
+  RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), x_cf_name, x_cl_name,
+                                                     x_cf_shape, cf_to_cl, x_cl_shape,
+                                                     qnn_dtype_x, quant_x,
+                                                     do_op_validation,
+                                                     /*is_for_input=*/false, /*is_for_output=*/false));
+
+  // -------------------------------------------------------------------------
+  // Weight w: OIHW -> HWIO (transpose bytes for initializer). Per-channel axis follows.
+  // -------------------------------------------------------------------------
+  TensorInfo w_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kIdxW], w_info));
+  RETURN_IF(!w_info.is_initializer, "QLinearConv: weight must be a constant initializer.");
+  const uint32_t num_output_channels = w_info.shape[0];
+
+  QnnQuantParamsWrapper quant_w;
+  RETURN_IF_ERROR(BuildWeightQuantParam(qnn_model_wrapper, inputs[kIdxWScale], inputs[kIdxWZeroPoint],
+                                        num_output_channels, quant_w));
+  Qnn_DataType_t qnn_dtype_w = QNN_DATATYPE_UNDEFINED;
+  RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, inputs[kIdxW].type, qnn_dtype_w));
+
+  // Weight working shape: [M,C,kH,kW] for 2D ([M,C,1,kW] for 1D), [M,C,kD,kH,kW] for 3D.
+  std::vector<uint32_t> w_work_shape;
+  if (is_1d) {
+    w_work_shape = {w_info.shape[0], w_info.shape[1], 1, w_info.shape[2]};
+  } else {
+    w_work_shape = w_info.shape;
+  }
+
+  std::vector<uint32_t> hwcn_shape(w_work_shape.size());
+  RETURN_IF_ERROR(utils::NchwShapeToHwcn<uint32_t>(w_work_shape, hwcn_shape));
+
+  std::vector<uint8_t> w_bytes;
+  if (is_1d) {
+    // Transpose a [M,C,1,kW] view of the [M,C,kW] initializer to HWCN.
+    std::vector<int64_t> w_work_i64(w_work_shape.begin(), w_work_shape.end());
+    std::vector<uint8_t> orig_bytes;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(w_info.initializer_tensor, orig_bytes));
+    w_bytes.resize(orig_bytes.size());
+
+    const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+    const OrtTypeInfo* type_info = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(
+        static_cast<const OrtValueInfo*>(w_info.initializer_tensor), &type_info));
+    const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
+    ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(type_shape, &elem_type));
+    const size_t elem_byte_size = utils::GetElementSizeByType(elem_type);
+    RETURN_IF(elem_byte_size == 0, "QLinearConv 1D: cannot get weight element byte size.");
+    RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(std::move(w_work_i64), elem_byte_size,
+                                                   orig_bytes, w_bytes, /*is_3d=*/false));
+  } else {
+    RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(qnn_model_wrapper, w_info.initializer_tensor,
+                                                   w_bytes, is_3d));
+  }
+
+  // Move the per-channel quant axis through the OIHW->HWIO transpose.
+  if (quant_w.IsPerChannel()) {
+    const std::vector<size_t>& perm = is_3d ? nchw2hwcn_perm_3d : nchw2hwcn_perm;
+    std::vector<size_t> perm_inv(perm.size());
+    RETURN_IF_ERROR(utils::InvertPerm<size_t>(perm, perm_inv));
+    RETURN_IF_ERROR(quant_w.HandleTranspose<size_t>(perm_inv));
+  }
+
+  const std::string w_hwcn_name = node_base + "_w_hwcn";
+  {
+    QnnTensorWrapper w_tensor(w_hwcn_name, QNN_TENSOR_TYPE_STATIC, qnn_dtype_w, quant_w.Copy(),
+                              std::vector<uint32_t>(hwcn_shape), std::vector<uint8_t>(w_bytes));
+    if (do_op_validation) {
+      // For validation we still register the tensor so QNN can type-check the Conv node.
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
+    } else {
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Bias (optional, int32): scale = x_scale*w_scale, zp = 0. Shape [M], layout-invariant.
+  // -------------------------------------------------------------------------
+  std::string bias_name;
+  const bool has_bias = num_inputs > kIdxBias && inputs[kIdxBias].Exists();
+  if (has_bias) {
+    bias_name = inputs[kIdxBias].name;
+    TensorInfo bias_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kIdxBias], bias_info));
+    RETURN_IF(!bias_info.is_initializer, "QLinearConv: bias must be a constant initializer.");
+
+    QnnQuantParamsWrapper quant_bias;
+    RETURN_IF_ERROR(BuildBiasQuantParam(qnn_model_wrapper, node_unit, quant_bias));
+
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(bias_name)) {
+      std::vector<uint8_t> bias_bytes;
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, bias_bytes));
+      QnnTensorWrapper bias_tensor(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
+                                   std::move(quant_bias), std::vector<uint32_t>(bias_info.shape),
+                                   std::move(bias_bytes));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor.");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Conv attributes: kernel_shape, dilations, strides, pads, group.
+  // -------------------------------------------------------------------------
   OrtNodeAttrHelper node_helper(node_unit);
-  std::vector<std::string> param_tensor_names;
+  std::vector<std::string> param_names;
 
-  std::vector<uint32_t> input_0_shape;  // NHW[D]C
-  std::vector<uint32_t> input_1_shape;  // NCHW[D]
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[kIdxX].shape, input_0_shape), "Cannot get x shape");
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[kIdxW].shape, input_1_shape), "Cannot get w shape");
-
-  // Kernel shape (infer from weight spatial dims if absent).
+  // kernel_shape (spatial dims of the weight). For 1D, prepend H=1.
   std::vector<uint32_t> kernel_shape = node_helper.Get("kernel_shape", std::vector<uint32_t>{});
   if (kernel_shape.empty()) {
-    kernel_shape.assign(input_1_shape.begin() + 2, input_1_shape.end());
+    kernel_shape.assign(w_info.shape.begin() + 2, w_info.shape.end());
   }
-  if (is_1d_conv) {
-    kernel_shape.insert(kernel_shape.begin(), 1);  // insert H=1
+  if (is_1d) {
+    kernel_shape.insert(kernel_shape.begin(), 1);
   }
+  const size_t spatial_rank = kernel_shape.size();  // 2 for 1D/2D, 3 for 3D
 
   // Dilations.
-  std::vector<uint32_t> dilations;
-  dilations.assign(kernel_shape.size(), 1);
-  dilations = node_helper.Get("dilations", dilations);
-  if (dilations.size() == 1) {
-    const uint32_t width_dilation = dilations[0];
-    dilations.resize(2);
-    dilations[0] = 1;  // H == 1
-    dilations[1] = width_dilation;
+  std::vector<uint32_t> dilations = node_helper.Get("dilations", std::vector<uint32_t>(spatial_rank, 1));
+  if (is_1d && dilations.size() == 1) {
+    dilations.insert(dilations.begin(), 1);
   }
   {
-    QnnParamWrapper dilation_paramwrapper(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_DILATION,
-                                          {SafeInt<uint32_t>(dilations.size())}, std::vector<uint32_t>(dilations));
-    param_tensor_names.push_back(dilation_paramwrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(dilation_paramwrapper));
+    QnnParamWrapper p(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_DILATION,
+                      {SafeInt<uint32_t>(dilations.size())}, std::vector<uint32_t>(dilations));
+    param_names.push_back(p.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(p));
   }
 
   // Strides.
-  std::vector<uint32_t> strides;
-  strides.assign(kernel_shape.size(), 1);
-  strides = node_helper.Get("strides", strides);
-  if (strides.size() == 1) {
-    const uint32_t width_stride = strides[0];
-    strides.resize(2);
-    strides[0] = 1;  // H
-    strides[1] = width_stride;
+  std::vector<uint32_t> strides = node_helper.Get("strides", std::vector<uint32_t>(spatial_rank, 1));
+  if (is_1d && strides.size() == 1) {
+    strides.insert(strides.begin(), 1);
   }
   {
-    QnnParamWrapper stride_paramwrapper(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_STRIDE,
-                                        {SafeInt<uint32_t>(strides.size())}, std::vector<uint32_t>(strides));
-    param_tensor_names.push_back(stride_paramwrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(stride_paramwrapper));
+    QnnParamWrapper p(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_STRIDE,
+                      {SafeInt<uint32_t>(strides.size())}, std::vector<uint32_t>(strides));
+    param_names.push_back(p.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(p));
   }
 
-  // Pads / auto_pad.
+  // Pads / auto_pad. Channel-last spatial dims of x and y for SAME computation.
   {
-    std::vector<uint32_t> pads;
-    pads.assign(kernel_shape.size() * 2, 0);
-    pads = node_helper.Get("pads", pads);
+    std::vector<uint32_t> pads = node_helper.Get("pads", std::vector<uint32_t>(spatial_rank * 2, 0));
+    if (is_1d && pads.size() == 2) {
+      // NCW pads [w_begin, w_end] -> 2D [h_begin=0, w_begin, h_end=0, w_end].
+      pads = {0, pads[0], 0, pads[1]};
+    }
     auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
-    RETURN_IF(auto_pad != "NOTSET" && auto_pad != "SAME_LOWER" && auto_pad != "SAME_UPPER" && auto_pad != "VALID",
-              ("QNN QLinearConv does not support 'auto_pad' value: " + auto_pad).c_str());
-
     if (auto_pad != "NOTSET" && auto_pad != "VALID") {
       auto pad_type = qnn::StringToAutoPadType(auto_pad);
-      std::vector<uint32_t> input_dims(input_0_shape.begin() + 1, input_0_shape.end() - 1);  // NHWC -> H,W[,D]
-      std::vector<uint32_t> output_dims(output_shape.begin() + 1, output_shape.end() - 1);
-      if (is_1d_conv) {
-        input_dims.insert(input_dims.begin(), 1);
-        output_dims.insert(output_dims.begin(), 1);
+      // Channel-last spatial dims: x_cl_shape is [N, <spatial>, C].
+      std::vector<uint32_t> in_spatial(x_cl_shape.begin() + 1, x_cl_shape.end() - 1);
+      std::vector<uint32_t> y_cl_shape;  // derive output spatial from ONNX y (NCHW) -> channel-last
+      {
+        std::vector<uint32_t> y_cf = is_1d
+                                         ? std::vector<uint32_t>{y_shape_nchw[0], y_shape_nchw[1], 1, y_shape_nchw[2]}
+                                         : y_shape_nchw;
+        y_cl_shape = PermuteShape(y_cf, ChannelFirstToLastPerm(conv_rank));
       }
-      size_t rank = input_dims.size();
-      for (size_t dim = 0; dim < rank; ++dim) {
+      std::vector<uint32_t> out_spatial(y_cl_shape.begin() + 1, y_cl_shape.end() - 1);
+      for (size_t dim = 0; dim < spatial_rank; ++dim) {
         int64_t pad_head = pads[dim];
-        int64_t pad_tail = pads[rank + dim];
-        RETURN_IF_ERROR(qnn::ComputePad(input_dims[dim], strides[dim], kernel_shape[dim],
+        int64_t pad_tail = pads[spatial_rank + dim];
+        RETURN_IF_ERROR(qnn::ComputePad(in_spatial[dim], strides[dim], kernel_shape[dim],
                                         dilations[dim], pad_type, pad_head, pad_tail));
         pads[dim] = gsl::narrow<uint32_t>(pad_head);
-        pads[rank + dim] = gsl::narrow<uint32_t>(pad_tail);
+        pads[spatial_rank + dim] = gsl::narrow<uint32_t>(pad_tail);
       }
-    } else if (pads.size() == 2) {
-      // 1D NOTSET/VALID: set H pad to 0.
-      const uint32_t width_pad_begin = pads[0];
-      const uint32_t width_pad_end = pads[1];
-      pads.resize(4);
-      pads[0] = 0;  // H begin
-      pads[1] = width_pad_begin;
-      pads[2] = 0;  // H end
-      pads[3] = width_pad_end;
     }
-
-    ReArrangePads(pads);
-    uint32_t pad_size = gsl::narrow<uint32_t>(pads.size() / 2);
-    QnnParamWrapper pad_paramwrapper(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_PAD_AMOUNT,
-                                     {pad_size, 2}, std::move(pads));
-    param_tensor_names.push_back(pad_paramwrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(pad_paramwrapper));
+    ReArrangePads(pads);  // [b0,b1,...,e0,e1,...] -> [[b0,e0],[b1,e1],...]
+    uint32_t pad_dims = gsl::narrow<uint32_t>(pads.size() / 2);
+    QnnParamWrapper p(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_PAD_AMOUNT,
+                      {pad_dims, 2}, std::move(pads));
+    param_names.push_back(p.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(p));
   }
 
   const uint32_t group = node_helper.Get("group", static_cast<uint32_t>(1));
-  const uint32_t num_output_channels = output_shape.back();
-  uint32_t num_input_channels = 0;
-  RETURN_IF_ERROR(GetInputChannelNumber(qnn_model_wrapper, node_unit, num_input_channels));
+  const uint32_t num_in_channels = x_shape_nchw[1];
+  const uint32_t num_out_channels = y_shape_nchw[1];
 
-  // DepthWiseConv2d exists only for 2D (and reshaped-1D); there is no DepthWiseConv3d.
-  const bool is_depthwise_conv2d = (!is_3d_conv) &&
-                                   (num_input_channels == num_output_channels) &&
-                                   (group == num_output_channels);
+  // DepthWiseConv2d only exists for 2D (incl. reshaped-1D); 3D always uses Conv3d with a group param.
+  const bool is_depthwise = (!is_3d) && (num_in_channels == num_out_channels) && (group == num_out_channels);
 
-  if (!is_depthwise_conv2d) {
+  if (!is_depthwise) {
     Qnn_Scalar_t group_scalar = QNN_SCALAR_INIT;
     group_scalar.dataType = QNN_DATATYPE_UINT_32;
     group_scalar.uint32Value = group;
-    QnnParamWrapper group_paramwrapper(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_GROUP, group_scalar);
-    param_tensor_names.push_back(group_paramwrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(group_paramwrapper));
-  } else {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("Using DepthWiseConv2d for QLinearConv node " + node_unit.Name()).c_str());
+    QnnParamWrapper p(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_GROUP, group_scalar);
+    param_names.push_back(p.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(p));
   }
 
-  std::string qnn_op_type;
-  if (is_3d_conv) {
-    qnn_op_type = QNN_OP_CONV_3D;
-  } else {
-    qnn_op_type = is_depthwise_conv2d ? QNN_OP_DEPTH_WISE_CONV_2D : QNN_OP_CONV_2D;
-  }
+  const char* qnn_op = is_3d ? QNN_OP_CONV_3D : (is_depthwise ? QNN_OP_DEPTH_WISE_CONV_2D : QNN_OP_CONV_2D);
 
-  // Output quant params (per-tensor) from y_scale / y_zero_point.
+  // -------------------------------------------------------------------------
+  // Conv output (channel-last) + Transpose back to NCHW (+ Reshape for 1D).
+  // -------------------------------------------------------------------------
   QnnQuantParamsWrapper quant_y;
   RETURN_IF_ERROR(BuildPerTensorQuantParam(qnn_model_wrapper, inputs[kIdxYScale], inputs[kIdxYZeroPoint], quant_y));
-
   Qnn_DataType_t qnn_dtype_y = QNN_DATATYPE_UNDEFINED;
   RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized=*/true, outputs[0].type, qnn_dtype_y));
 
-  const auto& output_name = outputs[0].name;
+  // Channel-first output shape used after transpose-back (NCHW or NC1W for 1D, NCDHW for 3D).
+  std::vector<uint32_t> y_cf_shape = is_1d
+                                         ? std::vector<uint32_t>{y_shape_nchw[0], y_shape_nchw[1], 1, y_shape_nchw[2]}
+                                         : y_shape_nchw;
+  const std::vector<uint32_t> y_cl_shape = PermuteShape(y_cf_shape, ChannelFirstToLastPerm(conv_rank));
 
-  if (is_1d_conv) {
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-    std::vector<uint32_t> output_shape_2d = {output_shape[0], 1, output_shape[1], output_shape[2]};
-    const std::string conv_output_name = utils::UniqueNameGenerator().New(output_name, "_conv");
-    QnnTensorWrapper conv_out(conv_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_dtype_y,
-                              quant_y.Copy(), std::vector<uint32_t>(output_shape_2d));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv_out)), "Failed to add conv output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
-                                                  std::move(input_names), {conv_output_name},
-                                                  std::move(param_tensor_names), do_op_validation),
-                  "Failed to add QLinearConv node.");
-    // Reshape 2D conv output back to 1D.
-    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(conv_output_name, output_name, output_shape_2d,
-                                                     output_shape, qnn_dtype_y, quant_y,
-                                                     do_op_validation, false, is_graph_output));
+  const std::string y_cl_name = node_base + "_y_nhwc";
+  {
+    QnnTensorWrapper y_cl_tensor(y_cl_name, QNN_TENSOR_TYPE_NATIVE, qnn_dtype_y, quant_y.Copy(),
+                                 std::vector<uint32_t>(y_cl_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(y_cl_tensor)), "Failed to add Conv output tensor.");
+  }
+
+  std::vector<std::string> conv_inputs = {x_cl_name, w_hwcn_name};
+  if (has_bias) {
+    conv_inputs.push_back(bias_name);
+  }
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_base, QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op,
+                                                std::vector<std::string>(conv_inputs), {y_cl_name},
+                                                std::vector<std::string>(param_names), do_op_validation),
+                "Failed to create QLinearConv node.");
+
+  // Transpose channel-last Conv output back to channel-first.
+  const std::vector<uint32_t> cl_to_cf = ChannelLastToFirstPerm(conv_rank);
+  const std::string& y_name = outputs[0].name;
+  const bool y_is_graph_output = qnn_model_wrapper.IsGraphOutput(y_name);
+
+  if (is_1d) {
+    // Transpose NHWC->NC1W (intermediate), then Reshape NC1W->NCW (final ONNX output).
+    const std::string y_cf_name = node_base + "_y_nchw";
+    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), y_cl_name, y_cf_name,
+                                                       y_cl_shape, cl_to_cf, y_cf_shape,
+                                                       qnn_dtype_y, quant_y,
+                                                       do_op_validation,
+                                                       /*is_for_input=*/false, /*is_for_output=*/false));
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(y_cf_name, y_name, y_cf_shape, y_shape_nchw,
+                                                     qnn_dtype_y, quant_y, do_op_validation,
+                                                     /*is_for_input=*/false, /*is_for_output=*/y_is_graph_output));
   } else {
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper output_tensor(output_name, tensor_type, qnn_dtype_y,
-                                   std::move(quant_y), std::move(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
-                                                  std::move(input_names), {output_name},
-                                                  std::move(param_tensor_names), do_op_validation),
-                  "Failed to add QLinearConv node.");
+    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), y_cl_name, y_name,
+                                                       y_cl_shape, cl_to_cf, y_cf_shape,
+                                                       qnn_dtype_y, quant_y,
+                                                       do_op_validation,
+                                                       /*is_for_input=*/false, /*is_for_output=*/y_is_graph_output));
   }
 
   return Ort::Status();
