@@ -459,6 +459,7 @@ TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint16) {
 // 0 is legal in ONNX (selects no boxes) but produces a degenerate [0, 3] QNN output
 // that QNN rejects at compose. QNN EP must decline the node instead of hard-failing.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_ZeroMaxBoxes) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(HtpNmsProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "QDQ", uint8_t);
   auto build_model = [](ModelTestBuilder& builder) {
     builder.MakeInput<float>("boxes", {1, 3, 4},
                              {0.0f, 0.0f, 1.0f, 1.0f,
@@ -478,6 +479,7 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_ZeroMaxBoxes) {
 // max_output_boxes_per_class absent (only boxes + scores) must fall back.
 // Absent defaults to 0 in ONNX, which selects no boxes.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_AbsentMaxBoxes) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(HtpNmsProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "QDQ", uint8_t);
   auto build_model = [](ModelTestBuilder& builder) {
     builder.MakeInput<float>("boxes", {1, 3, 4},
                              {0.0f, 0.0f, 1.0f, 1.0f,
