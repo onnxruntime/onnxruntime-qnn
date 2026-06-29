@@ -24,12 +24,12 @@
 #include "test/providers/qnn/unit/qnn_unit_test_utils.h"
 
 // Forward declarations for operator<< overloads defined in qnn_utils.cc
-// but not declared in qnn_utils.h. These exist in the EP shared library.
+// but not declared in qnn_utils.h (Qnn_DataType_t IS declared there).
+// These exist in the EP shared library.
 namespace onnxruntime {
 namespace qnn {
 namespace utils {
 std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar);
-std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type);
 std::ostream& operator<<(std::ostream& out, const Qnn_Definition_t& definition);
 std::ostream& operator<<(std::ostream& out, const Qnn_QuantizationEncoding_t& encoding);
 std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize_params);
@@ -41,9 +41,10 @@ std::ostream& operator<<(std::ostream& out, const Qnn_ParamType_t& param_type);
 }  // namespace onnxruntime
 
 // Bring everything into scope at file level so TEST() bodies can use them.
-using namespace onnxruntime::qnn;
-using namespace onnxruntime::qnn::utils;
-using namespace onnxruntime::test;
+namespace onnxruntime {
+namespace test {
+using namespace ::onnxruntime::qnn;
+using namespace ::onnxruntime::qnn::utils;
 
 // =============================================================================
 // GetElementSizeByType(Qnn_DataType_t)
@@ -69,6 +70,9 @@ TEST(QnnUnit_UtilsTest, GetElementSizeByType_Qnn_KnownTypes) {
   EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_8), 1u);
   EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_16), 2u);
   EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_32), 4u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_SFIXED_POINT_4), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UFIXED_POINT_4), 1u);
+  EXPECT_EQ(GetElementSizeByType(QNN_DATATYPE_UNDEFINED), 1u);
 }
 
 TEST(QnnUnit_UtilsTest, GetElementSizeByType_Qnn_UnknownThrows) {
@@ -204,7 +208,8 @@ TEST(QnnUnit_UtilsTest, OstreamQnnScalar_FLOAT16DoesNotCrash) {
   Qnn_Scalar_t s{};
   s.dataType = QNN_DATATYPE_FLOAT_16;
   std::ostringstream oss;
-  oss << s;  // no output in the switch case, just verifying no crash
+  oss << s;                        // no output in the switch case, just verifying no crash
+  EXPECT_TRUE(oss.str().empty());  // FLOAT_16 case has no output (empty break)
 }
 
 TEST(QnnUnit_UtilsTest, OstreamQnnScalar_SFixedPointVariants) {
@@ -277,30 +282,106 @@ TEST(QnnUnit_UtilsTest, OstreamQnnDataType_UnknownThrows) {
   EXPECT_THROW(oss << dt, Ort::Exception);
 }
 
-TEST(QnnUnit_UtilsTest, OstreamQnnDataType_VariousUncoveredTypes) {
-  auto check = [](Qnn_DataType_t dt, std::string_view expected_substr) {
-    std::ostringstream oss;
-    oss << dt;
-    EXPECT_NE(oss.str().find(expected_substr), std::string::npos)
-        << "for dt=" << static_cast<int>(dt);
-  };
-  check(QNN_DATATYPE_INT_8, "INT_8");
-  check(QNN_DATATYPE_INT_16, "INT_16");
-  check(QNN_DATATYPE_UINT_16, "UINT_16");
-  check(QNN_DATATYPE_INT_64, "INT_64");
-  check(QNN_DATATYPE_UINT_64, "UINT_64");
-  check(QNN_DATATYPE_FLOAT_64, "FLOAT_64");
-  check(QNN_DATATYPE_SFIXED_POINT_8, "SFIXED_POINT_8");
-  check(QNN_DATATYPE_SFIXED_POINT_16, "SFIXED_POINT_16");
-  check(QNN_DATATYPE_SFIXED_POINT_32, "SFIXED_POINT_32");
-  check(QNN_DATATYPE_UFIXED_POINT_8, "UFIXED_POINT_8");
-  check(QNN_DATATYPE_UFIXED_POINT_16, "UFIXED_POINT_16");
-  check(QNN_DATATYPE_UFIXED_POINT_32, "UFIXED_POINT_32");
-  check(QNN_DATATYPE_BFLOAT_16, "BFLOAT_16");
-  check(QNN_DATATYPE_BOOL_8, "BOOL_8");
-  check(QNN_DATATYPE_SFIXED_POINT_4, "SFIXED_POINT_4");
-  check(QNN_DATATYPE_UFIXED_POINT_4, "UFIXED_POINT_4");
-  check(QNN_DATATYPE_UNDEFINED, "UNDEFINED");
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Int8) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_INT_8;
+  EXPECT_NE(oss.str().find("INT_8"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Int16) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_INT_16;
+  EXPECT_NE(oss.str().find("INT_16"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Uint16) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UINT_16;
+  EXPECT_NE(oss.str().find("UINT_16"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Int64) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_INT_64;
+  EXPECT_NE(oss.str().find("INT_64"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Uint64) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UINT_64;
+  EXPECT_NE(oss.str().find("UINT_64"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Float64) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_FLOAT_64;
+  EXPECT_NE(oss.str().find("FLOAT_64"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_SFixedPoint8) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_SFIXED_POINT_8;
+  EXPECT_NE(oss.str().find("SFIXED_POINT_8"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_SFixedPoint16) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_SFIXED_POINT_16;
+  EXPECT_NE(oss.str().find("SFIXED_POINT_16"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_SFixedPoint32) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_SFIXED_POINT_32;
+  EXPECT_NE(oss.str().find("SFIXED_POINT_32"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_UFixedPoint8) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UFIXED_POINT_8;
+  EXPECT_NE(oss.str().find("UFIXED_POINT_8"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_UFixedPoint16) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UFIXED_POINT_16;
+  EXPECT_NE(oss.str().find("UFIXED_POINT_16"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_UFixedPoint32) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UFIXED_POINT_32;
+  EXPECT_NE(oss.str().find("UFIXED_POINT_32"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_BFloat16) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_BFLOAT_16;
+  EXPECT_NE(oss.str().find("BFLOAT_16"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Bool8) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_BOOL_8;
+  EXPECT_NE(oss.str().find("BOOL_8"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_SFixedPoint4) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_SFIXED_POINT_4;
+  EXPECT_NE(oss.str().find("SFIXED_POINT_4"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_UFixedPoint4) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UFIXED_POINT_4;
+  EXPECT_NE(oss.str().find("UFIXED_POINT_4"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnDataType_Undefined) {
+  std::ostringstream oss;
+  oss << QNN_DATATYPE_UNDEFINED;
+  EXPECT_NE(oss.str().find("UNDEFINED"), std::string::npos);
 }
 
 TEST(QnnUnit_UtilsTest, OstreamQnnDefinition_AllBranches) {
@@ -343,6 +424,43 @@ TEST(QnnUnit_UtilsTest, OstreamQnnQuantizeParams_BwScaleOffset) {
   std::ostringstream oss;
   oss << qp;
   EXPECT_NE(oss.str().find("bitwidth"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, OstreamQnnQuantizeParams_AllEncodingBranches) {
+  auto check = [](Qnn_QuantizeParams_t qp, std::string_view expected_substr) {
+    std::ostringstream oss;
+    oss << qp;
+    EXPECT_NE(oss.str().find(expected_substr), std::string::npos);
+  };
+  // SCALE_OFFSET
+  {
+    Qnn_QuantizeParams_t qp{};
+    qp.encodingDefinition = QNN_DEFINITION_DEFINED;
+    qp.quantizationEncoding = QNN_QUANTIZATION_ENCODING_SCALE_OFFSET;
+    qp.scaleOffsetEncoding.scale = 0.5f;
+    qp.scaleOffsetEncoding.offset = 0;
+    check(qp, "scale");
+  }
+  // AXIS_SCALE_OFFSET
+  {
+    Qnn_QuantizeParams_t qp{};
+    qp.encodingDefinition = QNN_DEFINITION_DEFINED;
+    qp.quantizationEncoding = QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET;
+    check(qp, "AXIS_SCALE_OFFSET");
+  }
+  // BW_AXIS_SCALE_OFFSET
+  {
+    Qnn_QuantizeParams_t qp{};
+    qp.encodingDefinition = QNN_DEFINITION_DEFINED;
+    qp.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET;
+    check(qp, "BW_AXIS_SCALE_OFFSET");
+  }
+  // UNDEFINED encoding
+  {
+    Qnn_QuantizeParams_t qp{};
+    qp.encodingDefinition = QNN_DEFINITION_UNDEFINED;
+    check(qp, "UNDEFINED");
+  }
 }
 
 TEST(QnnUnit_UtilsTest, OstreamQnnTensorType_AllBranches) {
@@ -442,39 +560,84 @@ static void RunJsonGraphParamTest(const char* op_name, Qnn_DataType_t param_dt,
                         {in_fix.tensor}, {out_fix.tensor}, {param});
   QnnJSONGraph json_graph;
   json_graph.AddOp(op);
-  EXPECT_FALSE(json_graph.Finalize().dump().empty()) << "for op=" << op_name;
+  auto j = json_graph.Finalize();
+  EXPECT_FALSE(j.dump().empty()) << "for op=" << op_name;
+  ASSERT_TRUE(j.contains("graph")) << "missing 'graph' key for op=" << op_name;
+  EXPECT_TRUE(!j["graph"]["nodes"].empty()) << "for op=" << op_name;
 }
 
-TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_CoversManyDataTypeBranches) {
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_SFixedPoint8) {
   RunJsonGraphParamTest<int8_t>("op_i8", QNN_DATATYPE_SFIXED_POINT_8,
                                 QNN_DATATYPE_SFIXED_POINT_8, {-1, 0, 1, 2});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_SFixedPoint16) {
   RunJsonGraphParamTest<int16_t>("op_i16", QNN_DATATYPE_SFIXED_POINT_16,
                                  QNN_DATATYPE_SFIXED_POINT_16, {-100, 0, 100});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Int32) {
   RunJsonGraphParamTest<int32_t>("op_i32", QNN_DATATYPE_INT_32,
                                  QNN_DATATYPE_INT_32, {1, 2});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Int64) {
   RunJsonGraphParamTest<int64_t>("op_i64", QNN_DATATYPE_INT_64,
                                  QNN_DATATYPE_INT_64, {100000LL});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_UFixedPoint8) {
   RunJsonGraphParamTest<uint8_t>("op_u8", QNN_DATATYPE_UFIXED_POINT_8,
                                  QNN_DATATYPE_UFIXED_POINT_8, {10u, 20u, 30u});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_UFixedPoint16) {
   RunJsonGraphParamTest<uint16_t>("op_u16", QNN_DATATYPE_UFIXED_POINT_16,
                                   QNN_DATATYPE_UFIXED_POINT_16, {1u, 2u});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_UFixedPoint32) {
   RunJsonGraphParamTest<uint32_t>("op_u32", QNN_DATATYPE_UFIXED_POINT_32,
                                   QNN_DATATYPE_UFIXED_POINT_32, {5u});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Uint64) {
   RunJsonGraphParamTest<uint64_t>("op_u64", QNN_DATATYPE_UINT_64,
                                   QNN_DATATYPE_UINT_64, {999999ULL});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Float32) {
   RunJsonGraphParamTest<float>("op_f32", QNN_DATATYPE_FLOAT_32,
                                QNN_DATATYPE_FLOAT_32, {0.5f, -0.5f});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Float16) {
   RunJsonGraphParamTest<Ort::Float16_t>("op_f16", QNN_DATATYPE_FLOAT_16,
                                         QNN_DATATYPE_FLOAT_16,
                                         {Ort::Float16_t(1.0f)});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Int8Raw) {
   RunJsonGraphParamTest<int8_t>("op_i8_raw", QNN_DATATYPE_INT_8,
                                 QNN_DATATYPE_INT_8, {-1, 0, 1, 2});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Int16Raw) {
   RunJsonGraphParamTest<int16_t>("op_i16_raw", QNN_DATATYPE_INT_16,
                                  QNN_DATATYPE_INT_16, {-100, 0, 100});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Uint8Raw) {
   RunJsonGraphParamTest<uint8_t>("op_u8_raw", QNN_DATATYPE_UINT_8,
                                  QNN_DATATYPE_UINT_8, {10u, 20u, 30u});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Uint16Raw) {
   RunJsonGraphParamTest<uint16_t>("op_u16_raw", QNN_DATATYPE_UINT_16,
                                   QNN_DATATYPE_UINT_16, {1u, 2u});
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Uint32Raw) {
   RunJsonGraphParamTest<uint32_t>("op_u32_raw", QNN_DATATYPE_UINT_32,
                                   QNN_DATATYPE_UINT_32, {5u, 10u});
 }
@@ -525,6 +688,26 @@ TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_QuantizedPath) {
                                       qnn_type, /*is_quantized=*/true);
   EXPECT_TRUE(ok);
   EXPECT_EQ(qnn_type, QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_QuantizedPath_MoreTypes) {
+  struct Mapping {
+    ONNXTensorElementDataType onnx;
+    Qnn_DataType_t expected;
+  };
+  const Mapping table[] = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, QNN_DATATYPE_UFIXED_POINT_8},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_SFIXED_POINT_16},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, QNN_DATATYPE_UFIXED_POINT_16},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, QNN_DATATYPE_FLOAT_16},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, QNN_DATATYPE_FLOAT_32},
+  };
+  for (const auto& m : table) {
+    Qnn_DataType_t qnn_type = QNN_DATATYPE_UNDEFINED;
+    bool ok = OnnxDataTypeToQnnDataType(m.onnx, qnn_type, /*is_quantized=*/true);
+    EXPECT_TRUE(ok) << "for onnx type " << m.onnx;
+    EXPECT_EQ(qnn_type, m.expected) << "for onnx type " << m.onnx;
+  }
 }
 
 TEST(QnnUnit_UtilsTest, OnnxDataTypeToQnnDataType_UnquantizedPath) {
@@ -794,26 +977,27 @@ TEST(QnnUnit_UtilsTest, GetDataQuantParams_PerChannelAxis) {
 // UniqueNameGenerator — uniqueness contract and Reset()
 // =============================================================================
 
-TEST(QnnUnit_UtilsTest, UniqueNameGenerator_FirstCallReturnsBaseName) {
-  UniqueNameGenerator().Reset();
+class UniqueNameGeneratorTest : public ::testing::Test {
+ protected:
+  void SetUp() override { UniqueNameGenerator().Reset(); }
+};
+
+TEST_F(UniqueNameGeneratorTest, UniqueNameGenerator_FirstCallReturnsBaseName) {
   EXPECT_EQ(UniqueNameGenerator().New("tensor"), "tensor");
 }
 
-TEST(QnnUnit_UtilsTest, UniqueNameGenerator_DuplicateGetsCounter) {
-  UniqueNameGenerator().Reset();
+TEST_F(UniqueNameGeneratorTest, UniqueNameGenerator_DuplicateGetsCounter) {
   UniqueNameGenerator().New("tensor");
   EXPECT_EQ(UniqueNameGenerator().New("tensor"), "tensor_2");
 }
 
-TEST(QnnUnit_UtilsTest, UniqueNameGenerator_ResetClearsCounter) {
-  UniqueNameGenerator().Reset();
+TEST_F(UniqueNameGeneratorTest, UniqueNameGenerator_ResetClearsCounter) {
   UniqueNameGenerator().New("tensor");
   UniqueNameGenerator().Reset();
   EXPECT_EQ(UniqueNameGenerator().New("tensor"), "tensor");
 }
 
-TEST(QnnUnit_UtilsTest, UniqueNameGenerator_WithSuffix) {
-  UniqueNameGenerator().Reset();
+TEST_F(UniqueNameGeneratorTest, UniqueNameGenerator_WithSuffix) {
   EXPECT_EQ(UniqueNameGenerator().New("conv", "_weight"), "conv_weight");
 }
 
@@ -993,5 +1177,226 @@ TEST(QnnUnit_UtilsTest, GetVerboseQnnErrorMessage_ReturnsNonEmptyString) {
                                               static_cast<Qnn_ErrorHandle_t>(1));
   EXPECT_FALSE(msg.empty());
 }
+
+// =============================================================================
+// GetTimeStampInUs
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetTimeStampInUs_ReturnsNonZero) {
+  uint64_t t = GetTimeStampInUs();
+  EXPECT_GT(t, 0u);
+}
+
+TEST(QnnUnit_UtilsTest, GetTimeStampInUs_Monotonic) {
+  uint64_t t1 = GetTimeStampInUs();
+  uint64_t t2 = GetTimeStampInUs();
+  EXPECT_GE(t2, t1);
+}
+
+// =============================================================================
+// PtrToString
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, PtrToString_NullPointer) {
+  std::string s = PtrToString(nullptr);
+  EXPECT_FALSE(s.empty());
+}
+
+TEST(QnnUnit_UtilsTest, PtrToString_NonNullPointer) {
+  int x = 42;
+  std::string s = PtrToString(&x);
+  EXPECT_FALSE(s.empty());
+  // Two calls with the same pointer must return the same string.
+  EXPECT_EQ(PtrToString(&x), PtrToString(&x));
+}
+
+// =============================================================================
+// GetQuantParams
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, GetQuantParams_Uint8_Asymmetric_BasicRange) {
+  float scale = 0.0f;
+  int32_t zero_point = 0;
+  // rmin=-1, rmax=1, UFIXED_POINT_8, asymmetric
+  // scale = (1 - (-1)) / 255 ≈ 0.00784, initial_zp = 0 - (-1/scale) ≈ 127.5 → 128
+  // zero_point is negated: -128
+  auto st = GetQuantParams(-1.0f, 1.0f, QNN_DATATYPE_UFIXED_POINT_8, scale, zero_point, false);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(scale, 2.0f / 255.0f, 1e-5f);
+  EXPECT_EQ(zero_point, -128);
+}
+
+TEST(QnnUnit_UtilsTest, GetQuantParams_Int8_Symmetric_BasicRange) {
+  float scale = 0.0f;
+  int32_t zero_point = 0;
+  // rmin=-1, rmax=0.8 → abs_max=1, scale=2/254≈0.00787, zero_point=0
+  auto st = GetQuantParams(-1.0f, 0.8f, QNN_DATATYPE_SFIXED_POINT_8, scale, zero_point, true);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_GT(scale, 0.0f);
+  EXPECT_EQ(zero_point, 0);  // symmetric → zero_point always 0
+}
+
+TEST(QnnUnit_UtilsTest, GetQuantParams_Int16_Asymmetric) {
+  float scale = 0.0f;
+  int32_t zero_point = 0;
+  auto st = GetQuantParams(0.0f, 1.0f, QNN_DATATYPE_UFIXED_POINT_16, scale, zero_point, false);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_NEAR(scale, 1.0f / 65535.0f, 1e-8f);
+}
+
+// =============================================================================
+// NchwShapeToHwcn / CnhwShapeToHwcn — rank error paths
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, NchwShapeToHwcn_Rank4_HappyPath) {
+  std::array<int64_t, 4> nchw = {2, 3, 4, 5};
+  std::array<int64_t, 4> hwcn = {};
+  auto st = NchwShapeToHwcn<int64_t>(
+      gsl::make_span(nchw.data(), nchw.size()),
+      gsl::make_span(hwcn.data(), hwcn.size()));
+  EXPECT_TRUE(st.IsOK());
+  // H=4, W=5, C=3, N=2
+  EXPECT_EQ(hwcn[0], 4);
+  EXPECT_EQ(hwcn[1], 5);
+  EXPECT_EQ(hwcn[2], 3);
+  EXPECT_EQ(hwcn[3], 2);
+}
+
+TEST(QnnUnit_UtilsTest, NchwShapeToHwcn_Rank3_ReturnsError) {
+  std::array<int64_t, 3> nchw = {2, 3, 4};
+  std::array<int64_t, 3> hwcn = {};
+  auto st = NchwShapeToHwcn<int64_t>(
+      gsl::make_span(nchw.data(), nchw.size()),
+      gsl::make_span(hwcn.data(), hwcn.size()));
+  EXPECT_FALSE(st.IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, CnhwShapeToHwcn_Rank4_HappyPath) {
+  std::array<int64_t, 4> cnhw = {2, 3, 4, 5};
+  std::array<int64_t, 4> hwcn = {};
+  auto st = CnhwShapeToHwcn<int64_t>(
+      gsl::make_span(cnhw.data(), cnhw.size()),
+      gsl::make_span(hwcn.data(), hwcn.size()));
+  EXPECT_TRUE(st.IsOK());
+  // H=4, W=5, C=2, N=3
+  EXPECT_EQ(hwcn[0], 4);
+  EXPECT_EQ(hwcn[1], 5);
+  EXPECT_EQ(hwcn[2], 2);
+  EXPECT_EQ(hwcn[3], 3);
+}
+
+TEST(QnnUnit_UtilsTest, CnhwShapeToHwcn_Rank6_ReturnsError) {
+  std::array<int64_t, 6> cnhw = {1, 2, 3, 4, 5, 6};
+  std::array<int64_t, 6> hwcn = {};
+  auto st = CnhwShapeToHwcn<int64_t>(
+      gsl::make_span(cnhw.data(), cnhw.size()),
+      gsl::make_span(hwcn.data(), hwcn.size()));
+  EXPECT_FALSE(st.IsOK());
+}
+
+// =============================================================================
+// TransformUnsignedToSignedFixedPoint
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, TransformUnsignedToSigned_Bits8) {
+  // mask = 0b10000000; each byte XOR'd with 128
+  std::vector<uint8_t> data = {0x00, 0x7F, 0x80, 0xFF};
+  auto st = TransformUnsignedToSignedFixedPoint(data, 8);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(data[0], 0x80u);
+  EXPECT_EQ(data[1], 0xFFu);
+  EXPECT_EQ(data[2], 0x00u);
+  EXPECT_EQ(data[3], 0x7Fu);
+}
+
+TEST(QnnUnit_UtilsTest, TransformUnsignedToSigned_Bits4) {
+  // mask = 0b10001000
+  std::vector<uint8_t> data = {0x00, 0xFF};
+  auto st = TransformUnsignedToSignedFixedPoint(data, 4);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(data[0], 0x88u);
+  EXPECT_EQ(data[1], 0x77u);
+}
+
+TEST(QnnUnit_UtilsTest, TransformUnsignedToSigned_Bits2) {
+  // mask = 0b10101010
+  std::vector<uint8_t> data = {0x00};
+  auto st = TransformUnsignedToSignedFixedPoint(data, 2);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(data[0], 0xAAu);
+}
+
+TEST(QnnUnit_UtilsTest, TransformUnsignedToSigned_UnsupportedBitsReturnsError) {
+  std::vector<uint8_t> data = {0x00};
+  auto st = TransformUnsignedToSignedFixedPoint(data, 3);
+  EXPECT_FALSE(st.IsOK());
+}
+
+// =============================================================================
+// UnpackInt4ToInt8 (Signed and Unsigned)
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, UnpackInt4ToInt8_Signed_BasicUnpack) {
+  // INT4 packs two 4-bit values per byte.
+  // 0x31 packs two INT4 values: lower nibble=1, upper nibble=3
+  // After unpack + mask: values are 1 and 3 (lower 4 bits only)
+  std::vector<uint8_t> data = {0x31};  // 1 packed byte → 2 INT4 values
+  auto st = UnpackInt4ToInt8<true>(2, data);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(data.size(), 2u);
+  // Both values masked to lower 4 bits
+  EXPECT_EQ(data[0] & 0x0F, data[0]);
+  EXPECT_EQ(data[1] & 0x0F, data[1]);
+}
+
+TEST(QnnUnit_UtilsTest, UnpackInt4ToInt8_Unsigned_BasicUnpack) {
+  std::vector<uint8_t> data = {0x52};  // two UINT4: lower=2, upper=5
+  auto st = UnpackInt4ToInt8<false>(2, data);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(data.size(), 2u);
+}
+
+// =============================================================================
+// ConvertBlockQuantScalesToLpbq (basic smoke test)
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, ConvertBlockQuantScalesToLpbq_BasicSmoke) {
+  // Only bitwidth==4 is supported; bq_scales layout is block-major: [b * num_channels + c]
+  std::vector<float> bq_scales = {1.0f, 0.5f};  // 2 blocks, 1 channel
+  std::vector<int32_t> bq_offsets = {0, 0};
+  std::vector<float> per_channel_scales;
+  std::vector<uint8_t> per_block_int_scales;
+  std::vector<int32_t> offsets;
+  auto st = ConvertBlockQuantScalesToLpbq(
+      gsl::make_span(bq_scales.data(), bq_scales.size()),
+      gsl::make_span(bq_offsets.data(), bq_offsets.size()),
+      /*num_blocks_per_channel=*/2u,
+      /*num_channels=*/1u,
+      /*bitwidth=*/4u,
+      per_channel_scales, per_block_int_scales, offsets);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(per_channel_scales.size(), 1u);    // one per channel
+  EXPECT_EQ(per_block_int_scales.size(), 2u);  // num_channels * num_blocks_per_channel
+  EXPECT_EQ(offsets.size(), 1u);
+}
+
+TEST(QnnUnit_UtilsTest, ConvertBlockQuantScalesToLpbq_UnsupportedBitwdithReturnsError) {
+  std::vector<float> bq_scales = {1.0f, 0.5f};
+  std::vector<int32_t> bq_offsets;
+  std::vector<float> per_channel_scales;
+  std::vector<uint8_t> per_block_int_scales;
+  std::vector<int32_t> offsets;
+  auto st = ConvertBlockQuantScalesToLpbq(
+      gsl::make_span(bq_scales.data(), bq_scales.size()),
+      gsl::make_span(bq_offsets.data(), bq_offsets.size()),
+      /*num_blocks_per_channel=*/2u,
+      /*num_channels=*/1u,
+      /*bitwidth=*/8u,  // unsupported
+      per_channel_scales, per_block_int_scales, offsets);
+  EXPECT_FALSE(st.IsOK());
+}
+
+}  // namespace test
+}  // namespace onnxruntime
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
