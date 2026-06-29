@@ -189,12 +189,15 @@ static void RunQLinearConvTest(const std::vector<int64_t>& x_shape,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
+  EPVerificationParams verification_params;
+  verification_params.ep_node_assignment = expected_ep_assignment;
+  // Output dequantized with y_scale = 8/255 ≈ 0.031 per LSB; allow ~1.5 LSB for HTP-vs-CPU.
+  verification_params.tensor_verifier = ElementwiseAbsoluteVerifier{0.05f};
+
   RunQnnModelTest(
       BuildQLinearConvTestCase<AType, WType, YType>(x_shape, w_shape, attrs, has_bias,
                                                     per_channel_weight, dynamic_x_scale),
-      provider_options, opset, expected_ep_assignment,
-      // Output dequantized with y_scale = 8/255 ≈ 0.031 per LSB; allow ~1.5 LSB for HTP-vs-CPU.
-      /*fp32_abs_err=*/0.05f);
+      provider_options, opset, verification_params);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +243,9 @@ TEST_F(QnnHTPBackendTests, QLinearConvOp_DynamicZeroPoint_Unsupported) {
                     {"y_q"}, kOnnxDomain);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 10, ExpectedEPNodeAssignment::None);
+  EPVerificationParams vp;
+  vp.ep_node_assignment = ExpectedEPNodeAssignment::None;
+  RunQnnModelTest(model_fn, provider_options, 10, vp);
 }
 
 // --- uint8 ---
