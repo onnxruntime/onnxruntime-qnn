@@ -112,8 +112,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_Basic) {
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape, no Transpose
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
@@ -143,8 +142,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_WithContext) {
   RunQnnModelTest(BuildTransposeReshapeTransposeWithContextTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape (from fusion), no Transpose
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
@@ -177,8 +175,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_4D) {
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape, no Transpose
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
@@ -212,8 +209,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_IdentityTransposes) {
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape, no Transpose
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
@@ -247,8 +243,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_MergeFirstTwoDims) {
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape, no Transpose
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
@@ -283,8 +278,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_NotFusable_Reordered)
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify NO fusion: should have Transpose ops (fusion did not happen)
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 2);
@@ -317,8 +311,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_LargerTensor) {
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape, no Transpose
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);

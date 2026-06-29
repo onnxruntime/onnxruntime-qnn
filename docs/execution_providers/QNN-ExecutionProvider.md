@@ -20,6 +20,8 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
+- [QNN EP Framework Op Tracing](#qnn-ep-framework-op-tracing)
+- [QNN EP Input Graph Dump](#qnn-ep-input-graph-dump)
 - [QNN EP Profiling](#qnn-ep-profiling)
 - [QNN EP weight sharing](#qnn-ep-weight-sharing)
 - [Usage](#usage)
@@ -39,16 +41,15 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.2.0         | v2.46.0           | v1.24.4              |
+| v2.3.0         | v2.47.0           | v1.24.4              |
 
-> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.4.zip).
+> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
-  - **Note**: The NuGet package only supports Windows ARM64 platform
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
@@ -88,7 +89,7 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 |`"backend_path"`|Description|
 |---|-----|
-|'libQnnCpu.so' or 'QnnCpu.dll'|Enable CPU backend. See `backend_type` 'cpu'.|
+|'libQnnCpu.so' or 'QnnCpu.dll'|Enable CPU backend. See `backend_type` 'cpu'. Not shipped in the onnxruntime-qnn release package; obtain the file directly from the QAIRT SDK.|
 |'libQnnHtp.so' or 'QnnHtp.dll'|Enable HTP backend. See `backend_type` 'htp'.|
 |'libQnnGpu.so' or 'QnnGpu.dll'|Enable GPU backend. See `backend_type` 'gpu'.|
 |'libQnnSaver.so' or 'QnnSaver.dll'|Enable Saver backend. See `backend_type` 'saver'.|
@@ -96,6 +97,15 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 **Note:** `backend_path` is an alternative to `backend_type`. At most one of the two should be specified.
 `backend_path` requires a platform-specific path (e.g., `libQnnCpu.so` vs. `QnnCpu.dll`) but also allows one to specify an arbitrary path.
+
+### CPU backend availability (`ORT_QNN_ENABLE_CPU_BACKEND`)
+
+The QNN CPU backend is a reference implementation intended for integration testing, not production inference. Its visibility to the runtime depends on the host architecture:
+
+- **x86_64 hosts**: the CPU backend is always advertised (it doubles as the HTP emulator).
+- **arm64 hosts**: the CPU backend is hidden by default. Set the `ORT_QNN_ENABLE_CPU_BACKEND` environment variable to a non-empty, non-`0` value (e.g., `1`) before the QNN EP is registered / `OrtEnv` is created to opt in.
+
+This only affects automatic EP/backend selection. Explicit `backend_type='cpu'` or `backend_path='...QnnCpu...'` provider options continue to work on both architectures when the corresponding QNN CPU library is available on disk (see note above about packaging).
 
 |`"genie_log_level"`|Description|
 |---|---|
@@ -170,7 +180,14 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_arch"`|Description|
 |---|---|
-|Hardware architecture (string)|HTP Architecture number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for valid values. Defaults to "0" (none).|
+|'0'|Default. No architecture specified.|
+|'68'|HTP v68.|
+|'69'|HTP v69.|
+|'73'|HTP v73.|
+|'75'|HTP v75.|
+|'81'|HTP v81.|
+
+Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
 
 |`"device_id"`|Description|
 |---|---|
@@ -180,6 +197,11 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |'0'|Disabled. Inference with fp32 precision if it's fp32 model.|
 |'1'|Default. Enable the float32 model to be inferenced with fp16 precision.|
+
+|`"disable_htp_monolithic_lstm"`|Description|
+|---|---|
+|'0'|Default. HTP uses the monolithic LSTM graph configuration.|
+|'1'|Disable the monolithic LSTM graph configuration on HTP.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
@@ -191,10 +213,25 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
 |'1'|Default. Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
 
+|`"enable_block_quant_weight_optimization"`|Description|
+|---|---|
+|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
 |'1'|Enable the QNN HTP shared memory allocator. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+
+|`"enable_dx12_shared_memory_allocator"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable the QNN DX12 shared memory allocator. Requires a D3D12 capable system, and only available on Windows.|
+
+|`"extended_udma"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable HTP extended UDMA mode for better performance on supported hardware.|
 
 |`"op_packages"`|Description|
 |---|---|
@@ -208,6 +245,15 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"json_qnn_graph_dir"`|Description|
 |---|---|
 |Directory path (string)|Directory path for dumping QNN JSON graphs. Only effective when `dump_json_qnn_graph` is enabled.|
+
+|`"dump_qnn_ep_input_graph"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Dump the ONNX graph the QNN EP receives at compile time (after ORT Level 1 optimizations, before partitioning) as a JSON file. The output uses the same schema as `dump_json_qnn_graph`, so it opens in QNN Netron. Unlike `dump_json_qnn_graph` (which dumps the post-compile QNN graph), this captures the pre-compile ONNX graph. See `dump_qnn_ep_input_graph_dir` to control the output location.|
+
+|`"dump_qnn_ep_input_graph_dir"`|Description|
+|---|---|
+|Directory path (string)|Directory path for the QNN EP input graph dump. Only effective when `dump_qnn_ep_input_graph` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to, the dump is disabled with a WARNING log. Output files use the pattern `<graph_name>.<n>_qnn_ep_input_graph.json`, where `<n>` is a per-EP counter that increments for each dumped graph. When the source graph has no name, `<graph_name>` is the literal `graph`.|
 
 |`"dump_qnn_ir_dlc"`|Description|
 |---|---|
@@ -231,6 +277,11 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |Backend path (string)|Path to the QNN IR backend library. Defaults to 'libQnnIr.so' or 'QnnIr.dll'. Only effective when `dump_qnn_ir_dlc` is enabled.|
 
+|`"skip_backend_op_validation"`|Description|
+|---|---|
+|'0'|Default. The target backend (e.g. HTP) validates each op config during DLC dump.|
+|'1'|Skip target-backend op validation during DLC dump and fall back to the serializer's generic op checks. Intended for device-less hosts (e.g. cloud x86_64 compilation): there the target backend validates against an arch-agnostic op table and over-rejects arch-specific (v73+) ops such as `ScatterElements(reduction=max)`, even though the op is valid on real hardware. Only effective when `dump_qnn_ir_dlc` is enabled. Op lowering still targets the intended backend; only the validation verdict changes.|
+
 |`"skip_qnn_version_check"`|Description|
 |---|---|
 |'0'|Default. Version check enabled.|
@@ -238,10 +289,30 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"num_graph_prepare_threads"`|Description|
 |---|---|
-|Number (string)|The number of threads to use during model compilation. Must be greater than 1 and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
+|Number (string)|The number of threads to use during model compilation. Must be at least 1 (a value of 1 disables the feature) and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
 
 For more information, see the [Parallel Graph Preparation](#parallel-graph-preparation) section below.
 
+|`"htp_share_resource_optimization"`|Description|
+|---|---|
+|'1'|Enable HTP VTCM backup buffer sharing across sessions. Only `'1'` is a valid value. Supersedes `enable_vtcm_backup_buffer_sharing`. Requires QNN API version >= 2.26.|
+
+**Note:** `htp_share_resource_optimization` and `enable_vtcm_backup_buffer_sharing` both enable the same underlying feature. Prefer `htp_share_resource_optimization`.
+
+|`"disable_file_mapped_weights"`|Description|
+|---|---|
+|'0'|Default. File-mapped weights enabled (when supported).|
+|'1'|Disable file-mapped weight loading. File-mapped weights are only available on Windows ARM64 with QNN API >= 2.32; this option is ignored on other platforms.|
+
+|`"htp_bf16_enable"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable BFloat16 precision on the HTP backend. Requires `soc_model` to be set to a value >= 88 (e.g., SM8750). An error is raised at session creation if `soc_model` is unset or below 88.|
+
+|`"enable_htp_prepare_only"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
 
 ### Run Options
 
@@ -258,6 +329,9 @@ Run options can be set dynamically at runtime using the ORT Run API. These optio
 ```python
 import onnxruntime as ort
 import onnxruntime_qnn as qnn_ep
+
+# ORT QNN EP Version
+print(qnn_ep.__version__)
 
 # Register QNN EP library
 ep_lib_path = qnn_ep.get_library_path()
@@ -304,11 +378,13 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Clip|fp16 supported since 1.18.0|
 |ai.onnx:Concat||
 |ai.onnx:Conv|3d supported since 1.18.0|
+|ai.onnx:ConvInteger|Supported exclusively via DynamicQuantizeLinear → ConvInteger fusion pattern|
 |ai.onnx:ConvTranspose|3d supported since 1.18.0|
 |ai.onnx:Cos||
 |ai.onnx:CumSum||
 |ai.onnx:DepthToSpace||
 |ai.onnx:DequantizeLinear||
+|ai.onnx:DynamicQuantizeLinear|Supported exclusively via ConvInteger and MatMulInteger fusion patterns|
 |ai.onnx:Div||
 |ai.onnx:Einsum||
 |ai.onnx:Elu||
@@ -327,10 +403,14 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
+|ai.onnx:GroupNormalization||
 |ai.onnx:HardSigmoid||
 |ai.onnx:HardSwish||
+|ai.onnx:If|Single output per branch with identical shape+dtype; cond must be scalar bool; both branches are always executed (lowered to Where/Select)|
+|ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
+|ai.onnx:IsNaN||
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
 |ai.onnx:LayerNormalization||
@@ -341,6 +421,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:LogSoftmax||
 |ai.onnx:LpNormalization|p == 2|
 |ai.onnx:MatMul|Supported input data types on HTP backend: (uint8, uint8), (uint8, uint16), (uint16, uint8)|
+|ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
 |ai.onnx:MaxPool||
 |ai.onnx:Mean||
@@ -348,23 +429,31 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Mod||
 |ai.onnx:Mul||
 |ai.onnx:Neg||
+|ai.onnx:NonZero||
 |ai.onnx:Not||
 |ai.onnx:Or||
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
+|ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
+|ai.onnx:RandomNormalLike||
 |ai.onnx:RandomUniformLike||
 |ai.onnx:Reciprocal||
 |ai.onnx:ReduceL2||
+|ai.onnx:ReduceLogSumExp|Decomposed into ReduceMax->Sub->Exp->ReduceSum->Log->Add. Quantized input not supported.|
 |ai.onnx:ReduceMax||
 |ai.onnx:ReduceMean||
 |ai.onnx:ReduceMin||
 |ai.onnx:ReduceProd||
 |ai.onnx:ReduceSum||
 |ai.onnx:Relu||
+|ai.onnx:RMSNormalization||
+|ai.onnx:Reshape||
 |ai.onnx:Resize||
+|ai.onnx:RoiAlign||
 |ai.onnx:Round||
+|ai.onnx:RotaryEmbedding|HTP backend only|
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
@@ -373,12 +462,14 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Sin||
 |ai.onnx:Slice||
 |ai.onnx:Softmax||
+|ai.onnx:Softplus||
 |ai.onnx:SpaceToDepth||
 |ai.onnx:Split||
 |ai.onnx:Sqrt||
 |ai.onnx:Squeeze||
 |ai.onnx:Sub||
 |ai.onnx:Sum||
+|ai.onnx:Tan||
 |ai.onnx:Tanh||
 |ai.onnx:ThresholdedRelu||
 |ai.onnx:Tile||
@@ -388,11 +479,60 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Upsample||
 |ai.onnx:Where||
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
+|com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
+|com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
-|com.microsoft.MatMulNBits|Supported bits == 4 on GPU backend|
+|com.microsoft:QuickGelu||
+|com.microsoft:RotaryEmbedding|HTP backend only|
+|com.microsoft:SimplifiedLayerNormalization||
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+## Supported operator fusions
+
+QNN EP recognizes the following multi-op patterns and fuses them into a single QNN operation or a more efficient subgraph. Fusions are attempted before individual op builders run.
+
+### DQ/Q and quantization fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `DequantizeLinear → QuantizeLinear` | `QNN_OP_CONVERT` | Eliminates redundant re-quantization between compatible quantization schemes. Scalar scale/zero-point required. |
+| `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
+| `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | ConvInteger is supported exclusively via this fusion. Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
+| `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | MatMulInteger is supported exclusively via this fusion. Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
+
+### Low-Power Block Quantization (LPBQ) fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `Scale_DQL → [W_QL →] W_DQL → Act_DQL → Gemm → QL` | `QNN_OP_FULLY_CONNECTED` | Per-block integer scales with per-channel float scales. HTP/NPU backend only. |
+| `Scale_DQL → [W_QL →] W_DQL → MatMul` | `QNN_OP_MAT_MUL` | Per-block integer scales with per-channel float scales. int4/int8 weights. HTP/NPU backend only. |
+
+### Operator decomposition fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `[Div/Mul(√2)] → Erf → [Mul(0.5) →] Add(1) → Mul → [Mul(0.5)]` | `QNN_OP_GELU` | Matches two common Gelu decomposition variants (ErfAdd and ErfMul). Surrounding DQ nodes are also handled. |
+| `HardSigmoid(α=1/6, β=0.5) → Mul` (shared input) | `QNN_OP_ELEMENT_WISE_NEURON` (HardSwish) | Both inputs to Mul must originate from the same source tensor. |
+| `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
+| `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
+
+### Layout and reshape fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `Transpose → Reshape → Transpose → Reshape → Transpose` | `QNN_OP_CHANNEL_SHUFFLE` | 5-node pattern. Head and tail transposes must cancel; middle transpose permutes only the channel dimension. |
+| `[Transpose →] Reshape(4D→6D) → Transpose(DCR/CRD) → Reshape(6D→4D) [→ Transpose]` | `QNN_OP_SPACE_TO_DEPTH` | Matches both NCHW and NHWC layout variants and both DCR and CRD modes. Static dimensions required. |
+| `Reshape(4D→6D) → Einsum(transpose-equivalent) → Reshape(6D→4D)` | `QNN_OP_DEPTH_TO_SPACE + QNN_OP_TRANSPOSE` | Matches Einsum used as a rank-6 permutation with perm `[0,5,1,3,2,4]` (DCR DepthToSpace). |
+| `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
+| `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
+
+### Miscellaneous fusions
+
+| Pattern | Fused QNN op | Notes |
+|---|---|---|
+| `[DQ inputs →] Custom UDO op [→ Q outputs]` | Custom QNN UDO | Strips surrounding DQ/Q nodes and passes quantization parameters directly into the user-defined operator. |
 
 ## Running a model with QNN EP's HTP backend (Python)
 <p align="center"><img width="100%" src="../images/qnn_ep_quant_workflow.png" alt="Offline workflow for quantizing an ONNX model for use on QNN EP"/></p>
@@ -690,6 +830,96 @@ ort.unregister_execution_provider_library(ep_registration_name)
 
 For an out-of-the-box example, see [`qcom/samples/test_genie.py`](../../qcom/samples/test_genie.py).
 
+## QNN EP Input Graph Dump
+
+Setting `dump_qnn_ep_input_graph` to `'1'` writes the ONNX graph the QNN EP
+receives at compile time — after ORT Level 1 optimizations, before partitioning
+and EP compile — to a JSON file (one per graph, named
+`<graph_name>.<n>_qnn_ep_input_graph.json`, where `<n>` is a per-EP counter
+that disambiguates collisions when two graph names sanitize to the same
+string). Use `dump_qnn_ep_input_graph_dir` to
+choose the output directory (defaults to the current working directory).
+
+This is useful for inspecting exactly what the EP sees: that graph is **not** the
+user's source `.onnx` (ORT has run constant folding, QDQ duplication via
+`EnsureUniqueDQForNodeUnit`, Transpose optimization, etc.), and it is otherwise
+hard to observe — `SessionOptions::optimized_model_filepath` refuses to serialize
+a graph once an EP has compiled part of it into opaque compiled nodes ("Unable to
+serialize model as it contains compiled nodes").
+
+### Why the dump is QNN-Netron JSON, not an ONNX model
+
+Netron is the open-source neural-net viewer that already understands the
+JSON shape produced by QNN's existing `dump_json_qnn_graph`
+(the post-compile QNN graph). The schema is not formally specified,
+but it is stable and observable in this repository at
+`onnxruntime/core/providers/qnn/builder/qnn_utils.cc` (`QnnJSONGraph`). The
+EP-input dump deliberately reuses that schema rather than emitting a real
+`.onnx`.
+
+The QNN EP ships as a **standalone ABI plugin** that
+links only the public ONNX Runtime C/C++ API, Abseil, and nlohmann/json — it does
+**not** link protobuf or the ONNX proto definitions. Constructing or serializing
+an `onnx::ModelProto` therefore is not possible from the EP without adding a
+protobuf dependency to every shipped `onnxruntime_providers_qnn` binary, which
+would break the plugin's minimal-dependency contract.
+
+Reusing the QNN-Netron JSON schema instead means:
+
+- **No new dependencies** — nlohmann/json is already used by the EP.
+- **Opens directly in QNN Netron** — same schema Netron already understands.
+- **One graph-dump format** across the EP: `dump_json_qnn_graph` for the
+  post-compile QNN graph, `dump_qnn_ep_input_graph` for the pre-compile ONNX graph.
+- **Consumable by tooling** — the offline `qcom/tools/op_trace_matcher/source_to_optimized_matcher.py`
+  reads this JSON directly as its `--optimized-model`, recovering
+  `original ONNX -> EP-input -> QNN op` provenance.
+
+The schema carries node name/op_type/input_names/output_names and a tensor table
+flagging each tensor's role (graph input / output / intermediate / initializer),
+which is everything downstream consumers need.
+
+**Known limitation:** the dump does **not** include initializer tensor data
+bytes. Only the tensor name, dtype, shape, and role are recorded. Tools
+consuming the dump (for example `source_to_optimized_matcher.py`'s
+`--optimized-model` input) must therefore rely on initializer **names** or
+graph **topology** — not data hashes — when correlating tensors across the
+source and the EP-input graph. The matcher uses a name-derived sentinel hash
+for initializers from this input so name-based and topology-based matching
+work unchanged.
+
+### Multiple dumps per graph name
+
+A single inference session can produce **more than one** dump for the same
+graph name, because ORT may invoke `GetCapability` more than once:
+
+- **Layout transformation 2-pass cycle.** When the graph contains
+  layout-sensitive ops (Conv, Resize, Pool, …), ORT runs a 1st pass to
+  collect EP claims, applies an NCHW->NHWC rewrite for nodes the EP
+  accepted, and runs a 2nd pass on the transformed graph. The two dumps
+  differ — the 2nd has Conv in `kMSInternalNHWCDomain` and includes
+  inserted Transpose ops.
+- **Control-flow subgraphs.** Each `If` / `Loop` / `Scan` subgraph is a
+  separate `OrtGraph*` and gets its own `GetCapability` invocation, so
+  models with control flow legitimately produce multiple dumps with
+  different graph names.
+- **EPContext model loads.** Loading a previously-cached EPContext model
+  triggers another `GetCapability` pass on that context graph.
+
+Filenames append a per-EP atomic counter (`<graph_name>.<n>_…json`) so each
+pass gets a distinct file, and an explicit overwrite warning is logged if
+the same name is ever about to be rewritten.
+
+**Rule for the offline matcher (`source_to_optimized_matcher.py`):** for
+each unique `<graph_name>` in the dump directory, feed the file with the
+**highest `<n>`** as `--optimized-model`. That is the graph the EP actually
+compiled, and its node names are exactly the names that appear in
+`qnn_op_trace.json`'s `sources[]`. Lower-numbered files are intermediate
+snapshots (useful for debugging the layout transformer itself, not for
+matcher input).
+
+If a model has subgraphs (different graph names), pick the highest-numbered
+file *per unique graph name* and run the matcher per graph.
+
 ## QNN context binary cache feature
 There's a QNN context which contains QNN graphs after converting, compiling, finalizing the model. QNN can serialize the context into binary file, so that user can use it for futher inference directly (without the QDQ model) to improve the model loading cost.
 The QNN Execution Provider supports a number of session options to configure this.
@@ -806,7 +1036,7 @@ session = ort.InferenceSession("model.onnx", sess_options=sess_options)
 
 ### Important Considerations
 #### Feature Disabled if Number of Subgraphs is Less Than 5
-While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance. 
+While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance.
 
 #### Feature Disabled if `num_graph_prepare_threads` is 1
 This defeats the purpose of the feature, and enabling the feature will only add additional overhead from thread pool creation.
@@ -820,6 +1050,22 @@ If `std::thread::hardware_concurrency` fails, then the allowable range will be r
 If `num_graph_prepare_threads` is never set or set to a value outside of the allowable range, then the default number of threads will be 8.
 
 If `std::thread::hardware_concurrency` returns a value less than 8, then the default number of threads will be the lower value rather than 8. This applies when `num_graph_prepare_threads` is set to an invalid value.
+
+## QNN EP Framework Op Tracing
+
+Framework op tracing records the mapping between ONNX operators and the QNN operators they compile to. It is useful for debugging accuracy issues, understanding node-group fusions, and diagnosing why certain operators fall back to CPU EP.
+
+Enable tracing by setting `enable_framework_op_trace` to `'1'` and optionally `framework_op_trace_dir` to choose the output directory.
+
+### Output File Naming
+
+The trace is written as `{framework_op_trace_dir}/qnn_op_trace.json`.
+
+### Sidecar for Pre-compiled Context Models
+
+When loading a pre-compiled context model with `profiling_level=detailed` or `optrace`, the EP looks for a sidecar trace file to annotate profiling output with ONNX source op names. The sidecar path is `qnn_op_trace.json` in the same directory as the context model.
+
+Because AOT context-binary generation (`ep.context_enable=1`) also writes `qnn_op_trace.json`, no manual rename is needed. The only prerequisite is that the Phase 1 (context-generation) run must set `framework_op_trace_dir` to the directory where the context model is saved (i.e. the parent directory of `ep.context_file_path`), so the sidecar lands next to the context model. If the two directories differ, copy `qnn_op_trace.json` next to the context model before the Phase 2 run.
 
 ## QNN EP Profiling
 Profiling data is available with the HTP backend. Enabling QNN profiling will generate a user-readable .csv file that will contain information from initialization, execution, and de-initialization.
@@ -879,6 +1125,10 @@ With the example above, a file "output.csv" will be generated containing the pro
 The above will output basic information, such as the profiling data for the fastest and slowest execution as well as the average case. A .csv file can also be generated this way, too, though the information will likely not differ from the "output.csv".
 
 Additionally, if the profiling_level is set to "detailed" or "optrace", additional data will be shown per-network-layer.
+
+> **Combining profiling with framework op tracing:** When `profiling_level` is `detailed` or `optrace` **and** `enable_framework_op_trace` is `'1'`, the profiling CSV gains an extra `ONNX Source Ops` column. For each per-layer `NODE` event row, this column lists the originating ONNX operator name(s) (semicolon-separated for fused groups). This makes it easy to correlate QNN-level hardware profiling data back to the original ONNX model operators without manual lookup.
+>
+> At `profiling_level=basic` the `ONNX Source Ops` column is **not** added because basic profiling does not emit per-layer `NODE` events.
 
 ### Optrace-Level Profiling
 [Optrace-level profiling](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-profiling) generates a profiling .log file that contains [Qualcomm Hexagon Tensor Processor Analaysis Summary (QHAS)](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-analysis-summary-qhas-) data. This data can be used to generate chrometraces and provide a web browser-friendly UI to visualize data.

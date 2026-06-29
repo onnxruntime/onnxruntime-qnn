@@ -38,6 +38,7 @@ struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
+  bool enable_block_quant_weight_optimization = false;
 };
 
 class QnnModelWrapper {
@@ -147,23 +148,29 @@ class QnnModelWrapper {
   // Find an initializer by name
   Ort::Status FindInitializer(const std::string& tensor_name,
                               const OrtValueInfo** found_value_info = nullptr) const {
-    size_t num_initializers = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph_, &num_initializers));
-
-    std::vector<const OrtValueInfo*> initializers(num_initializers);
-    RETURN_IF_ERROR(GetInitializerTensors(initializers));
-
-    for (const OrtValueInfo* value_info : initializers) {
-      const char* value_info_name = nullptr;
-      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name));
-
-      if (std::string(value_info_name) == tensor_name) {
-        *found_value_info = value_info;
+    // Walk the branch graph scope stack from innermost to outermost so that initializers
+    // defined inside an `If`/`Loop` branch shadow same-named initializers in the parent graph.
+    for (auto it = branch_graph_scope_stack_.rbegin(); it != branch_graph_scope_stack_.rend(); ++it) {
+      if (FindInitializerInGraph(*it, tensor_name, found_value_info).IsOK()) {
         return Ort::Status();
       }
     }
+    return FindInitializerInGraph(&ort_graph_, tensor_name, found_value_info);
+  }
 
-    return MAKE_EP_FAIL("Initializer not found");
+  // Push the given branch graph onto the scope stack. While pushed, FindInitializer (and
+  // therefore IsConstantInput / GetConstantTensor) will also consider this graph's
+  // initializers. Used by IfOpBuilder when recursively translating branch nodes so that
+  // ORT-folded branch-internal Constants (which live as initializers on the branch graph)
+  // resolve as STATIC tensors during op-builder dispatch.
+  void PushBranchGraphScope(const OrtGraph* branch_graph) {
+    branch_graph_scope_stack_.push_back(branch_graph);
+  }
+
+  void PopBranchGraphScope() {
+    if (!branch_graph_scope_stack_.empty()) {
+      branch_graph_scope_stack_.pop_back();
+    }
   }
 
   const OrtValueInfo* GetConstantTensor(const std::string& tensor_name) const {
@@ -363,6 +370,8 @@ class QnnModelWrapper {
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
+  const Ort::Logger& GetLogger() const { return logger_; }
+
   const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
     return model_tensors_map_;
   }
@@ -439,6 +448,35 @@ class QnnModelWrapper {
   }
 
  private:
+  // Searches a single OrtGraph's initializer table for an entry with `tensor_name`.
+  // Returns OK on hit (with `found_value_info` populated) and an EP_FAIL on miss.
+  Ort::Status FindInitializerInGraph(const OrtGraph* graph,
+                                     const std::string& tensor_name,
+                                     const OrtValueInfo** found_value_info) const {
+    size_t num_initializers = 0;
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(graph, &num_initializers));
+
+    std::vector<const OrtValueInfo*> initializers(num_initializers);
+    if (num_initializers > 0) {
+      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(graph,
+                                                                         initializers.data(),
+                                                                         initializers.size()));
+    }
+
+    for (const OrtValueInfo* value_info : initializers) {
+      const char* value_info_name = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name));
+      if (std::string(value_info_name) == tensor_name) {
+        if (found_value_info != nullptr) {
+          *found_value_info = value_info;
+        }
+        return Ort::Status();
+      }
+    }
+
+    return MAKE_EP_FAIL("Initializer not found");
+  }
+
   Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
                               std::string& error_msg) const;
 
@@ -526,6 +564,12 @@ class QnnModelWrapper {
   // Tensor names produced by compile-time Q/DQ folds; chained across hops.
   std::unordered_set<std::string> folded_constant_tensors_;
 
+  // Stack of branch graphs (e.g., If::then_branch / else_branch) currently being translated.
+  // FindInitializer walks this from top to bottom before falling back to ort_graph_, which
+  // lets op-builders dispatched on branch nodes resolve branch-internal initializers
+  // (notably ORT-folded Constants) as STATIC tensors.
+  std::vector<const OrtGraph*> branch_graph_scope_stack_;
+
   // Non-owning pointer to the trace collector. Lifetime is managed by
   // QnnModel::ComposeGraph (stack-allocated unique_ptr).
   // Null when tracing is disabled.
@@ -559,8 +603,10 @@ inline Ort::Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF(true, "QNN EP: Unsupported scalar dtype");
   }
   QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
-  param_names.push_back(qnn_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
+  std::string param_tensor_name = qnn_param_wrapper.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper)),
+                ("QNN EP: Failed to add scalar param " + qnn_scalar_param_name).c_str());
+  param_names.push_back(std::move(param_tensor_name));
   return Ort::Status();
 }
 
@@ -574,8 +620,10 @@ inline Ort::Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
   qnn_scalar.dataType = QNN_DATATYPE_STRING;
   qnn_scalar.stringValue = scalar.c_str();
   QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
-  param_names.push_back(qnn_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
+  std::string param_tensor_name = qnn_param_wrapper.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper)),
+                ("QNN EP: Failed to add scalar param " + qnn_scalar_param_name).c_str());
+  param_names.push_back(std::move(param_tensor_name));
   return Ort::Status();
 }
 

@@ -66,7 +66,10 @@ namespace test {
   provider_options["soc_model"] = "88";       // TODO: Use QnnTypes.h when it's availible
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(build_test_case, provider_options, opset, expected_ep_assignment, fp32_abs_err);
+  RunQnnModelTest(build_test_case,
+                  provider_options,
+                  opset,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)

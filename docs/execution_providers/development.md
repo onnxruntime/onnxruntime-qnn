@@ -5,6 +5,7 @@
 This guide provides instructions for developing features for the ONNX Runtime (ORT) QNN Execution Provider using the plugin EP library. The ABI compatibility ensures stable interfaces and streamlined session creation.
 
 - **Note**: QNN EP version < 2.0 is **NOT** included in this page.
+- **Note**: QNN EP version < 2.0 will be deprecated and no longer maintained.
 
 ## Contents
 

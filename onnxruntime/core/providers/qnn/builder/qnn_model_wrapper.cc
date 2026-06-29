@@ -39,7 +39,10 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to create Qnn graph: " + graph_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  ("Failed to create Qnn graph: " + graph_name + ". " +
+                   utils::FormatQnnError(qnn_interface_, rt))
+                      .c_str());
       return false;
     }
   }
@@ -854,7 +857,8 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   tensor_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(tensor.quant_param.has_value(),
                                         tensor.type,
-                                        tensor_info.qnn_data_type));
+                                        tensor_info.qnn_data_type,
+                                        qnn_backend_type_));
 
   // Fill in shape.
   RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");

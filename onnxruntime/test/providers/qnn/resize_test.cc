@@ -171,7 +171,7 @@ static void RunCPUResizeOpTest(const TestInputDef<float>& input_def, const std::
                                         nearest_mode, cubic_coeff_a),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, const std::vector<float>& scales_data,
@@ -188,7 +188,7 @@ static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, c
                                                   nearest_mode, cubic_coeff_a),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 template <typename QuantType>

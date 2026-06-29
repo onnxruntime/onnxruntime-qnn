@@ -72,8 +72,7 @@ static void RunCPUGatherElemsOpTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs a QDQ GatherElements model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -118,8 +117,7 @@ static void RunHTPGatherElemsOpTest(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //

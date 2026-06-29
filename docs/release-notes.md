@@ -1,3 +1,83 @@
+# ONNX Runtime QNN Execution Provider v2.3.0
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)<br>
+**QAIRT SDK Compatibility:** 2.47.0
+
+```
+pip install onnxruntime==1.24.4
+pip install onnxruntime-qnn==2.3.0
+```
+
+## Packaging
+
+### New in 2.3.0
+
+- **NuGet** — ARM64 (ARM64X) package support added. Previously ARM64-only.
+- **Linux x86_64 Python wheels** — New **preview** wheels for Ubuntu 22.04 (`manylinux_2_35_x86_64`), Python 3.11–3.14. Requires GLIBC >= 2.35 due to QAIRT library dependencies.
+- **Maven (Android)** — New Android ARM64 package. Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`.
+
+For instructions on building wheels across different architectures, see the [Build Guide](execution_providers/build.md).
+
+### Platform Support
+
+| Package | Windows ARM64 | Windows x64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|
+| Python Wheel | Inference | AOT compilation | Inference | AOT compilation | — |
+| NuGet | Inference | — | — | — | — |
+| ZIP | Inference | — | — | — | — |
+| tgz | — | — | Inference | — | — |
+| Maven | — | — | — | — | Inference |
+
+## New Operators and Fusions
+
+- NonZero ([#217](https://github.com/onnxruntime/onnxruntime-qnn/pull/217))
+- RandomNormalLike ([#266](https://github.com/onnxruntime/onnxruntime-qnn/pull/266))
+- Identity ([#268](https://github.com/onnxruntime/onnxruntime-qnn/pull/268))
+- **Gelu Pattern 3** — New `Erf*0.5 + 0.5` decomposition variant; fixes models previously not fused. ([#236](https://github.com/onnxruntime/onnxruntime-qnn/pull/236))
+- **DynamicQuantizeLinear + MatMulInteger** — Fuses `DQL → MatMulInteger → Cast → Mul → [Add]` into a float QNN MatMul. ([#367](https://github.com/onnxruntime/onnxruntime-qnn/pull/367))
+- **DynamicQuantizeLinear + ConvInteger** — Fuses `DQL → ConvInteger → Cast → Mul → [Add]` into a float QNN Conv2d. ([#364](https://github.com/onnxruntime/onnxruntime-qnn/pull/364))
+
+For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
+
+## Improvements
+
+- Added `htp_share_resource_optimization` and `ep.enable_htp_prepare_only` provider options. See [Configuration Options](execution_providers/QNN-ExecutionProvider.md#configuration-options). ([#107](https://github.com/onnxruntime/onnxruntime-qnn/pull/107), [#347](https://github.com/onnxruntime/onnxruntime-qnn/pull/347))
+- Added int32 input support for ScatterElements (QAIRT 2.45+). ([#247](https://github.com/onnxruntime/onnxruntime-qnn/pull/247))
+- GatherND now uses shared index-normalization primitives for consistency with ScatterND/ScatterElements. ([#336](https://github.com/onnxruntime/onnxruntime-qnn/pull/336))
+- Gemm with `beta=0.0` now maps to QNN FullyConnected without bias instead of falling back to CPU. ([#375](https://github.com/onnxruntime/onnxruntime-qnn/pull/375))
+- RoiAlign now accepts `coordinate_transformation_mode=half_pixel` and `sampling_ratio=0`. ([#389](https://github.com/onnxruntime/onnxruntime-qnn/pull/389))
+- MatMulNBits extended to HTP with 2-bit and 4-bit support (block sizes 32/64).([#288](https://github.com/onnxruntime/onnxruntime-qnn/pull/288))
+- Graph verification in tests migrated to the public `GetEpGraphAssignmentInfo` API. ([#346](https://github.com/onnxruntime/onnxruntime-qnn/pull/346))
+- Conv now supports block-quantized weights on HTP via the `BW_FLOAT_BLOCK` kernel, including int2 support. ([#429](https://github.com/onnxruntime/onnxruntime-qnn/pull/429))
+- Static MSVC runtime linkage enabled for Windows x86_64 builds. ([#432](https://github.com/onnxruntime/onnxruntime-qnn/pull/432))
+
+## Bug Fixes
+
+- BatchNormalization: incorrect QNN offset handling for `QNN_DATATYPE_UFIXED_POINT_16` scale inputs. ([#135](https://github.com/onnxruntime/onnxruntime-qnn/pull/135))
+- ThresholdedRelu: stale `add → relu → sign → mul` pattern replaced with QAIRT-aligned `Greater → Select`. ([#221](https://github.com/onnxruntime/onnxruntime-qnn/pull/221))
+- Graph composition failure when `offload_graph_io_quantization=1` and a graph input fans out to multiple QDQ pairs. ([#295](https://github.com/onnxruntime/onnxruntime-qnn/pull/295))
+- Softmax `axis ≠ rank-1` falling back to CPU due to missing upstream tensor wrappers at validation time. ([#304](https://github.com/onnxruntime/onnxruntime-qnn/pull/304))
+- ScatterND/ScatterElements silent CPU fallback for negative or INT_64 indices. ([#311](https://github.com/onnxruntime/onnxruntime-qnn/pull/311), [#317](https://github.com/onnxruntime/onnxruntime-qnn/pull/317))
+- Build failure on Ubuntu 24.04 / GCC 13 due to false-positive `-Wmaybe-uninitialized`. ([#387](https://github.com/onnxruntime/onnxruntime-qnn/pull/387))
+- QNN EP failure on devices where DXCore cannot discover the NPU. ([#12](https://github.com/onnxruntime/onnxruntime-qnn/pull/12))
+- ORT Core version floor raised to `>= 1.24.2`, preventing accidental downgrade. ([#448](https://github.com/onnxruntime/onnxruntime-qnn/pull/448))
+
+**Full Changelog:** [rel/ort-qnn-ep/2.2.0...rel-2.3.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel/ort-qnn-ep/2.2.0...rel-2.3.0)
+
+## Known Issues
+
+- **WoS AMD64 — Python 3.11 installer issue** — `ep.get_library_path()` returns the `amd64` path instead of `arm64ec`; manually construct the path to the `arm64ec` library as a workaround. Ongoing.
+
+## Contributors
+
+This release includes contributions from:
+
+[Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Jaykumar Luhar](https://github.com/qti-luharj), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Min Fong Hong](https://github.com/minfhong-qti), [Mu-Chien Hsu](https://github.com/quic-muchhsu), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Xia Han](https://github.com/xiha0704), [Yathindra Kota](https://github.com/quic-ykota), [Yu-Hung Chuang](https://github.com/yuhuchua-qti), [Yuduo Wu](https://github.com/qti-yuduo)
+
+---
+
+---
+
 # ONNX Runtime QNN Execution Provider v2.2.0
 This release delivers operator coverage improvements, multi-NPU device selection, and build fixes.
 

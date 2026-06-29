@@ -4,6 +4,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -26,6 +27,9 @@ static const std::string EP_SDK_VER = "ep_sdk_version";
 static const std::string PARTITION_NAME = "partition_name";
 static const std::string SOURCE = "source";
 static const std::string MAX_SIZE = "max_size";
+// Serialized internal->external tensor-name overrides produced by offload_graph_io_quantization.
+// Persisted into the EPContext node so the cached-context load path can resolve graph I/O by name.
+static const std::string IO_NAME_OVERRIDES = "io_name_overrides";
 
 // EP_CONTEXT_TYPES
 static const std::string EP_CONTEXT_TYPE_BIN = "bin";
@@ -48,6 +52,11 @@ Ort::Status GetMainContextNode(const OrtGraph** graphs,
                                size_t count,
                                const OrtApi& ort_api,
                                std::vector<int>& main_context_pos);
+
+// Parses the IO_NAME_OVERRIDES attribute (if present) from an EPContext node into an
+// internal->external tensor-name map. Returns an empty map when the attribute is absent
+// (offload disabled, or a context model generated before this attribute existed).
+std::unordered_map<std::string, std::string> ParseIoNameOverrides(const OrtNode* ep_context_node);
 
 Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      const OrtApi& ort_api,
@@ -85,7 +94,8 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  const Ort::Logger& logger,
                                  bool share_ep_contexts,
                                  bool stop_share_ep_contexts,
-                                 const std::string& ep_name);
+                                 const std::string& ep_name,
+                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides);
 
 }  // namespace qnn
 }  // namespace onnxruntime

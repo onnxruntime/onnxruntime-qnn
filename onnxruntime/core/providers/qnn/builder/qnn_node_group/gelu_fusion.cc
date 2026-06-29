@@ -529,13 +529,21 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(root_input, input_tensor));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(final_output, output_tensor));
 
+  // Gelu maps to QNN_OP_ELEMENT_WISE_NEURON, which requires the mandatory 'operation' scalar param.
+  Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+  neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+  neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_GELU;
+  QnnParamWrapper operation_param(node_units[0]->Index(), node_name,
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+  std::string operation_param_name = operation_param.GetParamTensorName();
+
   if (validate) {
     RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_GELU,
+                                                      QNN_OP_ELEMENT_WISE_NEURON,
                                                       {input_tensor.GetQnnTensor()},
                                                       {output_tensor.GetQnnTensor()},
-                                                      {}));
+                                                      {operation_param.GetQnnParam()}));
   } else {
     // Only add tensor wrappers if they don't already exist
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(root_input.name)) {
@@ -544,12 +552,13 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(final_output.name)) {
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
     }
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(operation_param)), "Failed to add operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_GELU,
+                                                  QNN_OP_ELEMENT_WISE_NEURON,
                                                   {root_input.name},
                                                   {final_output.name},
-                                                  {},
+                                                  {operation_param_name},
                                                   validate),
                   "Failed to add fused Gelu node.");
   }

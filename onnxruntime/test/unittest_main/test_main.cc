@@ -85,6 +85,15 @@ static std::vector<std::unique_ptr<::testing::TestEventListener>> MakeTestEventL
 int TEST_MAIN(int argc, char** argv) {
   int status = 0;
 
+#if defined(USE_QNN)
+  // arm64 doesn't advertise QNN CPU by default; opt in before EP registration (no-op on x86).
+#if defined(_WIN32)
+  _putenv_s("ORT_QNN_ENABLE_CPU_BACKEND", "1");
+#else
+  setenv("ORT_QNN_ENABLE_CPU_BACKEND", "1", /*overwrite*/ 1);
+#endif
+#endif  // USE_QNN
+
   try {
     ortenv_setup();
     ::testing::InitGoogleTest(&argc, argv);
