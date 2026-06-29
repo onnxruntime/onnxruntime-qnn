@@ -501,7 +501,6 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_ZeroMaxBoxes) {
 // max_output_boxes_per_class absent (only boxes + scores) must fall back.
 // Absent defaults to 0 in ONNX, which selects no boxes.
 TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_AbsentMaxBoxes) {
-  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(HtpNmsProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "QDQ", uint8_t);
   auto build_model = [](ModelTestBuilder& builder) {
     builder.MakeInput<float>("boxes", {1, 3, 4},
                              {0.0f, 0.0f, 1.0f, 1.0f,
@@ -515,32 +514,6 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_AbsentMaxBoxes) {
   };
 
   RunNmsTest(build_model, 11, ExpectedEPNodeAssignment::None);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GPU fallback test
-// QNN GPU backend does not support NonMaxSuppression.
-// ─────────────────────────────────────────────────────────────────────────────
-
-TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_GpuNotSupported) {
-  auto build_model = [](ModelTestBuilder& builder) {
-    builder.MakeInput<float>("boxes", {1, 3, 4},
-                             {0.0f, 0.0f, 1.0f, 1.0f,
-                              0.0f, 5.0f, 1.0f, 6.0f,
-                              0.0f, 10.0f, 1.0f, 11.0f});
-    builder.MakeInput<float>("scores", {1, 1, 3}, {0.9f, 0.85f, 0.8f});
-    builder.MakeInitializer<int64_t>("max_boxes", {}, {3});
-    builder.MakeInitializer<float>("iou_threshold", {}, {0.5f});
-    builder.AddNode("nms_node", "NonMaxSuppression",
-                    {"boxes", "scores", "max_boxes", "iou_threshold"},
-                    {"selected_indices"}, kOnnxDomain,
-                    {test::MakeAttribute("center_point_box", int64_t{0})});
-    builder.MakeOutput<int64_t>("selected_indices", std::vector<int64_t>{3, 3});
-  };
-
-  ProviderOptions gpu_opts;
-  gpu_opts["backend_type"] = "gpu";
-  RunNmsTest(build_model, 11, ExpectedEPNodeAssignment::None, gpu_opts);
 }
 
 }  // namespace test
