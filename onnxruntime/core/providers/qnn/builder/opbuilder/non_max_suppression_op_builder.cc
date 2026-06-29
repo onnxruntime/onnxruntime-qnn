@@ -109,8 +109,9 @@ Ort::Status NonMaxSuppressionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model
               "(0 or absent selects no boxes and yields an invalid [0, 3] output).");
   } else {
     // max_output_boxes_per_class absent → defaults to 0 → no boxes selected.
-    return MAKE_EP_FAIL("NonMaxSuppression: max_output_boxes_per_class must be provided "
-                        "and > 0 for QNN (absent defaults to 0, which selects no boxes).");
+    return MAKE_EP_FAIL(
+        "NonMaxSuppression: max_output_boxes_per_class must be provided "
+        "and > 0 for QNN (absent defaults to 0, which selects no boxes).");
   }
 
   // Validate center_point_box attribute.
