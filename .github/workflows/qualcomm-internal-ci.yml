@@ -48,18 +48,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit
 
-  pytest-unit-tests:
-    name: PyTest Unit Tests
+  pytest:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v6
-      - name: Run pytest
-        working-directory: qcom/scripts/all/tests
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install pytest
-          .venv/bin/python -m pytest -q
+    uses: ./.github/workflows/qualcomm-internal-pytest.yml
+    secrets: inherit
