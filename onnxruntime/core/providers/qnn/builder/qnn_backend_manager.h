@@ -742,6 +742,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   ProfilingLevel profiling_level_;
   ProfilingLevel profiling_level_merge_;
   const std::string profiling_file_path_;
+  bool backend_lib_loaded_ = false;
   bool system_lib_loaded_ = false;
 
   // ----------------------------------------------------------------------
