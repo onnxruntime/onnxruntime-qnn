@@ -332,8 +332,8 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
   std::vector<float> scales_qnn, offsets_qnn;
   if (trans_b == 0) {
     // Transpose from [num_blocks, N] to [N, num_blocks].
-    bq::TransposeBlockMajorToChannelMajor(onnx_scales, num_blocks, N, scales_qnn);
-    bq::TransposeBlockMajorToChannelMajor(onnx_offsets, num_blocks, N, offsets_qnn);
+    RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_scales, num_blocks, N, scales_qnn));
+    RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_offsets, num_blocks, N, offsets_qnn));
   } else {
     scales_qnn = std::move(onnx_scales);
     offsets_qnn = std::move(onnx_offsets);

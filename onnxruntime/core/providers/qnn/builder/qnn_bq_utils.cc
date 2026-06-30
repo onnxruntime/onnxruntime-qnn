@@ -3,15 +3,10 @@
 
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 
-#include <cassert>
 #include <string>
 #include <vector>
 
-#include "QnnOpDef.h"
-
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 
 namespace onnxruntime {
@@ -123,10 +118,11 @@ Ort::Status ComputeBQOffsets(const QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-void TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_blocks, int64_t N,
-                                       /*out*/ std::vector<float>& out) {
-  // Caller is responsible for ensuring in.size() == num_blocks * N with both > 0.
-  assert(num_blocks > 0 && N > 0 && in.size() == static_cast<size_t>(num_blocks * N));
+Ort::Status TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_blocks, int64_t N,
+                                              /*out*/ std::vector<float>& out) {
+  RETURN_IF_NOT(num_blocks > 0 && N > 0 && in.size() == static_cast<size_t>(num_blocks * N),
+                "TransposeBlockMajorToChannelMajor: num_blocks and N must be positive and "
+                "in.size() must equal num_blocks * N");
   out.resize(static_cast<size_t>(N * num_blocks));
   for (int64_t b = 0; b < num_blocks; ++b) {
     for (int64_t n = 0; n < N; ++n) {
@@ -135,6 +131,7 @@ void TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_bl
       out[dst] = in[src];
     }
   }
+  return Ort::Status();
 }
 
 Ort::Status AddInt16ToFp16DequantForActivation(QnnModelWrapper& qnn_model_wrapper,
@@ -150,19 +147,8 @@ Ort::Status AddInt16ToFp16DequantForActivation(QnnModelWrapper& qnn_model_wrappe
                  " activation must be INT16-quantized for the BW_FLOAT_BLOCK kernel")
                     .c_str());
   const std::vector<uint32_t> act_shape = qnn_model_wrapper.GetQnnTensorWrapper(act_name).GetTensorDims();
-  QnnTensorWrapper fp16_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
-                                QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                std::vector<uint32_t>(act_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_wrapper)),
-                ("Failed to add FP16 activation tensor for BQ " + std::string(op_tag) + ".").c_str());
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                    utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                    QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                    {act_name}, {fp16_name}, {}, do_op_validation),
-                ("Failed to add INT16→FP16 Dequantize node for BQ " + std::string(op_tag) +
-                 " activation.")
-                    .c_str());
-  return Ort::Status();
+  return qnn_model_wrapper.AddDequantizeNode(act_name, fp16_name,
+                                             QNN_DATATYPE_FLOAT_16, act_shape, do_op_validation);
 }
 
 Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
@@ -173,16 +159,10 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
                                          QnnQuantParamsWrapper int16_quant_param,
                                          std::vector<uint32_t> output_shape,
                                          bool do_op_validation) {
-  QnnTensorWrapper int16_wrapper(int16_out_name, int16_tensor_type, int16_qnn_data_type,
-                                 std::move(int16_quant_param), std::vector<uint32_t>(output_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_wrapper)),
-                "Failed to add INT16 BQ op output tensor.");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                    utils::UniqueNameGenerator().New(fp16_out_name, "_fp16_quantize"),
-                    QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                    {fp16_out_name}, {int16_out_name}, {}, do_op_validation),
-                "Failed to add FP16→INT16 Quantize node for BQ op output.");
-  return Ort::Status();
+  return qnn_model_wrapper.AddQuantizeNode(fp16_out_name, int16_out_name,
+                                           int16_tensor_type, int16_qnn_data_type,
+                                           std::move(int16_quant_param),
+                                           std::move(output_shape), do_op_validation);
 }
 
 }  // namespace bq

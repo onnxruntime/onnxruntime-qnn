@@ -68,8 +68,8 @@ Ort::Status ComputeBQOffsets(const QnnModelWrapper& qnn_model_wrapper,
 // Transposes a flat [num_blocks, N] scale/offset array into QNN's output-channel-major
 // [N, num_blocks] layout. `in` must have exactly num_blocks*N elements (asserted);
 // `out` is resized to the same count.
-void TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_blocks, int64_t N,
-                                       /*out*/ std::vector<float>& out);
+Ort::Status TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_blocks, int64_t N,
+                                              /*out*/ std::vector<float>& out);
 
 // Inserts a QNN_OP_DEQUANTIZE node in front of the BQ activation input.
 // The BW_FLOAT_BLOCK kernels compute in FP16, so the (only expected) INT16 activation must be

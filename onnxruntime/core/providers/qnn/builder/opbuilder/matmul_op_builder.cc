@@ -708,8 +708,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
 
   // Transpose scales/offsets [num_blocks, N] → [N, num_blocks].
   std::vector<float> scales_qnn, offsets_qnn;
-  bq::TransposeBlockMajorToChannelMajor(onnx_scales, num_blocks, N, scales_qnn);
-  bq::TransposeBlockMajorToChannelMajor(onnx_offsets, num_blocks, N, offsets_qnn);
+  RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_scales, num_blocks, N, scales_qnn));
+  RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_offsets, num_blocks, N, offsets_qnn));
 
   QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
                                         gsl::span<const float>(offsets_qnn),
