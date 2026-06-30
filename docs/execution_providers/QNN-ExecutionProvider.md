@@ -429,6 +429,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Mod||
 |ai.onnx:Mul||
 |ai.onnx:Neg||
+|ai.onnx:NonMaxSuppression|max_output_boxes_per_class, iou_threshold, and score_threshold must be static constants; max_output_boxes_per_class must be > 0; center_point_box must be 0 (diagonal corners); GPU backend not supported|
 |ai.onnx:NonZero||
 |ai.onnx:Not||
 |ai.onnx:Or||
