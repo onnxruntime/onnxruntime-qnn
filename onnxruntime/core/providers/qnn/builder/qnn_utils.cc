@@ -328,11 +328,14 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizationEncoding_t& en
     case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET:
       out << "QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET";
       break;
+    case QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION:
+      out << "QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION";
+      break;
     case QNN_QUANTIZATION_ENCODING_UNDEFINED:
       out << "QNN_QUANTIZATION_ENCODING_UNDEFINED";
       break;
     default:
-      out << "Uknown quantization encoding";
+      out << "Unknown quantization encoding";
   }
   return out;
 }
@@ -378,6 +381,35 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
         out << quantize_params.bwAxisScaleOffsetEncoding.offsets[i] << (i == num_elems - 1 ? "" : " ");
       }
       out << (truncate ? "...)" : ")");
+    } else if (quantize_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION &&
+               quantize_params.blockwiseExpansion != nullptr) {
+      const Qnn_BlockwiseExpansion_t& lpbq = *quantize_params.blockwiseExpansion;
+      out << " axis=" << lpbq.axis
+          << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
+          << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
+      // For LPBQ, num_elems are not present in the quantize_params,
+      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
+      size_t num_elems = lpbq.numBlocksPerAxis;
+      bool truncate = num_elems > 20;
+      num_elems = truncate ? 20 : num_elems;
+      if (lpbq.scaleOffsets != nullptr) {
+        out << " scales=(";
+        for (size_t i = 0; i < num_elems; i++) {
+          out << lpbq.scaleOffsets[i].scale << (i + 1 < num_elems ? " " : "");
+        }
+        out << (truncate ? "...)" : ")") << " offsets=(";
+        for (size_t i = 0; i < num_elems; i++) {
+          out << lpbq.scaleOffsets[i].offset << (i + 1 < num_elems ? " " : "");
+        }
+        out << (truncate ? "...)" : ")");
+      }
+      if (lpbq.blocksScale8 != nullptr) {
+        out << " perBlockIntScales=(";
+        for (size_t i = 0; i < num_elems; i++) {
+          out << static_cast<int32_t>(lpbq.blocksScale8[i]) << (i + 1 < num_elems ? " " : "");
+        }
+        out << (truncate ? "...)" : ")");
+      }
     } else {
       out << " encoding not supported.";
     }
@@ -1197,6 +1229,81 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
           return Ort::Status("Unsupported quantization data type for DequantizeData", ORT_INVALID_ARGUMENT);
       }
       i += block_size;
+    }
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
+                                          gsl::span<const int32_t> bq_offsets,
+                                          uint32_t num_blocks_per_channel,
+                                          uint32_t num_channels,
+                                          uint32_t bitwidth,
+                                          /*out*/ std::vector<float>& per_channel_scales,
+                                          /*out*/ std::vector<uint8_t>& per_block_int_scales,
+                                          /*out*/ std::vector<int32_t>& offsets) {
+  RETURN_IF_NOT(bq_scales.size() == static_cast<size_t>(num_blocks_per_channel) * num_channels,
+                "BQ scales size does not match num_blocks_per_channel * num_channels");
+  RETURN_IF_NOT(bq_offsets.empty() || bq_offsets.size() == bq_scales.size(),
+                "BQ offsets size must be empty or equal to bq_scales size");
+  RETURN_IF_NOT(bitwidth == 4, "BQ to LPBQ conversion is only supported for 4-bit");
+
+  const uint32_t max_int_scale = (1u << bitwidth);  // 2^bitwidth
+
+  // Require symmetric quantization (all offsets must be zero).
+  if (!bq_offsets.empty()) {
+    for (size_t i = 0; i < bq_offsets.size(); ++i) {
+      RETURN_IF_NOT(bq_offsets[i] == 0,
+                    "LPBQ conversion requires symmetric quantization (all block zero-points must be 0)");
+    }
+  }
+
+  // Validate that all scales are non-negative and finite.
+  for (size_t i = 0; i < bq_scales.size(); ++i) {
+    RETURN_IF_NOT(std::isfinite(bq_scales[i]) && bq_scales[i] >= 0.0f,
+                  "BQ scales must be non-negative and finite");
+  }
+
+  // Algorithm:
+  //   max_int_scale             = 2^bitwidth
+  //   per_channel_scale[c]      = max(bq_scales[:, c]) / max_int_scale
+  //   per_block_int_scale[c, b] = clamp(round(bq_scales[b, c] / per_channel_scale[c]), 1, max_int_scale)
+  //
+  // Note: This conversion is inherently approximate — the block scales are arbitrary floats and
+  // are rounded to the nearest integer multiple of per_channel_scale. The rounding error is
+  // bounded by 0.5 * per_channel_scale per block, which is the expected LPBQ quantization noise.
+
+  per_channel_scales.resize(num_channels, 0.0f);
+  per_block_int_scales.resize(static_cast<size_t>(num_channels) * num_blocks_per_channel, 0);
+  offsets.assign(num_channels, 0);
+
+  // Step 1: Compute per-channel float scales.
+  // bq_scales is in block-major order: bq_scales[b * num_channels + c]
+  for (uint32_t c = 0; c < num_channels; ++c) {
+    float max_scale = 0.0f;
+    for (uint32_t b = 0; b < num_blocks_per_channel; ++b) {
+      float s = bq_scales[static_cast<size_t>(b) * num_channels + c];
+      if (s > max_scale) max_scale = s;
+    }
+    per_channel_scales[c] = max_scale / static_cast<float>(max_int_scale);
+  }
+
+  // Step 2: Compute per-block integer scales in channel-major order.
+  // Output layout: per_block_int_scales[c * num_blocks_per_channel + b]
+  for (uint32_t c = 0; c < num_channels; ++c) {
+    const float pc_scale = per_channel_scales[c];
+    for (uint32_t b = 0; b < num_blocks_per_channel; ++b) {
+      const float raw_scale = bq_scales[static_cast<size_t>(b) * num_channels + c];
+      uint8_t int_scale;
+      if (pc_scale <= 0.0f) {
+        int_scale = 1;
+      } else {
+        const float tentative = std::round(raw_scale / pc_scale);
+        const uint32_t clamped = std::max(1u, std::min(static_cast<uint32_t>(tentative), max_int_scale));
+        int_scale = static_cast<uint8_t>(clamped);
+      }
+      per_block_int_scales[static_cast<size_t>(c) * num_blocks_per_channel + b] = int_scale;
     }
   }
 

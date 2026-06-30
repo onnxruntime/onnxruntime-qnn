@@ -148,10 +148,10 @@ static void RunQLinearMatMulTest(
   RunQnnModelTest(
       BuildQLinearMatMulTestCase<AType, BType, YType>(
           shape_a, shape_b, b_is_initializer, dynamic_a_scale),
-      provider_options, opset, expected_ep_assignment,
+      provider_options, opset,
       // Output is dequantized with y_scale = (2 - -2)/255 ≈ 0.0157 per LSB. HTP and CPU EP can
       // differ by a couple of quantization units on deeper reductions, so allow ~2.5 LSB.
-      /*fp32_abs_err=*/0.04f);
+      EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(0.04f)});
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_DynamicZeroPoint_Unsupported) {
                     {"y"}, kOnnxDomain);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 10, ExpectedEPNodeAssignment::None);
+  RunQnnModelTest(model_fn, provider_options, 10, EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +308,8 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_Float16Scale) {
     builder.AddNode("DequantizeLinear", "DequantizeLinear", {"y_q", "y_scale_f32", "y_zp"}, {"y"}, kOnnxDomain);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 21, ExpectedEPNodeAssignment::All, /*fp32_abs_err=*/0.02f);
+  RunQnnModelTest(model_fn, provider_options, 21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.02f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -357,7 +358,8 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
     builder.AddNode("DequantizeLinear", "DequantizeLinear", {"y_q", "y_scale_f32", "y_zp"}, {"y"}, kOnnxDomain);
   };
 
-  RunQnnModelTest(model_fn, provider_options, 21, ExpectedEPNodeAssignment::All, /*fp32_abs_err=*/0.02f);
+  RunQnnModelTest(model_fn, provider_options, 21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.02f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)

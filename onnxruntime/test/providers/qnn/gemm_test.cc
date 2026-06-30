@@ -29,7 +29,7 @@ static void RunGemmTest(const std::vector<TestInputDef<DataType>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //
@@ -211,7 +211,10 @@ void RunReshapeGemmTest(const TestInputDef<float>& input, const TestInputDef<int
 
   provider_options["backend_type"] = backend_name;
   auto build_fn = BuildReshapeGemmTestCase(input, shape, weight, bias);
-  RunQnnModelTest(build_fn, provider_options, 18, expected_ep_assignment, fp32_abs_err);
+  RunQnnModelTest(build_fn,
+                  provider_options,
+                  18,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 }  // namespace
@@ -577,8 +580,7 @@ TEST_F(QnnHTPBackendTests, GemmFromMatMulAddNonStaticBias) {
   RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
                   provider_options,
                   /*opset=*/18,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
 TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
@@ -589,7 +591,7 @@ TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
   RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
                   provider_options,
                   /*opset=*/18,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 namespace {
@@ -695,14 +697,16 @@ ProviderOptions GetBQGemmProviderOptions() {
 TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT4 weight transB=1, [N,K]=[4,16], block_size=8, no bias.
 TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB1_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // transA=1: ONNX activation is [K, M]; QNN EP inserts a Transpose to [M, K] before the FC.
@@ -711,7 +715,8 @@ TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransA1_TransB0) {
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
                                       /*include_bias=*/false, /*weight_bits=*/4,
                                       /*weight_is_unsigned=*/false, /*transA=*/1),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // transA=1 with transB=1: both A and B transposed.
@@ -720,14 +725,16 @@ TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransA1_TransB1) {
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
                                       /*include_bias=*/false, /*weight_bits=*/4,
                                       /*weight_is_unsigned=*/false, /*transA=*/1),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT4 transB=0, larger K with multiple blocks. Guards scale reordering.
 TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_MultiBlock) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8, /*transB=*/0),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT4 transB=0 with INT32-quantized bias.
@@ -735,7 +742,8 @@ TEST_F(QnnHTPBackendTests, GemmBQ_U16Int4_TransB0_WithBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
                                       /*include_bias=*/true),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // INT8, block_size=4, transB=0.
@@ -743,7 +751,8 @@ TEST_F(QnnHTPBackendTests, GemmBQ_U16Int8_TransB0_BlockSize4) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4, /*transB=*/0,
                                       /*include_bias=*/false, /*weight_bits=*/8),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 1e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // UINT4 transB=0: exercises unsigned→signed conversion.
@@ -751,7 +760,8 @@ TEST_F(QnnHTPBackendTests, GemmBQ_U16UInt4_TransB0_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
                                       /*include_bias=*/false, /*weight_bits=*/4, /*weight_is_unsigned=*/true),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 2e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 // INT2 DISABLED — CPU lacks 2-bit Q/DQ; HTP 2-bit BQ requires QAIRT >= 2.47 (float MatMul/FC kernel).
@@ -759,7 +769,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/4, /*block_size=*/16, /*transB=*/0,
                                       /*include_bias=*/false, /*weight_bits=*/2),
-                  GetBQGemmProviderOptions(), /*opset=*/21, ExpectedEPNodeAssignment::All, 2e-2f);
+                  GetBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

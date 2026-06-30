@@ -61,7 +61,7 @@ TEST_F(QnnCPUBackendTests, Slice_SharedInitializersBugFix) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -126,7 +126,7 @@ static void RunSliceNonQDQOnHTP(const TestInputDef<DataType>& data_def,
   RunQnnModelTest(f32_model_builder,
                   provider_options,
                   13,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Check that QNN compiles DQ -> Slice -> Q as a single unit.

@@ -481,8 +481,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -491,8 +490,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -515,8 +513,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -525,8 +522,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -549,8 +545,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   RunQnnModelTest(BuildGeluPattern3TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -559,8 +554,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   RunQnnModelTest(BuildGeluPattern3TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -581,8 +575,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -603,8 +596,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -627,8 +619,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -637,8 +628,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -661,8 +651,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -671,8 +660,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -695,8 +683,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -705,8 +692,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }
@@ -729,8 +715,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 
@@ -739,8 +724,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
 }

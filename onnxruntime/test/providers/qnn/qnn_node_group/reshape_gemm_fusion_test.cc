@@ -236,8 +236,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
   RunQnnModelTest(BuildReshapeGemmTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected is in the graph (fusion happened)
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -258,8 +257,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
   RunQnnModelTest(BuildReshapeGemmReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape (output reshape kept)
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -281,8 +279,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
   RunQnnModelTest(BuildReshapeGemmReshapeTestCase({2, 4, 8, 32}, 32, 64),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -304,8 +301,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
   RunQnnModelTest(BuildReshapeGemmReshapeReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape (only final reshape kept)
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -328,8 +324,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
   RunQnnModelTest(BuildReshapeGemmReshapeKeepFirstDimTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -352,8 +347,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
   RunQnnModelTest(BuildReshapeGemmReshapeTestCase({1, 16, 64}, 64, 64),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify FullyConnected and one Reshape
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -363,6 +357,50 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
 // ============================================================================
 // Negative Tests - Fusion should NOT happen
 // ============================================================================
+
+// Build a test case where input Reshape has two consumers (fusion should not happen).
+// Graph: Input -> Reshape -> Gemm1 (output1)
+//                        \-> Gemm2 (output2)
+// Claiming the shared Reshape for Gemm1 would break Gemm2, so fusion must not fire.
+GetTestModelFn BuildReshapeSharedByTwoGemmsTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_shared_two_gemms_graph");
+
+    auto input_def = TestInputDef<float>({1, 4, 8}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Shared Reshape: [1, 4, 8] -> [4, 8]
+    builder.Make1DInitializer<int64_t>("reshape_shape", {4, 8});
+    builder.AddNode("reshape", "Reshape", {"input", "reshape_shape"}, {"reshape_out"}, kOnnxDomain);
+
+    // Gemm1: [4, 8] x [8, 16] -> [4, 16]
+    builder.MakeInitializer<float>("weight1", {8, 16}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias1", {16}, -0.1f, 0.1f);
+    builder.AddNode("gemm1", "Gemm", {"reshape_out", "weight1", "bias1"}, {"output1"}, kOnnxDomain);
+
+    // Gemm2: [4, 8] x [8, 32] -> [4, 32]  — shares reshape_out
+    builder.MakeInitializer<float>("weight2", {8, 32}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias2", {32}, -0.1f, 0.1f);
+    builder.AddNode("gemm2", "Gemm", {"reshape_out", "weight2", "bias2"}, {"output2"}, kOnnxDomain);
+
+    builder.MakeOutput("output1");
+    builder.MakeOutput("output2");
+  };
+}
+
+// Test: Fusion should NOT happen when the input Reshape has two consumers.
+// If fusion incorrectly claimed the shared Reshape for one Gemm, the other Gemm
+// would lose its input and the model would fail. All nodes must still run on QNN EP.
+TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_SharedReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options = GetProviderOptions();
+
+  RunQnnModelTest(BuildReshapeSharedByTwoGemmsTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
 
 // Build a test case where Gemm has transA=1 (fusion should not happen)
 GetTestModelFn BuildReshapeGemmWithTransATestCase(const std::vector<int64_t>& input_shape,
@@ -504,8 +542,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransA) {
   RunQnnModelTest(BuildReshapeGemmWithTransATestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Test: Fusion should NOT happen when transB=1
@@ -515,8 +552,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransB) {
   RunQnnModelTest(BuildReshapeGemmWithTransBTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Test: Fusion should NOT happen when weight is dynamic
@@ -526,8 +562,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DynamicWeight) {
   RunQnnModelTest(BuildReshapeGemmDynamicWeightTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Test: Fusion should NOT happen when the input Reshape's input has rank 5.
@@ -549,8 +584,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_Rank5Input) {
   RunQnnModelTest(BuildReshapeGemmReshapeRank5InputTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify the fusion did NOT fire: one FullyConnected node and two Reshape nodes in the QNN graph
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
@@ -666,8 +700,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_QDQ_NoFusion) {
   RunQnnModelTest(BuildQDQReshapeGemmTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/0.5f);  // Higher tolerance for quantized
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
 }
 
 // Test: QDQ Reshape -> Gemm -> Reshape (fusion should NOT happen)
@@ -678,8 +711,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_QDQ_NoFusion) {
   RunQnnModelTest(BuildQDQReshapeGemmReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/0.5f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

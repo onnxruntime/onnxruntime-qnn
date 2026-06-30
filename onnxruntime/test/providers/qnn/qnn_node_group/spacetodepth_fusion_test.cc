@@ -282,8 +282,7 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
   RunQnnModelTest(BuildSpaceToDepthTestCase<QuantType>(input_shape, block_height, block_width, perm, use_qdq, use_contrib_qdq),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/fp32_abs_err,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)},
                   /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
@@ -310,8 +309,7 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
   RunQnnModelTest(model_builder,
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/fp32_abs_err,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)},
                   /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);

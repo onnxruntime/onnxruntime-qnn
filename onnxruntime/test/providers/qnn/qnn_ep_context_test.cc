@@ -3281,7 +3281,220 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   CleanUpCtxFile(ctx_path);
 }
 
+// ==============================================================================
+// GPU weight-sharing tests
+// ==============================================================================
+
+// [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
+// HTP weight sharing is active: both sessions compile into the same .bin.
+TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#endif
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  std::vector<std::string> onnx_model_paths{"./htp_no_gpu_cfg1.onnx", "./htp_no_gpu_cfg2.onnx"};
+  for (auto model_path : onnx_model_paths) {
+    std::remove(model_path.c_str());
+  }
+
+  std::vector<std::string> ctx_model_paths;
+  for (auto model_path : onnx_model_paths) {
+    CreateQdqModel(model_path);
+    EXPECT_TRUE(std::filesystem::exists(model_path.c_str()));
+    auto pos = model_path.find_last_of(".");
+    if (pos != std::string::npos) {
+      model_path = model_path.substr(0, pos) + "_ctx.onnx";
+    } else {
+      model_path = model_path + "_ctx.onnx";
+    }
+    ctx_model_paths.push_back(model_path);
+  }
+  for (auto ctx_model_path : ctx_model_paths) {
+    std::remove(ctx_model_path.c_str());
+  }
+
+  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
+
+  std::string qnn_ctx_binary_file_name1;
+  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1);
+  EXPECT_TRUE(!qnn_ctx_binary_file_name1.empty());
+
+  std::string qnn_ctx_binary_file_name2;
+  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2);
+  EXPECT_TRUE(!qnn_ctx_binary_file_name2.empty());
+
+  // HTP weight sharing active: both _ctx.onnx models must point to the same .bin.
+  EXPECT_TRUE(qnn_ctx_binary_file_name1 == qnn_ctx_binary_file_name2);
+  EXPECT_TRUE(std::filesystem::file_size(qnn_ctx_binary_file_name1) > 0);
+
+  // clean up
+  for (auto model_path : onnx_model_paths) {
+    ASSERT_EQ(std::remove(model_path.c_str()), 0);
+  }
+  for (auto ctx_model_path : ctx_model_paths) {
+    ASSERT_EQ(std::remove(ctx_model_path.c_str()), 0);
+  }
+  ASSERT_EQ(std::remove(qnn_ctx_binary_file_name1.c_str()), 0);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+
+// GPU backend does not support QDQ (quantized) ops. This creates a plain float
+// Add model that GPU can compile into a context binary.
+static void CreateFloatModel(const std::string& model_file_name) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}};
+
+  ModelTestBuilder helper;
+  std::vector<float> data = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
+  MakeTestInput(helper, "add_in1", TestInputDef<float>({2, 3}, false, data));
+  MakeTestInput(helper, "add_in2", TestInputDef<float>({2, 3}, true, data));
+  helper.AddNode("Add_node", "Add", {"add_in1", "add_in2"}, {"add_out"});
+  helper.MakeOutput<float>("add_out", std::vector<int64_t>{2, 3});
+
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  const std::wstring model_file_name_w(model_file_name.begin(), model_file_name.end());
+  std::ofstream model_ofs(model_file_name_w, std::ios::binary);
+
+  ASSERT_TRUE(model_ofs.good());
+  ASSERT_TRUE(helper.model_.SerializeToOstream(&model_ofs));
+  model_ofs.close();
+}
+
+// [Case 2] GPU backend + weight sharing enabled (ARM64 + share_ep_contexts):
+// Observable effect: both sessions compile into the same context binary.
+TEST_F(QnnGPUBackendTests, QnnContextGenGpuWeightSharingSessionAPI) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+
+  std::vector<std::string> onnx_model_paths{"./gpu_weight_share1.onnx", "./gpu_weight_share2.onnx"};
+  for (auto model_path : onnx_model_paths) {
+    std::remove(model_path.c_str());
+  }
+
+  std::vector<std::string> ctx_model_paths;
+  for (auto model_path : onnx_model_paths) {
+    CreateFloatModel(model_path);
+    EXPECT_TRUE(std::filesystem::exists(model_path.c_str()));
+    auto pos = model_path.find_last_of(".");
+    if (pos != std::string::npos) {
+      model_path = model_path.substr(0, pos) + "_ctx.onnx";
+    } else {
+      model_path = model_path + "_ctx.onnx";
+    }
+    ctx_model_paths.push_back(model_path);
+  }
+  for (auto ctx_model_path : ctx_model_paths) {
+    std::remove(ctx_model_path.c_str());
+  }
+
+  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
+
+  std::string qnn_ctx_binary_file_name1;
+  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1);
+  EXPECT_TRUE(!qnn_ctx_binary_file_name1.empty());
+
+  std::string qnn_ctx_binary_file_name2;
+  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2);
+  EXPECT_TRUE(!qnn_ctx_binary_file_name2.empty());
+
+  // Both _ctx.onnx models must point to the same .bin (weight sharing active).
+  EXPECT_TRUE(qnn_ctx_binary_file_name1 == qnn_ctx_binary_file_name2);
+  auto file_size_1 = std::filesystem::file_size(qnn_ctx_binary_file_name1);
+  EXPECT_TRUE(file_size_1 > 0);
+
+  // clean up
+  for (auto model_path : onnx_model_paths) {
+    ASSERT_EQ(std::remove(model_path.c_str()), 0);
+  }
+  for (auto ctx_model_path : ctx_model_paths) {
+    ASSERT_EQ(std::remove(ctx_model_path.c_str()), 0);
+  }
+  ASSERT_EQ(std::remove(qnn_ctx_binary_file_name1.c_str()), 0);
+}
+
+// [Case 3] GPU backend + share_ep_contexts=false:
+// Observable effect: each session compiles into its own separate context binary.
+TEST_F(QnnGPUBackendTests, QnnContextGenGpuNoWeightSharing) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+
+  const std::string onnx_model_path1 = "./gpu_no_share1.onnx";
+  const std::string onnx_model_path2 = "./gpu_no_share2.onnx";
+  std::remove(onnx_model_path1.c_str());
+  std::remove(onnx_model_path2.c_str());
+
+  CreateFloatModel(onnx_model_path1);
+  CreateFloatModel(onnx_model_path2);
+  ASSERT_TRUE(std::filesystem::exists(onnx_model_path1));
+  ASSERT_TRUE(std::filesystem::exists(onnx_model_path2));
+
+  // Derive context model paths.
+  auto MakeCtxPath = [](const std::string& p) {
+    auto pos = p.find_last_of(".");
+    return (pos != std::string::npos ? p.substr(0, pos) : p) + "_ctx.onnx";
+  };
+  const std::string ctx_path1 = MakeCtxPath(onnx_model_path1);
+  const std::string ctx_path2 = MakeCtxPath(onnx_model_path2);
+  std::remove(ctx_path1.c_str());
+  std::remove(ctx_path2.c_str());
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    const std::wstring path1_w(onnx_model_path1.begin(), onnx_model_path1.end());
+    ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, path1_w.c_str(), so));
+
+    const std::wstring path2_w(onnx_model_path2.begin(), onnx_model_path2.end());
+    Ort::Session session2(*ort_env, path2_w.c_str(), so);
+  }
+
+  // Each model must have produced its own context binary.
+  std::string bin1, bin2;
+  GetContextBinaryFileName(ctx_path1, bin1);
+  GetContextBinaryFileName(ctx_path2, bin2);
+  EXPECT_FALSE(bin1.empty());
+  EXPECT_FALSE(bin2.empty());
+  // Without weight sharing the two sessions produce distinct binaries.
+  EXPECT_NE(bin1, bin2);
+  EXPECT_GT(std::filesystem::file_size(bin1), 0u);
+  EXPECT_GT(std::filesystem::file_size(bin2), 0u);
+
+  // clean up
+  ASSERT_EQ(std::remove(onnx_model_path1.c_str()), 0);
+  ASSERT_EQ(std::remove(onnx_model_path2.c_str()), 0);
+  ASSERT_EQ(std::remove(ctx_path1.c_str()), 0);
+  ASSERT_EQ(std::remove(ctx_path2.c_str()), 0);
+  ASSERT_EQ(std::remove(bin1.c_str()), 0);
+  ASSERT_EQ(std::remove(bin2.c_str()), 0);
+}
+#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
 
 // Utility class to help create enviornment using HNRD for testing.
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.

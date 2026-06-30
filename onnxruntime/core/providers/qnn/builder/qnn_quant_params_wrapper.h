@@ -106,35 +106,38 @@ class QnnQuantParamsWrapper {
   // Get a copy of scales. Works for both per-tensor and per-channel.
   Ort::Status GetScales(/*out*/ std::vector<float>& scales) const;
 
-  // Handle transposing of a per-channel quantized tensor. The quantization parameter's axis
-  // must be transposed using the inverse permutation of the Transpose.
+  // Handle transposing of a per-channel or LPBQ quantized tensor. The quantization parameter's
+  // axis must be updated using the permutation of the Transpose.
   template <typename IntType>
   Ort::Status HandleTranspose(gsl::span<const IntType> perm) {
-    if (!IsPerChannel()) {
+    if (!IsPerChannel() && !IsLPBQ()) {
       return Ort::Status();
     }
 
     if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
       RETURN_IF_NOT(static_cast<size_t>(params_.axisScaleOffsetEncoding.axis) < perm.size(),
                     "Axis value is out of range of the provided permutation");
-      const int32_t new_axis = static_cast<int32_t>(perm[params_.axisScaleOffsetEncoding.axis]);
-      params_.axisScaleOffsetEncoding.axis = new_axis;
+      params_.axisScaleOffsetEncoding.axis = static_cast<int32_t>(perm[params_.axisScaleOffsetEncoding.axis]);
     } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
       RETURN_IF_NOT(static_cast<size_t>(params_.bwAxisScaleOffsetEncoding.axis) < perm.size(),
                     "Axis value is out of range of the provided permutation");
-      const int32_t new_axis = static_cast<int32_t>(perm[params_.bwAxisScaleOffsetEncoding.axis]);
-      params_.bwAxisScaleOffsetEncoding.axis = new_axis;
+      params_.bwAxisScaleOffsetEncoding.axis = static_cast<int32_t>(perm[params_.bwAxisScaleOffsetEncoding.axis]);
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION &&
+               params_.blockwiseExpansion != nullptr) {
+      RETURN_IF_NOT(static_cast<size_t>(params_.blockwiseExpansion->axis) < perm.size(),
+                    "LPBQ axis value is out of range of the provided permutation");
+      params_.blockwiseExpansion->axis = static_cast<int32_t>(perm[params_.blockwiseExpansion->axis]);
     }
 
     return Ort::Status();
   }
 
-  // Handle "unsqueeze" of a per-channel quantized tensor. The quantization parameter's axis
-  // may need to be shifted if the unsqueeze inserted 1s before the quantization axis.
+  // Handle "unsqueeze" of a per-channel or LPBQ quantized tensor. The quantization parameter's
+  // axis may need to be shifted if the unsqueeze inserted 1s before the quantization axis.
   template <typename IntType>
   Ort::Status HandleUnsqueeze(gsl::span<const IntType> orig_shape,
                               gsl::span<const IntType> new_shape) {
-    if (!IsPerChannel()) {
+    if (!IsPerChannel() && !IsLPBQ()) {
       return Ort::Status();
     }
 
@@ -146,6 +149,9 @@ class QnnQuantParamsWrapper {
       axis = params_.axisScaleOffsetEncoding.axis;
     } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
       axis = params_.bwAxisScaleOffsetEncoding.axis;
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION &&
+               params_.blockwiseExpansion != nullptr) {
+      axis = params_.blockwiseExpansion->axis;
     } else {
       return MAKE_EP_FAIL(("Unhandled quantization encoding: " + std::to_string(params_.quantizationEncoding)).c_str());
     }
@@ -175,6 +181,9 @@ class QnnQuantParamsWrapper {
       params_.axisScaleOffsetEncoding.axis = static_cast<int32_t>(j);
     } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
       params_.bwAxisScaleOffsetEncoding.axis = static_cast<int32_t>(j);
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION &&
+               params_.blockwiseExpansion != nullptr) {
+      params_.blockwiseExpansion->axis = static_cast<int32_t>(j);
     } else {
       return MAKE_EP_FAIL(("Unhandled quantization encoding: " + std::to_string(params_.quantizationEncoding)).c_str());
     }
@@ -194,7 +203,7 @@ class QnnQuantParamsWrapper {
 
   // Stores LowPowerBlockQuant encodings meta like number of per_channel_scales, per-block scales,
   // and blockwise_expansion_data
-  uint32_t per_channel_scales_size_;
+  uint32_t per_channel_scales_size_ = 0;
   std::unique_ptr<uint8_t[]> block_scales_data_;
   std::unique_ptr<char[]> blockwise_expansion_data_;
 

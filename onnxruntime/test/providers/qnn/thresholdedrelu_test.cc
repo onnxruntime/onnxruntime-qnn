@@ -30,8 +30,7 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
   RunQnnModelTest(BuildOpTestCase<DataType>("ThresholdedRelu_node", "ThresholdedRelu", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //

@@ -36,7 +36,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType>(op_type + "_node", op_type, input_defs, {}, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 template <typename InputType1, typename InputType2 = int64_t>
@@ -55,7 +55,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Test float DepthToSpace on the QNN CPU backend.
@@ -167,8 +167,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
                                          {}, {}),
                   provider_options,
                   14,
-                  ExpectedEPNodeAssignment::All,
-                  0.004f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.004f)});
 }
 
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
@@ -259,8 +258,7 @@ static void RunOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType>(op_type + "_node", op_type, input_defs, {}, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs a non-QDQ model with indices inputs (int64) on HTP and compares output to CPU EP.
@@ -292,8 +290,7 @@ static void RunOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs an FP16 model on the QNN HTP backend and compares QNN EP's accuracy to CPU EP.
@@ -948,7 +945,7 @@ TEST_F(QnnHTPBackendTests, QuantAccuracyTest) {
   RunQnnModelTest(builder_func,
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test 8-bit QDQ Add
@@ -1013,7 +1010,10 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
 #endif
   provider_options["enable_htp_fp16_precision"] = "1";
 
-  RunQnnModelTest(builder, provider_options, 17, ExpectedEPNodeAssignment::All, 1e-3);
+  RunQnnModelTest(builder,
+                  provider_options,
+                  17,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3)});
 }
 
 // Test 8-bit QDQ Sub
@@ -1450,7 +1450,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
                       kOnnxDomain),
                   provider_options,
                   17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test ScatterElements with default attributes on HTP
@@ -1881,13 +1881,13 @@ TEST_F(QnnHTPBackendTests, DQ_Q_ConvertFusion_SameType) {
   RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint8_t, uint8_t>(input0_def, input1_def, out_qparams_u8),
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   // QNN Convert op converts uint16 to uint16 at the graph output. Slightly different scale values.
   RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint16_t, uint16_t>(input0_def, input1_def, out_qparams_u16),
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU8) {
@@ -2067,8 +2067,9 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   18,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);  // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
+                                       ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
@@ -2136,8 +2137,7 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   14,
-                  ExpectedEPNodeAssignment::All,
-                  1e-5f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   false);
 }

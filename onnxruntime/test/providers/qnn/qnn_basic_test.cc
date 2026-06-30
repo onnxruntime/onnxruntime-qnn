@@ -1335,8 +1335,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1368,8 +1367,7 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1454,8 +1452,7 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 
 // Test that QNN EP only handles nodes with static shapes and rejects nodes with dynamic shape I/O.
@@ -1524,11 +1521,10 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   RunQnnModelTest(model_build_fn,
                   provider_options,
                   /*opset*/ 19,
-                  ExpectedEPNodeAssignment::Some,
-                  /*abs_err*/ 1e-4f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-4f),
+                                       &ep_graph_checker},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_output*/ true,
-                  &ep_graph_checker);
+                  /*verify_output*/ true);
 }
 
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
@@ -1946,6 +1942,32 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
+TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
+  ProviderOptions options;
+  options["backend_type"] = "gpu";
+
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+}
+
+TEST_F(QnnGPUBackendTests, CosineSimilarityVerifier) {
+  ProviderOptions options;
+  options["backend_type"] = "gpu";
+
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, CosineSimilarityVerifier(0.99f)});
+}
+
 // Returns true if QNN EP was created and QNN HTP shared memory allocator is available, false otherwise.
 static bool CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(RegisteredEpDeviceUniquePtr& registered_ep_device, const ORTCHAR_T* model_path, Ort::Session& session) {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -2252,8 +2274,7 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
                                          kOnnxDomain),
                   provider_options,
                   11,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
@@ -2900,7 +2921,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
     provider_options["dump_json_qnn_graph"] = "1";
     provider_options["json_qnn_graph_dir"] = json_dir.string();
 
-    RunQnnModelTest(model_fn, provider_options, 13, ExpectedEPNodeAssignment::All);
+    RunQnnModelTest(model_fn, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
     std::unordered_set<std::string> node_names;
     for (const auto& entry : fs::directory_iterator(json_dir)) {
@@ -2943,8 +2964,7 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 #endif  // defined(_WIN32)
 
@@ -3335,7 +3355,7 @@ TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_BasicStructure) {
                                          {TestInputDef<float>({1, 2, 3}, false, data),
                                           TestInputDef<float>({1, 2, 3}, false, data)},
                                          {}, {}, kOnnxDomain),
-                  options, 13, ExpectedEPNodeAssignment::All);
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     std::filesystem::remove_all(dump_dir, ec);
@@ -3407,7 +3427,7 @@ TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_TensorClassification) {
                                                 {TestInputDef<float>({1, 2, 3}, false, input_data)},
                                                 {TestInputDef<float>({1, 2, 3}, true, init_data)},
                                                 {}, kOnnxDomain),
-                  options, 13, ExpectedEPNodeAssignment::All);
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     std::filesystem::remove_all(dump_dir, ec);
@@ -3457,7 +3477,7 @@ TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_DisabledByDefault) {
                                          {TestInputDef<float>({1, 2, 3}, false, data),
                                           TestInputDef<float>({1, 2, 3}, false, data)},
                                          {}, {}, kOnnxDomain),
-                  options, 13, ExpectedEPNodeAssignment::All);
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     std::filesystem::remove_all(dump_dir, ec);

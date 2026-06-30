@@ -26,7 +26,7 @@ static void RunFlattenTest(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType>("flatten_node", "Flatten", {input_def}, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //
@@ -72,7 +72,7 @@ static void RunFlattenTestOnHTP(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType>("flatten_node", "Flatten", {input_def}, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Runs a QDQ Flatten model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
@@ -162,7 +162,7 @@ TEST_F(QnnHTPBackendTests, Flatten_QDQ8bit_Rank5) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test that int32 non-QDQ Flatten runs on HTP backend.

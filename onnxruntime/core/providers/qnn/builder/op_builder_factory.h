@@ -76,6 +76,7 @@ void CreateGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderReg
 void CreateGRUOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateHardSigmoidOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIdentityOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateIfOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInstanceNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIsInfOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -88,6 +89,7 @@ void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateNonMaxSuppressionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

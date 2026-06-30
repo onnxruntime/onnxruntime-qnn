@@ -110,8 +110,7 @@ static void RunReduceTest(const std::string& op_type,
                                                   false),  // noop_with_empty_axes
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //
@@ -862,8 +861,7 @@ static void RunReduceLogSumExpHTPBF16Test(const TestInputDef<float>& input_def,
                                                false),  // noop_with_empty_axes
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 TEST_F(QnnHTPBackendTests, ReduceLogSumExp_HTP_BF16_KeepDims) {
