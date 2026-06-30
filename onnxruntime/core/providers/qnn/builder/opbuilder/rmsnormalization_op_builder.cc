@@ -87,15 +87,15 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[X_IDX], logger, input_names));
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names));
 
-#if !defined(QNN_SDK_VERSION_MINOR) || QNN_SDK_VERSION_MINOR < 48
-  // QNN SDK < 2.48 requires an explicit beta/bias input for QNN_OP_RMS_NORM on NPU.
-  // SDK 2.48+ accepts beta as optional, so the dummy tensor is only needed for older SDKs.
+#if !defined(QNN_SDK_VERSION_MINOR) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 49)
+  // QNN SDK < 2.49 requires an explicit beta/bias input for QNN_OP_RMS_NORM on NPU.
+  // SDK 2.49+ accepts beta as optional, so the dummy tensor is only needed for older SDKs.
   // Note: SDK 2.47 and 2.48 share the same QNN API version (2.36), so QNN_SDK_VERSION_MINOR
-  // derived from CMAKE is used here instead of QNN_API_VERSION_MINOR.
+  // derived from CMake is used here instead of QNN_API_VERSION_MINOR.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("RMSNorm node " + node_unit.Name() + ": adding dummy beta tensor (SDK < 2.48).").c_str());
+                ("RMSNorm node " + node_unit.Name() + ": adding dummy beta tensor (SDK < 2.49).").c_str());
     TensorInfo scale_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[SCALE_IDX], scale_info));
 
@@ -133,9 +133,9 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
 #else
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("RMSNorm node " + node_unit.Name() + ": skipping dummy beta tensor (SDK >= 2.48).").c_str());
+                ("RMSNorm node " + node_unit.Name() + ": skipping dummy beta tensor (SDK >= 2.49).").c_str());
   }
-#endif  // !defined(QNN_SDK_VERSION_MINOR) || QNN_SDK_VERSION_MINOR < 48
+#endif  // !defined(QNN_SDK_VERSION_MINOR) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 49)
 
   return Ort::Status();
 }
