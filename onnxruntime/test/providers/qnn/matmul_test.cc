@@ -656,7 +656,7 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ) {
   RunQDQPerChannelMatMulOpTest<uint16_t, int8_t, uint16_t>({2, 3, 3}, {3}, -1, QDQTolerance(0.0041f));
 }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_AIHubRegression_StaticPerChannelInt16Weight) {
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_StaticLeadingUnitDimsPerChannelInt16Weight) {
   RunQDQPerChannelMatMulOpTest<uint16_t, int16_t, uint16_t>(
       {1, 6, 3, 3}, {1, 1, 3, 420}, 3, QDQTolerance(),
       ExpectedEPNodeAssignment::All, 21, false, true);
