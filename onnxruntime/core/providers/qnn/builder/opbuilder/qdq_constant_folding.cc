@@ -19,8 +19,8 @@ namespace onnxruntime {
 namespace qnn {
 
 Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,
-                                           const std::string& tensor_name,
-                                           /*out*/ std::vector<uint8_t>& bytes) {
+                                              const std::string& tensor_name,
+                                              /*out*/ std::vector<uint8_t>& bytes) {
   if (qnn_model_wrapper.IsConstantInput(tensor_name)) {
     const OrtValueInfo* init = qnn_model_wrapper.GetConstantTensor(tensor_name);
     RETURN_IF(init == nullptr, "Constant initializer not found for tensor.");
