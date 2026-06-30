@@ -595,8 +595,15 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
   // QNN only accept 3 input. We need to first combine mean and variance into scale and bias.
   //
   {
-    const std::string& scale_name = inputs[1].name;
-    const std::string& bias_name = inputs[2].name;
+    // The fused scale/bias QNN tensors are specific to each bn node: PreprocessScale/PreprocessBias fold in
+    // this BN's mean/variance. Naming them after the source ONNX initializer (inputs[1]/inputs[2])
+    // causes a collision when two BN nodes share an initializer (e.g. AIMET-quantized models that
+    // share a saturated int32 bias init): the second node finds the name already registered, skips
+    // recompute, and silently reuses the first node's fused params. Use a per-node-unique name so
+    // each BN gets its own fused scale/bias
+    const std::string node_prefix = std::to_string(node_unit.Index()) + "_" + node_unit.Name();
+    const std::string scale_name = node_prefix + "_bn_fused_scale";
+    const std::string bias_name = node_prefix + "_bn_fused_bias";
     TensorInfo scale_info = {};
     TensorInfo bias_info = {};
     TensorInfo mean_info = {};
@@ -695,8 +702,8 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                     scale_raw_tensor));
       }
 
-      Qnn_TensorType_t scale_tensor_type = qnn_model_wrapper.GetTensorType(scale_name);
-      QnnTensorWrapper input_tensorwrapper(scale_name, scale_tensor_type, scale_info.qnn_data_type,
+      // Fused scale carries raw initializer data → always STATIC
+      QnnTensorWrapper input_tensorwrapper(scale_name, QNN_TENSOR_TYPE_STATIC, scale_info.qnn_data_type,
                                            std::move(scale_quant_param), std::move(scale_info.shape),
                                            std::move(scale_raw_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
@@ -718,8 +725,8 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                     bias_quant_param,
                                     bias_raw_tensor));
       }
-      Qnn_TensorType_t bias_tensor_type = qnn_model_wrapper.GetTensorType(bias_name);
-      QnnTensorWrapper input_tensorwrapper(bias_name, bias_tensor_type, bias_info.qnn_data_type,
+      // Fused bias carries raw initializer data → always STATIC
+      QnnTensorWrapper input_tensorwrapper(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
                                            std::move(bias_quant_param), std::move(bias_info.shape),
                                            std::move(bias_raw_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
