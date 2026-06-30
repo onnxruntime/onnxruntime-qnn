@@ -513,7 +513,7 @@ Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfi
       return Ort::Status();
     }
     if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-      RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
+      RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot apply sustained/burst performance config.");
       RETURN_IF(timer_ == nullptr, "timer is not started");
     }
   }

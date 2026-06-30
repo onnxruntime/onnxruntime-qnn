@@ -129,6 +129,9 @@ class HtpPowerConfigManager {
 
   // Lock acquisition order: state_mutex_ must always be acquired before perf_mutex_
   // to prevent deadlocks. Never acquire state_mutex_ while already holding perf_mutex_.
+  //
+  // state_mutex_ guards both graph_state_ and the timer lifecycle (timer_,
+  // timer_callback_arg_, timer_resource_.timer_active_).
   std::mutex perf_mutex_;
   std::mutex state_mutex_;
   std::unique_ptr<Timer> timer_;
