@@ -1,5 +1,5 @@
-// Copyright (c) Qualcomm. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #pragma once
 
