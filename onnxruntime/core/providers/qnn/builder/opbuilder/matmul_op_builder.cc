@@ -36,10 +36,6 @@ bool HasOnlyLeadingUnitDimensions(const std::vector<uint32_t>& shape) {
   return true;
 }
 
-bool IsStaticMatMulWeightWithOnlyLeadingUnitDimensions(const TensorInfo& input_info) {
-  return input_info.is_initializer && HasOnlyLeadingUnitDimensions(input_info.shape);
-}
-
 Ort::Status AdjustQuantAxisAfterSqueezingLeadingDimensions(QnnQuantParamsWrapper& quant_param,
                                                            size_t num_squeezed_leading_dims) {
   if (num_squeezed_leading_dims == 0 || (!quant_param.IsPerChannel() && !quant_param.IsLPBQ())) {
@@ -150,7 +146,8 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
   const bool is_rank2_static_weight = input_info_1.shape.size() == 2 && input_info_1.is_initializer;
   const bool is_rank1_input_1 = input_info_1.shape.size() == 1;
   const bool can_canonicalize_static_weight_to_2d =
-      IsStaticMatMulWeightWithOnlyLeadingUnitDimensions(input_info_1) && input_info_0.shape.size() > 2;
+      input_info_1.is_initializer && HasOnlyLeadingUnitDimensions(input_info_1.shape) &&
+      input_info_0.shape.size() > 2;
   // FullyConnected cannot pass the Op validation if keep_dims is true, so if input_0 is per-channel quantized tensor
   // with rank > 2, it's not easy to set the quantization parameters for the output reshaped rank 2 tensor.
   // In this case, we will not use FullyConnected.
@@ -482,7 +479,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
   std::string input_1_name = org_input_1_name;
   std::vector<uint32_t> fc_weight_shape;
   QnnQuantParamsWrapper fc_weight_quant_param = input_info_1.quant_param.Copy();
-  const bool squeeze_static_weight_to_2d = IsStaticMatMulWeightWithOnlyLeadingUnitDimensions(input_info_1);
+  const bool squeeze_static_weight_to_2d =
+      input_info_1.is_initializer && HasOnlyLeadingUnitDimensions(input_info_1.shape);
   if (reshape_input_1) {
     // Input[1] is a rank 1 tensor that needs to be reshaped.
     input_1_name = utils::UniqueNameGenerator().New(org_input_1_name, "_reshape");
