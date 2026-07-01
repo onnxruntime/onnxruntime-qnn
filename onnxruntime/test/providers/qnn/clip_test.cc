@@ -399,7 +399,7 @@ TEST_F(QnnHTPBackendTests, Clip_U16_FloatData_QDQConstMinMax) {
 
   RunQnnModelTest(model_fn,
                   provider_options,
-                  13,
+                  21,  // 16-bit DequantizeLinear requires opset >= 21.
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
