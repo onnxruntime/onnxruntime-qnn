@@ -60,7 +60,7 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   }
   // Blocked axis is rank-2 (K dimension). scale_shape[rank-2] < weight_shape[rank-2].
   const size_t k_axis = rank - 2;
-  return bq::IsBlockedScale(scale_shape, weight_shape, k_axis);
+  return bq::IsBQScale(scale_shape, weight_shape, k_axis);
 }
 
 // Flattens the leading dims of `shape` (all but the last `n_trailing` dims) into a single
@@ -707,9 +707,10 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
                                        is_unsigned_weight, bitwidth, num_blocks * N, onnx_offsets));
 
   // Transpose scales/offsets [num_blocks, N] → [N, num_blocks].
+  const std::vector<uint32_t> transpose_shape = {static_cast<uint32_t>(num_blocks), static_cast<uint32_t>(N)};
   std::vector<float> scales_qnn, offsets_qnn;
-  RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_scales, num_blocks, N, scales_qnn));
-  RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_offsets, num_blocks, N, offsets_qnn));
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_scales, transpose_shape, scales_qnn, logger));
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_offsets, transpose_shape, offsets_qnn, logger));
 
   QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
                                         gsl::span<const float>(offsets_qnn),

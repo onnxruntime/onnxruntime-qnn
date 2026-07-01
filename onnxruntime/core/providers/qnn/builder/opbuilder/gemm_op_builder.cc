@@ -37,8 +37,8 @@ bool IsBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitI
   }
   // For transB=0: B=[K,N], blocked on axis 0 → scale=[num_blocks, N], scale_shape[0] < weight_shape[0].
   // For transB=1: B=[N,K], blocked on axis 1 → scale=[N, num_blocks], scale_shape[1] < weight_shape[1].
-  const size_t blocked_axis = (trans_b == 0) ? 0 : 1;
-  return bq::IsBlockedScale(scale_shape, weight_shape, blocked_axis);
+  const size_t block_axis = (trans_b == 0) ? 0 : 1;
+  return bq::IsBQScale(scale_shape, weight_shape, block_axis);
 }
 
 }  // namespace
@@ -332,8 +332,9 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
   std::vector<float> scales_qnn, offsets_qnn;
   if (trans_b == 0) {
     // Transpose from [num_blocks, N] to [N, num_blocks].
-    RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_scales, num_blocks, N, scales_qnn));
-    RETURN_IF_ERROR(bq::TransposeBlockMajorToChannelMajor(onnx_offsets, num_blocks, N, offsets_qnn));
+    const std::vector<uint32_t> transpose_shape = {static_cast<uint32_t>(num_blocks), static_cast<uint32_t>(N)};
+    RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_scales, transpose_shape, scales_qnn, logger));
+    RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_offsets, transpose_shape, offsets_qnn, logger));
   } else {
     scales_qnn = std::move(onnx_scales);
     offsets_qnn = std::move(onnx_offsets);

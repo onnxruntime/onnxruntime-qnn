@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gsl/gsl>
@@ -33,7 +34,7 @@ bool IsUnsignedBQType(ONNXTensorElementDataType onnx_type);
 
 // Validates a BQ weight bitwidth and block_size against the HTP constraints above.
 // `op_tag` is used in the error messages (e.g. "Conv", "MatMul", "Gemm").
-Ort::Status ValidateBQBitwidthAndBlockSize(uint32_t bitwidth, int64_t block_size, const char* op_tag);
+Ort::Status ValidateBQBitwidthAndBlockSize(uint32_t bitwidth, int64_t block_size, std::string_view op_tag);
 
 // Resolves the BQ block_size along the contraction axis. The block_size = contraction_dim /
 // num_blocks (the value the QNN BW_FLOAT_BLOCK encoding needs) is always derivable from the
@@ -42,16 +43,16 @@ Ort::Status ValidateBQBitwidthAndBlockSize(uint32_t bitwidth, int64_t block_size
 // model where they disagree is rejected) and otherwise ignored. `op_tag` names the op in the
 // error message. Returns the resolved block_size via `block_size`.
 Ort::Status ResolveBlockSize(const OrtNodeUnitIODef& weight, int64_t contraction_dim,
-                             int64_t num_blocks, const char* op_tag,
+                             int64_t num_blocks, std::string_view op_tag,
                              /*out*/ int64_t& block_size);
 
 // Returns true if `scale_shape` describes a block-quantized scale for `weight_shape`
-// blocked along `blocked_axis`: the scale dim is positive, strictly smaller than the
+// blocked along `block_axis`: the scale dim is positive, strictly smaller than the
 // weight dim, and divides it evenly. Caller is responsible for the op-specific rank and
 // leading-dim checks.
-bool IsBlockedScale(gsl::span<const int64_t> scale_shape,
-                    gsl::span<const uint32_t> weight_shape,
-                    size_t blocked_axis);
+bool IsBQScale(gsl::span<const int64_t> scale_shape,
+               gsl::span<const uint32_t> weight_shape,
+               size_t block_axis);
 
 // Computes per-block float offsets from optional ONNX zero-points, matching the shared
 // BQ convention: offset = unsigned_bias - onnx_zp, where unsigned_bias = (1 << (bits-1))
@@ -65,12 +66,6 @@ Ort::Status ComputeBQOffsets(const QnnModelWrapper& qnn_model_wrapper,
                              int64_t count,
                              /*out*/ std::vector<float>& offsets);
 
-// Transposes a flat [num_blocks, N] scale/offset array into QNN's output-channel-major
-// [N, num_blocks] layout. `in` must have exactly num_blocks*N elements (asserted);
-// `out` is resized to the same count.
-Ort::Status TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_blocks, int64_t N,
-                                              /*out*/ std::vector<float>& out);
-
 // Inserts a QNN_OP_DEQUANTIZE node in front of the BQ activation input.
 // The BW_FLOAT_BLOCK kernels compute in FP16, so the (only expected) INT16 activation must be
 // dequantized first. Verifies `act_name`'s QNN dtype is SFIXED/UFIXED_POINT_16, registers the
@@ -81,7 +76,7 @@ Ort::Status AddInt16ToFp16DequantForActivation(QnnModelWrapper& qnn_model_wrappe
                                                const std::string& act_name,
                                                const std::string& fp16_name,
                                                bool do_op_validation,
-                                               const char* op_tag);
+                                               std::string_view op_tag);
 
 // Adds the FP16→INT16 output tail for a BW_FLOAT_BLOCK op. Registers the INT16 output tensor
 // and adds a QNN_OP_QUANTIZE node (fp16_out_name → int16_out_name).

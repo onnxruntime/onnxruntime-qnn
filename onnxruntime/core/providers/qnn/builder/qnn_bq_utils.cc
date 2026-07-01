@@ -4,6 +4,7 @@
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -43,7 +44,7 @@ bool IsUnsignedBQType(ONNXTensorElementDataType onnx_type) {
          onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
 }
 
-Ort::Status ValidateBQBitwidthAndBlockSize(uint32_t bitwidth, int64_t block_size, const char* op_tag) {
+Ort::Status ValidateBQBitwidthAndBlockSize(uint32_t bitwidth, int64_t block_size, std::string_view op_tag) {
   auto bq_it = kHtpBQBitsAndBlockSizeMultipliers.find(bitwidth);
   RETURN_IF(bq_it == kHtpBQBitsAndBlockSizeMultipliers.end(),
             ("QNN HTP " + std::string(op_tag) + " BQ: unsupported weight bitwidth=" +
@@ -58,7 +59,7 @@ Ort::Status ValidateBQBitwidthAndBlockSize(uint32_t bitwidth, int64_t block_size
 }
 
 Ort::Status ResolveBlockSize(const OrtNodeUnitIODef& weight, int64_t contraction_dim,
-                             int64_t num_blocks, const char* op_tag,
+                             int64_t num_blocks, std::string_view op_tag,
                              /*out*/ int64_t& block_size) {
   RETURN_IF(num_blocks <= 0 || contraction_dim % num_blocks != 0,
             ("QNN EP: BQ " + std::string(op_tag) +
@@ -80,14 +81,14 @@ Ort::Status ResolveBlockSize(const OrtNodeUnitIODef& weight, int64_t contraction
   return Ort::Status();
 }
 
-bool IsBlockedScale(gsl::span<const int64_t> scale_shape,
-                    gsl::span<const uint32_t> weight_shape,
-                    size_t blocked_axis) {
-  if (blocked_axis >= scale_shape.size() || blocked_axis >= weight_shape.size()) {
+bool IsBQScale(gsl::span<const int64_t> scale_shape,
+               gsl::span<const uint32_t> weight_shape,
+               size_t block_axis) {
+  if (block_axis >= scale_shape.size() || block_axis >= weight_shape.size()) {
     return false;
   }
-  const int64_t num_blocks = scale_shape[blocked_axis];
-  const int64_t weight_dim = static_cast<int64_t>(weight_shape[blocked_axis]);
+  const int64_t num_blocks = scale_shape[block_axis];
+  const int64_t weight_dim = static_cast<int64_t>(weight_shape[block_axis]);
   if (num_blocks <= 0 || num_blocks >= weight_dim) {
     return false;
   }
@@ -118,27 +119,11 @@ Ort::Status ComputeBQOffsets(const QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status TransposeBlockMajorToChannelMajor(gsl::span<const float> in, int64_t num_blocks, int64_t N,
-                                              /*out*/ std::vector<float>& out) {
-  RETURN_IF_NOT(num_blocks > 0 && N > 0 && in.size() == static_cast<size_t>(num_blocks * N),
-                "TransposeBlockMajorToChannelMajor: num_blocks and N must be positive and "
-                "in.size() must equal num_blocks * N");
-  out.resize(static_cast<size_t>(N * num_blocks));
-  for (int64_t b = 0; b < num_blocks; ++b) {
-    for (int64_t n = 0; n < N; ++n) {
-      const size_t src = static_cast<size_t>(b * N + n);
-      const size_t dst = static_cast<size_t>(n * num_blocks + b);
-      out[dst] = in[src];
-    }
-  }
-  return Ort::Status();
-}
-
 Ort::Status AddInt16ToFp16DequantForActivation(QnnModelWrapper& qnn_model_wrapper,
                                                const std::string& act_name,
                                                const std::string& fp16_name,
                                                bool do_op_validation,
-                                               const char* op_tag) {
+                                               std::string_view op_tag) {
   const Qnn_DataType_t act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(act_name).GetTensorDataType();
   // The BW_FLOAT_BLOCK kernels compute in FP16. The only activation dtype reaching this path
   // through the QDQ selector is INT16 (SFIXED or UFIXED), so anything else is unexpected.
