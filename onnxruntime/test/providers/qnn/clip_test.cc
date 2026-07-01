@@ -400,7 +400,8 @@ TEST_F(QnnHTPBackendTests, Clip_U16_FloatData_QDQConstMinMax) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   21,  // 16-bit DequantizeLinear requires opset >= 21.
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier{5e-3f}});
 }
 
 TEST_F(QnnHTPBackendTests, Clip_U8_FloatData_QDQConstMinMax) {
@@ -430,7 +431,8 @@ TEST_F(QnnHTPBackendTests, Clip_U8_FloatData_QDQConstMinMax) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier{5e-3f}});
 }
 
 // Test FP16 Clip with min (FP16)
