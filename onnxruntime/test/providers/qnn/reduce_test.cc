@@ -802,6 +802,49 @@ TEST_F(QnnHTPBackendTests, ReduceMeanS8Opset18) {
 }
 
 //
+// ReduceL2 on HTP
+//
+
+// Test creates a Q -> DQ -> ReduceL2 -> Q -> DQ graph, and checks that all
+// nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
+//
+// - Uses uint8 as the quantization type.
+// - Uses opset 18, which has "axes" as an input.
+TEST_F(QnnHTPBackendTests, ReduceL2U8Opset18) {
+  RunReduceOpQDQTest<uint8_t>("ReduceL2",
+                              TestInputDef<float>({2, 2}, false, -10.0f, 10.0f),
+                              {0, 1},  // axes
+                              true,    // keepdims
+                              18,      // opset
+                              ExpectedEPNodeAssignment::All);
+}
+
+// - Uses int8 as the quantization type.
+// - Uses opset 13, which has "axes" as an input.
+TEST_F(QnnHTPBackendTests, ReduceL2S8Opset13) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 20.0f, 9);
+
+  RunReduceOpQDQTest<int8_t>("ReduceL2",
+                             TestInputDef<float>({3, 3}, false, input_data),
+                             {0, 1},  // axes
+                             true,    // keepdims
+                             13,      // opset
+                             ExpectedEPNodeAssignment::All);
+}
+
+// Tests that keepdims = false generates expected results.
+TEST_F(QnnHTPBackendTests, ReduceL2U8Opset13_NoKeepDims) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 9);
+
+  RunReduceOpQDQTest<uint8_t>("ReduceL2",
+                              TestInputDef<float>({3, 3}, false, input_data),
+                              {1},    // axes
+                              false,  // keepdims
+                              13,     // opset
+                              ExpectedEPNodeAssignment::All);
+}
+
+//
 // ReduceLogSumExp on HTP
 //
 
