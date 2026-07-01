@@ -946,6 +946,47 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
+// IR backend: only verify session creation (graph composition). QnnIr cannot execute.
+static void RunIrFP32GRUOpTest(const TestInputDef<float>& X_def,
+                               const TestInputDef<float>& W_def,
+                               const TestInputDef<float>& R_def,
+                               const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
+                               const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
+                               const std::string direction,
+                               const int64_t hidden_size,
+                               int opset = 22) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "ir";
+
+  ModelTestBuilder helper;
+  BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def,
+                          true, true, direction, hidden_size, 0, 0)(helper);
+  const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id{helper.model_.add_opset_import()};
+  opset_id->set_domain("");
+  opset_id->set_version(opset);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+}
+
+TEST_F(QnnIRBackendTests, GRU_FP32_IR_forward_wo_H) {
+  uint32_t num_direction = 1, batch_size = 1, hidden_size = 4, input_size = 3, seq_len = 5;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  RunIrFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),
+                     TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),
+                     TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),
+                     std::ref(B_def),
+                     std::nullopt,  // no initial_h, exercises null tensor
+                     "forward", hidden_size);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
