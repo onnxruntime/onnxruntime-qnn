@@ -58,7 +58,7 @@ no platform-specific `#ifdef` guards are needed inside test bodies.
 
 ### Shared utilities
 
-Common helpers live in `qnn_int_test_utils.h` — include it from any integration test file
+Common helpers live in `qnn_test_utils.h` — include it from any integration test file
 to reuse them instead of re-defining locally:
 
 | Symbol | Purpose |
@@ -90,14 +90,14 @@ Minimal template:
 #include "gtest/gtest.h"
 #include "onnxruntime_cxx_api.h"
 
-#include "test/providers/qnn/integration/qnn_int_test_utils.h"
+#include "test/providers/qnn/integration/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
 
-TEST_F(QnnInt_OrtApiTest, MyFunction_MyScenario_ExpectedResult) {
+TEST_F(QnnInteg_OrtApiTest, MyFunction_MyScenario_ExpectedResult) {
   // Build a minimal inline model, create a session, run it.
-  // The fixture (QnnInt_OrtApiTest) already sets up the HTP backend and
+  // The fixture (QnnInteg_OrtApiTest) already sets up the HTP backend and
   // calls GTEST_SKIP() if it is unavailable.
 }
 
@@ -109,24 +109,24 @@ TEST_F(QnnInt_OrtApiTest, MyFunction_MyScenario_ExpectedResult) {
 
 ### Verification checklist before review
 
-- [ ] `./onnxruntime_provider_test --gtest_filter="QnnInt_*"` — all green
+- [ ] `./onnxruntime_provider_test --gtest_filter="QnnInteg_*"` — all green
 - [ ] `python qcom/build_and_test.py lint` — clean
 
 ## Test suite naming
 
-Tests in this directory use the `QnnInt_` prefix:
+Tests in this directory use the `QnnInteg_` prefix:
 
 ```
-QnnInt_<Component>Test.<Function>_<Scenario>_<ExpectedResult>
+QnnInteg_<Component>Test.<Function>_<Scenario>_<ExpectedResult>
 ```
 
-Example: `QnnInt_OrtApiTest.QDQGroup_CoversGetQDQIODefs`
+Example: `QnnInteg_OrtApiTest.QDQGroup_CoversGetQDQIODefs`
 
 ## Running the tests
 
 ```bash
 # Run only pipeline integration tests
-./onnxruntime_provider_test --gtest_filter="QnnInt_*"
+./onnxruntime_provider_test --gtest_filter="QnnInteg_*"
 
 # Run all QNN tests (unit + integration + op-level)
 ./onnxruntime_provider_test --gtest_filter="Qnn*"
@@ -139,4 +139,4 @@ automatically skipped via `GTEST_SKIP()` — no manual filtering needed.
 
 | File | Suite | EP internal code path covered |
 |---|---|---|
-| `ort_api_test.cc` | `QnnInt_OrtApiTest` | `ort_api.cc`: `GetQDQIODefs`, `OrtNodeUnit` QDQ ctor, `OrtNodeAttrHelper` found-paths |
+| `ort_api_test.cc` | `QnnInteg_OrtApiTest` | `ort_api.cc`: `GetQDQIODefs`, `OrtNodeUnit` QDQ ctor, `OrtNodeAttrHelper` found-paths |

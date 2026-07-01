@@ -30,7 +30,7 @@
 #include "gtest/gtest.h"
 #include "onnxruntime_cxx_api.h"
 
-#include "test/providers/qnn/integration/qnn_int_test_utils.h"
+#include "test/providers/qnn/integration/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -39,7 +39,7 @@ namespace test {
 // Test fixture: QNN HTP backend + model editor
 // ============================================================
 
-class QnnInt_OrtApiTest : public ::testing::Test {
+class QnnInteg_OrtApiTest : public ::testing::Test {
  protected:
   void SetUp() override {
     if (!Ort::GetApi().GetModelEditorApi())
@@ -68,7 +68,7 @@ class QnnInt_OrtApiTest : public ::testing::Test {
 // QDQ OrtNodeUnit constructor (lines 241–249).
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, QDQGroup_CoversGetQDQIODefs) {
+TEST_F(QnnInteg_OrtApiTest, QDQGroup_CoversGetQDQIODefs) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -138,7 +138,7 @@ TEST_F(QnnInt_OrtApiTest, QDQGroup_CoversGetQDQIODefs) {
 // which finds the attribute, exercising the "found" branch.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, TransposeAttr_CoversOrtNodeAttrHelperFoundInt64s) {
+TEST_F(QnnInteg_OrtApiTest, TransposeAttr_CoversOrtNodeAttrHelperFoundInt64s) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -189,7 +189,7 @@ TEST_F(QnnInt_OrtApiTest, TransposeAttr_CoversOrtNodeAttrHelperFoundInt64s) {
 // exercising the float Get "found" branch.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, LeakyReluAttr_CoversOrtNodeAttrHelperFoundFloat) {
+TEST_F(QnnInteg_OrtApiTest, LeakyReluAttr_CoversOrtNodeAttrHelperFoundFloat) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -240,7 +240,7 @@ TEST_F(QnnInt_OrtApiTest, LeakyReluAttr_CoversOrtNodeAttrHelperFoundFloat) {
 // exercising the "found" branch for each.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
+TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -312,7 +312,7 @@ TEST_F(QnnInt_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
 // goes through the InitForSingleNode "DequantizeLinear" branch.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, StandaloneDQ_CoversDequantizeLinearBranch) {
+TEST_F(QnnInteg_OrtApiTest, StandaloneDQ_CoversDequantizeLinearBranch) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -372,7 +372,7 @@ TEST_F(QnnInt_OrtApiTest, StandaloneDQ_CoversDequantizeLinearBranch) {
 // branch.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, StandaloneQ_CoversQuantizeLinearBranch) {
+TEST_F(QnnInteg_OrtApiTest, StandaloneQ_CoversQuantizeLinearBranch) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -433,7 +433,7 @@ TEST_F(QnnInt_OrtApiTest, StandaloneQ_CoversQuantizeLinearBranch) {
 // GetInt64s("pads") and GetFloat("value") directly.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, PadOpset10Attr_CoversGetInt64sAndGetFloatFound) {
+TEST_F(QnnInteg_OrtApiTest, PadOpset10Attr_CoversGetInt64sAndGetFloatFound) {
   Ort::Model model({{"", 10}});
   Ort::Graph graph;
 
@@ -476,7 +476,7 @@ TEST_F(QnnInt_OrtApiTest, PadOpset10Attr_CoversGetInt64sAndGetFloatFound) {
 // attributes, exercising the int32 Get "found" branch.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, ArgMaxAttr_CoversOrtNodeAttrHelperFoundInt32) {
+TEST_F(QnnInteg_OrtApiTest, ArgMaxAttr_CoversOrtNodeAttrHelperFoundInt32) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
@@ -521,7 +521,7 @@ TEST_F(QnnInt_OrtApiTest, ArgMaxAttr_CoversOrtNodeAttrHelperFoundInt32) {
 // int32 element-by-element.
 // ============================================================
 
-TEST_F(QnnInt_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32Vec) {
+TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32Vec) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
