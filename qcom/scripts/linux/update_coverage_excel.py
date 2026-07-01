@@ -107,6 +107,8 @@ def main() -> None:
     print(f"Date         : {run_date}")
 
     file_rows = parse_coverage_xml(args.coverage_xml)
+    if not file_rows:
+        print("WARNING: coverage XML contains zero <class> elements — Excel will be empty", file=sys.stderr)
     print(f"Files parsed : {len(file_rows)}")
 
     args.excel.parent.mkdir(parents=True, exist_ok=True)

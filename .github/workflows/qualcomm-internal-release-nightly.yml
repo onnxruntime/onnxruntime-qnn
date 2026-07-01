@@ -15,7 +15,7 @@ on:
 jobs:
   setup:
     name: Compute Shared QA Tag
-    runs-on: ubuntu-latest
+    runs-on: [Linux, self-hosted]
     outputs:
       qa_tag: ${{ steps.t.outputs.qa_tag }}
     steps:
