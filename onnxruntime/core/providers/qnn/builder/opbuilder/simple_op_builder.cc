@@ -219,7 +219,7 @@ Ort::Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
 
     unpacked_data.resize(1);
     RETURN_IF_ERROR(qnn::utils::QuantizeData(float_data, shape, scales, offsets, unpacked_data, qnn_data_type));
-    quantize_param = QnnQuantParamsWrapper(scales[0], static_cast<int32_t>(offsets[0]));
+    quantize_param = QnnQuantParamsWrapper::PerTensor(scales[0], static_cast<int32_t>(offsets[0]));
   } else {
     const auto& inputs = node_unit.Inputs();
     TensorInfo input_info = {};

@@ -405,7 +405,7 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
                                             scale,
                                             zero_point,
                                             symmetric));
-      quant_param = QnnQuantParamsWrapper(scale, zero_point);
+      quant_param = QnnQuantParamsWrapper::PerTensor(scale, zero_point);
       for (size_t i = 0; i < double_tensor.size(); ++i) {
         int quant_value_int = 0;
         RETURN_IF_ERROR(utils::Quantize(double_tensor[i], scale, zero_point, info.qnn_data_type, quant_value_int));
@@ -682,7 +682,7 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                    bias_info.qnn_data_type,
                                    scale_rmin < 0.0);
     if (is_quantized_op && bias_is_float) {
-      bias_info.quant_param = QnnQuantParamsWrapper(1.0f, 0);  // Placeholder, computed in Postprocess
+      bias_info.quant_param = QnnQuantParamsWrapper::PerTensor(1.0f, 0);  // Placeholder, computed in Postprocess
     }
 
     // use_float_params stores the fused weight/bias as F32.
