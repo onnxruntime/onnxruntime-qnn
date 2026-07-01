@@ -959,8 +959,8 @@ static void RunIrFP32GRUOpTest(const TestInputDef<float>& X_def,
   provider_options["backend_type"] = "ir";
 
   ModelTestBuilder helper;
-  BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def,
-                          true, true, direction, hidden_size, 0, 0)(helper);
+  _BuildGRUTestCase<float>(helper, X_def, W_def, R_def, B_def, H_def,
+                           true, true, direction, hidden_size, 0, 0, {});
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id{helper.model_.add_opset_import()};
   opset_id->set_domain("");
   opset_id->set_version(opset);

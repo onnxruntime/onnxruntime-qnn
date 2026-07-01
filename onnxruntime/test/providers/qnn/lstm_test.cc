@@ -1896,8 +1896,8 @@ static void RunIrFP32LSTMOpTest(const TestInputDef<float>& X_def,
   provider_options["backend_type"] = "ir";
 
   ModelTestBuilder helper;
-  BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def,
-                           true, true, true, direction, hidden_size, 0)(helper);
+  _BuildLSTMTestCase<float>(helper, X_def, W_def, R_def, B_def, H_def, C_def, P_def,
+                            true, true, true, direction, hidden_size, 0, {});
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id{helper.model_.add_opset_import()};
   opset_id->set_domain("");
   opset_id->set_version(opset);
