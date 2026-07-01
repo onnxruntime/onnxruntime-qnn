@@ -844,6 +844,17 @@ TEST_F(QnnHTPBackendTests, ReduceL2U8Opset13_NoKeepDims) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// - Uses uint16 as the quantization type.
+// - Uses opset 18, which has "axes" as an input.
+TEST_F(QnnHTPBackendTests, ReduceL2U16Opset18) {
+  RunReduceOpQDQTest<uint16_t>("ReduceL2",
+                               TestInputDef<float>({2, 2}, false, -10.0f, 10.0f),
+                               {0, 1},  // axes
+                               true,    // keepdims
+                               18,      // opset
+                               ExpectedEPNodeAssignment::All);
+}
+
 //
 // ReduceLogSumExp on HTP
 //
