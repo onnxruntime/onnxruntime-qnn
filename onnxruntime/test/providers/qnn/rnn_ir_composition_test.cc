@@ -1,8 +1,6 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-// Separate TU to avoid GCC 14 false-positive -Wmaybe-uninitialized from TestInputDef's std::variant.
-
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
