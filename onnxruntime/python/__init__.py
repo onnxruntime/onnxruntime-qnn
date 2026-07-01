@@ -24,6 +24,38 @@ except ImportError:
     pass
 
 
+def _configure_dsp_skel_search_path():
+    """Ensure the QNN HTP DSP skel (libQnnHtpV*Skel.so) can be found by the
+    fastRPC loader on Windows.
+
+    The DSP-side fastRPC loader searches ``ADSP_LIBRARY_PATH`` (plus a few fixed
+    system paths) for the skel. Unlike the Windows DLL loader, it does NOT
+    automatically include the directory a DLL was loaded from -- so when
+    ``QnnHtp.dll`` is loaded dynamically from deep under ``site-packages``, the
+    skel that sits next to it is not on the search path. Native executables
+    (qnn-net-run, onnxruntime_perf_test) work without this because they run from
+    the same directory as the skel; the Python wheel does not.
+
+    Without this, skel load fails (``qnn_open 0x80000406`` / error 1002), QNN
+    falls back to the HNRD user-driver path, and newer ops (e.g. GroupQueryAttention,
+    MatMulNBits) fail op validation and land on CPU.
+
+    We prepend the package directory to ``ADSP_LIBRARY_PATH`` (idempotently, and
+    preserving any user-provided value).
+    """
+    if sys.platform != "win32":
+        # Linux/Android package and load the skel via different mechanisms.
+        return
+    skel_dir = LIB_DIR_FULL_PATH
+    existing = os.environ.get("ADSP_LIBRARY_PATH", "")
+    parts = existing.split(";") if existing else []
+    if skel_dir not in parts:
+        os.environ["ADSP_LIBRARY_PATH"] = ";".join([skel_dir, *parts])
+
+
+_configure_dsp_skel_search_path()
+
+
 def _lib_name(base):
     if sys.platform == "win32":
         return f"{base}.dll"
