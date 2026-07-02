@@ -1893,12 +1893,11 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     for (uint32_t i = 0; i < graph_count; ++i) {
       auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
       RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[i], context));
-      std::string graph_name(graphs_info[i].graphInfoV1.graphName);
       // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
       if (!context_bin_filepath.empty()) {
         qnn_model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
       }
-      qnn_models.emplace(graph_name, std::move(qnn_model));
+      qnn_models.emplace(graphs_info[i].graphInfoV1.graphName, std::move(qnn_model));
     }
   }
 

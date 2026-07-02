@@ -8,8 +8,8 @@
 #include <gsl/gsl>
 #include <thread>
 
-#include "QnnOpDef.h"
 #include "HTP/QnnHtpContext.h"
+#include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
@@ -700,13 +700,17 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
     Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
 
-    // If a sibling model sharing the same context already recovered from SSR
-    // (freeing the old context), our handles are stale.  Proactively recover
-    // before calling graphExecute with dangling handles.
+    // In multi-partition or weight-sharing scenarios, multiple QnnModel instances (each
+    // representing a different graph) share the same Qnn_ContextHandle_t.  If another
+    // QnnModel in the same context already recovered from SSR — releasing the old context
+    // and creating a new one — our graph/context handles are now dangling.  Detect this
+    // by checking whether our context handle is still tracked by the backend manager, and
+    // proactively recover before calling graphExecute with invalid handles.
     if (!context_bin_filepath_.empty() &&
         !qnn_backend_manager_->HasContextHandle(graph_info_->GraphContext())) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  "SSR recovery: context was freed by sibling model, recovering proactively.");
+                  "SSR recovery: context was already freed by another QnnModel in the same context, "
+                  "recovering proactively.");
       RETURN_IF_ERROR(RecoverFromSSR(logger));
       continue;  // retry with fresh context and re-bound tensors
     }
