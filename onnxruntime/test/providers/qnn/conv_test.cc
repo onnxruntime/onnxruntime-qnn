@@ -1007,13 +1007,13 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
 // Conv2d: reuse_sparse_indices should be added to the QNN node parameters.
 TEST_F(QnnCPUBackendTests, Conv2D_ReuseSparseIndices) {
   RunConvOpTest("Conv",
-                TestInputDef<float>({1, 2, 5, 5}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({4, 2, 3, 3}, true, -1.0f, 1.0f),      // Static weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                {1, 1},                                                    // Strides
-                {0, 0, 0, 0},                                              // Pads
-                {1, 1},                                                    // Dilations
-                1,                                                         // default group
+                TestInputDef<float>({1, 2, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({4, 2, 3, 3}, true, -1.0f, 1.0f),     // Static weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                {1, 1},                                                   // Strides
+                {0, 0, 0, 0},                                             // Pads
+                {1, 1},                                                   // Dilations
+                1,                                                        // default group
                 "NOTSET",
                 ExpectedEPNodeAssignment::All);
 }
@@ -1021,13 +1021,13 @@ TEST_F(QnnCPUBackendTests, Conv2D_ReuseSparseIndices) {
 // Conv3d: reuse_sparse_indices should be added using QNN_OP_CONV_3D_PARAM_REUSE_SPARSE_INDICIES.
 TEST_F(QnnCPUBackendTests, Conv3D_ReuseSparseIndices) {
   RunConvOpTest("Conv",
-                TestInputDef<float>({1, 2, 4, 4, 4}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({4, 2, 2, 2, 2}, true, -1.0f, 1.0f),      // Static weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),                  // Static bias
-                {1, 1, 1},                                                    // Strides
-                {0, 0, 0, 0, 0, 0},                                           // Pads
-                {1, 1, 1},                                                    // Dilations
-                1,                                                            // default group
+                TestInputDef<float>({1, 2, 4, 4, 4}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({4, 2, 2, 2, 2}, true, -1.0f, 1.0f),     // Static weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),                 // Static bias
+                {1, 1, 1},                                                   // Strides
+                {0, 0, 0, 0, 0, 0},                                          // Pads
+                {1, 1, 1},                                                   // Dilations
+                1,                                                           // default group
                 "NOTSET",
                 ExpectedEPNodeAssignment::All);
 }
@@ -1035,13 +1035,13 @@ TEST_F(QnnCPUBackendTests, Conv3D_ReuseSparseIndices) {
 // DepthwiseConv2d: reuse_sparse_indices should NOT be added (group == input_channels == output_channels).
 TEST_F(QnnCPUBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
   RunConvOpTest("Conv",
-                TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),      // Depthwise weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                {1, 1},                                                    // Strides
-                {0, 0, 0, 0},                                              // Pads
-                {1, 1},                                                    // Dilations
-                4,                                                         // group == input_channels == output_channels -> DepthwiseConv2d
+                TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),     // Depthwise weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                {1, 1},                                                   // Strides
+                {0, 0, 0, 0},                                             // Pads
+                {1, 1},                                                   // Dilations
+                4,                                                        // group == input_channels == output_channels -> DepthwiseConv2d
                 "NOTSET",
                 ExpectedEPNodeAssignment::All);
 }
@@ -1049,13 +1049,13 @@ TEST_F(QnnCPUBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
 // ConvTranspose: reuse_sparse_indices should NOT be added.
 TEST_F(QnnCPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
   RunConvOpTest("ConvTranspose",
-                TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({2, 4, 3, 3}, true, -1.0f, 1.0f),      // Static weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                {1, 1},                                                    // Strides
-                {0, 0, 0, 0},                                              // Pads
-                {1, 1},                                                    // Dilations
-                1,                                                         // default group
+                TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({2, 4, 3, 3}, true, -1.0f, 1.0f),     // Static weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                {1, 1},                                                   // Strides
+                {0, 0, 0, 0},                                             // Pads
+                {1, 1},                                                   // Dilations
+                1,                                                        // default group
                 "NOTSET",
                 ExpectedEPNodeAssignment::All);
 }
@@ -3475,13 +3475,13 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
 // Conv2d: reuse_sparse_indices should be added to the QNN node parameters.
 TEST_F(QnnHTPBackendTests, Conv2D_ReuseSparseIndices) {
   RunHTPConvOpTest<uint8_t, uint8_t>("Conv",
-                                     TestInputDef<float>({1, 2, 5, 5}, false, -10.0f, 10.0f),   // Dynamic input
-                                     TestInputDef<float>({4, 2, 3, 3}, true, -1.0f, 1.0f),      // Static weights
-                                     TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                                     {1, 1},                                                    // Strides
-                                     {0, 0, 0, 0},                                              // Pads
-                                     {1, 1},                                                    // Dilations
-                                     1,                                                         // default group
+                                     TestInputDef<float>({1, 2, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
+                                     TestInputDef<float>({4, 2, 3, 3}, true, -1.0f, 1.0f),     // Static weights
+                                     TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                                     {1, 1},                                                   // Strides
+                                     {0, 0, 0, 0},                                             // Pads
+                                     {1, 1},                                                   // Dilations
+                                     1,                                                        // default group
                                      "NOTSET",
                                      ExpectedEPNodeAssignment::All);
 }
@@ -3489,13 +3489,13 @@ TEST_F(QnnHTPBackendTests, Conv2D_ReuseSparseIndices) {
 // Conv3d: reuse_sparse_indices should be added using QNN_OP_CONV_3D_PARAM_REUSE_SPARSE_INDICIES.
 TEST_F(QnnHTPBackendTests, Conv3D_ReuseSparseIndices) {
   RunHTPConvOpTest<uint8_t, int8_t>("Conv",
-                                    TestInputDef<float>({1, 2, 4, 4, 4}, false, -10.0f, 10.0f),   // Dynamic input
-                                    TestInputDef<float>({4, 2, 2, 2, 2}, true, -1.0f, 1.0f),      // Static weights
-                                    TestInputDef<float>({4}, true, -1.0f, 1.0f),                  // Static bias
-                                    {1, 1, 1},                                                    // Strides
-                                    {0, 0, 0, 0, 0, 0},                                           // Pads
-                                    {1, 1, 1},                                                    // Dilations
-                                    1,                                                            // default group
+                                    TestInputDef<float>({1, 2, 4, 4, 4}, false, -10.0f, 10.0f),  // Dynamic input
+                                    TestInputDef<float>({4, 2, 2, 2, 2}, true, -1.0f, 1.0f),     // Static weights
+                                    TestInputDef<float>({4}, true, -1.0f, 1.0f),                 // Static bias
+                                    {1, 1, 1},                                                   // Strides
+                                    {0, 0, 0, 0, 0, 0},                                          // Pads
+                                    {1, 1, 1},                                                   // Dilations
+                                    1,                                                           // default group
                                     "NOTSET",
                                     ExpectedEPNodeAssignment::All);
 }
@@ -3503,14 +3503,14 @@ TEST_F(QnnHTPBackendTests, Conv3D_ReuseSparseIndices) {
 // DepthwiseConv2d: reuse_sparse_indices should NOT be added (group == input_channels == output_channels).
 TEST_F(QnnHTPBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
-                                              TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),   // Dynamic input
-                                              TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),      // Depthwise weights
-                                              TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                                              0,                                                         // weight_quant_axis
-                                              {1, 1},                                                    // Strides
-                                              {0, 0, 0, 0},                                              // Pads
-                                              {1, 1},                                                    // Dilations
-                                              4,                                                         // group == input_channels == output_channels -> DepthwiseConv2d
+                                              TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
+                                              TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),     // Depthwise weights
+                                              TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                                              0,                                                        // weight_quant_axis
+                                              {1, 1},                                                   // Strides
+                                              {0, 0, 0, 0},                                             // Pads
+                                              {1, 1},                                                   // Dilations
+                                              4,                                                        // group == input_channels == output_channels -> DepthwiseConv2d
                                               "NOTSET",
                                               ExpectedEPNodeAssignment::All);
 }
@@ -3518,13 +3518,13 @@ TEST_F(QnnHTPBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
 // ConvTranspose: reuse_sparse_indices should NOT be added.
 TEST_F(QnnHTPBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
   RunHTPConvOpTest<uint8_t, uint8_t>("ConvTranspose",
-                                     TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),   // Dynamic input
-                                     TestInputDef<float>({2, 4, 3, 3}, true, -1.0f, 1.0f),      // Static weights
-                                     TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                                     {1, 1},                                                    // Strides
-                                     {0, 0, 0, 0},                                              // Pads
-                                     {1, 1},                                                    // Dilations
-                                     1,                                                         // default group
+                                     TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),  // Dynamic input
+                                     TestInputDef<float>({2, 4, 3, 3}, true, -1.0f, 1.0f),     // Static weights
+                                     TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                                     {1, 1},                                                   // Strides
+                                     {0, 0, 0, 0},                                             // Pads
+                                     {1, 1},                                                   // Dilations
+                                     1,                                                        // default group
                                      "NOTSET",
                                      ExpectedEPNodeAssignment::All);
 }
@@ -3815,13 +3815,13 @@ TEST_F(QnnGPUBackendTests, ConvTranspose1D) {
 // Conv2d: reuse_sparse_indices should be added to the QNN node parameters.
 TEST_F(QnnGPUBackendTests, Conv2D_ReuseSparseIndices) {
   RunConvOpTest("Conv",
-                TestInputDef<float>({1, 2, 5, 5}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({4, 2, 3, 3}, true, -1.0f, 1.0f),      // Static weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                {1, 1},                                                    // Strides
-                {0, 0, 0, 0},                                              // Pads
-                {1, 1},                                                    // Dilations
-                1,                                                         // default group
+                TestInputDef<float>({1, 2, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({4, 2, 3, 3}, true, -1.0f, 1.0f),     // Static weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                {1, 1},                                                   // Strides
+                {0, 0, 0, 0},                                             // Pads
+                {1, 1},                                                   // Dilations
+                1,                                                        // default group
                 "NOTSET",
                 ExpectedEPNodeAssignment::All,
                 "gpu");
@@ -3830,13 +3830,13 @@ TEST_F(QnnGPUBackendTests, Conv2D_ReuseSparseIndices) {
 // Conv3d: GPU does not support Conv3D.
 TEST_F(QnnGPUBackendTests, DISABLED_Conv3D_ReuseSparseIndices) {
   RunConvOpTest("Conv",
-                TestInputDef<float>({1, 2, 4, 4, 4}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({4, 2, 2, 2, 2}, true, -1.0f, 1.0f),      // Static weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),                  // Static bias
-                {1, 1, 1},                                                    // Strides
-                {0, 0, 0, 0, 0, 0},                                           // Pads
-                {1, 1, 1},                                                    // Dilations
-                1,                                                            // default group
+                TestInputDef<float>({1, 2, 4, 4, 4}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({4, 2, 2, 2, 2}, true, -1.0f, 1.0f),     // Static weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),                 // Static bias
+                {1, 1, 1},                                                   // Strides
+                {0, 0, 0, 0, 0, 0},                                          // Pads
+                {1, 1, 1},                                                   // Dilations
+                1,                                                           // default group
                 "NOTSET",
                 ExpectedEPNodeAssignment::All,
                 "gpu");
@@ -3845,13 +3845,13 @@ TEST_F(QnnGPUBackendTests, DISABLED_Conv3D_ReuseSparseIndices) {
 // DepthwiseConv2d: reuse_sparse_indices should NOT be added (group == input_channels == output_channels).
 TEST_F(QnnGPUBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
   RunConvOpTest("Conv",
-                TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),      // Depthwise weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                {1, 1},                                                    // Strides
-                {0, 0, 0, 0},                                              // Pads
-                {1, 1},                                                    // Dilations
-                4,                                                         // group == input_channels == output_channels -> DepthwiseConv2d
+                TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),     // Depthwise weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                {1, 1},                                                   // Strides
+                {0, 0, 0, 0},                                             // Pads
+                {1, 1},                                                   // Dilations
+                4,                                                        // group == input_channels == output_channels -> DepthwiseConv2d
                 "NOTSET",
                 ExpectedEPNodeAssignment::All,
                 "gpu");
@@ -3860,18 +3860,17 @@ TEST_F(QnnGPUBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
 // ConvTranspose: reuse_sparse_indices should NOT be added.
 TEST_F(QnnGPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
   RunConvOpTest("ConvTranspose",
-                TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),   // Dynamic input
-                TestInputDef<float>({2, 4, 3, 3}, true, -1.0f, 1.0f),      // Static weights
-                TestInputDef<float>({4}, true, -1.0f, 1.0f),               // Static bias
-                {1, 1},                                                    // Strides
-                {0, 0, 0, 0},                                              // Pads
-                {1, 1},                                                    // Dilations
-                1,                                                         // default group
+                TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),  // Dynamic input
+                TestInputDef<float>({2, 4, 3, 3}, true, -1.0f, 1.0f),     // Static weights
+                TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
+                {1, 1},                                                   // Strides
+                {0, 0, 0, 0},                                             // Pads
+                {1, 1},                                                   // Dilations
+                1,                                                        // default group
                 "NOTSET",
                 ExpectedEPNodeAssignment::All,
                 "gpu");
 }
-
 
 #endif  // defined(_M_ARM64) GPU tests
 
