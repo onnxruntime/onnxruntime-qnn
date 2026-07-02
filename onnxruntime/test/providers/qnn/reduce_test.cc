@@ -438,15 +438,16 @@ template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQReduceOpTestCase(const std::string& reduce_op_type,
                                                       const TestInputDef<float>& input_def,
                                                       bool axes_as_input, const std::vector<int64_t>& axes, bool keepdims,
-                                                      bool noop_with_empty_axes) {
+                                                      bool noop_with_empty_axes, bool use_ms_domain_qdq = false) {
   return [reduce_op_type, input_def, axes_as_input, axes, keepdims,
-          noop_with_empty_axes](ModelTestBuilder& builder,
-                                std::vector<QuantParams<QuantType>>& output_qparams) {
+          noop_with_empty_axes, use_ms_domain_qdq](ModelTestBuilder& builder,
+                                                   std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
     MakeTestInput<float>(builder, "input", input_def);
     const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
     const std::string input_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point,
+                                  use_ms_domain_qdq);
 
     // -> ReduceOp (e.g., ReduceSum) ->
     std::vector<std::string> input_names;
@@ -473,7 +474,7 @@ GetTestQDQModelFn<QuantType> BuildQDQReduceOpTestCase(const std::string& reduce_
 
     // -> Q -> DQ -> final output
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
-        builder, "qdq_out", reduce_out, output_qparams[0].scale, output_qparams[0].zero_point);
+        builder, "qdq_out", reduce_out, output_qparams[0].scale, output_qparams[0].zero_point, use_ms_domain_qdq);
   };
 }
 
@@ -495,7 +496,8 @@ static void RunReduceOpQDQTest(const std::string& op_type,
                                const std::vector<int64_t>& axes,
                                bool keepdims,
                                int opset,
-                               ExpectedEPNodeAssignment expected_ep_assignment) {
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               bool use_ms_domain_qdq = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -506,7 +508,7 @@ static void RunReduceOpQDQTest(const std::string& op_type,
   TestQDQModelAccuracy(BuildReduceOpTestCase<float>(op_type, input_def, axes_as_input, axes, keepdims,
                                                     noop_with_empty_axes),
                        BuildQDQReduceOpTestCase<QuantType>(op_type, input_def, axes_as_input, axes, keepdims,
-                                                           noop_with_empty_axes),
+                                                           noop_with_empty_axes, use_ms_domain_qdq),
                        provider_options,
                        opset,
                        expected_ep_assignment);
@@ -844,7 +846,8 @@ TEST_F(QnnHTPBackendTests, ReduceL2U8Opset13_NoKeepDims) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// - Uses uint16 as the quantization type.
+// - Uses uint16 as the quantization type. Requires the MS domain QDQ ops since standard
+//   QuantizeLinear/DequantizeLinear don't support a uint16 zero-point.
 // - Uses opset 18, which has "axes" as an input.
 TEST_F(QnnHTPBackendTests, ReduceL2U16Opset18) {
   RunReduceOpQDQTest<uint16_t>("ReduceL2",
@@ -852,7 +855,8 @@ TEST_F(QnnHTPBackendTests, ReduceL2U16Opset18) {
                                {0, 1},  // axes
                                true,    // keepdims
                                18,      // opset
-                               ExpectedEPNodeAssignment::All);
+                               ExpectedEPNodeAssignment::All,
+                               true);  // use_ms_domain_qdq
 }
 
 //
