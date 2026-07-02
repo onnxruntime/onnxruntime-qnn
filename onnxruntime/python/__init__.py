@@ -4,6 +4,7 @@
 # --------------------------------------------------------------------------
 
 import os
+import platform
 import sys
 
 from . import build_and_package_info  # noqa: F401
@@ -26,7 +27,7 @@ except ImportError:
 
 def _configure_dsp_skel_search_path():
     """Ensure the QNN HTP DSP skel (libQnnHtpV*Skel.so) can be found by the
-    fastRPC loader on Windows.
+    fastRPC loader on Windows ARM64.
 
     The DSP-side fastRPC loader searches ``ADSP_LIBRARY_PATH`` (plus a few fixed
     system paths) for the skel. Unlike the Windows DLL loader, it does NOT
@@ -40,13 +41,22 @@ def _configure_dsp_skel_search_path():
     falls back to the HNRD user-driver path, and newer ops (e.g. GroupQueryAttention,
     MatMulNBits) fail op validation and land on CPU.
 
+    This only matters when a real Hexagon DSP is present, i.e. on a Windows ARM64
+    (Snapdragon) device. On Windows x64 there is no DSP, so the skel is never
+    loaded and this is a no-op there. We therefore restrict it to native ARM64.
+
     We prepend the package directory to ``ADSP_LIBRARY_PATH`` (idempotently, and
     preserving any user-provided value).
     """
-    if sys.platform != "win32":
-        # Linux/Android package and load the skel via different mechanisms.
+    if sys.platform != "win32" or platform.machine().lower() not in ("arm64", "aarch64"):
+        # Only Windows ARM64 (Snapdragon) has an on-device DSP that loads the skel.
+        # x64 hosts have no DSP; Linux/Android package and load the skel differently.
         return
     skel_dir = LIB_DIR_FULL_PATH
+    existing = os.environ.get("ADSP_LIBRARY_PATH", "")
+    parts = existing.split(";") if existing else []
+    if skel_dir not in parts:
+        os.environ["ADSP_LIBRARY_PATH"] = ";".join([skel_dir, *parts])
     existing = os.environ.get("ADSP_LIBRARY_PATH", "")
     parts = existing.split(";") if existing else []
     if skel_dir not in parts:
