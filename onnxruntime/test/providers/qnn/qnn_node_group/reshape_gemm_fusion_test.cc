@@ -539,7 +539,8 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_Negative_SharedReshap
 
   // Verify fusion did NOT fire: the shared input Reshape is standalone, both Gemms run
   // as independent FullyConnected nodes, and each chain's output Reshapes are also standalone.
-  // Note: QNN backend internally merges consecutive Reshapes (Reshape1a+1b → 1 Reshape),
+  // Note: ORT's ReshapeFusion::FuseContiguousReshapes graph transformer merges each chain's
+  // two consecutive output Reshapes (Reshape1a+1b) into one before the QNN EP sees the graph,
   // so expected count is 3: 1 (shared input) + 1 (merged chain1) + 1 (merged chain2).
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 3);
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 2);
