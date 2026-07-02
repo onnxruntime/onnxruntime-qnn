@@ -358,6 +358,50 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
 // Negative Tests - Fusion should NOT happen
 // ============================================================================
 
+// Build a test case where input Reshape has two consumers (fusion should not happen).
+// Graph: Input -> Reshape -> Gemm1 (output1)
+//                        \-> Gemm2 (output2)
+// Claiming the shared Reshape for Gemm1 would break Gemm2, so fusion must not fire.
+GetTestModelFn BuildReshapeSharedByTwoGemmsTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_shared_two_gemms_graph");
+
+    auto input_def = TestInputDef<float>({1, 4, 8}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Shared Reshape: [1, 4, 8] -> [4, 8]
+    builder.Make1DInitializer<int64_t>("reshape_shape", {4, 8});
+    builder.AddNode("reshape", "Reshape", {"input", "reshape_shape"}, {"reshape_out"}, kOnnxDomain);
+
+    // Gemm1: [4, 8] x [8, 16] -> [4, 16]
+    builder.MakeInitializer<float>("weight1", {8, 16}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias1", {16}, -0.1f, 0.1f);
+    builder.AddNode("gemm1", "Gemm", {"reshape_out", "weight1", "bias1"}, {"output1"}, kOnnxDomain);
+
+    // Gemm2: [4, 8] x [8, 32] -> [4, 32]  — shares reshape_out
+    builder.MakeInitializer<float>("weight2", {8, 32}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias2", {32}, -0.1f, 0.1f);
+    builder.AddNode("gemm2", "Gemm", {"reshape_out", "weight2", "bias2"}, {"output2"}, kOnnxDomain);
+
+    builder.MakeOutput("output1");
+    builder.MakeOutput("output2");
+  };
+}
+
+// Test: Fusion should NOT happen when the input Reshape has two consumers.
+// If fusion incorrectly claimed the shared Reshape for one Gemm, the other Gemm
+// would lose its input and the model would fail. All nodes must still run on QNN EP.
+TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_SharedReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options = GetProviderOptions();
+
+  RunQnnModelTest(BuildReshapeSharedByTwoGemmsTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
 // Build a test case where Gemm has transA=1 (fusion should not happen)
 GetTestModelFn BuildReshapeGemmWithTransATestCase(const std::vector<int64_t>& input_shape,
                                                   int64_t hidden_size,

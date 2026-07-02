@@ -394,10 +394,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
         // 2.5 Create QNN wrappers.
         const std::vector<uint32_t> block_sizes = {1, gsl::narrow_cast<uint32_t>(block_size)};
-        QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(per_block_float_scale,
-                                                                     per_block_int32_offset,
-                                                                     block_sizes,
-                                                                     QNN_DATATYPE_SFIXED_POINT_4);
+        QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::Block(per_block_float_scale,
+                                                                            per_block_int32_offset,
+                                                                            block_sizes);
 
         std::vector<uint32_t> weight_shape = {gsl::narrow_cast<uint32_t>(N), gsl::narrow_cast<uint32_t>(K)};
         QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
@@ -448,10 +447,10 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         // 2.5 Create QNN wrappers.
         // Note that unlike weights requiring transpose, scales/offsets are expected in original ONNX shape.
         const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
-        QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(per_block_float_scale,
-                                                                     per_block_float_zp,
-                                                                     gsl::narrow_cast<uint32_t>(bits),
-                                                                     block_sizes);
+        QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::BwFloatBlock(per_block_float_scale,
+                                                                                   per_block_float_zp,
+                                                                                   gsl::narrow_cast<uint32_t>(bits),
+                                                                                   block_sizes);
 
         // Shape is for Conv2d, expecting in HWIO.
         std::vector<uint32_t> weight_shape = {1, 1, gsl::narrow_cast<uint32_t>(K), gsl::narrow_cast<uint32_t>(N)};

@@ -155,7 +155,7 @@ Ort::Status QLinearMatMulOpBuilder::BuildQuantParam(const QnnModelWrapper& qnn_m
   RETURN_IF_ERROR(ReadZeroPointAsInt32(qnn_model_wrapper, zp_tensor, zero_point));
 
   // UnpackZeroPoints already returns -zp (QNN offset convention); pass through directly.
-  out_quant_param = QnnQuantParamsWrapper(scale, zero_point);
+  out_quant_param = QnnQuantParamsWrapper::PerTensor(scale, zero_point);
   return Ort::Status();
 }
 

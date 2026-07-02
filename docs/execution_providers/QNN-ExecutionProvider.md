@@ -163,9 +163,13 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"qnn_context_priority"`|[Description](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_yielding.html)|
 |---|---|
 |'low'|Low priority.|
+|'normal_low'|Normal low priority.|
 |'normal'|Normal priority. Default.|
 |'normal_high'|Normal high priority.|
 |'high'|High priority.|
+|'high_plus'|High plus priority.|
+|'critical'|Critical priority.|
+|'critical_plus'|Critical plus priority.|
 
 |`"htp_graph_finalization_optimization_mode"`|Description|
 |---|---|
