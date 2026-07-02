@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #pragma once
 
@@ -19,15 +19,13 @@ class QnnModelWrapper;
 /// <summary>
 /// Fuses the tanh-based GELU approximation into a single QNN Gelu op.
 ///
-/// Pattern (entry point is Tanh):
+/// Pattern (entry point is Tanh; ORT lowers Pow(x,3) to Mul(Mul(x,x),x) before QNN EP sees the graph):
 ///
-///                                                   +----------------------------+
-///                                                   |                            |
-///                                                   v                            |
-///   [x] --> Pow(3) --> Mul(0.044715) --> Add --> Mul(sqrt(2/pi)) --> Tanh --> Add(1) --> Mul(0.5) --> Mul ==>
-///                                         ^
-///                                         |
-///                                        [x]
+///        +-> Mul(x,x) -> Mul(x²,x) -> Mul(0.044715) --+
+///        |                   ^                          v
+///   [x] -+-------------------+------------------------> Add --> Mul(sqrt(2/pi)) --> Tanh --> Add(1) --> Mul --> Mul(0.5) ==>
+///        |                                                                                              ^
+///        +----------------------------------------------------------------------------------------------+
 ///
 /// Equation: x * 0.5 * (1 + Tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 ///

@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -18,55 +18,123 @@ namespace test {
 
 namespace {
 
-// Builds the tanh-GELU approximation pattern:
+// Builds the canonical tanh-GELU approximation pattern (float32):
 //
-//  [x] --+-> Mul(x,x) -> Mul(x²,x) -> Mul(0.044715) -> Add --+-> Mul(sqrt2pi) -> Tanh -> Add(1) -> Mul(x) -> Mul(0.5) ==>
-//        |                                                     |
-//        +-----------------------------------------------------+
+//  [x] --+-> Mul(x,x) -> Mul(x²,x) -> Mul(0.044715) --+
+//        |                                              v
+//        +--------------------------------------------> Add -> Mul(sqrt2pi) -> Tanh -> Add(1) -> Mul(x) -> Mul(0.5) ==>
 //
-// This matches what ORT's optimizer produces (Pow(x,3) is lowered to Mul(Mul(x,x),x)).
+// Equation: 0.5 * x * (1 + Tanh(sqrt(2/pi) * (x + 0.044715 * x³)))
 GetTestModelFn BuildTanhGeluTestCase(const TestInputDef<float>& input_def) {
   return [input_def](ModelTestBuilder& builder) -> void {
     constexpr float k0044715 = 0.044715f;
-    constexpr float kSqrt2OverPi = 0.7978845608f;  // sqrt(2/pi)
+    constexpr float kSqrt2OverPi = 0.7978845608f;
     constexpr float kOne = 1.0f;
     constexpr float kHalf = 0.5f;
 
     builder.graph_->set_name("tanh_gelu_graph");
-
     MakeTestInput<float>(builder, "input", input_def);
 
-    // x² = Mul(x, x)
     builder.AddNode("Mul_x2", "Mul", {"input", "input"}, {"x2_out"}, kOnnxDomain);
-
-    // x³ = Mul(x², x)
     builder.AddNode("Mul_x3", "Mul", {"x2_out", "input"}, {"x3_out"}, kOnnxDomain);
 
-    // 0.044715 * x³
     builder.MakeScalarInitializer<float>("c0044715", k0044715);
     builder.AddNode("Mul_0044715", "Mul", {"x3_out", "c0044715"}, {"mul_0044715_out"}, kOnnxDomain);
 
-    // x + 0.044715*x³
+    // Canonical Add: Add(input, 0.044715*x³)  — x is input[0], cubic branch is input[1]
     builder.AddNode("Add_inner", "Add", {"input", "mul_0044715_out"}, {"add_inner_out"}, kOnnxDomain);
 
-    // sqrt(2/pi) * (x + 0.044715*x³)
     builder.MakeScalarInitializer<float>("sqrt2pi", kSqrt2OverPi);
     builder.AddNode("Mul_coeff", "Mul", {"add_inner_out", "sqrt2pi"}, {"mul_coeff_out"}, kOnnxDomain);
 
-    // Tanh
     builder.AddNode("Tanh", "Tanh", {"mul_coeff_out"}, {"tanh_out"}, kOnnxDomain);
 
-    // 1 + Tanh(...)
     builder.MakeScalarInitializer<float>("one", kOne);
     builder.AddNode("Add_one", "Add", {"tanh_out", "one"}, {"add_one_out"}, kOnnxDomain);
 
-    // x * (1 + Tanh(...))
     builder.AddNode("Mul_x", "Mul", {"input", "add_one_out"}, {"mul_x_out"}, kOnnxDomain);
 
-    // 0.5 * x * (1 + Tanh(...))
     builder.MakeScalarInitializer<float>("half", kHalf);
     builder.AddNode("Mul_half", "Mul", {"mul_x_out", "half"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+}
 
+// Same as BuildTanhGeluTestCase but with commutative-input orderings swapped at two places
+// that exercise the matcher's `for i` (add_inner branch index) and `for j` (mul_x3 child order):
+//
+//  add_inner   : Add(0.044715*x³, x)  — cubic branch is input[0] instead of input[1]  (for i loop)
+//  mul_x3      : Mul(x, x²)           — x is input[0] instead of input[1]              (for j loop)
+GetTestModelFn BuildTanhGeluTestCaseSwappedInputs(const TestInputDef<float>& input_def) {
+  return [input_def](ModelTestBuilder& builder) -> void {
+    constexpr float k0044715 = 0.044715f;
+    constexpr float kSqrt2OverPi = 0.7978845608f;
+    constexpr float kOne = 1.0f;
+    constexpr float kHalf = 0.5f;
+
+    builder.graph_->set_name("tanh_gelu_swapped_graph");
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.AddNode("Mul_x2", "Mul", {"input", "input"}, {"x2_out"}, kOnnxDomain);
+
+    // for j: Mul(x, x²) — x in slot 0, x² in slot 1 (swapped vs canonical Mul(x²,x))
+    builder.AddNode("Mul_x3", "Mul", {"input", "x2_out"}, {"x3_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<float>("c0044715", k0044715);
+    builder.AddNode("Mul_0044715", "Mul", {"x3_out", "c0044715"}, {"mul_0044715_out"}, kOnnxDomain);
+
+    // for i: Add(0.044715*x³, x) — cubic branch is input[0] (swapped vs canonical Add(x, 0.044715*x³))
+    builder.AddNode("Add_inner", "Add", {"mul_0044715_out", "input"}, {"add_inner_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<float>("sqrt2pi", kSqrt2OverPi);
+    builder.AddNode("Mul_coeff", "Mul", {"add_inner_out", "sqrt2pi"}, {"mul_coeff_out"}, kOnnxDomain);
+
+    builder.AddNode("Tanh", "Tanh", {"mul_coeff_out"}, {"tanh_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<float>("one", kOne);
+    builder.AddNode("Add_one", "Add", {"tanh_out", "one"}, {"add_one_out"}, kOnnxDomain);
+
+    builder.AddNode("Mul_x", "Mul", {"input", "add_one_out"}, {"mul_x_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<float>("half", kHalf);
+    builder.AddNode("Mul_half", "Mul", {"mul_x_out", "half"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+}
+
+// Builds the tanh-GELU pattern using fp16 scalar constants.
+// GetScalarConstantValue supports FLOAT16 element type, so fusion must also fire for fp16 models.
+GetTestModelFn BuildTanhGeluTestCaseFp16(const TestInputDef<float>& float_input_def) {
+  return [float_input_def](ModelTestBuilder& builder) -> void {
+    const Ort::Float16_t k0044715 = static_cast<Ort::Float16_t>(0.044715f);
+    const Ort::Float16_t kSqrt2OverPi = static_cast<Ort::Float16_t>(0.7978845608f);
+    const Ort::Float16_t kOne = static_cast<Ort::Float16_t>(1.0f);
+    const Ort::Float16_t kHalf = static_cast<Ort::Float16_t>(0.5f);
+
+    builder.graph_->set_name("tanh_gelu_fp16_graph");
+    const TestInputDef<Ort::Float16_t> input_def = ConvertToFP16InputDef(float_input_def);
+    MakeTestInput<Ort::Float16_t>(builder, "input", input_def);
+
+    builder.AddNode("Mul_x2", "Mul", {"input", "input"}, {"x2_out"}, kOnnxDomain);
+    builder.AddNode("Mul_x3", "Mul", {"x2_out", "input"}, {"x3_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<Ort::Float16_t>("c0044715", k0044715);
+    builder.AddNode("Mul_0044715", "Mul", {"x3_out", "c0044715"}, {"mul_0044715_out"}, kOnnxDomain);
+
+    builder.AddNode("Add_inner", "Add", {"input", "mul_0044715_out"}, {"add_inner_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<Ort::Float16_t>("sqrt2pi", kSqrt2OverPi);
+    builder.AddNode("Mul_coeff", "Mul", {"add_inner_out", "sqrt2pi"}, {"mul_coeff_out"}, kOnnxDomain);
+
+    builder.AddNode("Tanh", "Tanh", {"mul_coeff_out"}, {"tanh_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<Ort::Float16_t>("one", kOne);
+    builder.AddNode("Add_one", "Add", {"tanh_out", "one"}, {"add_one_out"}, kOnnxDomain);
+
+    builder.AddNode("Mul_x", "Mul", {"input", "add_one_out"}, {"mul_x_out"}, kOnnxDomain);
+
+    builder.MakeScalarInitializer<Ort::Float16_t>("half", kHalf);
+    builder.AddNode("Mul_half", "Mul", {"mul_x_out", "half"}, {"output"}, kOnnxDomain);
     builder.MakeOutput("output");
   };
 }
@@ -81,78 +149,78 @@ ProviderOptions GetProviderOptions() {
   return provider_options;
 }
 
+// Runs a positive fusion test: verifies fusion fires (one ElementWiseNeuron in the QNN graph)
+// and that QNN output matches CPU EP within abs_err.
+void RunTanhGeluFusionTest(const std::string& test_name,
+                           const GetTestModelFn& build_fn,
+                           float abs_err) {
+  const std::filesystem::path json_qnn_graph_dir = test_name;
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(build_fn,
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(abs_err)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
+}
+
 }  // namespace
 
-// Basic pattern: verifies fusion fires and produces a single QNN Gelu node.
+// ---- Positive tests --------------------------------------------------------
+
+// 4D input: typical batch * channel * H * W layout.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float32_4D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
-
-  const std::filesystem::path json_qnn_graph_dir = "TanhGeluFusion_Float32_4D";
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-
-  RunQnnModelTest(BuildTanhGeluTestCase(input_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
-
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  RunTanhGeluFusionTest("TanhGeluFusion_Float32_4D",
+                        BuildTanhGeluTestCase(TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f)),
+                        6e-3f);
 }
 
-// Typical transformer hidden-size shape {1, 128, 768}.
+// 3D input: typical transformer hidden-size shape {batch, seq, hidden}.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float32_3D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto input_def = TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f);
-
-  const std::filesystem::path json_qnn_graph_dir = "TanhGeluFusion_Float32_3D";
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-
-  RunQnnModelTest(BuildTanhGeluTestCase(input_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
-
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  RunTanhGeluFusionTest("TanhGeluFusion_Float32_3D",
+                        BuildTanhGeluTestCase(TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f)),
+                        2e-3f);
 }
 
-// 2D shape (e.g., after flatten in a linear layer).
+// 2D input: typical post-flatten shape in a linear layer.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float32_2D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
-
-  const std::filesystem::path json_qnn_graph_dir = "TanhGeluFusion_Float32_2D";
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-
-  RunQnnModelTest(BuildTanhGeluTestCase(input_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
-
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+  RunTanhGeluFusionTest("TanhGeluFusion_Float32_2D",
+                        BuildTanhGeluTestCase(TestInputDef<float>({32, 512}, false, -1.5f, 1.5f)),
+                        6e-3f);
 }
 
-// Negative test: a broken pattern (wrong coefficient) must NOT fuse.
+// Commutative-input-ordering test:
+//   add_inner  = Add(0.044715*x³, x)   — cubic arm in slot 0  → exercises `for i` in TryMatchCubicSubtree
+//   mul_x3     = Mul(x, x²)            — x in slot 0          → exercises `for j` inside TryMatchCubicSubtree
+TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float32_SwappedInputs) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunTanhGeluFusionTest("TanhGeluFusion_Float32_SwappedInputs",
+                        BuildTanhGeluTestCaseSwappedInputs(TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f)),
+                        6e-3f);
+}
+
+// fp16 test: scalar constants are FLOAT16 initializers.
+// GetScalarConstantValue handles FLOAT16 via Ort::Float16_t::ToFloat(), so fusion must fire.
+TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunTanhGeluFusionTest("TanhGeluFusion_Float16",
+                        BuildTanhGeluTestCaseFp16(TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f)),
+                        6e-3f);
+}
+
+// ---- Negative tests --------------------------------------------------------
+
+// Wrong cubic coefficient (0.1 instead of 0.044715) — matcher must reject.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
@@ -166,9 +234,8 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
-  // Build pattern with wrong coefficient (0.1 instead of 0.044715).
   GetTestModelFn bad_model = [&input_def](ModelTestBuilder& builder) -> void {
-    constexpr float kWrongCoeff = 0.1f;  // Should be 0.044715
+    constexpr float kWrongCoeff = 0.1f;
     constexpr float kSqrt2OverPi = 0.7978845608f;
     constexpr float kOne = 1.0f;
     constexpr float kHalf = 0.5f;
@@ -195,11 +262,63 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   RunQnnModelTest(bad_model,
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/6e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
 
-  // No Gelu should appear in the QNN graph.
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", 0);
+}
+
+// Shared intermediate: x² is also consumed by an extra Relu outside the pattern.
+// Fusing would leave Relu with a dangling input, so the matcher must reject.
+TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedIntermediate_ShouldNotFuse) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+
+  const std::filesystem::path json_qnn_graph_dir = "TanhGeluFusion_SharedIntermediate";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  GetTestModelFn shared_model = [&input_def](ModelTestBuilder& builder) -> void {
+    constexpr float k0044715 = 0.044715f;
+    constexpr float kSqrt2OverPi = 0.7978845608f;
+    constexpr float kOne = 1.0f;
+    constexpr float kHalf = 0.5f;
+
+    builder.graph_->set_name("tanh_gelu_shared_graph");
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // x² is shared: consumed by both Mul(x²,x) and the extra Relu below.
+    builder.AddNode("Mul_x2", "Mul", {"input", "input"}, {"x2_out"}, kOnnxDomain);
+
+    // Extra consumer of x² — prevents fusion.
+    builder.AddNode("Relu_extra", "Relu", {"x2_out"}, {"extra_out"}, kOnnxDomain);
+    builder.MakeOutput("extra_out");
+
+    builder.AddNode("Mul_x3", "Mul", {"x2_out", "input"}, {"x3_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("c0044715", k0044715);
+    builder.AddNode("Mul_0044715", "Mul", {"x3_out", "c0044715"}, {"mul_0044715_out"}, kOnnxDomain);
+    builder.AddNode("Add_inner", "Add", {"input", "mul_0044715_out"}, {"add_inner_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("sqrt2pi", kSqrt2OverPi);
+    builder.AddNode("Mul_coeff", "Mul", {"add_inner_out", "sqrt2pi"}, {"mul_coeff_out"}, kOnnxDomain);
+    builder.AddNode("Tanh", "Tanh", {"mul_coeff_out"}, {"tanh_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("one", kOne);
+    builder.AddNode("Add_one", "Add", {"tanh_out", "one"}, {"add_one_out"}, kOnnxDomain);
+    builder.AddNode("Mul_x", "Mul", {"input", "add_one_out"}, {"mul_x_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("half", kHalf);
+    builder.AddNode("Mul_half", "Mul", {"mul_x_out", "half"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+
+  RunQnnModelTest(shared_model,
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
