@@ -912,6 +912,134 @@ TEST_F(QnnHTPBackendTests, BatchNorm_NoOutputQ) {
                        ExpectedEPNodeAssignment::All);
 }
 
+// Float reference for two BatchNorm nodes that SHARE a single bias initializer but use different
+// scales (hence different correct fused biases), summed into one output.
+//   X -> BN_a(scale_a, SHARED_bias, mean1, var1) -> a
+//   X -> BN_b(scale_b, SHARED_bias, mean2, var2) -> b
+//   Add(a, b) -> Y
+template <typename FLOAT_TYPE>
+static GetTestModelFn BuildSharedBiasBatchNormFloatTestCase(const TestInputDef<FLOAT_TYPE>& input_def,
+                                                            const std::vector<FLOAT_TYPE>& scale_a_data,
+                                                            const std::vector<FLOAT_TYPE>& scale_b_data,
+                                                            const std::vector<FLOAT_TYPE>& bias_data) {
+  QNN_ASSERT(input_def.IsRawData());
+  return [input_def, scale_a_data, scale_b_data, bias_data](ModelTestBuilder& builder) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
+
+    std::vector<FLOAT_TYPE> mean_vals(num_channels);
+    std::vector<FLOAT_TYPE> var_vals(num_channels);
+    ComputeChannelMeanAndVar<FLOAT_TYPE>(input_data, input_shape, mean_vals, var_vals);
+
+    MakeTestInput<FLOAT_TYPE>(builder, "X", input_def);
+    builder.MakeInitializer<FLOAT_TYPE>("scale_a", {num_channels}, scale_a_data);
+    builder.MakeInitializer<FLOAT_TYPE>("scale_b", {num_channels}, scale_b_data);
+    builder.MakeInitializer<FLOAT_TYPE>("shared_bias", {num_channels}, bias_data);
+    builder.MakeInitializer<FLOAT_TYPE>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<FLOAT_TYPE>("var", {num_channels}, var_vals);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs;
+    bn_attrs.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    builder.AddNode("bn_a", "BatchNormalization", {"X", "scale_a", "shared_bias", "mean", "var"},
+                    {"a_out"}, "", bn_attrs);
+    std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs_b;
+    bn_attrs_b.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    builder.AddNode("bn_b", "BatchNormalization", {"X", "scale_b", "shared_bias", "mean", "var"},
+                    {"b_out"}, "", bn_attrs_b);
+
+    builder.AddNode("add", "Add", {"a_out", "b_out"}, {"Y"});
+    builder.MakeOutput("Y");
+  };
+}
+
+// QDQ form: two BN nodes share one float bias initializer ("shared_bias") but consume different
+// per-tensor scales. Each node's correct fused bias (bias - mean*scale/sqrt(var+eps)) differs.
+// The QNN EP must emit a distinct fused-bias QNN tensor per node; if it instead caches the fused
+// bias under the shared ONNX initializer name, the second BN silently reuses the first node's
+// fused bias and produces wrong results. (Root cause of SiNet w8a8 bn_2/bn_3 bias collision.)
+template <typename InputQType, typename ScaleQType>
+static GetTestQDQModelFn<InputQType> BuildSharedBiasBatchNormQDQTestCase(
+    const TestInputDef<float>& input_def,
+    const std::vector<float>& scale_a_data,
+    const std::vector<float>& scale_b_data,
+    const std::vector<float>& bias_data) {
+  QNN_ASSERT(input_def.IsRawData());
+  return [input_def, scale_a_data, scale_b_data, bias_data](
+             ModelTestBuilder& builder, std::vector<QuantParams<InputQType>>& output_qparams) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
+
+    bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
+    std::string input_dq = AddQDQNodePair<InputQType>(builder, "input_qdq", "input",
+                                                      input_qparams.scale, input_qparams.zero_point);
+
+    auto make_scale_dq = [&](const std::string& tag, const std::vector<float>& sdata) {
+      float abs_max = 0.0f;
+      for (float v : sdata) abs_max = std::max(abs_max, std::abs(v));
+      if (abs_max == 0.0f) abs_max = 1.0f;
+      float qscale = abs_max / static_cast<float>(std::numeric_limits<ScaleQType>::max());
+      builder.MakeInitializer<float>(tag + "_init", {num_channels}, sdata);
+      return AddQDQNodePair<ScaleQType>(builder, tag + "_qdq", tag + "_init", qscale,
+                                        static_cast<ScaleQType>(0));
+    };
+    std::string scale_a_dq = make_scale_dq("scale_a", scale_a_data);
+    std::string scale_b_dq = make_scale_dq("scale_b", scale_b_data);
+
+    // Single shared float bias initializer feeding both BN nodes.
+    builder.MakeInitializer<float>("shared_bias", {num_channels}, bias_data);
+
+    std::vector<float> mean_vals(num_channels);
+    std::vector<float> var_vals(num_channels);
+    ComputeChannelMeanAndVar(input_data, input_shape, mean_vals, var_vals);
+    builder.MakeInitializer<float>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<float>("var", {num_channels}, var_vals);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs;
+    bn_attrs.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    builder.AddNode("bn_a", "BatchNormalization", {input_dq, scale_a_dq, "shared_bias", "mean", "var"},
+                    {"a_out"}, "", bn_attrs);
+    std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs_b;
+    bn_attrs_b.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    builder.AddNode("bn_b", "BatchNormalization", {input_dq, scale_b_dq, "shared_bias", "mean", "var"},
+                    {"b_out"}, "", bn_attrs_b);
+
+    builder.AddNode("add", "Add", {"a_out", "b_out"}, {"add_out"});
+
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "output_qdq", "add_out",
+                                                      output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Two BatchNorm nodes sharing one bias initializer but with different scales must each get their own
+// correct fused bias. Reproduces the SiNet w8a8 bug where the EP cached the fused bias by the shared
+// initializer name, so the second BN reused the first node's bias and accuracy collapsed
+TEST_F(QnnHTPBackendTests, BatchNorm2D_SharedBiasInitializer) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+
+  TestInputDef<float> input_def({2, num_channels, 2, 2}, false, input_data);
+  // Different scales per branch => different correct fused biases despite the shared bias initializer.
+  std::vector<float> scale_a_data = {1.0f, 2.0f};
+  std::vector<float> scale_b_data = {3.0f, 0.5f};
+  std::vector<float> bias_data = {1.1f, 2.1f};
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildSharedBiasBatchNormFloatTestCase<float>(input_def, scale_a_data, scale_b_data, bias_data),
+                       BuildSharedBiasBatchNormQDQTestCase<uint8_t, int8_t>(input_def, scale_a_data, scale_b_data,
+                                                                            bias_data),
+                       provider_options,
+                       21,
+                       ExpectedEPNodeAssignment::All);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

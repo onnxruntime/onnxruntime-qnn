@@ -958,6 +958,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+  model_settings_.enable_block_quant_weight_optimization = ParseBoolOption(ort_api,
+                                                                           session_options_,
+                                                                           FormatEPConfigKey("enable_block_quant_weight_optimization"),
+                                                                           false,
+                                                                           logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,

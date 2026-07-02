@@ -110,12 +110,32 @@ try:
                 assert self.dist_dir is not None
                 file = glob(path.join(self.dist_dir, "*linux*.whl"))[0]
                 logger.info("repairing %s for manylinux1", file)
-                auditwheel_cmd = ["auditwheel", "-v", "repair", "-w", self.dist_dir, file]
+                # Pin to the build's target platform tag. Without --plat, auditwheel
+                # auto-detects the lowest policy the binaries qualify for and emits a
+                # compressed tag set (e.g. manylinux_2_34_x86_64.manylinux_2_35_x86_64).
+                auditwheel_plat = environ["AUDITWHEEL_PLAT"]
+                auditwheel_cmd = ["auditwheel", "-v", "repair", "--plat", auditwheel_plat, "-w", self.dist_dir, file]
                 for dep in qnn_dependencies:
                     auditwheel_cmd.extend(["--exclude", dep])
                 logger.info("Running %s", " ".join([shlex.quote(arg) for arg in auditwheel_cmd]))
                 try:
                     subprocess.run(auditwheel_cmd, check=True, stdout=subprocess.PIPE)
+                    # auditwheel 6.x treats --plat as a ceiling and still emits a compressed
+                    # tag set listing every lower policy the binaries also satisfy. Collapse
+                    # that to the single target tag so the wheel filename is unambiguous.
+                    repaired = glob(path.join(self.dist_dir, "*manylinux*.whl"))[0]
+                    retag_cmd = [
+                        "python",
+                        "-m",
+                        "wheel",
+                        "tags",
+                        "--remove",
+                        "--platform-tag",
+                        auditwheel_plat,
+                        repaired,
+                    ]
+                    logger.info("Running %s", " ".join([shlex.quote(arg) for arg in retag_cmd]))
+                    subprocess.run(retag_cmd, check=True, stdout=subprocess.PIPE)
                 finally:
                     logger.info("removing %s", file)
                     remove(file)

@@ -107,7 +107,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
     if (scale_info.quant_param.IsQuantized()) {
       float quant_scale = 1.0f;
       int32_t zero_point = 0;
-      beta_quant_param = QnnQuantParamsWrapper(quant_scale, zero_point);
+      beta_quant_param = QnnQuantParamsWrapper::PerTensor(quant_scale, zero_point);
     }
 
     const size_t beta_size_in_bytes = utils::GetQnnTensorDataSizeInBytes(beta_shape, beta_data_type);
