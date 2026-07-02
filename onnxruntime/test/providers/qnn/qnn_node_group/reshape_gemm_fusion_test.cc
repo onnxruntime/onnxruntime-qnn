@@ -538,9 +538,10 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_Negative_SharedReshap
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion did NOT fire: the shared input Reshape is standalone, both Gemms run
-  // as independent FullyConnected nodes, and each chain's two output Reshapes are also standalone.
-  // Expected: 1 (shared input) + 2*2 (output chains) = 5 Reshape nodes total.
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 5);
+  // as independent FullyConnected nodes, and each chain's output Reshapes are also standalone.
+  // Note: QNN backend internally merges consecutive Reshapes (Reshape1a+1b → 1 Reshape),
+  // so expected count is 3: 1 (shared input) + 1 (merged chain1) + 1 (merged chain2).
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 3);
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 2);
 }
 
