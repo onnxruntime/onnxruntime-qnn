@@ -181,13 +181,19 @@ Ort::Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, c
               "QNN EP: ReduceLogSumExp operator only supports float input dtypes.");
   }
 
-  if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_L2 && node_unit.Inputs()[0].quant_param.has_value()) {
-    // QNN's Dequantize op does not accept per-channel quantized inputs; the float32 decomposition
-    // below assumes the inserted Dequantize can consume the input tensor's quant params as-is.
-    bool is_per_channel = false;
-    int64_t axis = 0;
-    RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_channel, axis));
-    RETURN_IF(is_per_channel, "QNN EP: ReduceL2 operator does not support per-channel quantized input.");
+  if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_L2) {
+    // QNN's Dequantize/Quantize ops do not accept per-channel quantized tensors; the float32
+    // decomposition below assumes the inserted Dequantize/Quantize can consume the node unit's
+    // input/output quant params as-is.
+    for (const auto& io_def : {node_unit.Inputs()[0], node_unit.Outputs()[0]}) {
+      if (!io_def.quant_param.has_value()) {
+        continue;
+      }
+      bool is_per_channel = false;
+      int64_t axis = 0;
+      RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(io_def, is_per_channel, axis));
+      RETURN_IF(is_per_channel, "QNN EP: ReduceL2 operator does not support per-channel quantized input/output.");
+    }
   }
 
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
@@ -258,9 +264,9 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape), "Cannot get input shape.");
     std::vector<uint32_t> output_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Cannot get output shape.");
-    const bool is_quantized_op = input.quant_param.has_value();
+    const bool is_quantized_input = input.quant_param.has_value();
     Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-    if (!is_quantized_op) {
+    if (!is_quantized_input) {
       RETURN_IF_ERROR(utils::GetQnnDataType(false, output.type, qnn_data_type));
     }
     std::string input_name = input_names[0];
@@ -271,7 +277,7 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       return qnn_model_wrapper.AddTensorWrapper(std::move(wrapper));
     };
 
-    if (is_quantized_op) {
+    if (is_quantized_input) {
       // Insert Dequantize (quantized -> float32) before the float32 decomposition.
       const std::string dq_output_name = utils::UniqueNameGenerator().New(input_name, "_to_f32");
       RETURN_IF_NOT(add_tensor(dq_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
@@ -322,12 +328,12 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     // Step 3: y = Sqrt(y_pow2_sum)
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output.name);
     const std::string sqrt_output_name =
-        is_quantized_op ? utils::UniqueNameGenerator().New(output.name, "_f32") : output.name;
+        is_quantized_input ? utils::UniqueNameGenerator().New(output.name, "_f32") : output.name;
     Qnn_TensorType_t sqrt_tensor_type =
-        (!is_quantized_op && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+        (!is_quantized_input && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
     // The quantized branch below still needs output_shape for the final Quantize output tensor.
     RETURN_IF_NOT(add_tensor(sqrt_output_name, sqrt_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
-                             is_quantized_op ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
+                             is_quantized_input ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
                   "AddTensorWrapper failed");
     std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_UNARY);
     std::vector<std::string> sqrt_param_names;
@@ -343,7 +349,7 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                   do_op_validation),
                   "CreateQnnNode failed");
 
-    if (is_quantized_op) {
+    if (is_quantized_input) {
       // Insert Quantize (float32 -> quantized) after the float32 decomposition, using the
       // QDQ node unit's output quant params.
       Qnn_DataType_t final_qnn_data_type = QNN_DATATYPE_FLOAT_32;
