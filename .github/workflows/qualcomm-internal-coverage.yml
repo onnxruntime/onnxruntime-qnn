@@ -10,7 +10,7 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
+    inputs: &common_inputs
       target_py_vsn:
         description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
         type: string
@@ -24,19 +24,7 @@ on:
         type: string
         default: ''
   workflow_dispatch:
-    inputs:
-      target_py_vsn:
-        description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
-        type: string
-        default: '3.10'
-      nightly_coverage:
-        description: "Set to true to upload the per-file coverage Excel to Artifactory"
-        type: boolean
-        default: false
-      qa_tag:
-        description: "Pre-computed QA tag from the caller; leave blank to auto-generate from today's date + SHA"
-        type: string
-        default: ''
+    inputs: *common_inputs
 
 jobs:
   coverage-linux-x86_64:
