@@ -868,7 +868,7 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      matmul_fp16_out, op_output_name,
                                                      op_output_tensor_type, output_info.qnn_data_type,
                                                      op_output_quant_param.Copy(),
-                                                     std::move(op_output_shape), do_op_validation));
+                                                     op_output_shape, do_op_validation));
   } else {
     QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
                                               op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
