@@ -13,8 +13,21 @@ on:
     - cron: "0 9 * * *"  # Every day at 2am in San Diego/PDT (9am UTC)
 
 jobs:
+  setup:
+    name: Compute Shared QA Tag
+    runs-on: [Linux, self-hosted]
+    outputs:
+      qa_tag: ${{ steps.t.outputs.qa_tag }}
+    steps:
+      - id: t
+        # Compute the QA tag once so all downstream jobs (publish-artifacts + coverage)
+        # upload to the exact same Artifactory directory. Same format as
+        # qualcomm-internal-release.yml's auto-compute fallback.
+        run: echo "qa_tag=nightly-$(date --rfc-3339=date)-${GITHUB_SHA:0:10}" >> "$GITHUB_OUTPUT"
+
   publish-artifacts:
     name: Publish Artifacts
+    needs: setup
     uses: ./.github/workflows/qualcomm-internal-release.yml
     secrets: inherit
     with:
@@ -23,3 +36,14 @@ jobs:
       skip_publish_wheel: false
       build_windows_arm64_debug: true
       build_windows_arm64_relwithdebinfo: true
+      qa_tag: ${{ needs.setup.outputs.qa_tag }}
+
+  coverage:
+    name: Per-File Coverage Tracking
+    needs: setup
+    uses: ./.github/workflows/qualcomm-internal-coverage.yml
+    secrets: inherit
+    continue-on-error: true
+    with:
+      nightly_coverage: true
+      qa_tag: ${{ needs.setup.outputs.qa_tag }}

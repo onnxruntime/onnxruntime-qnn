@@ -10,17 +10,21 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
+    inputs: &common_inputs
       target_py_vsn:
         description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
         type: string
         default: '3.10'
+      nightly_coverage:
+        description: "Set to true to upload the per-file coverage Excel to Artifactory"
+        type: boolean
+        default: false
+      qa_tag:
+        description: "Pre-computed QA tag from the caller; leave blank to auto-generate from today's date + SHA"
+        type: string
+        default: ''
   workflow_dispatch:
-    inputs:
-      target_py_vsn:
-        description: "Python version for the coverage build wheel (does not affect C++ coverage results)"
-        type: string
-        default: '3.10'
+    inputs: *common_inputs
 
 jobs:
   coverage-linux-x86_64:
@@ -28,6 +32,8 @@ jobs:
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     env:
       COVERAGE_DIR: build/linux-x86_64/RelWithDebInfo/coverage
+      # Consumed by upload-qa-artifact's publish_qa.py (reads os.environ["BUILD_ARTIFACTORY_REPO"]).
+      BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -42,7 +48,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || \
+             [ "${{ inputs.nightly_coverage }}" = "true" ]; then
             echo "run=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -79,7 +86,7 @@ jobs:
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && !cancelled()
         with:
           name: "coverage-linux-x86_64-${{ github.sha }}"
           retention-days: 3
@@ -90,7 +97,7 @@ jobs:
             ${{ env.COVERAGE_DIR }}/diff-coverage.txt
 
       - name: Show Diff Coverage Summary
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && !cancelled()
         run: |
           txt="${COVERAGE_DIR}/diff-coverage.txt"
           if [ -f "${txt}" ]; then
@@ -99,6 +106,73 @@ jobs:
             cat "${txt}" >> "${GITHUB_STEP_SUMMARY}"
             echo '```' >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      - name: Set up JFrog CLI
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        uses: jfrog/setup-jfrog-cli@v5
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Set QA Build Tag
+        # Use the caller-provided qa_tag if present so coverage shares the exact same
+        # Artifactory directory as the nightly release upload. Falls back to auto-compute
+        # for standalone runs (workflow_dispatch / PR CI). Mirrors qualcomm-internal-release.yml.
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        run: |
+          if [ -z "${{ inputs.qa_tag }}" ]; then
+            run_date="$(date --rfc-3339=date)"
+            echo "QA_TAG=nightly-${run_date}-${GITHUB_SHA:0:10}" >> ${GITHUB_ENV}
+            echo "COVERAGE_RUN_DATE=${run_date}" >> ${GITHUB_ENV}
+          else
+            echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
+            # Extract date portion from the canonical "nightly-YYYY-MM-DD-{sha}" format
+            # so the Excel's date column matches the directory name.
+            run_date="$(echo '${{ inputs.qa_tag }}' | sed -n 's/^nightly-\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)-.*/\1/p')"
+            if [ -z "${run_date}" ]; then
+              echo "::warning::qa_tag '${{ inputs.qa_tag }}' is not canonical (nightly-YYYY-MM-DD-*); falling back to today's UTC date for the Excel date column"
+              run_date="$(date --rfc-3339=date)"
+            fi
+            echo "COVERAGE_RUN_DATE=${run_date}" >> ${GITHUB_ENV}
+          fi
+
+      - name: Update per-file coverage Excel
+        # !cancelled(): run even when the coverage step failed due to UT failure.
+        # coverage.xml is still produced by generate_coverage.sh before it propagates the exit code.
+        # File guard: build-stage failures (cmake, link, submodule) can leave coverage.xml absent — skip cleanly.
+        # update_coverage_excel.py picks up $COVERAGE_RUN_DATE for the Excel's date column.
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        run: |
+          [ -f "${COVERAGE_DIR}/coverage.xml" ] || {
+            echo "::warning::coverage.xml missing — skipping nightly Excel generation"
+            echo "### ⚠️ No coverage Excel produced this nightly (coverage.xml missing)" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          }
+          python3 qcom/build_and_test.py \
+            --target-py-version ${{ inputs.target_py_vsn }} \
+            --only \
+            file_coverage_excel_linux_x86_64
+
+      - name: Check coverage Excel exists
+        id: check_xlsx
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
+        run: |
+          if [ -f "${COVERAGE_DIR}/per_file_coverage.xlsx" ]; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::warning::per_file_coverage.xlsx missing — skipping nightly Artifactory upload"
+            echo "### ⚠️ No coverage Excel produced this nightly (per_file_coverage.xlsx missing)" >> "${GITHUB_STEP_SUMMARY}"
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Upload per-file coverage Excel to Artifactory
+        # Reuse the shared QA upload action so the qa/{tag} path convention lives in one place
+        # (publish_qa.py -> QaArtifactory.artifact_root) instead of being re-derived here.
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled() && steps.check_xlsx.outputs.exists == 'true'
+        uses: ./.github/actions/upload-qa-artifact
+        with:
+          src_pattern: "linux-x86_64/RelWithDebInfo/coverage/per_file_coverage.xlsx"
+          qa_tag: ${{ env.QA_TAG }}
 
       - name: Post Diff Coverage to PR
         # TODO: re-enable once the coverage pipeline is stable.

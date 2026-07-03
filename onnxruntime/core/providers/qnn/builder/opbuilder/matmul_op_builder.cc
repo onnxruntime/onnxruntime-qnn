@@ -4,12 +4,12 @@
 #include <functional>
 #include <limits>
 #include <numeric>
-#include <unordered_map>
 
 #include <gsl/gsl>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -20,28 +20,6 @@ namespace qnn {
 namespace {
 inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
   return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
-// HTP BQ MatMul: supported weight bitwidths and their block_size divisor constraints.
-// block_size must be a multiple of the corresponding value (same as Conv BQ / MatMulNBits HTP constraints).
-const std::unordered_map<uint32_t, int64_t> kHtpMatMulBQBitsAndBlockSizeMultipliers{
-    {2, 16}, {4, 8}, {8, 4}};
-
-// Returns BQ weight bitwidth (2/4/8) from an ONNX element data type, or 0 if unsupported.
-uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
-  switch (onnx_type) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
-      return 2;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
-      return 4;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      return 8;
-    default:
-      return 0;
-  }
 }
 
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
@@ -82,14 +60,7 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   }
   // Blocked axis is rank-2 (K dimension). scale_shape[rank-2] < weight_shape[rank-2].
   const size_t k_axis = rank - 2;
-  if (scale_shape[k_axis] >= static_cast<int64_t>(weight_shape[k_axis])) {
-    return false;
-  }
-  const int64_t num_blocks = scale_shape[k_axis];
-  if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[k_axis]) % num_blocks != 0) {
-    return false;
-  }
-  return true;
+  return bq::IsBQScale(scale_shape, weight_shape, k_axis);
 }
 
 // Flattens the leading dims of `shape` (all but the last `n_trailing` dims) into a single
@@ -668,29 +639,14 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   {
     const std::string act_name = input_names[0];
     const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
-    const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
     std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
 
-    std::string fp16_name = act_name;
-    // BW_FLOAT_BLOCK MatMul requires FP16 activation. The only activation dtype reaching this
-    // path through the QDQ selector is INT16 (SFIXED or UFIXED), so anything else is unexpected.
-    RETURN_IF_NOT(act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16,
-                  "QNN EP: BQ MatMul activation must be INT16-quantized for the BW_FLOAT_BLOCK kernel");
-    // Reuse the original DequantizeLinear node's output name (the target MatMul's input[0]) for the
-    // FP16 tensor. That tensor is conceptually the dequantized activation — exactly what this
-    // INT16→FP16 Dequantize produces — and QNN EP otherwise skips it, so the name is free and keeps
-    // the QNN graph aligned with the ONNX graph naming.
-    fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-    QnnTensorWrapper fp16_act_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
-                                      QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                      std::vector<uint32_t>(act_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_act_wrapper)),
-                  "Failed to add FP16 activation tensor for BQ MatMul.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                      {act_name}, {fp16_name}, {}, do_op_validation),
-                  "Failed to add INT16→FP16 Dequantize node for BQ MatMul activation.");
+    // BW_FLOAT_BLOCK MatMul requires FP16 activation; dequantize the INT16 activation to FP16.
+    // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
+    // stays aligned with the ONNX graph naming.
+    const std::string fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+    RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
+                                                           fp16_name, do_op_validation, "MatMul"));
 
     // Reshape the FP16 activation [..., M, K] to 4-D [batch, 1, M, K] for the QNN HTP BQ MatMul.
     const uint32_t k_dim = act_shape.back();
@@ -717,29 +673,20 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   RETURN_IF_NOT(scale_shape.size() == w_rank,
                 "QNN EP: BQ MatMul scale rank must match weight rank");
   const int64_t num_blocks = scale_shape[w_rank - 2];
-  RETURN_IF(num_blocks <= 0 || K % num_blocks != 0, "QNN EP: BQ MatMul K must be divisible by num_blocks");
-  const int64_t block_size = K / num_blocks;
-  const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
-  auto bq_it = kHtpMatMulBQBitsAndBlockSizeMultipliers.find(bitwidth);
-  RETURN_IF(bq_it == kHtpMatMulBQBitsAndBlockSizeMultipliers.end(),
-            ("QNN HTP MatMul BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
-  RETURN_IF(block_size % bq_it->second != 0,
-            ("QNN HTP MatMul BQ: block_size=" + std::to_string(block_size) +
-             " must be a multiple of " + std::to_string(bq_it->second) +
-             " for " + std::to_string(bitwidth) + "-bit weight")
-                .c_str());
+  int64_t block_size = 0;
+  RETURN_IF_ERROR(bq::ResolveBlockSize(inputs[1], K, num_blocks, "MatMul", block_size));
+  const uint32_t bitwidth = bq::GetBQBitwidth(inputs[1].type);
+  RETURN_IF_ERROR(bq::ValidateBQBitwidthAndBlockSize(bitwidth, block_size, "MatMul"));
 
   // Unpack the weight to one byte per element (sub-byte INT2/INT4 expanded to INT8).
   std::vector<uint8_t> unpacked_tensor;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
 
-  // For unsigned types (UINT2/UINT4/UINT8), shift weight data to the signed domain. QNN BW_FLOAT_BLOCK
-  // only supports SFIXED_POINT_8 (signed); unsigned data must be converted (see conv_op_builder.cc).
-  const bool is_unsigned_weight = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 ||
-                                   inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
-                                   inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+  // For unsigned types (UINT2/UINT4/UINT8), shift weight data to the signed domain.
+  const bool is_unsigned_weight = bq::IsUnsignedBQType(inputs[1].type);
   if (is_unsigned_weight) {
-    RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_tensor, static_cast<int64_t>(bitwidth)));
+    RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_tensor,
+                                                               static_cast<int64_t>(bitwidth)));
   }
 
   // QNN HTP requires a BQ MatMul to be expressed with 4-D activation, 4-D weight, and a 4-D blockSize.
@@ -749,41 +696,21 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
 
   // ONNX per-block float scales are laid out [..., num_blocks, N] (block-major along K-axis).
   // QNN expects the scale/offset array output-channel-major: [N, num_blocks].
-  // Transpose from [num_blocks, N] → [N, num_blocks] (leading dims are always 1, so we just
-  // look at the last two dims of the flat scale array).
   std::vector<float> onnx_scales;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[1].quant_param->scale, onnx_scales));
   RETURN_IF_NOT(static_cast<int64_t>(onnx_scales.size()) == num_blocks * N,
                 "QNN EP: BQ MatMul scale size mismatch");
 
-  // Float offsets in ONNX [num_blocks, N] order before transpose. Matches the Conv BQ formula:
-  //   offsets_qnn[idx] = unsigned_bias - zp_values[idx]
-  // where zp_values come from UnpackZeroPoints and unsigned_bias = (1 << (bits-1)) for unsigned weights
-  // (compensating for the unsigned→signed shift above), 0 for signed weights.
-  const float unsigned_bias = is_unsigned_weight ? static_cast<float>(1u << (bitwidth - 1)) : 0.0f;
-  std::vector<float> onnx_offsets(static_cast<size_t>(num_blocks * N), unsigned_bias);
-  if (inputs[1].quant_param->zero_point != nullptr) {
-    std::vector<int32_t> zp_values;
-    ONNXTensorElementDataType zp_onnx_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(inputs[1].quant_param->zero_point, zp_values, zp_onnx_type));
-    RETURN_IF_NOT(static_cast<int64_t>(zp_values.size()) == num_blocks * N,
-                  "QNN EP: BQ MatMul zero_point size must match num_blocks * N");
-    for (size_t idx = 0; idx < zp_values.size(); ++idx) {
-      onnx_offsets[idx] = unsigned_bias - static_cast<float>(zp_values[idx]);
-    }
-  }
+  // Float offsets in ONNX [num_blocks, N] order before transpose.
+  std::vector<float> onnx_offsets;
+  RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
+                                       is_unsigned_weight, bitwidth, num_blocks * N, onnx_offsets));
 
   // Transpose scales/offsets [num_blocks, N] → [N, num_blocks].
-  std::vector<float> scales_qnn(static_cast<size_t>(N * num_blocks));
-  std::vector<float> offsets_qnn(static_cast<size_t>(N * num_blocks));
-  for (int64_t b = 0; b < num_blocks; ++b) {
-    for (int64_t n = 0; n < N; ++n) {
-      const size_t src = static_cast<size_t>(b * N + n);
-      const size_t dst = static_cast<size_t>(n * num_blocks + b);
-      scales_qnn[dst] = onnx_scales[src];
-      offsets_qnn[dst] = onnx_offsets[src];
-    }
-  }
+  const std::vector<uint32_t> transpose_shape = {static_cast<uint32_t>(num_blocks), static_cast<uint32_t>(N)};
+  std::vector<float> scales_qnn, offsets_qnn;
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_scales, transpose_shape, scales_qnn, logger));
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_offsets, transpose_shape, offsets_qnn, logger));
 
   QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
                                                                               gsl::span<const float>(offsets_qnn),
@@ -937,16 +864,11 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      QnnQuantParamsWrapper(), do_op_validation,
                                                      /*is_for_input=*/false, /*is_for_output=*/false));
 
-    // INT16 quantized output tensor consumed by downstream nodes (or the graph output).
-    QnnTensorWrapper int16_out_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                       op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                  "Failed to add INT16 BQ MatMul output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(op_output_name, "_fp16_quantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                      {matmul_fp16_out}, {op_output_name}, {}, do_op_validation),
-                  "Failed to add FP16→INT16 Quantize node for BQ MatMul output.");
+    RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
+                                                     matmul_fp16_out, op_output_name,
+                                                     op_output_tensor_type, output_info.qnn_data_type,
+                                                     op_output_quant_param.Copy(),
+                                                     op_output_shape, do_op_validation));
   } else {
     QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
                                               op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
