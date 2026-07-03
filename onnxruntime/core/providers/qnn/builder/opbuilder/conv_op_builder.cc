@@ -401,7 +401,7 @@ Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          std::vector<std::string>& input_names,
                                          bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
-  assert(inputs.size() >= 2);
+  RETURN_IF_NOT(inputs.size() >= 2, "Expecting at least two inputs.");
 
   std::vector<uint32_t> input0_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
@@ -426,7 +426,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   OnnxConvType conv_type = {};
   RETURN_IF_ERROR(GetOnnxConvType(node_unit.OpType(), conv_type));
 
-  assert(num_inputs >= 2);  // Checked by IsOpSupported.
+  RETURN_IF_NOT(num_inputs >= 2, "Expecting at least two inputs.");  // Checked by IsOpSupported.
 
   //
   // Input 0
@@ -486,8 +486,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                ? "weight quant params not LPBQ (enable_block_quant_weight_optimization=0, non-INT4, or asymmetric ZP)"
                                : "unknown";
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Conv weight encoding: BW_FLOAT_BLOCK for " + input1_name +
-                   " [LPBQ skipped: " + reason + "]")
+                  ("Conv weight encoding: non-LPBQ block-quant path for " + input1_name +
+                   " [LPBQ skipped: " + reason + "] — native BQ (BLOCK) vs BW_FLOAT_BLOCK is decided below")
                       .c_str());
     }
   }
@@ -495,15 +495,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   if (is_bq_weight && !use_lpbq_path) {
     RETURN_IF_NOT(input_info.is_initializer, "QNN EP: BQ Conv weight must be a constant initializer");
 
-    // Activation handling: BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via Dequantize.
-    if (utils::IsQuant16bit(act_dtype)) {
-      // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
-      // stays aligned with the ONNX graph naming.
-      const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-      RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
-                                                             fp16_act_name, do_op_validation, "Conv"));
-      input_names[0] = fp16_act_name;
-    }
+    // Activation handling: the non-native BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via
+    // Dequantize. The native BQ kernel (ENCODING_BLOCK) consumes INT16 directly and needs no Dequantize.
+    // The insertion is deferred until the offsets are known, since offset symmetry is one of the
+    // native-BQ preconditions checked by bq::IsHTPSupportedNativeBQ below.
 
     // Common: transpose weight data from OIHW→HWIO (or IOHW→HWIO for ConvTranspose).
     // TransposeFromNchwToHwcn unpacks INT4 to INT8 internally (1 byte per element).
@@ -557,10 +552,51 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
                                          is_unsigned_weight, bitwidth, OC * nb, offsets_qnn));
 
-    QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
-                                                                                gsl::span<const float>(offsets_qnn),
-                                                                                bitwidth,
-                                                                                gsl::span<const uint32_t>(block_size_arr));
+    // Prefer the HTP native BQ kernel (QNN_QUANTIZATION_ENCODING_BLOCK) when the BQ parameters satisfy its
+    // constraints: it consumes the INT16 activation and produces an INT16 output directly, avoiding the
+    // INT16→FP16 activation Dequantize and FP16→INT16 output Quantize that BW_FLOAT_BLOCK requires.
+    // Restricted to the bias-less case (num_inputs < 3): with a bias present the BW_FLOAT_BLOCK path also
+    // dequantizes the INT32 bias to FP16 (see ProcessConv2D3DBias), which the native kernel does not expect.
+    const bool is_supported_native_bq = num_inputs < 3 &&
+                                        bq::IsHTPSupportedNativeBQ(qnn_model_wrapper.GetHtpArch(),
+                                                                   act_dtype,
+                                                                   bitwidth,
+                                                                   static_cast<uint32_t>(block_size),
+                                                                   static_cast<uint32_t>(OC),
+                                                                   gsl::span<const float>(offsets_qnn));
+
+    QnnQuantParamsWrapper bq_quant_params;
+    if (is_supported_native_bq) {
+      // Native BQ requires symmetric quantization; IsHTPSupportedNativeBQ has verified all offsets are zero.
+      const std::vector<int32_t> offsets_sym(offsets_qnn.size(), 0);
+      bq_quant_params = QnnQuantParamsWrapper::Block(gsl::span<const float>(scales_qnn),
+                                                     gsl::span<const int32_t>(offsets_sym),
+                                                     gsl::span<const uint32_t>(block_size_arr));
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Conv weight encoding: native BQ (BLOCK) for " + input1_name).c_str());
+    } else {
+      bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                            gsl::span<const float>(offsets_qnn),
+                                                            bitwidth,
+                                                            gsl::span<const uint32_t>(block_size_arr));
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Conv weight encoding: BW_FLOAT_BLOCK for " + input1_name).c_str());
+
+      // Non-native BQ kernel computes in FP16, so dequantize the INT16 activation first.
+      if (utils::IsQuant16bit(act_dtype)) {
+        // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
+        // stays aligned with the ONNX graph naming.
+        const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+        RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
+                                                               act_name,
+                                                               fp16_act_name,
+                                                               do_op_validation,
+                                                               "Conv"));
+        input_names[0] = fp16_act_name;
+      }
+    }
 
     // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
     QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
@@ -749,7 +785,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
   OnnxConvType conv_type = {};
   RETURN_IF_ERROR(GetOnnxConvType(node_unit.OpType(), conv_type));
 
-  assert(num_inputs >= 2);  // Checked by IsOpSupported.
+  RETURN_IF_NOT(num_inputs >= 2, "Expecting at least two inputs.");  // Checked by IsOpSupported.
 
   //
   // Input 0
@@ -1212,12 +1248,17 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, output_type, qnn_data_type));
 
-  // Detect BQ Conv from the weight tensor's quant encoding.
-  // BQ  (BW_FLOAT_BLOCK):       Conv outputs FP16 → need FP16 intermediate + Convert(FP16→INT16).
+  // Detect the non-native BQ Conv from the weight tensor's quant encoding.
+  // native BQ (BLOCK)             : Conv outputs INT16 → standard quantized output path.
+  // non-native BQ (BW_FLOAT_BLOCK): Conv outputs FP16 → need FP16 intermediate + Quantize(FP16→INT16).
+  // LPBQ (BLOCKWISE_EXPANSION)    : Conv outputs INT16 → standard quantized output path.
+  // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
   // input_names[1] is the weight — IsOpSupported guarantees Conv has >= 2 inputs.
-  bool is_bq_conv = false;
+  bool is_bw_float_block = false;
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
-    is_bq_conv = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsBlockQuantized();
+    const auto& quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
+    is_bw_float_block = quant_params.encodingDefinition == QNN_DEFINITION_DEFINED &&
+                        quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK;
   }
 
   const auto& output_name = outputs[0].name;
@@ -1256,8 +1297,8 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    if (is_bq_conv && is_quantized_tensor) {
-      // BQ Conv outputs FP16; downstream QDQ expects INT16.
+    if (is_bw_float_block && is_quantized_tensor) {
+      // Non-native BQ Conv outputs FP16; downstream QDQ expects INT16.
       // Emit: Conv (FP16 output) → Quantize (FP16 → INT16 quantized output).
       // Reuse the original QuantizeLinear input name for the FP16 tensor so the QNN graph
       // stays aligned with the ONNX graph naming.

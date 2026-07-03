@@ -10,6 +10,7 @@
 
 #include <gsl/gsl>
 
+#include "HTP/QnnHtpDeviceConfigShared.h"
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
@@ -91,6 +92,16 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
                                          QnnQuantParamsWrapper int16_quant_param,
                                          std::vector<uint32_t> output_shape,
                                          bool do_op_validation);
+
+// Determine whether given BQ parameters are natively supported by HTP. If true, activation data type can be kept in
+// fixed point; otherwise, insert Dequantize and Quantize nodes around to make activation in FP16.
+// Note: HTP native BQ requires HTP arch >= 81.
+bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
+                            Qnn_DataType_t act_data_type,
+                            uint32_t bitwidth,
+                            uint32_t block_size,
+                            uint32_t output_channel,
+                            gsl::span<const float> offsets);
 
 }  // namespace bq
 }  // namespace qnn

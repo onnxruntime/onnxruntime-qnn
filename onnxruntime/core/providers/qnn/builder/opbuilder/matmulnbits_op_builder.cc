@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <cassert>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -59,22 +58,32 @@ namespace qnn {
  * 1. Reshape
  *      in   Input     fp16/fp32/uint16/int16   [batch_size, sequence_len, K]
  *      out  Output    fp16/fp32/uint16/int16   [batch_size, 1, sequence_len, K]
- * 2a. Cast
+ * 2a. Cast (only when A is fp32)
  *      in   Input     fp32                     [batch_size, 1, sequence_len, K]
  *      out  Output    fp16                     [batch_size, 1, sequence_len, K]
- * 2b. Dequantize
+ * 2b. Dequantize (only when A is uint16/int16 and the weight is BW_FLOAT_BLOCK)
  *      in   Input     uint16/int16             [batch_size, 1, sequence_len, K]
  *      out  Output    fp16                     [batch_size, 1, sequence_len, K]
  * 3. Conv2d
  *      in   Input     fp16                     [batch_size, 1, sequence_len, K]
- *      in   Weight    qint8 (BwFloatBlock)     [1, 1, K, N]
- *                       scales   fp32          [N * (K / block_size)]
- *                       offsets  fp32          [N * (K / block_size)]
+ *                     uint16/int16               (LPBQ / native BQ)
+ *      in   Weight    qint8, one byte per element, transposed [N,K] -> [1, 1, K, N]
+ *                     (BLOCKWISE_EXPANSION)
+ *                       per-channel scales  fp32   [N]
+ *                       per-block scales    uint8  [N * (K / block_size)]
+ *                       offsets             int32  [N], all 0
+ *                     (BLOCK)
+ *                       scales              fp32   [N * (K / block_size)]
+ *                       offsets             int32  [N * (K / block_size)], all 0
+ *                     (BW_FLOAT_BLOCK)
+ *                       scales              fp32   [N * (K / block_size)]
+ *                       offsets             fp32   [N * (K / block_size)]
  *      out  Output    fp16                     [batch_size, 1, sequence_len, N]
- * 4a. Cast
+ *                     uint16/int16               (LPBQ / native BQ)
+ * 4a. Cast (only when Y is fp32)
  *      in   Input     fp16                     [batch_size, 1, sequence_len, N]
  *      out  Output    fp32                     [batch_size, 1, sequence_len, N]
- * 4b. Quantize
+ * 4b. Quantize (only when Y is uint16/int16 and the weight is BW_FLOAT_BLOCK)
  *      in   Input     fp16                     [batch_size, 1, sequence_len, N]
  *      out  Output    uint16/int16             [batch_size, 1, sequence_len, N]
  * 5. Reshape
@@ -287,7 +296,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
   const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
 
   // Should already be guaranteed in IsOpSupported.
-  assert(K > 0 && N > 0 && bits > 0 && block_size > 0);
+  RETURN_IF_NOT(K > 0 && N > 0 && bits > 0 && block_size > 0, "Unexpected MatMulNbits attribute values.");
 
   const int64_t num_elements_per_uint8 = kByteBits / bits;
   const int64_t num_zp_per_uint8 = K / block_size < num_elements_per_uint8 ? K / block_size : num_elements_per_uint8;
@@ -309,7 +318,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       is_act_16bitquant = utils::IsQuant16bit(input_info.qnn_data_type);
 
       // Input A having 3D shape is guaranteed in IsOpSupported.
-      assert(input_info.shape.size() == 3);
+      RETURN_IF_NOT(input_info.shape.size() == 3, "Unexpected MatMulNBits input rank");
       std::vector<uint32_t> reshape_output_shape = {input_info.shape[0], 1, input_info.shape[1], input_info.shape[2]};
 
       const std::string reshape_output_name = utils::UniqueNameGenerator().New(input_names[0], "_reshape_4d");
@@ -474,12 +483,17 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         }
 
         if (!used_lpbq) {
-          // BwFloatBlock (float block-quantized) path.
+          // Non-LPBQ block-quant path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
           const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
                                : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
                                : !zp_is_symmetric ? "zero-points not symmetric"
                                                   : "LPBQ conversion failed (enable_block_quant_weight_optimization=0)";
-          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: BW_FLOAT_BLOCK for " + weight_tensor_name + " [LPBQ skipped: " + reason + "]").c_str());
+          ORT_CXX_LOG(logger,
+                      ORT_LOGGING_LEVEL_VERBOSE,
+                      ("MatMulNBits weight encoding: non-LPBQ block-quant path for " + weight_tensor_name +
+                       " [LPBQ skipped: " + reason + "]")
+                          .c_str());
+
           // 2.5 Block-quantized offsets.
           std::vector<float> per_block_float_zp;
           if (inputs.size() > 3 && inputs[3].Exists()) {
@@ -502,19 +516,47 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
           // Note that unlike weights requiring transpose, scales/offsets are expected in original ONNX shape.
           const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
-          quantize_param = QnnQuantParamsWrapper::BwFloatBlock(per_block_float_scale,
-                                                               per_block_float_zp,
-                                                               gsl::narrow_cast<uint32_t>(bits),
-                                                               block_sizes);
-          if (is_act_16bitquant) {
-            // 2.6 Add Dequantize to UINT16/INT16 → FP16.
-            const std::string fp16_act_name = utils::UniqueNameGenerator().New(input_names[0], "_dq_fp16");
-            RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
-                                                                   input_names[0],
-                                                                   fp16_act_name,
-                                                                   do_op_validation,
-                                                                   "MatMulNBits"));
-            input_names[0] = fp16_act_name;
+
+          // Prefer the HTP native BQ kernel (QNN_QUANTIZATION_ENCODING_BLOCK) when the BQ parameters satisfy
+          // its constraints: it consumes the INT16 activation and produces an INT16 output directly, avoiding
+          // the INT16→FP16 activation Dequantize and FP16→INT16 output Quantize that BW_FLOAT_BLOCK requires.
+          RETURN_IF_NOT(qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0]),
+                        "Expecting MatMulNBits input tensor wrapper should already be constructed.");
+          const Qnn_DataType_t act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+          const bool is_supported_native_bq = bq::IsHTPSupportedNativeBQ(qnn_model_wrapper.GetHtpArch(),
+                                                                         act_dtype,
+                                                                         gsl::narrow_cast<uint32_t>(bits),
+                                                                         gsl::narrow_cast<uint32_t>(block_size),
+                                                                         gsl::narrow_cast<uint32_t>(N),
+                                                                         per_block_float_zp);
+
+          if (is_supported_native_bq) {
+            // Native BQ requires symmetric quantization; IsHTPSupportedNativeBQ verified all offsets are zero.
+            const std::vector<int32_t> per_block_int32_zp(per_block_float_zp.size(), 0);
+            quantize_param = QnnQuantParamsWrapper::Block(per_block_float_scale,
+                                                          per_block_int32_zp,
+                                                          block_sizes);
+            ORT_CXX_LOG(logger,
+                        ORT_LOGGING_LEVEL_VERBOSE,
+                        ("MatMulNBits weight encoding: native BQ (BLOCK) for " + weight_tensor_name).c_str());
+          } else {
+            quantize_param = QnnQuantParamsWrapper::BwFloatBlock(per_block_float_scale,
+                                                                 per_block_float_zp,
+                                                                 gsl::narrow_cast<uint32_t>(bits),
+                                                                 block_sizes);
+            ORT_CXX_LOG(logger,
+                        ORT_LOGGING_LEVEL_VERBOSE,
+                        ("MatMulNBits weight encoding: BW_FLOAT_BLOCK for " + weight_tensor_name).c_str());
+            if (is_act_16bitquant) {
+              // 2.6 Add Dequantize to UINT16/INT16 → FP16 (only the non-native BQ kernel needs FP16 activation).
+              const std::string fp16_act_name = utils::UniqueNameGenerator().New(input_names[0], "_dq_fp16");
+              RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
+                                                                     input_names[0],
+                                                                     fp16_act_name,
+                                                                     do_op_validation,
+                                                                     "MatMulNBits"));
+              input_names[0] = fp16_act_name;
+            }
           }
         }
       }
@@ -637,21 +679,28 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                            param_tensor_names));
 
     // Input originally having 3D shape is guaranteed in IsOpSupported.
-    assert(output_info.shape.size() == 3);
+    RETURN_IF_NOT(output_info.shape.size() == 3, "Unexpected MatMulNBits output rank.");
     std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
 
-    // Detect LPBQ from the registered weight tensor's quant encoding.
-    // For LPBQ, the Conv2D output uses the actual output data type (e.g., uint16/int16 for QDQ models).
-    // For BwFloatBlock, the Conv2D kernel always outputs FP16.
-    const bool is_lpbq = qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
-                         qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsLPBQ();
-    const Qnn_DataType_t conv2d_output_dtype = is_lpbq ? output_info.qnn_data_type : QNN_DATATYPE_FLOAT_16;
+    // Determine the Conv2D output data type from the registered weight tensor's quant encoding.
+    // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION) and native BQ
+    // (BLOCK) both produce the actual output data type (e.g. uint16/int16 for QDQ models) directly.
+    // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
+    bool is_bw_float_block = false;
+    if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
+      const auto& weight_quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
+      is_bw_float_block = weight_quant_params.encodingDefinition == QNN_DEFINITION_DEFINED &&
+                          weight_quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK;
+    }
+    const Qnn_DataType_t conv2d_output_dtype = is_bw_float_block ? QNN_DATATYPE_FLOAT_16 : output_info.qnn_data_type;
+    QnnQuantParamsWrapper conv2d_output_qparam = is_bw_float_block ? QnnQuantParamsWrapper()
+                                                                   : output_info.quant_param.Copy();
 
     const std::string conv2d_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
     QnnTensorWrapper conv2d_output_tensor_wrapper(conv2d_output_name,
                                                   QNN_TENSOR_TYPE_NATIVE,
                                                   conv2d_output_dtype,
-                                                  output_info.quant_param.Copy(),
+                                                  std::move(conv2d_output_qparam),
                                                   std::vector<uint32_t>(conv2d_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv2d_output_tensor_wrapper)),
                   "Failed to add Conv2d output tensor.");
@@ -680,8 +729,8 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                     do_op_validation));
 
       reshape_input_name = cast_output_name;
-    } else if (utils::IsQuant16bit(output_info.qnn_data_type) && !is_lpbq) {
-      // 2. Add Quantize to FP16 → UINT16/INT16.
+    } else if (utils::IsQuant16bit(output_info.qnn_data_type) && is_bw_float_block) {
+      // 2. Add Quantize to FP16 → UINT16/INT16 (only needed when the kernel computed in FP16).
       const std::string q_suffix = output_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ? "_q_int16" : "_q_uint16";
       const std::string q_output_name = utils::UniqueNameGenerator().New(output_tensor.name, q_suffix);
       RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,

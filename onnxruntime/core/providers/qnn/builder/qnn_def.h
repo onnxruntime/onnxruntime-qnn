@@ -64,6 +64,11 @@ namespace qnn {
 #endif
 #endif
 
+// HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_HTP_NATIVE_BQ_AVAILABLE
+#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+
 // QNN only support subset of POSIX of dlopen/dlsym/dladdr/dlerror/dlclose
 // except the following flags for dlopen, others should be done only
 // when we really need them

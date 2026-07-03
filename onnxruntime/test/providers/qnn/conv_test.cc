@@ -3,12 +3,15 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
-#include "test/providers/qnn/qnn_test_utils.h"
-
+#include <gsl/gsl_util>
 #include "gtest/gtest.h"
+
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
+#include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -3430,6 +3433,45 @@ ProviderOptions GetLPBQConvProviderOptions() {
   return opts;
 }
 
+// Runs a BQ Conv model on the QNN HTP backend and verifies which BQ encoding path QNN EP selected by inspecting the
+// dumped QNN graph JSON.
+//   - Native BQ  (QNN_QUANTIZATION_ENCODING_BLOCK): no INT16→FP16 activation Dequantize and no
+//     FP16→INT16 output Quantize are inserted → Quantize=1, Dequantize=1.
+//   - Fallback   (QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK): activation Dequantize and output
+//     Quantize are inserted → Quantize=2, Dequantize=2.
+void RunNativeBQConvTest(GetQDQTestCaseFn build_fn,
+                         bool expect_native_bq,
+                         float fp32_abs_err = 1e-2f) {
+  ProviderOptions provider_options = GetBQConvProviderOptions();
+
+  // Dump JSON graph for verifying native BQ working as expected.
+  const std::filesystem::path json_qnn_graph_dir = "ConvNativeBQ";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(build_fn,
+                  provider_options,
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)});
+
+#ifndef QNN_HTP_NATIVE_BQ_AVAILABLE
+  // HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
+  // Disable here to avoid guarding everywhere.
+  expect_native_bq = false;
+#endif
+
+  if (expect_native_bq) {
+    AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", 1);
+    AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 1);
+  } else {
+    AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", 2);
+    AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 2);
+  }
+}
+
 }  // namespace
 
 // 1x1 Conv, INT4 weight, block_size=8, uint16 activation, no bias.
@@ -3751,6 +3793,123 @@ TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithFloatBias_BS32) {
                   GetLPBQConvProviderOptions(),
                   /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// ── HTP native BQ path ────────────────────────────────────────────────────────
+// HTP native BQ kernel adopts QNN_QUANTIZATION_ENCODING_BLOCK encoding type.
+// Compared to non-native BQ kernel adopting QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK, no INT16→FP16 activation dequant
+// and no FP16→INT16 output quantize are inserted.
+
+// Native path: INT4, block_size=32, IC=32, OC=32.
+TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_BlockSize32) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
+
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{32, 32, 1, 1},
+                                          /*block_size=*/32,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+}
+
+// Native path: INT4, block_size=64, IC=64, OC=32.
+TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_BlockSize64) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
+
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
+                                          /*weight=*/{32, 64, 1, 1},
+                                          /*block_size=*/64,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+}
+
+// Native path: INT4, block_size=128, IC=128, OC=32.
+TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_BlockSize128) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
+
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 128, 4, 4},
+                                          /*weight=*/{32, 128, 1, 1},
+                                          /*block_size=*/128,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+}
+
+// Native path: INT4, block_size=32, IC=64, OC=64.
+TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_MultiBlock) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
+
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
+                                          /*weight=*/{64, 64, 1, 1},
+                                          /*block_size=*/32,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+}
+
+// Fallback edge: Unsupported bitwidth 8.
+TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_Int8BlockSize32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{32, 32, 1, 1},
+                                          /*block_size=*/32,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/8),
+                      /*expect_native_bq=*/false);
+}
+
+// Fallback edge: Unsupported block size 16.
+TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{32, 32, 1, 1},
+                                          /*block_size=*/16,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/false);
+}
+
+// Fallback edge: Unsupported asymmetric offsets.
+TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_UInt4Asymmetric) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{32, 32, 1, 1},
+                                          /*block_size=*/32,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4,
+                                          /*weight_is_unsigned=*/true),
+                      /*expect_native_bq=*/false);
+}
+
+// Fallback edge: Unsupported non-32 multiplier OC.
+TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_OcNotMultipleOf32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{16, 32, 1, 1},
+                                          /*block_size=*/32,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/false);
+}
+
+// Fallback edge: Unsupported Conv with bias.
+TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_ConvWithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{32, 32, 1, 1},
+                                          /*block_size=*/32,
+                                          /*bias=*/true,
+                                          /*weight_bits=*/4),
+                      /*expect_native_bq=*/false);
 }
 
 // Tests for reuse_sparse_indices parameter (always false, verifies the parameter is accepted by QNN without errors).
