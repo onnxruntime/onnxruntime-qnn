@@ -72,13 +72,13 @@ const std::unordered_map<std::string, uint32_t> ResizeOpBuilder::supported_modes
     {"linear", QNN_OP_RESIZE_INTERPOLATION_MODE_LINEAR},
     {"cubic", QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC}};
 
+// tf_half_pixel_for_nn is intentionally excluded from this table.
+// It is handled separately via Resize(2x, ASYMMETRIC) + StridedSlice.
 const std::unordered_map<std::string, uint32_t> ResizeOpBuilder::supported_coord_transf_modes = {
     {"half_pixel", QNN_OP_RESIZE_TRANSFORMATION_MODE_HALF_PIXEL},
     {"pytorch_half_pixel", QNN_OP_RESIZE_TRANSFORMATION_MODE_PYTORCH_HALF_PIXEL},
     {"align_corners", QNN_OP_RESIZE_TRANSFORMATION_MODE_ALIGN_CORNERS},
     {"asymmetric", QNN_OP_RESIZE_TRANSFORMATION_MODE_ASYMMETRIC}};
-    // QNN has no dedicated tf_half_pixel_for_nn mode; map to HALF_PIXEL as the closest equivalent.
-    {"tf_half_pixel_for_nn", QNN_OP_RESIZE_TRANSFORMATION_MODE_HALF_PIXEL}};
 
 const std::unordered_map<std::string, uint32_t> ResizeOpBuilder::supported_nearest_modes = {
     {"round_prefer_floor", QNN_OP_RESIZE_NEAREST_MODE_ROUND_PREFER_FLOOR},
@@ -138,6 +138,176 @@ static bool IsOnnxAttrModeSupported(const std::unordered_map<std::string, uint32
   return supported_qnn_modes.find(onnx_attr_value) != supported_qnn_modes.end();
 }
 
+// Handles tf_half_pixel_for_nn coordinate transformation mode via:
+//   Step 1: QNN Resize with ASYMMETRIC mode at 2x output size on spatial dims.
+//   Step 2: QNN StridedSlice picking odd indices (1,3,5,...) on spatial dims.
+//
+// This exactly matches the tf_half_pixel_for_nn formula:
+//   tf_half_pixel_for_nn: x_src = (k + 0.5) / s
+//   ASYMMETRIC at 2x size:  x_src = k / (2s)
+//   Picking odd indices k = 2j+1: x_src = (2j+1)/(2s) = (j+0.5)/s  ✓ exact match
+//
+// Note: This function runs after layout transformation, so the layout is NHWC:
+//   [N, H, W, C] for rank-4, [N, H, W, D, C] for rank-5, etc.
+//   Spatial dims are indices 1 .. (rank-2).
+static Ort::Status ProcessTfHalfPixelForNN(QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            const std::vector<std::string>& input_names,
+                                            const std::string& interp_mode,
+                                            const std::string& nearest_mode,
+                                            const std::vector<uint32_t>& output_shape,
+                                            const TensorInfo& input_info,
+                                            bool do_op_validation) {
+  const size_t input_rank = output_shape.size();
+  const std::string node_name = node_unit.Name();
+
+  // Compute 2x output shape: double only the spatial dims (indices 1 .. rank-2 in NHWC).
+  std::vector<uint32_t> double_output_shape = output_shape;
+  for (size_t i = 1; i < input_rank - 1; ++i) {
+    double_output_shape[i] = output_shape[i] * 2;
+  }
+
+  // --- Step 1: Resize to 2x with ASYMMETRIC ---
+
+  // Use node_name + unique suffixes for all intermediate tensor/node/param names
+  // to avoid collisions between the two QNN nodes that share the same node_unit.
+  const std::string resize_out_name  = node_name + "_tfhp_resize_out";
+  const std::string resize_node_name = node_name + "_tfhp_resize";
+  const std::string slice_node_name  = node_name + "_tfhp_slice";
+
+  QnnTensorWrapper resize_out_tensor(resize_out_name,
+                                     QNN_TENSOR_TYPE_NATIVE,
+                                     input_info.qnn_data_type,
+                                     input_info.quant_param.Copy(),
+                                     std::vector<uint32_t>(double_output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(resize_out_tensor)),
+                "QNN EP: Failed to add intermediate Resize tensor for tf_half_pixel_for_nn.");
+
+  std::vector<std::string> resize_param_names;
+
+  // transformation_mode = ASYMMETRIC
+  {
+    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+    scalar.dataType    = QNN_DATATYPE_UINT_32;
+    scalar.uint32Value = QNN_OP_RESIZE_TRANSFORMATION_MODE_ASYMMETRIC;
+    QnnParamWrapper param(node_unit.Index(),
+                          node_name + "_tfhp_transf",
+                          QNN_OP_RESIZE_PARAM_TRANSFORMATION_MODE,
+                          scalar);
+    resize_param_names.push_back(param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(param));
+  }
+
+  // interpolation_mode
+  static const std::unordered_map<std::string, uint32_t> local_modes = {
+      {"nearest", QNN_OP_RESIZE_INTERPOLATION_MODE_NEAREST},
+      {"linear",  QNN_OP_RESIZE_INTERPOLATION_MODE_LINEAR},
+      {"cubic",   QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC}};
+
+  uint32_t qnn_interp_mode_value = 0;
+  RETURN_IF_ERROR(GetQnnModeValFromOnnxString(local_modes, interp_mode, "mode", qnn_interp_mode_value));
+
+  {
+    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+    scalar.dataType    = QNN_DATATYPE_UINT_32;
+    scalar.uint32Value = qnn_interp_mode_value;
+    QnnParamWrapper param(node_unit.Index(),
+                          node_name + "_tfhp_interp",
+                          QNN_OP_RESIZE_PARAM_INTERPOLATION_MODE,
+                          scalar);
+    resize_param_names.push_back(param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(param));
+  }
+
+  // nearest_mode (only for nearest interpolation)
+  if (qnn_interp_mode_value == QNN_OP_RESIZE_INTERPOLATION_MODE_NEAREST) {
+    static const std::unordered_map<std::string, uint32_t> local_nearest_modes = {
+        {"round_prefer_floor", QNN_OP_RESIZE_NEAREST_MODE_ROUND_PREFER_FLOOR},
+        {"round_prefer_ceil",  QNN_OP_RESIZE_NEAREST_MODE_ROUND_PREFER_CEIL},
+        {"floor",              QNN_OP_RESIZE_NEAREST_MODE_FLOOR},
+        {"ceil",               QNN_OP_RESIZE_NEAREST_MODE_CEIL}};
+
+    uint32_t qnn_nearest_mode_value = 0;
+    RETURN_IF_ERROR(GetQnnModeValFromOnnxString(local_nearest_modes,
+                                                nearest_mode, "nearest_mode",
+                                                qnn_nearest_mode_value));
+    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+    scalar.dataType    = QNN_DATATYPE_UINT_32;
+    scalar.uint32Value = qnn_nearest_mode_value;
+    QnnParamWrapper param(node_unit.Index(),
+                          node_name + "_tfhp_nearest",
+                          QNN_OP_RESIZE_PARAM_NEAREST_MODE,
+                          scalar);
+    resize_param_names.push_back(param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(param));
+  }
+
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                    resize_node_name,
+                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                    "Resize",
+                    std::vector<std::string>(input_names),
+                    {resize_out_name},
+                    std::move(resize_param_names),
+                    do_op_validation),
+                "QNN EP: Failed to create Resize node for tf_half_pixel_for_nn.");
+
+  // --- Step 2: StridedSlice to pick odd indices on spatial dims ---
+  // NHWC layout: N=take all, H=odd indices, W=odd indices, C=take all
+  // ranges format per dim: [start, end, stride]
+  std::vector<uint32_t> ranges_dims{static_cast<uint32_t>(input_rank), 3u};
+  std::vector<uint32_t> ranges_data;
+  ranges_data.reserve(input_rank * 3);
+
+  for (size_t i = 0; i < input_rank; ++i) {
+    const bool is_spatial = (i >= 1 && i < input_rank - 1);  // H, W (and D for rank-5) in NHWC
+    if (is_spatial) {
+      ranges_data.push_back(1u);                                              // start = 1 (first odd index)
+      ranges_data.push_back(static_cast<uint32_t>(double_output_shape[i]));  // end = 2 * output_size
+      ranges_data.push_back(2u);                                              // stride = 2
+    } else {
+      ranges_data.push_back(0u);                                              // start = 0
+      ranges_data.push_back(static_cast<uint32_t>(double_output_shape[i]));  // end = full dim
+      ranges_data.push_back(1u);                                              // stride = 1
+    }
+  }
+
+  std::vector<std::string> slice_param_names;
+  QnnParamWrapper ranges_param(node_unit.Index(),
+                               node_name + "_tfhp_ranges",
+                               QNN_OP_STRIDED_SLICE_PARAM_RANGES,
+                               std::move(ranges_dims),
+                               std::move(ranges_data),
+                               true);
+  slice_param_names.push_back(ranges_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(ranges_param));
+
+  // Add final output tensor
+  const std::string& final_output_name = node_unit.Outputs()[0].name;
+  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+  const Qnn_TensorType_t output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ
+                                                               : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper final_output_tensor(final_output_name,
+                                       output_tensor_type,
+                                       input_info.qnn_data_type,
+                                       input_info.quant_param.Copy(),
+                                       std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_output_tensor)),
+                "QNN EP: Failed to add StridedSlice output tensor for tf_half_pixel_for_nn.");
+
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                    slice_node_name,
+                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                    QNN_OP_STRIDED_SLICE,
+                    {resize_out_name},
+                    {final_output_name},
+                    std::move(slice_param_names),
+                    do_op_validation),
+                "QNN EP: Failed to create StridedSlice node for tf_half_pixel_for_nn.");
+
+  return Ort::Status();
+}
+
 // Resize ops are sensitive with data layout, no special validation so far
 // The nodes from 1st call of GetCapability do not get layout transformer applied, it's still NCHW
 // The nodes from 2nd call of GetCapability get layout transformer applied, it's NHWC
@@ -145,12 +315,30 @@ static bool IsOnnxAttrModeSupported(const std::unordered_map<std::string, uint32
 Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
                                            const Ort::Logger& logger) const {
+  OrtNodeAttrHelper node_helper(node_unit);
+
+  // Read transformation_mode and interp_mode early (before the NHWC early-return) so that
+  // unsupported tf_half_pixel_for_nn + nearest_mode combinations are rejected even after
+  // layout transformation has converted the node to the NHWC domain.
+  const std::string transformation_mode = GetOnnxAttr(node_helper, onnx_coord_transf_mode_attr);
+  if (transformation_mode == "tf_half_pixel_for_nn") {
+    const std::string tf_interp_mode = GetOnnxAttr(node_helper, onnx_mode_attr);
+    if (tf_interp_mode == "nearest") {
+      const std::string tf_nearest_mode = GetOnnxAttr(node_helper, onnx_nearest_mode_attr);
+      // Only "floor" is supported via Resize(2x, ASYMMETRIC) + StridedSlice.
+      // "round_prefer_floor" and "round_prefer_ceil" are not supported.
+      RETURN_IF_NOT(tf_nearest_mode == "floor",
+                    ("QNN EP: Resize with tf_half_pixel_for_nn does not support nearest_mode " +
+                     tf_nearest_mode + ". Only 'floor' is supported.")
+                        .c_str());
+    }
+  }
+
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
   }
 
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  OrtNodeAttrHelper node_helper(node_unit);
 
   // QNN doesn't support anti-aliasing (added in opset 18)
   if (node_unit.SinceVersion() >= 18) {
@@ -163,10 +351,15 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(IsOnnxAttrModeSupported(supported_modes, interp_mode),
                 ("QNN EP: Resize does not support mode " + interp_mode).c_str());
 
-  // Check coordinate transformation mode
-  const std::string transformation_mode = GetOnnxAttr(node_helper, onnx_coord_transf_mode_attr);
-  RETURN_IF_NOT(IsOnnxAttrModeSupported(supported_coord_transf_modes, transformation_mode),
-                ("QNN EP: Resize does not support coordinate_transformation_mode " + transformation_mode).c_str());
+  // Check coordinate transformation mode.
+  // tf_half_pixel_for_nn is handled separately via Resize(2x, ASYMMETRIC) + StridedSlice,
+  // so it is not in supported_coord_transf_modes but is still valid here.
+  const bool is_tf_half_pixel_for_nn = (transformation_mode == "tf_half_pixel_for_nn");
+  if (!is_tf_half_pixel_for_nn) {
+    RETURN_IF_NOT(IsOnnxAttrModeSupported(supported_coord_transf_modes, transformation_mode),
+                  ("QNN EP: Resize does not support coordinate_transformation_mode " +
+                   transformation_mode).c_str());
+  }
 
   const auto& input_0 = node_unit.Inputs()[0];
   std::vector<uint32_t> input_shape;
@@ -187,7 +380,7 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   //  pytorch_half_pixel (H==1 ∨ W==1)  |    X     Resize    Resize  Resize       X
   //                      align_corners |    X     Resize    RBL     Resize       X
   //                         asymmetric |    X     Resize    RBL     Resize       X
-  //            tf_half_pixel_for_nn    |    X     Resize    RBL     Resize       X
+  //            tf_half_pixel_for_nn    |    X          Resize+StridedSlice       X
   //
   // The H>1 ∧ W>1 row routes pytorch_half_pixel to RBL because it is then
   // bit-identical to half_pixel (see IsPyTorchHalfPixelEquivalentToHalfPixel).
@@ -206,13 +399,16 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   //              pytorch_half_pixel |  Resize(QNN < 2.20)        X             X      X
   //                   align_corners |  Resize(QNN < 2.20)  Resize(QNN 2.20)   RNN     X
   //                      asymmetric |  Resize(QNN < 2.20)        X            RNN     X
-  //         tf_half_pixel_for_nn    |  Resize(QNN < 2.20)        X            RNN     X
+  //            tf_half_pixel_for_nn |       Resize+StridedSlice (all nearest_modes supported)
+
   if (interp_mode == "nearest") {
     const std::string nearest_mode = GetOnnxAttr(node_helper, onnx_nearest_mode_attr);
     RETURN_IF_NOT(IsOnnxAttrModeSupported(supported_nearest_modes, nearest_mode),
                   ("QNN EP: Resize does not support nearest_mode " + nearest_mode).c_str());
 
-    if (is_npu_backend) {
+    // tf_half_pixel_for_nn uses Resize+StridedSlice which supports all nearest_modes,
+    // so skip the HTP-specific nearest_mode restrictions for this transformation mode.
+    if (is_npu_backend && !is_tf_half_pixel_for_nn) {
       // For better performance with HTP backend, use QNN's ResizeNearestNeighbor for rank-4 input.
       const bool use_resize_nn_op = input_rank == 4;
 
@@ -358,6 +554,24 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   std::string qnn_op_type = "Resize";
 
+  // Handle tf_half_pixel_for_nn via Resize(2x, ASYMMETRIC) + StridedSlice.
+  // This gives numerically exact results.
+  // Must be checked FIRST before the ResizeNearestNeighbor / ResizeBilinear branches
+  // because those branches do not handle tf_half_pixel_for_nn.
+  if (transformation_mode == "tf_half_pixel_for_nn") {
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+
+    const auto& output_0 = node_unit.Outputs()[0];
+    std::vector<uint32_t> output_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output_0.shape, output_shape),
+                  "QNN EP: Cannot get shape for Resize output");
+
+    return ProcessTfHalfPixelForNN(qnn_model_wrapper, node_unit, input_names,
+                                   interp_mode, nearest_mode, output_shape,
+                                   input_info, do_op_validation);
+  }
+
   if (is_npu_backend && input_rank == 4 && interp_mode == "nearest") {
     // Translate Resize with
     // {input_rank: 4, mode: "nearest", coordinate_transformation_mode: XXX} to
@@ -366,14 +580,22 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     qnn_op_type = "ResizeNearestNeighbor";
 
     // 'align_corners'
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                       transformation_mode == "align_corners",
-                                       QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_ALIGN_CORNERS, param_tensor_names));
+    Qnn_Scalar_t qnn_align_corners = QNN_SCALAR_INIT;
+    qnn_align_corners.dataType = QNN_DATATYPE_BOOL_8;
+    qnn_align_corners.bool8Value = static_cast<uint8_t>(transformation_mode == "align_corners");
+    QnnParamWrapper qnn_align_corners_param(node_unit.Index(), node_unit.Name(),
+                                            QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_ALIGN_CORNERS, qnn_align_corners);
+    param_tensor_names.push_back(qnn_align_corners_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_align_corners_param));
 
     // 'half_pixel_centers'
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                       transformation_mode == "half_pixel",
-                                       QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_HALF_PIXEL_CENTERS, param_tensor_names));
+    Qnn_Scalar_t qnn_half_pixel = QNN_SCALAR_INIT;
+    qnn_half_pixel.dataType = QNN_DATATYPE_BOOL_8;
+    qnn_half_pixel.bool8Value = static_cast<uint8_t>(transformation_mode == "half_pixel");
+    QnnParamWrapper qnn_half_pixel_param(node_unit.Index(), node_unit.Name(),
+                                         QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_HALF_PIXEL_CENTERS, qnn_half_pixel);
+    param_tensor_names.push_back(qnn_half_pixel_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_half_pixel_param));
   } else if (is_npu_backend && input_rank == 4 && interp_mode == "linear" &&
              (transformation_mode != "pytorch_half_pixel" ||
               IsPyTorchHalfPixelEquivalentToHalfPixel(node_unit))) {
@@ -388,56 +610,82 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     qnn_op_type = "ResizeBilinear";
 
     // 'align_corners'
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                       transformation_mode == "align_corners",
-                                       QNN_OP_RESIZE_BILINEAR_PARAM_ALIGN_CORNERS, param_tensor_names));
+    Qnn_Scalar_t qnn_align_corners = QNN_SCALAR_INIT;
+    qnn_align_corners.dataType = QNN_DATATYPE_BOOL_8;
+    qnn_align_corners.bool8Value = static_cast<uint8_t>(transformation_mode == "align_corners");
+
+    QnnParamWrapper qnn_align_corners_param(node_unit.Index(), node_unit.Name(),
+                                            QNN_OP_RESIZE_BILINEAR_PARAM_ALIGN_CORNERS, qnn_align_corners);
+
+    param_tensor_names.push_back(qnn_align_corners_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_align_corners_param));
 
     // 'half_pixel_centers'
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                       transformation_mode == "half_pixel" ||
-                                           transformation_mode == "pytorch_half_pixel",
-                                       QNN_OP_RESIZE_BILINEAR_PARAM_HALF_PIXEL_CENTERS, param_tensor_names));
+    Qnn_Scalar_t qnn_half_pixel = QNN_SCALAR_INIT;
+    qnn_half_pixel.dataType = QNN_DATATYPE_BOOL_8;
+    qnn_half_pixel.bool8Value = static_cast<uint8_t>(transformation_mode == "half_pixel" ||
+                                                     transformation_mode == "pytorch_half_pixel");
+
+    QnnParamWrapper qnn_half_pixel_param(node_unit.Index(), node_unit.Name(),
+                                         QNN_OP_RESIZE_BILINEAR_PARAM_HALF_PIXEL_CENTERS, qnn_half_pixel);
+
+    param_tensor_names.push_back(qnn_half_pixel_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_half_pixel_param));
   } else {
     // Fallback to QNN's Resize operator, which seems to align better with ONNX's Resize attributes and supports
     // input ranks other than 4, but may not perform as optimally (at the moment).
 
     // Parameter 'transformation_mode'
-    uint32_t qnn_transformation_mode_value = 0;
+    Qnn_Scalar_t qnn_transformation_mode = QNN_SCALAR_INIT;
+    qnn_transformation_mode.dataType = QNN_DATATYPE_UINT_32;
     RETURN_IF_ERROR(GetQnnModeValFromOnnxString(supported_coord_transf_modes, transformation_mode,
                                                 "coordinate_transformation_mode",
-                                                qnn_transformation_mode_value));
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                           qnn_transformation_mode_value,
-                                           QNN_OP_RESIZE_PARAM_TRANSFORMATION_MODE, param_tensor_names));
+                                                qnn_transformation_mode.uint32Value));
+
+    QnnParamWrapper qnn_transformation_mode_param(node_unit.Index(), node_unit.Name(),
+                                                  QNN_OP_RESIZE_PARAM_TRANSFORMATION_MODE, qnn_transformation_mode);
+    param_tensor_names.push_back(qnn_transformation_mode_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_transformation_mode_param));
 
     // Parameter 'exclude_outside'
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                       GetOnnxAttr(node_helper, onnx_exclude_outside_attr) != 0,
-                                       QNN_OP_RESIZE_PARAM_EXCLUDE_OUTSIDE, param_tensor_names));
+    Qnn_Scalar_t qnn_exclude_outside = QNN_SCALAR_INIT;
+    qnn_exclude_outside.dataType = QNN_DATATYPE_BOOL_8;
+    qnn_exclude_outside.bool8Value = static_cast<uint8_t>(GetOnnxAttr(node_helper, onnx_exclude_outside_attr) != 0);
+
+    QnnParamWrapper qnn_exclude_outside_param(node_unit.Index(), node_unit.Name(), QNN_OP_RESIZE_PARAM_EXCLUDE_OUTSIDE,
+                                              qnn_exclude_outside);
+    param_tensor_names.push_back(qnn_exclude_outside_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_exclude_outside_param));
 
     // Parameter 'interpolation_mode'
-    uint32_t qnn_interp_mode_value = 0;
-    RETURN_IF_ERROR(GetQnnModeValFromOnnxString(supported_modes, interp_mode, "mode", qnn_interp_mode_value));
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                           qnn_interp_mode_value,
-                                           QNN_OP_RESIZE_PARAM_INTERPOLATION_MODE, param_tensor_names));
+    Qnn_Scalar_t qnn_interp_mode = QNN_SCALAR_INIT;
+    qnn_interp_mode.dataType = QNN_DATATYPE_UINT_32;
+    RETURN_IF_ERROR(GetQnnModeValFromOnnxString(supported_modes, interp_mode, "mode", qnn_interp_mode.uint32Value));
 
-    if (is_npu_backend && qnn_interp_mode_value == QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC) {
+    QnnParamWrapper qnn_interp_mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_RESIZE_PARAM_INTERPOLATION_MODE,
+                                          qnn_interp_mode);
+    param_tensor_names.push_back(qnn_interp_mode_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(qnn_interp_mode_param));
+
+    if (is_npu_backend && qnn_interp_mode.uint32Value == QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC) {
       const ONNXTensorElementDataType input_dtype = node_unit.Inputs()[0].type;
       RETURN_IF(input_dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16, kNpuBF16InterpolationLimitations);
     }
 
     // Parameter 'nearest_mode'. Processed only when 'interpolation_mode' is NEAREST(0).
-    if (qnn_interp_mode_value == 0) {
-      uint32_t qnn_nearest_mode_value = 0;
+    if (qnn_interp_mode.uint32Value == 0) {
+      Qnn_Scalar_t qnn_nearest_mode = QNN_SCALAR_INIT;
+      qnn_nearest_mode.dataType = QNN_DATATYPE_UINT_32;
       RETURN_IF_ERROR(GetQnnModeValFromOnnxString(supported_nearest_modes, nearest_mode, "nearest_mode",
-                                                  qnn_nearest_mode_value));
-      RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                             qnn_nearest_mode_value,
-                                             QNN_OP_RESIZE_PARAM_NEAREST_MODE, param_tensor_names));
+                                                  qnn_nearest_mode.uint32Value));
+
+      QnnParamWrapper qnn_nearest_mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_RESIZE_PARAM_NEAREST_MODE,
+                                             qnn_nearest_mode);
+      param_tensor_names.push_back(qnn_nearest_mode_param.GetParamTensorName());
+      qnn_model_wrapper.AddParamWrapper(std::move(qnn_nearest_mode_param));
     }
 
-    if (qnn_interp_mode_value == QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC) {
+    if (qnn_interp_mode.uint32Value == QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC) {
       const float cubic_coeff = GetOnnxAttr(node_helper, onnx_cubic_coeff_a_attr);
       RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper,
                                           node_unit.Index(),
