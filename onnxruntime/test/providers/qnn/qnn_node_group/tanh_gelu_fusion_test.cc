@@ -14,8 +14,6 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
 namespace {
 
 // Builds the canonical tanh-GELU approximation pattern (float32):
@@ -173,6 +171,7 @@ void RunTanhGeluFusionTest(const std::string& test_name,
 
 }  // namespace
 
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 // ---- Positive tests --------------------------------------------------------
 
 // 4D input: typical batch * channel * H * W layout.
@@ -221,18 +220,10 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float16) {
 // ---- Negative tests --------------------------------------------------------
 
 // Wrong cubic coefficient (0.1 instead of 0.044715) — matcher must reject.
+// When fusion does not fire, all nodes fall back to CPU, so we expect None on the QNN EP.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
-
-  const std::filesystem::path json_qnn_graph_dir = "TanhGeluFusion_WrongCoeff";
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   GetTestModelFn bad_model = [&input_def](ModelTestBuilder& builder) -> void {
     constexpr float kWrongCoeff = 0.1f;
@@ -260,27 +251,17 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   };
 
   RunQnnModelTest(bad_model,
-                  provider_options,
+                  GetProviderOptions(),
                   /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
-
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", 0);
+                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(6e-3f)});
 }
 
 // Shared intermediate: x² is also consumed by an extra Relu outside the pattern.
 // Fusing would leave Relu with a dangling input, so the matcher must reject.
+// When fusion does not fire, all nodes fall back to CPU, so we expect None on the QNN EP.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedIntermediate_ShouldNotFuse) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
-
-  const std::filesystem::path json_qnn_graph_dir = "TanhGeluFusion_SharedIntermediate";
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   GetTestModelFn shared_model = [&input_def](ModelTestBuilder& builder) -> void {
     constexpr float k0044715 = 0.044715f;
@@ -314,11 +295,9 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedIntermediate_ShouldNotFuse) {
   };
 
   RunQnnModelTest(shared_model,
-                  provider_options,
+                  GetProviderOptions(),
                   /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
-
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", 0);
+                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(6e-3f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

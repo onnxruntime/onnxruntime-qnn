@@ -23,7 +23,7 @@ namespace qnn {
 namespace {
 
 // GELU approximation constants.
-constexpr float kGeluCubicCoeff = 0.044715f;  // coefficient on x³ term
+constexpr float kGeluCubicCoeff = 0.044715f;       // coefficient on x³ term
 constexpr float kGeluSqrt2OverPi = 0.7978845608f;  // sqrt(2/pi)
 constexpr float kGeluOne = 1.0f;
 constexpr float kGeluHalf = 0.5f;
@@ -58,7 +58,7 @@ const OrtNodeUnitIODef* NonConstInput(const QnnModelWrapper& qmw,
   const bool is1 = IsScalarConstantApprox(qmw, inputs[1].name, constant_val);
   if (is1 && !is0) return &inputs[0];  // input[1] is the constant → return input[0]
   if (is0 && !is1) return &inputs[1];  // input[0] is the constant → return input[1]
-  return nullptr;                       // both or neither match — ambiguous, reject
+  return nullptr;                      // both or neither match — ambiguous, reject
 }
 
 // Returns true if both inputs of a 2-input node share the same name (i.e., Mul(x, x)).

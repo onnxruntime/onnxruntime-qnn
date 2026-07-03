@@ -500,7 +500,7 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wra
 }
 
 std::optional<float> GetScalarConstantValue(const QnnModelWrapper& qmw,
-                                             const std::string& input_name) {
+                                            const std::string& input_name) {
   if (!qmw.IsConstantInput(input_name)) return std::nullopt;
   const OrtValueInfo* vi = qmw.GetConstantTensor(input_name);
   if (!vi) return std::nullopt;
@@ -524,9 +524,9 @@ std::optional<float> GetScalarConstantValue(const QnnModelWrapper& qmw,
 }
 
 bool IsScalarConstantApprox(const QnnModelWrapper& qmw,
-                             const std::string& input_name,
-                             float expected,
-                             float tol) {
+                            const std::string& input_name,
+                            float expected,
+                            float tol) {
   const auto val = GetScalarConstantValue(qmw, input_name);
   return val.has_value() && std::abs(*val - expected) <= tol;
 }

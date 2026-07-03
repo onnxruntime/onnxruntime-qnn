@@ -96,7 +96,7 @@ std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(const QnnModelWrap
 /// constant, not a scalar (element count != 1), or has an unsupported element type.
 /// </summary>
 std::optional<float> GetScalarConstantValue(const QnnModelWrapper& qnn_model_wrapper,
-                                             const std::string& input_name);
+                                            const std::string& input_name);
 
 /// <summary>
 /// Returns true if the named input is a scalar constant approximately equal to `expected`.
@@ -105,9 +105,9 @@ std::optional<float> GetScalarConstantValue(const QnnModelWrapper& qnn_model_wra
 /// tol defaults to 1e-3f (~2% relative error for the GELU cubic coefficient 0.044715).
 /// </summary>
 bool IsScalarConstantApprox(const QnnModelWrapper& qnn_model_wrapper,
-                             const std::string& input_name,
-                             float expected,
-                             float tol = 1e-3f);
+                            const std::string& input_name,
+                            float expected,
+                            float tol = 1e-3f);
 
 }  // namespace qnn
 }  // namespace onnxruntime
