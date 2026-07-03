@@ -658,7 +658,6 @@ bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation
 // Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,
 // BW_AXIS_SCALE_OFFSET), and LPBQ (BLOCKWISE_EXPANSION).
 Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
-                                 uint32_t num_output_channels,
                                  std::vector<float>& weights_scales);
 
 // Extracts current scales, offsets, and axis from a bias's quant params.

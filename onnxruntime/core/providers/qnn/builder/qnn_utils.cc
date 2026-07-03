@@ -1742,7 +1742,6 @@ bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation
 }
 
 Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
-                                 uint32_t num_output_channels,
                                  std::vector<float>& weights_scales) {
   const auto& qp = weight_quant_param.Get();
 
@@ -1768,9 +1767,10 @@ Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param
     }
   } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION) {
     RETURN_IF_NOT(qp.blockwiseExpansion != nullptr &&
-                      qp.blockwiseExpansion->scaleOffsets != nullptr,
+                      qp.blockwiseExpansion->scaleOffsets != nullptr &&
+                      weight_quant_param.GetPerChannelScalesSize() > 0,
                   "Invalid BLOCKWISE_EXPANSION weight quant params");
-    for (size_t c = 0; c < num_output_channels; ++c) {
+    for (size_t c = 0; c < weight_quant_param.GetPerChannelScalesSize(); ++c) {
       weights_scales.push_back(qp.blockwiseExpansion->scaleOffsets[c].scale);
     }
   } else {

@@ -13,6 +13,12 @@
 namespace onnxruntime {
 namespace qnn {
 
+namespace {
+inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
+}
+}  // namespace
+
 // ONNX convolution types supported by this builder.
 // We translate node_unit.OpType() into this enum to avoid repeated string comparisons.
 enum class OnnxConvType {
@@ -248,6 +254,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   // Input 0
   //
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+  const std::string act_name = input_names[0];  // activation (input 0)
+  const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
+  const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
+  const bool is_act_16bit = act_dtype == IsQuant16bit(act_dtype);
 
   // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight rank
   // with scale_shape[1] < weight_shape[1] (the blocked IC axis). Weight is always NCHW
@@ -272,14 +282,16 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
-  if (is_bq_weight && !input_info.quant_param.IsLPBQ()) {
+  const bool is_lpbq_weight = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                              is_act_16bit &&
+                              input_info.is_initializer &&
+                              input_info.quant_param.IsLPBQ();
+
+  if (is_bq_weight && !is_lpbq_weight) {
     RETURN_IF(!input_info.is_initializer, "QNN EP: BQ Conv weight must be a constant initializer");
 
     // Activation handling: BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via Dequantize.
-    const std::string act_name = input_names[0];  // activation (input 0), pushed by ProcessInput above
-    const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
-    const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
-    if (act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
+    if (is_act_16bit) {
       // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
       // stays aligned with the ONNX graph naming.
       const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
@@ -341,10 +353,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
                                          is_unsigned_weight, bitwidth, OC * nb, offsets_qnn));
 
-      QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
-                                                                                  gsl::span<const float>(offsets_qnn),
-                                                                                  bitwidth,
-                                                                                  gsl::span<const uint32_t>(block_size_arr));
+    QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                                                gsl::span<const float>(offsets_qnn),
+                                                                                bitwidth,
+                                                                                gsl::span<const uint32_t>(block_size_arr));
 
     // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
     QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
@@ -375,7 +387,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     }
 
     bool is_3d = (input_info.shape.size() == 5);
-    RETURN_IF(is_3d && input_info.quant_param.IsLPBQ(), "LPBQ is only supported for Conv2d (rank-4 weights)");
+    RETURN_IF(is_3d && is_lpbq_weight, "LPBQ is only supported for Conv2d (rank-4 weights)");
 
     std::vector<uint8_t> unpacked_tensor;
     if (input_info.is_initializer) {
@@ -389,7 +401,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       }
 
       // Transpose quantization parameter's axis if this is using per-channel or LPBQ quantization.
-      if (input_info.quant_param.IsPerChannel() || input_info.quant_param.IsLPBQ()) {
+      if (input_info.quant_param.IsPerChannel() || is_lpbq_weight) {
         std::vector<size_t> perm;
         if (is_3d) {
           perm = conv_type == OnnxConvType::kConv ? nchw2hwcn_perm_3d : cnhw2hwcn_perm_3d;
@@ -402,7 +414,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       }
     } else {
       // Add transpose node above weight input.
-      RETURN_IF(input_info.quant_param.IsPerChannel() || input_info.quant_param.IsLPBQ(),
+      RETURN_IF(input_info.quant_param.IsPerChannel() || is_lpbq_weight,
                 "Non-constant Conv inputs only support per-tensor quantization");
       bool is_graph_input = qnn_model_wrapper.IsGraphInput(input1_name);
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Add HWCN Transpose node after input: " + input1_name).c_str());
@@ -498,7 +510,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   if (has_bias_input) {
     // For BQ Conv: QNN BW_FLOAT_BLOCK Conv2d requires FP16 bias matching the computation precision.
     // The bias in the QDQ NodeUnit is an INT32 quantized initializer — dequantize it to FP16.
-    if (is_bq_weight && !input_info.quant_param.IsLPBQ()) {
+    if (is_bq_weight && !is_lpbq_weight) {
       TensorInfo bias_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
       RETURN_IF(!bias_info.is_initializer, "QNN EP: BQ Conv bias must be a constant initializer");
@@ -570,16 +582,16 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
             activation_scale = act_quant_params.bwScaleOffsetEncoding.scale;
           }
 
+          int32_t bias_quant_axis = 0;
           std::vector<float> weights_scales;
-          RETURN_IF_ERROR(utils::GetWeightQuantScales(input1_info.quant_param, bias_info.shape[0], weights_scales));
+          RETURN_IF_ERROR(utils::GetWeightQuantScales(input1_info.quant_param, weights_scales));
           RETURN_IF_NOT(!weights_scales.empty(), "No weight scales found for bias quantization");
 
           if (bias_info.quant_param.IsQuantized()) {
             // Bias is already quantized: check if scales match, requantize if needed.
             std::vector<float> current_scales;
             std::vector<int32_t> current_offsets;
-            int32_t quant_axis = 0;
-            RETURN_IF_ERROR(utils::GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales, current_offsets, quant_axis));
+            RETURN_IF_ERROR(utils::GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales, current_offsets, bias_quant_axis));
 
             const size_t num_channels = current_scales.size();
             bool needs_requantization = false;
@@ -600,7 +612,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
               std::vector<uint8_t> requantized_bias_data;
               std::vector<float> new_scales;
               std::vector<int32_t> new_offsets;
-              const std::optional<int64_t> axis_opt = (num_channels > 1) ? std::optional<int64_t>(quant_axis) : std::nullopt;
+              const std::optional<int64_t> axis_opt = (num_channels > 1) ? std::optional<int64_t>(bias_quant_axis) : std::nullopt;
               RETURN_IF_ERROR(utils::RequantizeBiasTensor(
                   original_bias_data, bias_info.shape, current_scales, current_offsets,
                   weights_scales, activation_scale, bias_info.qnn_data_type,
@@ -610,7 +622,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
               if (new_scales.size() == 1) {
                 new_quant_params = QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0]);
               } else {
-                new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, quant_axis, false);
+                new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
               }
 
               std::string bias_name = bias_input.name;
@@ -647,7 +659,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
             if (weights_scales.size() == 1) {
               new_quant_params = QnnQuantParamsWrapper::PerTensor(new_scales[0], 0);
             } else {
-              new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, /*axis=*/0, /*is_int4=*/false);
+              new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
             }
 
             std::string bias_name = bias_input.name;
