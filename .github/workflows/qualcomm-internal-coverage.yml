@@ -32,6 +32,8 @@ jobs:
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     env:
       COVERAGE_DIR: build/linux-x86_64/RelWithDebInfo/coverage
+      # Consumed by upload-qa-artifact's publish_qa.py (reads os.environ["BUILD_ARTIFACTORY_REPO"]).
+      BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -126,7 +128,12 @@ jobs:
             echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
             # Extract date portion from the canonical "nightly-YYYY-MM-DD-{sha}" format
             # so the Excel's date column matches the directory name.
-            echo "COVERAGE_RUN_DATE=$(echo '${{ inputs.qa_tag }}' | sed -n 's/^nightly-\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)-.*/\1/p')" >> ${GITHUB_ENV}
+            run_date="$(echo '${{ inputs.qa_tag }}' | sed -n 's/^nightly-\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)-.*/\1/p')"
+            if [ -z "${run_date}" ]; then
+              echo "::warning::qa_tag '${{ inputs.qa_tag }}' is not canonical (nightly-YYYY-MM-DD-*); falling back to today's UTC date for the Excel date column"
+              run_date="$(date --rfc-3339=date)"
+            fi
+            echo "COVERAGE_RUN_DATE=${run_date}" >> ${GITHUB_ENV}
           fi
 
       - name: Update per-file coverage Excel
@@ -138,6 +145,7 @@ jobs:
         run: |
           [ -f "${COVERAGE_DIR}/coverage.xml" ] || {
             echo "::warning::coverage.xml missing — skipping nightly Excel generation"
+            echo "### ⚠️ No coverage Excel produced this nightly (coverage.xml missing)" >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           }
           python3 qcom/build_and_test.py \
@@ -145,17 +153,26 @@ jobs:
             --only \
             file_coverage_excel_linux_x86_64
 
-      - name: Upload per-file coverage Excel to Artifactory
+      - name: Check coverage Excel exists
+        id: check_xlsx
         if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
         run: |
-          [ -f "${COVERAGE_DIR}/per_file_coverage.xlsx" ] || {
+          if [ -f "${COVERAGE_DIR}/per_file_coverage.xlsx" ]; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
             echo "::warning::per_file_coverage.xlsx missing — skipping nightly Artifactory upload"
-            exit 0
-          }
-          jf rt upload \
-            "${COVERAGE_DIR}/per_file_coverage.xlsx" \
-            "${{ secrets.BUILD_ARTIFACTORY_REPO }}/qa/${{ env.QA_TAG }}/" \
-            --flat=true
+            echo "### ⚠️ No coverage Excel produced this nightly (per_file_coverage.xlsx missing)" >> "${GITHUB_STEP_SUMMARY}"
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Upload per-file coverage Excel to Artifactory
+        # Reuse the shared QA upload action so the qa/{tag} path convention lives in one place
+        # (publish_qa.py -> QaArtifactory.artifact_root) instead of being re-derived here.
+        if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled() && steps.check_xlsx.outputs.exists == 'true'
+        uses: ./.github/actions/upload-qa-artifact
+        with:
+          src_pattern: "linux-x86_64/RelWithDebInfo/coverage/per_file_coverage.xlsx"
+          qa_tag: ${{ env.QA_TAG }}
 
       - name: Post Diff Coverage to PR
         # TODO: re-enable once the coverage pipeline is stable.
