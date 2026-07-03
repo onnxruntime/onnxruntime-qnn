@@ -257,7 +257,6 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   const std::string act_name = input_names[0];  // activation (input 0)
   const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
   const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
-  const bool is_act_16bit = act_dtype == IsQuant16bit(act_dtype);
 
   // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight rank
   // with scale_shape[1] < weight_shape[1] (the blocked IC axis). Weight is always NCHW
@@ -283,7 +282,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
   const bool is_lpbq_weight = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
-                              is_act_16bit &&
+                              IsQuant16bit(act_dtype) &&
                               input_info.is_initializer &&
                               input_info.quant_param.IsLPBQ();
 
@@ -291,7 +290,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     RETURN_IF(!input_info.is_initializer, "QNN EP: BQ Conv weight must be a constant initializer");
 
     // Activation handling: BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via Dequantize.
-    if (is_act_16bit) {
+    if (IsQuant16bit(act_dtype)) {
       // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
       // stays aligned with the ONNX graph naming.
       const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
@@ -326,7 +325,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     const int64_t OC = static_cast<int64_t>(input_info.shape[0]);
     const int64_t IC = static_cast<int64_t>(input_info.shape[1]);
     const int64_t nb = bq_scale_shape[1];  // num_blocks_per_oc
-    const int64_t block_size = 0;
+    int64_t block_size = 0;
     RETURN_IF_ERROR(bq::ResolveBlockSize(inputs[1], IC, nb, "Conv", block_size));
     const uint32_t bitwidth = bq::GetBQBitwidth(inputs[1].type);
 
