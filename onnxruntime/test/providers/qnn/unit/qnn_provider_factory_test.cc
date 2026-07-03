@@ -23,11 +23,8 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
-#include <atomic>
 #include <cstdint>
-#include <cstring>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -115,10 +112,6 @@ class FactoryStubContext {
   // instead of a fake pointer; the counter is decremented for each call.
   int fail_next_create_ep_device = 0;
 
-  // If true, HasSessionConfigEntry reports the corresponding key as present.
-  bool has_backend_type_entry = false;
-  bool has_backend_path_entry = false;
-
   // Version string reported by MakeFakeApiBase()'s GetVersionString. An empty
   // string is reported back as a nullptr (exercises the "(null)" branch of the
   // parse-error message); a non-empty string is passed through verbatim.
@@ -190,15 +183,12 @@ class FactoryStubContext {
     };
 
     stub_ort_api.HasSessionConfigEntry =
-        [](const OrtSessionOptions*, const char* key, int* out) noexcept -> OrtStatus* {
-      auto* self = current_;
+        [](const OrtSessionOptions*, const char*, int* out) noexcept -> OrtStatus* {
+      // No unit test configures backend_type/backend_path at the session-options
+      // level: setting either would make CreateEp skip the autoep block and reach
+      // std::make_unique<QnnEp>, which needs a real QnnEp (integration territory).
+      // Always reporting "not present" keeps CreateEp on the autoep branch.
       *out = 0;
-      if (self == nullptr) return nullptr;
-      const std::string k(key ? key : "");
-      if (k.find("backend_type") != std::string::npos)
-        *out = self->has_backend_type_entry ? 1 : 0;
-      else if (k.find("backend_path") != std::string::npos)
-        *out = self->has_backend_path_entry ? 1 : 0;
       return nullptr;
     };
     stub_ort_api.CreateSessionOptions = [](OrtSessionOptions** out) noexcept -> OrtStatus* {
@@ -602,7 +592,31 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_MaxEpDevicesTruncates) {
   EXPECT_EQ(ctx.created_ep_devices[0], npu);
 }
 
-// ===========================================================================
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CreateEpDeviceFails_PropagatesError) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(17);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+  ctx.fail_next_create_ep_device = 1;  // first CreateEpDevice call returns an error
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  // The supported NPU passes the filter, so CreateEpDevice is invoked and its
+  // error status must propagate out of GetSupportedDevices.
+  // Note: the create_ep_device lambda increments num_ep_devices before it
+  // returns, so the caller sees num == 1 with ep_devices[0] == nullptr.
+  OrtStatus* status = factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(StubStatusCode(ctx, status), ORT_FAIL);
+  EXPECT_EQ(num, 1u);
+  EXPECT_EQ(ep_devices[0], nullptr);
+  EXPECT_TRUE(ctx.created_ep_devices.empty());
+  ctx.stub_ort_api.ReleaseStatus(status);
+}
 // Group 4: GetHardwareDeviceIncompatibilityDetailsImpl /
 //          ValidateCompiledModelCompatibilityInfoImpl — error paths that stop
 //          before std::make_unique<QnnEp>. The fixture leaves the default
@@ -691,12 +705,13 @@ TEST_F(QnnUnit_ProviderFactoryTest, Ctor_CreateMemoryInfoFails_ReleasesMemoryInf
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   // CreateMemoryInfo_V2 returns a non-null status → ctor takes the
-  // ReleaseMemoryInfo cleanup branch. Must not crash.
+  // ReleaseMemoryInfo cleanup branch. Out-param is left null per the ORT
+  // convention that output params are null on failure. Must not crash.
   ctx.stub_ort_api.CreateMemoryInfo_V2 =
       [](const char*, OrtMemoryInfoDeviceType, uint32_t, int32_t,
          OrtDeviceMemoryType, size_t, OrtAllocatorType,
          OrtMemoryInfo** out) noexcept -> OrtStatus* {
-    *out = reinterpret_cast<OrtMemoryInfo*>(kFakeToken);
+    *out = nullptr;
     return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_FAIL, "stub CreateMemoryInfo_V2 failure"});
   };
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
@@ -725,8 +740,9 @@ TEST_F(QnnUnit_ProviderFactoryTest, CreateEp_ZeroDevices_ReturnsError) {
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
 
-  // Non-null logger skips the default-logger lookup; has_backend_* default false
-  // so the autoep block is entered, where num_devices == 0 errors out.
+  // Non-null logger skips the default-logger lookup; HasSessionConfigEntry
+  // always reports "not present" so the autoep block is entered, where
+  // num_devices == 0 errors out.
   const auto* logger = reinterpret_cast<const OrtLogger*>(kFakeToken);
   OrtEp* ep = nullptr;
   OrtStatus* status = factory.CreateEp(&factory, nullptr, nullptr, 0,
