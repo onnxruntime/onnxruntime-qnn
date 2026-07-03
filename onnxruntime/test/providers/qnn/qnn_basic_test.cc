@@ -1816,11 +1816,28 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 #endif  // !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 
 #if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
+// RAII guard that unconditionally unregisters an execution provider library on scope exit.
+// The AutoEp tests below register the EP library directly (without appending a device to the
+// session options, so RegisterQnnEpLibrary / RegisteredEpDeviceUniquePtr cannot be reused).
+// Without this guard, an early return from an ASSERT_* failure would leave the library
+// registered in the shared Ort::Env, corrupting subsequent tests (the source of the
+// intermittent failures).
+struct ScopedEpLibraryGuard {
+  const char* registration_name;
+  ~ScopedEpLibraryGuard() {
+    OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, registration_name);
+    if (status != nullptr) {
+      Ort::GetApi().ReleaseStatus(status);
+    }
+  }
+};
+
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1832,13 +1849,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1850,13 +1866,12 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1878,13 +1893,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1908,13 +1922,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1938,8 +1951,6 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
