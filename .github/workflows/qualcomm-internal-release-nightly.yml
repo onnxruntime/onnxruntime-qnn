@@ -41,9 +41,9 @@ jobs:
   coverage:
     name: Per-File Coverage Tracking
     needs: setup
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
     secrets: inherit
-    continue-on-error: true
     with:
       nightly_coverage: true
       qa_tag: ${{ needs.setup.outputs.qa_tag }}
