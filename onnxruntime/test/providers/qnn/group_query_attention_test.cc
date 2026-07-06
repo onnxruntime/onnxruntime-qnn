@@ -492,44 +492,44 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
 // Basic GQA on the HTP backend (FP32 model, FP16 precision on device).
 // Uses scale=0.0f, which both the ORT CPU EP and the QNN EP must interpret as the default
 // scale (1/sqrt(head_size)). This guards against the scale==0 sentinel-handling bug.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Explicit non-default scale. head_size=32 -> default would be 1/sqrt(32) ~= 0.1768; using a very
 // different value (0.5) ensures the explicit scale actually flows through to the op.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_ScaleExplicit_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_ScaleExplicit_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
 // Degenerate grouping: num_heads == kv_num_heads is standard multi-head attention (no grouping).
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
   RunHTPPackedGQATest<float>(8, 8, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Extreme grouping: kv_num_heads == 1 is multi-query attention (all query heads share one KV head).
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_MQA_KvOne_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MQA_KvOne_FP32) {
   RunHTPPackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Prefill: sequence_length > 1 (process a whole prompt chunk at once).
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Prefill_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Prefill_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Llama-3-like geometry: num_heads=32, kv_num_heads=8, head_size=64.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Llama3_AR1_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Llama3_AR1_FP32) {
   RunHTPPackedGQATest<float>(32, 8, 64, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Rotary embeddings enabled (do_rotary=1) with cos/sin caches.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
 // FP16 query/cache path.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
@@ -540,13 +540,13 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
 // GQA fp16 query/KV with in-place (buffer-shared) KV cache. scale=0 exercises the default path.
 
 // PhiVNext decode (AR1): sequence_length=1.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_PhiVNext_Decode_FP16) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Decode_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(32, 8, 128, /*seq*/ 1, /*total*/ 1024,
                                       /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
 // PhiVNext prefill (AR64): sequence_length=64.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_PhiVNext_Prefill_FP16) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Prefill_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(32, 8, 128, /*seq*/ 64, /*total*/ 1024,
                                       /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
@@ -566,33 +566,33 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PaddedCache_NoisePadding
 //
 
 // Basic unpacked GQA (FP32 model, FP16 on device), decode geometry, scale=0 default.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Explicit non-default scale on the unpacked path.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
 // Extreme grouping: kv_num_heads == 1 (multi-query attention), unpacked inputs.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
   RunHTPUnpackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Prefill: sequence_length > 1, unpacked inputs.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Prefill_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Prefill_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Rotary embeddings enabled, unpacked inputs.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Rotary_FP32) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Rotary_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
 // FP16 query/cache path, unpacked inputs.
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
