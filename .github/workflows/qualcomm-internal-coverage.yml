@@ -6,7 +6,9 @@ name: Qualcomm Internal Coverage
 permissions:
   contents: read
   checks: write
-  pull-requests: write
+  # pull-requests: write is only needed by the "Post Diff Coverage to PR" step, which is
+  # currently disabled (if: false). Requesting it here breaks callers that don't grant it
+  # (e.g. the nightly release workflow). Re-add it when that step is re-enabled.
 
 on:
   workflow_call:
