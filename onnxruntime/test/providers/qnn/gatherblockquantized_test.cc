@@ -46,7 +46,6 @@ void QuantizeBlockwiseOnly(
  * (rows x cols logical shape, Int4x2 packed storage). This mimics a weight that arrives
  * pre-quantized as int4 rather than packed as UInt4x2 in a uint8 buffer -- i.e. the
  * "weight_shape[1] already is the element count" case (no *2 for packed nibbles).
- * Only quantize_axis == 1 (column-wise) is supported on QNN GPU, matching QuantizeBlockwiseOnly.
  */
 void QuantizeBlockwiseInt4Unpacked(
     const std::vector<float>& raw_vals,
@@ -54,13 +53,14 @@ void QuantizeBlockwiseInt4Unpacked(
     std::vector<float>& scales,
     int32_t rows,
     int32_t cols,
-    int32_t block_size) {
+    int32_t block_size,
+    int32_t quantize_axis) {
   TestInputDef<float> weight_def({rows, cols}, true, raw_vals);
   std::vector<Int4x2> zero_points;  // symmetric quant: zero-points resolve to 0
   GetTestInputQuantParamsBlockQuant<Int4x2>(weight_def, scales, zero_points, block_size,
-                                            /*axis=*/1, /*symmetric=*/true);
+                                            quantize_axis, /*symmetric=*/true);
   QuantizeValuesBlockQuant<float, Int4x2>(raw_vals, quant_vals, {rows, cols}, scales, zero_points,
-                                          block_size, /*axis=*/1);
+                                          block_size, quantize_axis);
 }
 
 struct GatherBQTestParams {
@@ -221,7 +221,8 @@ static void RunGatherBlockQuantizedUnpackedInt4Test(
         scales,
         static_cast<int32_t>(params.vocab_size),
         static_cast<int32_t>(params.hidden_size),
-        static_cast<int32_t>(params.block_size));
+        static_cast<int32_t>(params.block_size),
+        static_cast<int32_t>(params.quantize_axis));
 
     // ------------------------------------------------------------
     // Indices
@@ -326,8 +327,9 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_UnpackedInt4Weight) {
   RunGatherBlockQuantizedUnpackedInt4Test(params);
 }
 
-// Same shapes as the reported failure: hidden_size=3072, block_size=32 (96 blocks/row),
-// weight already-unpacked as INT4.
+// Same shapes as the previously-failing case: weight already-unpacked as INT4 with
+// hidden_size=3072, block_size=32 (96 blocks/row), which previously mismatched the
+// weight_shape[1] * 2 == scale_shape[1] * block_size check (6144 != 3072).
 TEST_F(QnnGPUBackendTests, GatherBlockQuantized_UnpackedInt4Weight_LargeHidden) {
   GatherBQTestParams params;
   params.vocab_size = 256;
