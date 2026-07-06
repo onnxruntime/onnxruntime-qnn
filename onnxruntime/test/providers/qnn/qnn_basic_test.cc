@@ -14,6 +14,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
+#include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -1334,8 +1335,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1367,8 +1367,7 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1453,8 +1452,7 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 
 // Test that QNN EP only handles nodes with static shapes and rejects nodes with dynamic shape I/O.
@@ -1523,11 +1521,10 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   RunQnnModelTest(model_build_fn,
                   provider_options,
                   /*opset*/ 19,
-                  ExpectedEPNodeAssignment::Some,
-                  /*abs_err*/ 1e-4f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-4f),
+                                       &ep_graph_checker},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_output*/ true,
-                  &ep_graph_checker);
+                  /*verify_output*/ true);
 }
 
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
@@ -1945,6 +1942,32 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
+TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
+  ProviderOptions options;
+  options["backend_type"] = "gpu";
+
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+}
+
+TEST_F(QnnGPUBackendTests, CosineSimilarityVerifier) {
+  ProviderOptions options;
+  options["backend_type"] = "gpu";
+
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, CosineSimilarityVerifier(0.99f)});
+}
+
 // Returns true if QNN EP was created and QNN HTP shared memory allocator is available, false otherwise.
 static bool CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(RegisteredEpDeviceUniquePtr& registered_ep_device, const ORTCHAR_T* model_path, Ort::Session& session) {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -2114,6 +2137,116 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared) {
     binding.ClearBoundOutputs();
   }
 }
+
+TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared_offset) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  {
+    Ort::Session session{nullptr};
+    const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+    if (!CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(registered_ep_device, ort_model_path, session)) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+
+    Ort::MemoryInfo info_qnn_htp_shared("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
+
+    Ort::Allocator qnn_htp_shared_allocator(session, info_qnn_htp_shared);
+    auto allocator_info = qnn_htp_shared_allocator.GetInfo();
+    ASSERT_EQ(info_qnn_htp_shared, allocator_info);
+
+    const std::array<int64_t, 2> x_shape = {3, 2};
+    std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+
+    const size_t x_allocation_offset_bytes = 4 * sizeof(float);
+    const size_t x_allocation_size_bytes = x_allocation_offset_bytes + x_values.size() * sizeof(float);
+
+    auto input_data_base = qnn_htp_shared_allocator.GetAllocation(x_allocation_size_bytes);
+    ASSERT_NE(input_data_base.get(), nullptr);
+
+    auto input_data = reinterpret_cast<float*>(static_cast<uint8_t*>(input_data_base.get()) + x_allocation_offset_bytes);
+    memcpy(input_data, x_values.data(), sizeof(float) * x_values.size());
+
+    // Create an OrtValue tensor backed by data on QNN HTP shared memory
+    Ort::Value bound_x = Ort::Value::CreateTensor(info_qnn_htp_shared, input_data, x_values.size(),
+                                                  x_shape.data(), x_shape.size());
+
+    // Setup expected output (y) from model. Note that QNN EP runs float32 operators as float16,
+    // so the output will not be exactly equal.
+    const std::array<int64_t, 2> expected_y_shape = {3, 2};
+    const std::array<float, 3 * 2> expected_y = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+    constexpr float y_max_abs_err = 1e-5f;
+
+    const size_t y_allocation_offset_bytes = 4 * sizeof(float);
+    const size_t y_allocation_size_bytes = y_allocation_offset_bytes + expected_y.size() * sizeof(float);
+
+    auto output_data_base = qnn_htp_shared_allocator.GetAllocation(y_allocation_size_bytes);
+    ASSERT_NE(output_data_base.get(), nullptr);
+
+    auto output_data = reinterpret_cast<float*>(static_cast<uint8_t*>(output_data_base.get()) + y_allocation_offset_bytes);
+
+    // Create an OrtValue tensor backed by data on QNN HTP shared memory
+    Ort::Value bound_y = Ort::Value::CreateTensor(info_qnn_htp_shared, output_data,
+                                                  expected_y.size(), expected_y_shape.data(), expected_y_shape.size());
+
+    Ort::IoBinding binding(session);
+    binding.BindInput("X", bound_x);
+    binding.BindOutput("Y", bound_y);
+
+    session.Run(Ort::RunOptions(), binding);
+
+    // Check the values against the bound raw memory
+    {
+      gsl::span y{output_data, expected_y.size()};
+      EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+    }
+
+    // Now compare values via GetOutputValues
+    {
+      std::vector<Ort::Value> output_values = binding.GetOutputValues();
+      ASSERT_EQ(output_values.size(), 1U);
+      const Ort::Value& Y_value = output_values[0];
+      ASSERT_TRUE(Y_value.IsTensor());
+      Ort::TensorTypeAndShapeInfo type_info = Y_value.GetTensorTypeAndShapeInfo();
+      ASSERT_EQ(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, type_info.GetElementType());
+      auto count = type_info.GetElementCount();
+      ASSERT_EQ(expected_y.size(), count);
+
+      gsl::span y{Y_value.GetTensorData<float>(), count};
+      EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+    }
+
+    {
+      std::vector<std::string> output_names = binding.GetOutputNames();
+      ASSERT_EQ(1U, output_names.size());
+      ASSERT_EQ(output_names[0].compare("Y"), 0);
+    }
+
+    // Now replace binding of Y with an on device binding instead of pre-allocated memory.
+    // This is when we can not allocate an OrtValue due to unknown dimensions
+    {
+      binding.BindOutput("Y", info_qnn_htp_shared);
+      session.Run(Ort::RunOptions(), binding);
+    }
+
+    // Check the output value allocated based on the device binding.
+    {
+      std::vector<Ort::Value> output_values = binding.GetOutputValues();
+      ASSERT_EQ(output_values.size(), 1U);
+      const Ort::Value& Y_value = output_values[0];
+      ASSERT_TRUE(Y_value.IsTensor());
+      Ort::TensorTypeAndShapeInfo type_info = Y_value.GetTensorTypeAndShapeInfo();
+      ASSERT_EQ(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, type_info.GetElementType());
+      auto count = type_info.GetElementCount();
+      ASSERT_EQ(expected_y.size(), count);
+
+      gsl::span y{Y_value.GetTensorData<float>(), count};
+      EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+    }
+
+    // Clean up
+    binding.ClearBoundInputs();
+    binding.ClearBoundOutputs();
+  }
+}
 #endif  // defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
 
 // Test whether QNN EP can handle the case where the number of graph inputs and
@@ -2141,8 +2274,7 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
                                          kOnnxDomain),
                   provider_options,
                   11,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
@@ -2789,7 +2921,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
     provider_options["dump_json_qnn_graph"] = "1";
     provider_options["json_qnn_graph_dir"] = json_dir.string();
 
-    RunQnnModelTest(model_fn, provider_options, 13, ExpectedEPNodeAssignment::All);
+    RunQnnModelTest(model_fn, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
     std::unordered_set<std::string> node_names;
     for (const auto& entry : fs::directory_iterator(json_dir)) {
@@ -2832,10 +2964,531 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 #endif  // defined(_WIN32)
+
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+// Tests that the QNN GPU shared memory allocator (DX12) can be created and used to allocate/free memory.
+// Requires the QNN GPU backend (QnnGpu.dll) and a D3D12-capable device.
+TEST_F(QnnGPUBackendTests, get_allocator_qnn_gpu_shared) {
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  options["enable_dx12_shared_memory_allocator"] = "1";
+
+  Ort::SessionOptions session_options;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "capi_symbolic_dims.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  // Verify the shared memory allocator is accessible and functional.
+  Ort::MemoryInfo info_qnn_shared(nullptr);
+  Ort::Allocator qnn_gpu_shared_allocator(nullptr);
+  try {
+    // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
+    // migrate to "QnnShared".
+    info_qnn_shared = Ort::MemoryInfo("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
+    qnn_gpu_shared_allocator = Ort::Allocator(session, info_qnn_shared);
+  } catch (const Ort::Exception&) {
+    GTEST_SKIP() << "DX12 allocator unavailable (outdated drivers?). Skipping test.";
+  }
+
+  auto allocator_info = qnn_gpu_shared_allocator.GetInfo();
+  ASSERT_EQ(allocator_info, info_qnn_shared);
+
+  void* p = qnn_gpu_shared_allocator.Alloc(1024);
+  ASSERT_NE(p, nullptr);
+  qnn_gpu_shared_allocator.Free(p);
+
+  auto mem_allocation = qnn_gpu_shared_allocator.GetAllocation(1024);
+  ASSERT_NE(mem_allocation.get(), nullptr);
+  ASSERT_EQ(mem_allocation.size(), size_t{1024});
+}
+
+TEST_F(QnnGPUBackendTests, io_binding_qnn_gpu_shared) {
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  options["enable_dx12_shared_memory_allocator"] = "1";
+
+  Ort::SessionOptions session_options;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  Ort::MemoryInfo info_qnn_shared(nullptr);
+  Ort::Allocator qnn_gpu_shared_allocator(nullptr);
+  try {
+    // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
+    // migrate to "QnnShared".
+    info_qnn_shared = Ort::MemoryInfo("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
+    qnn_gpu_shared_allocator = Ort::Allocator(session, info_qnn_shared);
+  } catch (const Ort::Exception&) {
+    GTEST_SKIP() << "DX12 allocator unavailable (outdated drivers?). Skipping test.";
+  }
+
+  auto allocator_info = qnn_gpu_shared_allocator.GetInfo();
+  ASSERT_EQ(info_qnn_shared, allocator_info);
+
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  auto input_data = qnn_gpu_shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  ASSERT_NE(input_data.get(), nullptr);
+  memcpy(input_data.get(), x_values.data(), sizeof(float) * x_values.size());
+
+  // Create an OrtValue tensor backed by data on QNN shared memory
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_qnn_shared, reinterpret_cast<float*>(input_data.get()), x_values.size(),
+                                                x_shape.data(), x_shape.size());
+
+  const std::array<int64_t, 2> expected_y_shape = {3, 2};
+  const std::array<float, 3 * 2> expected_y = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+  constexpr float y_max_abs_err = 1e-5f;
+  auto output_data = qnn_gpu_shared_allocator.GetAllocation(expected_y.size() * sizeof(float));
+  ASSERT_NE(output_data.get(), nullptr);
+
+  // Create an OrtValue tensor backed by data on QNN shared memory
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_qnn_shared, reinterpret_cast<float*>(output_data.get()),
+                                                expected_y.size(), expected_y_shape.data(), expected_y_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+
+  session.Run(Ort::RunOptions(), binding);
+
+  // Check the values against the bound raw memory
+  {
+    gsl::span y{reinterpret_cast<const float*>(output_data.get()), expected_y.size()};
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+  }
+
+  // Now compare values via GetOutputValues
+  {
+    std::vector<Ort::Value> output_values = binding.GetOutputValues();
+    ASSERT_EQ(output_values.size(), 1U);
+    const Ort::Value& Y_value = output_values[0];
+    ASSERT_TRUE(Y_value.IsTensor());
+    Ort::TensorTypeAndShapeInfo type_info = Y_value.GetTensorTypeAndShapeInfo();
+    ASSERT_EQ(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, type_info.GetElementType());
+    auto count = type_info.GetElementCount();
+    ASSERT_EQ(expected_y.size(), count);
+
+    gsl::span y{Y_value.GetTensorData<float>(), count};
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+  }
+
+  {
+    std::vector<std::string> output_names = binding.GetOutputNames();
+    ASSERT_EQ(1U, output_names.size());
+    ASSERT_EQ(output_names[0].compare("Y"), 0);
+  }
+
+  // Now replace binding of Y with an on device binding instead of pre-allocated memory.
+  // This is when we can not allocate an OrtValue due to unknown dimensions
+  {
+    binding.BindOutput("Y", info_qnn_shared);
+    session.Run(Ort::RunOptions(), binding);
+  }
+
+  // Check the output value allocated based on the device binding.
+  {
+    std::vector<Ort::Value> output_values = binding.GetOutputValues();
+    ASSERT_EQ(output_values.size(), 1U);
+    const Ort::Value& Y_value = output_values[0];
+    ASSERT_TRUE(Y_value.IsTensor());
+    Ort::TensorTypeAndShapeInfo type_info = Y_value.GetTensorTypeAndShapeInfo();
+    ASSERT_EQ(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, type_info.GetElementType());
+    auto count = type_info.GetElementCount();
+    ASSERT_EQ(expected_y.size(), count);
+
+    gsl::span y{Y_value.GetTensorData<float>(), count};
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+  }
+
+  // Clean up
+  binding.ClearBoundInputs();
+  binding.ClearBoundOutputs();
+}
+
+// TODO: enable when DX12SharedMemoryAllocator supports tensors at nonzero offset within allocation
+TEST_F(QnnGPUBackendTests, DISABLED_io_binding_qnn_gpu_shared_offset) {
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  options["enable_dx12_shared_memory_allocator"] = "1";
+
+  Ort::SessionOptions session_options;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
+  // migrate to "QnnShared".
+  Ort::MemoryInfo info_qnn_shared("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator qnn_gpu_shared_allocator(session, info_qnn_shared);
+  auto allocator_info = qnn_gpu_shared_allocator.GetInfo();
+  ASSERT_EQ(info_qnn_shared, allocator_info);
+
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+
+  const size_t x_allocation_offset_bytes = 4 * sizeof(float);
+  const size_t x_allocation_size_bytes = x_allocation_offset_bytes + x_values.size() * sizeof(float);
+
+  auto input_data_base = qnn_gpu_shared_allocator.GetAllocation(x_allocation_size_bytes);
+  ASSERT_NE(input_data_base.get(), nullptr);
+
+  auto input_data = reinterpret_cast<float*>(static_cast<uint8_t*>(input_data_base.get()) + x_allocation_offset_bytes);
+  memcpy(input_data, x_values.data(), sizeof(float) * x_values.size());
+
+  // Create an OrtValue tensor backed by data on QNN shared memory
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_qnn_shared, input_data, x_values.size(),
+                                                x_shape.data(), x_shape.size());
+
+  const std::array<int64_t, 2> expected_y_shape = {3, 2};
+  const std::array<float, 3 * 2> expected_y = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+  constexpr float y_max_abs_err = 1e-5f;
+
+  const size_t y_allocation_offset_bytes = 4 * sizeof(float);
+  const size_t y_allocation_size_bytes = y_allocation_offset_bytes + expected_y.size() * sizeof(float);
+
+  auto output_data_base = qnn_gpu_shared_allocator.GetAllocation(y_allocation_size_bytes);
+  ASSERT_NE(output_data_base.get(), nullptr);
+
+  auto output_data = reinterpret_cast<float*>(static_cast<uint8_t*>(output_data_base.get()) + y_allocation_offset_bytes);
+
+  // Create an OrtValue tensor backed by data on QNN shared memory
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_qnn_shared, output_data,
+                                                expected_y.size(), expected_y_shape.data(), expected_y_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+
+  session.Run(Ort::RunOptions(), binding);
+
+  // Check the values against the bound raw memory
+  {
+    gsl::span y{output_data, expected_y.size()};
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+  }
+
+  // Now compare values via GetOutputValues
+  {
+    std::vector<Ort::Value> output_values = binding.GetOutputValues();
+    ASSERT_EQ(output_values.size(), 1U);
+    const Ort::Value& Y_value = output_values[0];
+    ASSERT_TRUE(Y_value.IsTensor());
+    Ort::TensorTypeAndShapeInfo type_info = Y_value.GetTensorTypeAndShapeInfo();
+    ASSERT_EQ(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, type_info.GetElementType());
+    auto count = type_info.GetElementCount();
+    ASSERT_EQ(expected_y.size(), count);
+
+    gsl::span y{Y_value.GetTensorData<float>(), count};
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+  }
+
+  {
+    std::vector<std::string> output_names = binding.GetOutputNames();
+    ASSERT_EQ(1U, output_names.size());
+    ASSERT_EQ(output_names[0].compare("Y"), 0);
+  }
+
+  // Now replace binding of Y with an on device binding instead of pre-allocated memory.
+  // This is when we can not allocate an OrtValue due to unknown dimensions
+  {
+    binding.BindOutput("Y", info_qnn_shared);
+    session.Run(Ort::RunOptions(), binding);
+  }
+
+  // Check the output value allocated based on the device binding.
+  {
+    std::vector<Ort::Value> output_values = binding.GetOutputValues();
+    ASSERT_EQ(output_values.size(), 1U);
+    const Ort::Value& Y_value = output_values[0];
+    ASSERT_TRUE(Y_value.IsTensor());
+    Ort::TensorTypeAndShapeInfo type_info = Y_value.GetTensorTypeAndShapeInfo();
+    ASSERT_EQ(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, type_info.GetElementType());
+    auto count = type_info.GetElementCount();
+    ASSERT_EQ(expected_y.size(), count);
+
+    gsl::span y{Y_value.GetTensorData<float>(), count};
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), y));
+  }
+
+  // Clean up
+  binding.ClearBoundInputs();
+  binding.ClearBoundOutputs();
+}
+
+#endif  // defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+
+// ============================ QNN EP input graph dump ============================
+//
+// `dump_qnn_ep_input_graph` writes the ONNX graph the EP receives at compile
+// time (after ORT Level 1 optimizations, before partitioning) as a JSON file in
+// the same QNN-Netron schema used by `dump_json_qnn_graph`. These tests run a
+// small model on the CPU backend, then parse and validate the emitted JSON.
+//
+// Why JSON (QNN Netron schema) and not a real .onnx: the QNN EP is a standalone
+// ABI plugin that links only the public ORT C/C++ API + Abseil + nlohmann/json
+// (see cmake/onnxruntime_providers_qnn.cmake) and intentionally does NOT link
+// protobuf / onnx proto, so it cannot construct or serialize an onnx::ModelProto.
+// nlohmann/json is already a plugin dependency and the schema is Netron-openable,
+// so reusing it adds zero dependencies. (The test binary itself DOES link onnx
+// proto, which is why these tests can build real models to feed the EP.)
+
+namespace {
+
+// Returns the first "*_qnn_ep_input_graph.json" file in `dir`, or {} if none.
+std::filesystem::path FindQnnEpInputGraphDump(const std::filesystem::path& dir) {
+  if (!std::filesystem::exists(dir)) return {};
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (entry.path().extension() == ".json" &&
+        entry.path().stem().string().find("_qnn_ep_input_graph") != std::string::npos) {
+      return entry.path();
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
+// Pure-function tests for SanitizeGraphNameForFilename. These do not need to
+// drive the EP because the helper is exposed in the dumper header. The intent
+// is to lock down: (a) path-separator characters cannot escape the dump
+// directory, (b) Windows-illegal characters are replaced, (c) parent-dir
+// references (`..`) cannot survive, (d) Windows-reserved device names get
+// suffixed so they do not collide with the device-name handler, and
+// (e) sanitized output combined with `<dump_dir> / sanitized` always lands
+// inside `<dump_dir>` (lexical containment check).
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_ReplacesPathSeparators) {
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("model/encoder/layer.0/Add"),
+            "model_encoder_layer.0_Add");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_ReplacesWindowsIllegal) {
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("a:b*c?d|e<f>g\"h"),
+            "a_b_c_d_e_f_g_h");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_StripsLeadingDotsAndDashes) {
+  // `..foo` must not survive as a parent-dir reference. Leading `-` is
+  // stripped so the result cannot resemble an argument flag if it ever
+  // round-trips through a CLI.
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("..foo"), "foo");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("-rf"), "rf");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename(".."), "graph");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("."), "graph");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_DropsTrailingDot) {
+  // Trailing dots are explicitly stripped because Windows treats them as
+  // ignorable. Trailing space is already replaced with `_` by the safe-set
+  // pass before the trim runs, so it never reaches the trim — the
+  // `"foo. "` case below documents that contract.
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo. "), "foo._");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo.bar."), "foo.bar");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("foo..."), "foo");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_AvoidsWindowsReservedNames) {
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("CON"), "CON_");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("nul"), "nul_");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("COM1"), "COM1_");
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("CON.json"), "CON_.json");
+  // A reserved-looking stem inside a longer name is fine.
+  EXPECT_EQ(qnn::SanitizeGraphNameForFilename("CONSOLE"), "CONSOLE");
+}
+
+TEST(QnnEpInputGraphDumperTest, SanitizeGraphName_LandsInsideDumpDir) {
+  // For any sanitized name N, `dump_dir / (N + suffix)`.lexically_normal()
+  // must remain a child of `dump_dir`. This is the containment invariant
+  // the dumper relies on so a hostile graph name (path separators, parent
+  // refs, drive prefixes) cannot redirect output outside the configured
+  // dump directory.
+  std::filesystem::path dump_dir = std::filesystem::temp_directory_path() / "qnn_dump_root";
+  for (const char* raw : {"model/encoder/Add",
+                          "../../etc/passwd",
+                          "C:\\Windows\\System32",
+                          "..",
+                          "CON",
+                          "graph.with.dots",
+                          ""}) {
+    std::string sanitized = qnn::SanitizeGraphNameForFilename(raw);
+    std::filesystem::path joined =
+        (dump_dir / (sanitized + "_qnn_ep_input_graph.json")).lexically_normal();
+    auto dump_root = dump_dir.lexically_normal();
+    auto joined_str = joined.string();
+    auto root_str = dump_root.string();
+    EXPECT_EQ(joined_str.rfind(root_str, 0), 0u)
+        << "graph name '" << raw << "' produced path '" << joined_str
+        << "' which escapes dump root '" << root_str << "'";
+    EXPECT_EQ(joined.parent_path().lexically_normal(), dump_root)
+        << "graph name '" << raw << "' produced parent != dump root";
+  }
+}
+
+// Run a tiny float model with the dump enabled and validate the emitted JSON
+// structure: the 8 top-level QNN-Netron keys, node entries keyed by name with
+// type/input_names/output_names, and tensor entries keyed by name with
+// id/type/data_type/dims.
+TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_BasicStructure) {
+  const std::filesystem::path dump_dir =
+      std::filesystem::temp_directory_path() / "qnn_ep_input_graph_basic";
+  std::error_code ec;
+  std::filesystem::remove_all(dump_dir, ec);
+  std::filesystem::create_directories(dump_dir);
+
+  ProviderOptions options;
+  options["backend_type"] = "cpu";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ep_input_graph"] = "1";
+  options["dump_qnn_ep_input_graph_dir"] = dump_dir.string();
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  RunQnnModelTest(BuildOpTestCase<float>("add_node", "Add",
+                                         {TestInputDef<float>({1, 2, 3}, false, data),
+                                          TestInputDef<float>({1, 2, 3}, false, data)},
+                                         {}, {}, kOnnxDomain),
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
+    std::filesystem::remove_all(dump_dir, ec);
+    return;
+  }
+
+  std::filesystem::path dump_file = FindQnnEpInputGraphDump(dump_dir);
+  ASSERT_FALSE(dump_file.empty()) << "No *_qnn_ep_input_graph.json written in " << dump_dir;
+
+  std::ifstream ifs(dump_file);
+  ASSERT_TRUE(ifs.is_open());
+  nlohmann::json j = nlohmann::json::parse(ifs, nullptr, false);
+  ASSERT_FALSE(j.is_discarded()) << "dump is not valid JSON: " << dump_file;
+
+  // 8 top-level QNN-Netron keys.
+  for (const char* key : {"model.cpp", "model.bin", "converter_command", "copyright_str",
+                          "op_types", "Total parameters", "Total MACs per inference", "graph"}) {
+    EXPECT_TRUE(j.contains(key)) << "missing top-level key: " << key;
+  }
+  ASSERT_TRUE(j["graph"].contains("nodes"));
+  ASSERT_TRUE(j["graph"].contains("tensors"));
+  EXPECT_GE(j["graph"]["nodes"].size(), 1u);
+  EXPECT_GE(j["graph"]["tensors"].size(), 1u);
+
+  // Every node entry carries the Netron-required fields.
+  for (auto it = j["graph"]["nodes"].begin(); it != j["graph"]["nodes"].end(); ++it) {
+    const auto& node = it.value();
+    EXPECT_TRUE(node.contains("type"));
+    EXPECT_TRUE(node.contains("input_names"));
+    EXPECT_TRUE(node.contains("output_names"));
+    EXPECT_TRUE(node["input_names"].is_array());
+    EXPECT_TRUE(node["output_names"].is_array());
+  }
+
+  // Every tensor entry carries id/type/data_type/dims.
+  for (auto it = j["graph"]["tensors"].begin(); it != j["graph"]["tensors"].end(); ++it) {
+    const auto& tensor = it.value();
+    EXPECT_TRUE(tensor.contains("id"));
+    EXPECT_TRUE(tensor.contains("type"));
+    EXPECT_TRUE(tensor.contains("data_type"));
+    EXPECT_TRUE(tensor.contains("dims"));
+    EXPECT_TRUE(tensor["dims"].is_array());
+  }
+
+  std::filesystem::remove_all(dump_dir, ec);
+}
+
+// Validate that graph inputs, outputs, and initializers are classified with the
+// QNN tensor-type integers Netron expects (APP_WRITE=0, APP_READ=1, STATIC=4).
+TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_TensorClassification) {
+  const std::filesystem::path dump_dir =
+      std::filesystem::temp_directory_path() / "qnn_ep_input_graph_classify";
+  std::error_code ec;
+  std::filesystem::remove_all(dump_dir, ec);
+  std::filesystem::create_directories(dump_dir);
+
+  ProviderOptions options;
+  options["backend_type"] = "cpu";
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ep_input_graph"] = "1";
+  options["dump_qnn_ep_input_graph_dir"] = dump_dir.string();
+
+  // Add with a constant initializer as the second input, so the dump contains
+  // a graph input (APP_WRITE), a graph output (APP_READ), and an initializer
+  // (STATIC).
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> init_data = GetFloatDataInRange(-1.0f, 1.0f, 6);
+  RunQnnModelTest(BuildOpTestCase<float, float>("add_node", "Add",
+                                                {TestInputDef<float>({1, 2, 3}, false, input_data)},
+                                                {TestInputDef<float>({1, 2, 3}, true, init_data)},
+                                                {}, kOnnxDomain),
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
+    std::filesystem::remove_all(dump_dir, ec);
+    return;
+  }
+
+  std::filesystem::path dump_file = FindQnnEpInputGraphDump(dump_dir);
+  ASSERT_FALSE(dump_file.empty()) << "No dump written in " << dump_dir;
+  std::ifstream ifs(dump_file);
+  nlohmann::json j = nlohmann::json::parse(ifs, nullptr, false);
+  ASSERT_FALSE(j.is_discarded());
+
+  // Collect the set of tensor-type integers present. We expect at least one
+  // graph input (0), one graph output (1), and one initializer (4).
+  std::unordered_set<int> seen_types;
+  for (auto it = j["graph"]["tensors"].begin(); it != j["graph"]["tensors"].end(); ++it) {
+    seen_types.insert(it.value()["type"].get<int>());
+  }
+  EXPECT_TRUE(seen_types.count(0)) << "expected an APP_WRITE (graph input) tensor";
+  EXPECT_TRUE(seen_types.count(1)) << "expected an APP_READ (graph output) tensor";
+  EXPECT_TRUE(seen_types.count(4)) << "expected a STATIC (initializer) tensor";
+
+  std::filesystem::remove_all(dump_dir, ec);
+}
+
+// With the option disabled (default), no dump file is written.
+TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_DisabledByDefault) {
+  const std::filesystem::path dump_dir =
+      std::filesystem::temp_directory_path() / "qnn_ep_input_graph_disabled";
+  std::error_code ec;
+  std::filesystem::remove_all(dump_dir, ec);
+  std::filesystem::create_directories(dump_dir);
+
+  ProviderOptions options;
+  options["backend_type"] = "cpu";
+  options["offload_graph_io_quantization"] = "0";
+  // Pin the dump directory to a scoped temp dir while leaving
+  // dump_qnn_ep_input_graph unset. Setting only the directory makes the
+  // assertion below catch a regression that flips the default to enabled:
+  // such a regression would write into this directory and trip the empty()
+  // check, instead of silently writing into the test's CWD where the helper
+  // would never look.
+  options["dump_qnn_ep_input_graph_dir"] = dump_dir.string();
+
+  std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  RunQnnModelTest(BuildOpTestCase<float>("add_node", "Add",
+                                         {TestInputDef<float>({1, 2, 3}, false, data),
+                                          TestInputDef<float>({1, 2, 3}, false, data)},
+                                         {}, {}, kOnnxDomain),
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
+    std::filesystem::remove_all(dump_dir, ec);
+    return;
+  }
+
+  EXPECT_TRUE(FindQnnEpInputGraphDump(dump_dir).empty())
+      << "dump file written even though dump_qnn_ep_input_graph was not enabled";
+
+  std::filesystem::remove_all(dump_dir, ec);
+}
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
 

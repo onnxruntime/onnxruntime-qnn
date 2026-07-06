@@ -27,8 +27,7 @@ static void RunClipTest(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType, DataType>("Clip_node", "Clip", {input_def}, min_max_defs, {}),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //
@@ -199,7 +198,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_IndependentQDQ_MinMaxQDQ) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip of rank 5.
@@ -239,7 +238,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_Rank5) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip with quantized min input only (and missing max input)
@@ -280,7 +279,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMin) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   11,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip with quantized max input only (and missing min input)
@@ -320,7 +319,7 @@ TEST_F(QnnHTPBackendTests, Clip_U16_QuantizedMax) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   21,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test QDQ Clip with both quantized min and max inputs
@@ -368,7 +367,72 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMinMax) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
+// Clip with a bare-float data input and Q/DQ-wrapped constant min/max. Asymmetric
+// zero_point exercises the dequant sign convention.
+TEST_F(QnnHTPBackendTests, Clip_U16_FloatData_QDQConstMinMax) {
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    const float scale = 10.0f / 65535.0f;
+    const float min_value = -10.0f;
+    const float max_value = 10.0f;
+    const uint16_t min_zp = 65535;
+    const uint16_t max_zp = 0;
+    uint16_t min_q = static_cast<uint16_t>(std::round(min_value / scale) + min_zp);
+    uint16_t max_q = static_cast<uint16_t>(std::round(max_value / scale) + max_zp);
+
+    builder.MakeInitializer<uint16_t>("min_q", {}, {min_q});
+    builder.AddDequantizeLinearNode<uint16_t>("min_dq", "min_q", scale, min_zp, "min_dq_out");
+    builder.MakeInitializer<uint16_t>("max_q", {}, {max_q});
+    builder.AddDequantizeLinearNode<uint16_t>("max_dq", "max_q", scale, max_zp, "max_dq_out");
+
+    builder.MakeInput<float>("X", {1, 8}, GetFloatDataInRange(-20.0f, 20.0f, 8));
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("clip", "Clip", {"X", "min_dq_out", "max_dq_out"}, {"Y"}, "", attributes);
+    builder.MakeOutput("Y");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  21,  // 16-bit DequantizeLinear requires opset >= 21.
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier{5e-3f}});
+}
+
+TEST_F(QnnHTPBackendTests, Clip_U8_FloatData_QDQConstMinMax) {
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    const float scale = 0.1f;
+    const uint8_t zp = 128;
+    const float min_value = -5.0f;
+    const float max_value = 5.0f;
+    uint8_t min_q = static_cast<uint8_t>(std::round(min_value / scale) + zp);
+    uint8_t max_q = static_cast<uint8_t>(std::round(max_value / scale) + zp);
+
+    builder.MakeInitializer<uint8_t>("min_q", {}, {min_q});
+    builder.AddDequantizeLinearNode<uint8_t>("min_dq", "min_q", scale, zp, "min_dq_out");
+    builder.MakeInitializer<uint8_t>("max_q", {}, {max_q});
+    builder.AddDequantizeLinearNode<uint8_t>("max_dq", "max_q", scale, zp, "max_dq_out");
+
+    builder.MakeInput<float>("X", {1, 8}, GetFloatDataInRange(-10.0f, 10.0f, 8));
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("clip", "Clip", {"X", "min_dq_out", "max_dq_out"}, {"Y"}, "", attributes);
+    builder.MakeOutput("Y");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier{5e-3f}});
 }
 
 // Test FP16 Clip with min (FP16)

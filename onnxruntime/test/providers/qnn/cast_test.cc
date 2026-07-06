@@ -111,7 +111,7 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
   RunQnnModelTest(BuildCastTestCase<InputType>(shape, dst_type),
                   GetProviderOption(backend_name, enable_fp16_precision),
                   13,  // opset
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
@@ -126,7 +126,7 @@ static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
   RunQnnModelTest(BuildCastFP64TestCase(shape),
                   GetProviderOption(backend_name, true),
                   13,  // opset
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -161,7 +161,7 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
     builder.MakeOutput("Y");
   };
 
-  RunQnnModelTest(testcase, provider_options, /* opset */ 13, expected_ep_assignment);
+  RunQnnModelTest(testcase, provider_options, /* opset */ 13, EPVerificationParams{expected_ep_assignment});
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

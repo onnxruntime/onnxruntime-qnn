@@ -260,10 +260,12 @@ Push-Location $RepoRoot
 
 $failed = $false
 if ($MakeTestArchive) {
+    $VcRedistDir = (Get-VcRedistDir)
     python.exe "$RepoRoot\qcom\scripts\all\archive_tests.py" `
         "--config=$Config" `
         "--qairt-sdk-root=$QairtSdkRoot" `
-        "--target-platform=windows-$BuildDirArch"
+        "--target-platform=windows-$BuildDirArch" `
+        "--vc-redist-dir=$VcRedistDir"
     if (-not $?) {
         $failed = $true
     }

@@ -138,8 +138,7 @@ static void RunMatMulNBitsTest(const TestParams params,
   RunQnnModelTest(model_builder,
                   provider_options,
                   13,  // opset version for contrib ops
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 #if defined(_M_ARM64)

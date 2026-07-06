@@ -30,6 +30,12 @@
   endif()
   message(STATUS "QNN SDK version ${QNN_SDK_VERSION}")
 
+  if(QNN_SDK_VERSION)
+    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _ "${QNN_SDK_VERSION}")
+    set(QNN_SDK_VERSION_MAJOR "${CMAKE_MATCH_1}")
+    set(QNN_SDK_VERSION_MINOR "${CMAKE_MATCH_2}")
+  endif()
+
   source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_ep_srcs})
 
   set(onnxruntime_providers_qnn_all_srcs ${onnxruntime_providers_qnn_ep_srcs})
@@ -53,6 +59,11 @@
 
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
 
+  if(WIN32)
+    # Required for D3D12CreateDevice (DX12 shared memory allocator for QNN GPU backend)
+    target_link_libraries(onnxruntime_providers_qnn PRIVATE d3d12.lib dxgi.lib)
+  endif()
+
   add_dependencies(onnxruntime_providers_qnn ort_core_target)
 
   message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: " ${ONNXRUNTIME_APPLICATION_INCLUDES})
@@ -71,6 +82,12 @@
 
     target_compile_definitions(onnxruntime_providers_qnn PRIVATE FILE_DESC=\"${QNN_DLL_FILE_DESCRIPTION}\")
     target_compile_definitions(onnxruntime_providers_qnn PRIVATE FILE_NAME=\"onnxruntime_providers_qnn.dll\")
+  endif()
+
+  if(QNN_SDK_VERSION_MAJOR AND QNN_SDK_VERSION_MINOR)
+    target_compile_definitions(onnxruntime_providers_qnn PRIVATE
+      QNN_SDK_VERSION_MAJOR=${QNN_SDK_VERSION_MAJOR}
+      QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR})
   endif()
 
   # Set linker flags for function(s) exported by EP DLL
