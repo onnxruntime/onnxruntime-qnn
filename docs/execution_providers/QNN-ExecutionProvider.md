@@ -199,8 +199,8 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 |`"enable_htp_fp16_precision"`|Description [Example](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)|
 |---|---|
-|'0'|Disabled. Inference with fp32 precision if it's fp32 model.|
-|'1'|Default. Enable the float32 model to be inferenced with fp16 precision.|
+|'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
+|'1'|Enable the float32 model to be inferenced with fp16 precision.|
 
 |`"disable_htp_monolithic_lstm"`|Description|
 |---|---|
