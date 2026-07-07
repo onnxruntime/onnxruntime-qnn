@@ -1059,6 +1059,12 @@ class ZipUpleveler(ArtifactUpleveler):
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update ZIP archive versions (simple copy with renamed version)."""
+        # version_from/to carry the "-pdb" channel suffix (from the Artifactory dir name), but
+        # filenames put it after the arch (onnxruntime-qnn-2.3.0rc1-win-arm64-pdb.zip), so the
+        # suffixed version token never matches. Strip "-pdb" to rename on the core version token.
+        file_version_from = self.args.version_from.removesuffix("-pdb")
+        file_version_to = self.args.version_to.removesuffix("-pdb")
+
         for zip_file in artifact_list:
             logging.info(
                 f"Updating version from {self.args.version_from} to {self.args.version_to} "
@@ -1066,10 +1072,8 @@ class ZipUpleveler(ArtifactUpleveler):
             )
 
             zip_path = os.path.join(input_dir, zip_file)
-            updated_zip_path = os.path.join(
-                output_dir,
-                os.path.basename(zip_path.replace(self.args.version_from, self.args.version_to)),
-            )
+            new_name = os.path.basename(zip_path).replace(file_version_from, file_version_to)
+            updated_zip_path = os.path.join(output_dir, new_name)
 
             shutil.copy(zip_path, updated_zip_path)
 

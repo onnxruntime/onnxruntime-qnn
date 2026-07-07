@@ -650,10 +650,23 @@ Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_T
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::InitializeBackend() {
+Ort::Status QnnBackendManager::InitializeBackend(bool enable_gpu_weight_sharing) {
   if (backend_initialized_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Backend initialized already.");
     return Ort::Status();
+  }
+
+  if (IsGpuBackend(GetQnnBackendType()) && enable_gpu_weight_sharing) {
+    gpu_backend_custom_config_.option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
+    gpu_backend_custom_config_.weightSharingEnabled = 1;
+
+    backend_config_wrapper_.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+    backend_config_wrapper_.customConfig = &gpu_backend_custom_config_;
+
+    backend_configs_ptr_[0] = &backend_config_wrapper_;
+    backend_configs_ptr_[1] = nullptr;
+
+    backend_config_ = backend_configs_ptr_;
   }
 
   return InitializeBackendCommon(qnn_interface_, log_handle_, backend_handle_, backend_initialized_, "backend");
@@ -1946,8 +1959,21 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeQnnLog succeed.");
   }
 
+  bool enable_gpu_weight_sharing = false;
+  if (share_ep_contexts && !load_from_cached_context) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    enable_gpu_weight_sharing = true;
+#endif
+  }
+
+  if (IsGpuBackend(GetQnnBackendType())) {
+    const std::string msg = std::string("GPU weight sharing: ") +
+                            (enable_gpu_weight_sharing ? "enabled" : "disabled");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, msg.c_str());
+  }
+
   if (status.IsOK()) {
-    status = InitializeBackend();
+    status = InitializeBackend(enable_gpu_weight_sharing);
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");

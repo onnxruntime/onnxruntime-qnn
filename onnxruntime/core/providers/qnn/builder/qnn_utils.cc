@@ -1699,7 +1699,7 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
   QnnTensorWrapper convert_output_tensorwrapper(convert_output_name,
                                                 QNN_TENSOR_TYPE_NATIVE,
                                                 output_qnn_data_type,
-                                                QnnQuantParamsWrapper(scale, offset),
+                                                QnnQuantParamsWrapper::PerTensor(scale, offset),
                                                 std::move(output_shape_copy));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(convert_output_tensorwrapper)), "Failed to add tensor.");
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(UniqueNameGenerator().New(convert_output_name, QNN_OP_CONVERT),

@@ -89,6 +89,7 @@ void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateNonMaxSuppressionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

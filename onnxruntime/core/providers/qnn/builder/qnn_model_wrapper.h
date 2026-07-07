@@ -266,6 +266,25 @@ class QnnModelWrapper {
                           std::vector<uint32_t>&& output_shape,
                           bool do_op_validation);
 
+  // Adds a QNN_OP_DEQUANTIZE node: input (quantized) → output (float).
+  // output_data_type must be FLOAT_16 or FLOAT_32.
+  // Output tensor type is always QNN_TENSOR_TYPE_NATIVE.
+  Ort::Status AddDequantizeNode(const std::string& input_name,
+                                const std::string& output_name,
+                                Qnn_DataType_t output_data_type,
+                                std::vector<uint32_t> output_shape,
+                                bool do_op_validation);
+
+  // Adds a QNN_OP_QUANTIZE node: input (float) → output (fixed-point).
+  // output_data_type must be a SFIXED_POINT or UFIXED_POINT type.
+  Ort::Status AddQuantizeNode(const std::string& input_name,
+                              const std::string& output_name,
+                              Qnn_TensorType_t output_tensor_type,
+                              Qnn_DataType_t output_data_type,
+                              QnnQuantParamsWrapper output_quant_param,
+                              std::vector<uint32_t> output_shape,
+                              bool do_op_validation);
+
   Ort::Status AddReshapeNode(const std::string& input_name,
                              const std::string& output_name,
                              const std::vector<uint32_t>& input_shape,

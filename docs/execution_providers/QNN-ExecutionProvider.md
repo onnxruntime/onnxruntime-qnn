@@ -163,9 +163,13 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"qnn_context_priority"`|[Description](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_yielding.html)|
 |---|---|
 |'low'|Low priority.|
+|'normal_low'|Normal low priority.|
 |'normal'|Normal priority. Default.|
 |'normal_high'|Normal high priority.|
 |'high'|High priority.|
+|'high_plus'|High plus priority.|
+|'critical'|Critical priority.|
+|'critical_plus'|Critical plus priority.|
 
 |`"htp_graph_finalization_optimization_mode"`|Description|
 |---|---|
@@ -429,6 +433,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Mod||
 |ai.onnx:Mul||
 |ai.onnx:Neg||
+|ai.onnx:NonMaxSuppression|max_output_boxes_per_class, iou_threshold, and score_threshold must be static constants; max_output_boxes_per_class must be > 0; center_point_box must be 0 (diagonal corners); GPU backend not supported|
 |ai.onnx:NonZero||
 |ai.onnx:Not||
 |ai.onnx:Or||

@@ -45,6 +45,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
+  CreateNonMaxSuppressionOpBuilder("NonMaxSuppression", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
   CreateOneHotOpBuilder("OneHot", *this);
   CreatePadOpBuilder("Pad", *this);
