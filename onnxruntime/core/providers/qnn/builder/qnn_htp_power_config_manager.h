@@ -34,12 +34,6 @@ typedef struct HtpPerfConfig {
   uint32_t rpc_control_latency;
 } HtpPerfConfig_t;
 
-enum class DcvsState {
-  DCVS_DEFAULT = 0,
-  DCVS_DISABLE = 1,
-  DCVS_ENABLE = 2
-};
-
 // Manages staging of any new power configurations and
 // updates power configurations for the HTP backend.
 //
@@ -105,13 +99,12 @@ class HtpPowerConfigManager {
 
   Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, const QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency, const Ort::Logger& logger);
 
-  // Sets power config for relaxed performance mode based on DCVS state
+  // Sets power config for relaxed performance mode
   void SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config,
-                                 uint32_t htp_power_config_client_id,
-                                 DcvsState dcvsState);
+                                 uint32_t htp_power_config_client_id);
 
-  // Sets power config for released performance mode based on DCVS state
-  void SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id, DcvsState dcvsState);
+  // Sets power config for released performance mode
+  void SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id);
 
   // Sets power config for extreme low performance mode
   void SetExtremeLowPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id);

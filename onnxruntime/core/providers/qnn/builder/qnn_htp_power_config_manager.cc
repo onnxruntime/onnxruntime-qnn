@@ -284,7 +284,7 @@ Ort::Status HtpPowerConfigManager::SetHtpPerformancePowerConfig(QnnHtpPerfInfras
   return Ort::Status();
 }
 
-void HtpPowerConfigManager::SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id, DcvsState dcvsState) {
+void HtpPowerConfigManager::SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id) {
   power_config.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
   QnnHtpPerfInfrastructure_DcvsV3_t& dcvs_v3 = power_config.dcvsV3Config;
   dcvs_v3.contextId = htp_power_config_client_id;
@@ -294,11 +294,7 @@ void HtpPowerConfigManager::SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_P
   dcvs_v3.setSleepLatency = 1;
   dcvs_v3.sleepDisable = 0;
   dcvs_v3.setSleepDisable = 0;
-  if (dcvsState == DcvsState::DCVS_ENABLE) {
-    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_ADJUST_UP_DOWN;
-  } else {
-    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
-  }
+  dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
   dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS2;
   dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS;
   dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS;
@@ -330,7 +326,7 @@ void HtpPowerConfigManager::SetExtremeLowPerfPowerConfig(QnnHtpPerfInfrastructur
   dcvs_v3.setCoreParams = 1;
 }
 
-void HtpPowerConfigManager::SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id, DcvsState dcvsState) {
+void HtpPowerConfigManager::SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id) {
   power_config.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
   QnnHtpPerfInfrastructure_DcvsV3_t& dcvs_v3 = power_config.dcvsV3Config;
   dcvs_v3.contextId = htp_power_config_client_id;
@@ -340,11 +336,7 @@ void HtpPowerConfigManager::SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_
   dcvs_v3.setSleepLatency = 1;
   dcvs_v3.sleepDisable = 0;
   dcvs_v3.setSleepDisable = 0;
-  if (dcvsState == DcvsState::DCVS_ENABLE) {
-    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_ADJUST_UP_DOWN;
-  } else {
-    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
-  }
+  dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
   dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
   dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
   dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
@@ -430,7 +422,7 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
       break;
     case GraphState::INIT_DONE: {
       QnnHtpPerfInfrastructure_PowerConfig_t init_done_htp_performance_cfg{};
-      SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, config.htp_power_config_client_id, DcvsState::DCVS_DEFAULT);
+      SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, config.htp_power_config_client_id);
       status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, init_done_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
       timer_resource_.caller_busy_ = false;
       break;
@@ -446,7 +438,7 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
     case GraphState::TIMEOUT: {
       if (!timer_resource_.caller_busy_) {
         QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg{};
-        SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, config.htp_power_config_client_id, DcvsState::DCVS_DEFAULT);
+        SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, config.htp_power_config_client_id);
         status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, timeout_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
       }
       break;
@@ -469,7 +461,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
         case qnn::HtpPerformanceMode::kHtpBalanced:
         case qnn::HtpPerformanceMode::kHtpHighPerformance: {
           QnnHtpPerfInfrastructure_PowerConfig_t relaxed_htp_performance_cfg{};
-          SetRelaxedPerfPowerConfig(relaxed_htp_performance_cfg, config.htp_power_config_client_id, DcvsState::DCVS_DEFAULT);
+          SetRelaxedPerfPowerConfig(relaxed_htp_performance_cfg, config.htp_power_config_client_id);
           status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, relaxed_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
           break;
         }
@@ -483,7 +475,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
         case qnn::HtpPerformanceMode::kHtpHighPowerSaver:
         case qnn::HtpPerformanceMode::kHtpPowerSaver: {
           QnnHtpPerfInfrastructure_PowerConfig_t released_htp_performance_cfg{};
-          SetReleasedPerfPowerConfig(released_htp_performance_cfg, config.htp_power_config_client_id, DcvsState::DCVS_DEFAULT);
+          SetReleasedPerfPowerConfig(released_htp_performance_cfg, config.htp_power_config_client_id);
           status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, released_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
           break;
         }
@@ -536,12 +528,6 @@ Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfi
       timer_->AbortTimer();
     }
     status = SetPerformance(state, config, logger);
-  }
-
-  // Update graph_state_ to NONE after performance functions complete
-  {
-    std::lock_guard<std::mutex> lk(state_mutex_);
-    graph_state_ = GraphState::NONE;
   }
 
   return status;
