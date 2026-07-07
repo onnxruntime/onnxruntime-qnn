@@ -210,7 +210,7 @@ Ort::Status Serializer::ProcessExtendedEvent(const QnnProfile_EventId_t event_id
                << ","
                << event_level << ","
                << (event_data.v1.identifier ? event_data.v1.identifier : "NULL");
-      if (profiling_info_.op_trace_lookup) {
+      if (emit_onnx_sources_column_) {
         outfile_ << "," << LookupOnnxSources(event_data.v1.identifier);
       }
       outfile_ << "\n";
@@ -263,6 +263,13 @@ Ort::Status Serializer::InitCsvFile() {
       const bool header_has_onnx_sources =
           existing_header.find("ONNX Source Ops") != std::string::npos;
       emit_onnx_sources_column_ = header_has_onnx_sources;
+      if (header_has_onnx_sources != want_onnx_sources && OrtLoggingManager::HasDefaultLogger()) {
+        ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                    (std::string("InitCsvFile: appending to existing profiling CSV '") + output_filepath +
+                     "' whose header " + (header_has_onnx_sources ? "has" : "lacks") +
+                     " the 'ONNX Source Ops' column, overriding this session's trace-enable setting to match")
+                        .c_str());
+      }
     }
   }
   if (infile.is_open()) {
