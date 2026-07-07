@@ -713,10 +713,50 @@ static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor, bool include_
   tensor_json["axis_format"] = "NOT_YET_DEFINED";
 
   const Qnn_QuantizeParams_t& quant_params = GetQnnTensorQParams(tensor);
-  tensor_json["quant_params"] = {
-      {"definition", quant_params.encodingDefinition},
-      {"encoding", quant_params.quantizationEncoding},
-      {"scale_offset", {{"scale", quant_params.scaleOffsetEncoding.scale}, {"offset", quant_params.scaleOffsetEncoding.offset}}}};
+  // quant_params JSON layout matches the QAIRT official qairt-dlc-to-json schema.
+  // Each case serializes only the union member valid for that encoding, avoiding
+  // undefined-behavior reads of the wrong union field.
+  nlohmann::json quant_params_json = {{"definition", quant_params.encodingDefinition},
+                                      {"encoding", quant_params.quantizationEncoding}};
+  switch (quant_params.quantizationEncoding) {
+    case QNN_QUANTIZATION_ENCODING_SCALE_OFFSET:
+      quant_params_json["scale_offset"] = {{"scale", quant_params.scaleOffsetEncoding.scale},
+                                           {"offset", quant_params.scaleOffsetEncoding.offset}};
+      break;
+    case QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET:
+      quant_params_json["bw_scale_offset"] = {{"bitwidth", quant_params.bwScaleOffsetEncoding.bitwidth},
+                                              {"scale", quant_params.bwScaleOffsetEncoding.scale},
+                                              {"offset", quant_params.bwScaleOffsetEncoding.offset}};
+      break;
+    case QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: {
+      const auto& enc = quant_params.axisScaleOffsetEncoding;
+      nlohmann::json scale_offsets = nlohmann::json::array();
+      for (uint32_t i = 0; i < enc.numScaleOffsets; ++i) {
+        scale_offsets.push_back({{"scale", enc.scaleOffset[i].scale}, {"offset", enc.scaleOffset[i].offset}});
+      }
+      quant_params_json["axis_scale_offset"] = {{"axis", enc.axis},
+                                                {"num_scale_offsets", enc.numScaleOffsets},
+                                                {"scale_offsets", std::move(scale_offsets)}};
+      break;
+    }
+    case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET: {
+      const auto& enc = quant_params.bwAxisScaleOffsetEncoding;
+      nlohmann::json scale_offsets = nlohmann::json::array();
+      // offsets may be NULL for symmetric quantization (all offsets implicitly 0).
+      for (uint32_t i = 0; i < enc.numElements; ++i) {
+        scale_offsets.push_back({{"scale", enc.scales[i]},
+                                 {"offset", enc.offsets ? enc.offsets[i] : 0}});
+      }
+      quant_params_json["bw_axis_scale_offset"] = {{"bitwidth", enc.bitwidth},
+                                                   {"axis", enc.axis},
+                                                   {"num_elements", enc.numElements},
+                                                   {"scale_offsets", std::move(scale_offsets)}};
+      break;
+    }
+    default:
+      break;
+  }
+  tensor_json["quant_params"] = std::move(quant_params_json);
 
   gsl::span<const uint32_t> dims{GetQnnTensorDims(tensor), GetQnnTensorRank(tensor)};
   tensor_json["dims"] = JSONFromSpan(dims);

@@ -64,6 +64,22 @@ inline Ort::Logger MakeNullLogger() {
   return logger;
 }
 
+}  // namespace test
+}  // namespace onnxruntime
+
+// Component/snapshot-tier helpers split out into focused headers. Included
+// AFTER MakeNullLogger so backend_contexts.h can use it in member initializers.
+// Existing test sources that pull only qnn_unit_test_utils.h keep access to
+// MakeMockIODef / MakeMockNodeUnit / MockInitRegistry / snapshot helpers
+// without extra explicit includes.
+#include "test/providers/qnn/unit/backend_contexts.h"
+#include "test/providers/qnn/unit/mock_init_registry.h"
+#include "test/providers/qnn/unit/mock_node_unit.h"
+#include "test/providers/qnn/unit/snapshot.h"
+
+namespace onnxruntime {
+namespace test {
+
 // OrtGlobalApiOverride
 //
 // RAII guard that replaces the global Ort::GetApi() with a caller-supplied

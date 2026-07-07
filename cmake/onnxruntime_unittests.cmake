@@ -200,6 +200,9 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
   include(onnxruntime_unittests_udo.cmake)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/unit/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/unit/builder/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/unit/builder/opbuilder/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/unit/builder/qnn_node_group/*)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
@@ -398,6 +401,18 @@ block()
     # stabilises, the gate can be widened to other CI build configurations without
     # touching the test code.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
+    # Accuracy/light tier: opt-in flag that gates the per-op accuracy test
+    # files (e.g. unit/builder/opbuilder/clip_accuracy_test.cc). Reuses the
+    # INTERNAL_SYMBOL_ACCESS prereqs (Linux x86_64 + shared QNN EP) — accuracy
+    # tests call RunQnnModelTest which goes through the public ORT API.
+    if(QNN_EP_ACCURACY_LIGHT_UT)
+      target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_LIGHT_UT=1)
+    endif()
+  elseif(QNN_EP_ACCURACY_LIGHT_UT)
+    message(FATAL_ERROR
+        "QNN_EP_ACCURACY_LIGHT_UT=ON requires ENABLE_COVERAGE=ON on Linux x86_64 "
+        "(emulator libQnnHtp.so is x86_64-linux-clang only, and the accuracy tests "
+        "live under unit/ which is only compiled when QNN_EP_INTERNAL_SYMBOL_ACCESS is on).")
   endif()
 
 endblock()

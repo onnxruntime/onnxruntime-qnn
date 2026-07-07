@@ -270,17 +270,58 @@ class OrtNodeUnit {
   explicit OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api);
   explicit OrtNodeUnit(const OrtGraph* graph, const QDQ::OrtNodeGroup& node_group, const OrtApi& ort_api);
 
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+  // Test-only constructor: build a NodeUnit entirely from explicit mock data.
+  // Bypasses the global Ort::GetApi() call path used by Domain/OpType/Name/SinceVersion/Index,
+  // making it safe to use in function-level unit tests where no real OrtNode is available.
+  struct MockSpec {
+    std::string domain;
+    std::string op_type;
+    std::string name;
+    int since_version = 1;
+    size_t index = 0;
+    std::vector<OrtNodeUnitIODef> inputs;
+    std::vector<OrtNodeUnitIODef> outputs;
+  };
+  explicit OrtNodeUnit(MockSpec spec);
+#endif
+
   Type UnitType() const noexcept { return type_; }
 
   const std::vector<OrtNodeUnitIODef>& Inputs() const noexcept { return inputs_; }
   const std::vector<OrtNodeUnitIODef>& Outputs() const noexcept { return outputs_; }
 
-  std::string Domain() const noexcept { return Ort::ConstNode(target_node_).GetDomain(); }
-  std::string OpType() const noexcept { return Ort::ConstNode(target_node_).GetOperatorType(); }
-  std::string Name() const noexcept { return Ort::ConstNode(target_node_).GetName(); }
-  int SinceVersion() const noexcept { return Ort::ConstNode(target_node_).GetSinceVersion(); }
+  std::string Domain() const noexcept {
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+    if (mock_overrides_) return mock_overrides_->domain;
+#endif
+    return Ort::ConstNode(target_node_).GetDomain();
+  }
+  std::string OpType() const noexcept {
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+    if (mock_overrides_) return mock_overrides_->op_type;
+#endif
+    return Ort::ConstNode(target_node_).GetOperatorType();
+  }
+  std::string Name() const noexcept {
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+    if (mock_overrides_) return mock_overrides_->name;
+#endif
+    return Ort::ConstNode(target_node_).GetName();
+  }
+  int SinceVersion() const noexcept {
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+    if (mock_overrides_) return mock_overrides_->since_version;
+#endif
+    return Ort::ConstNode(target_node_).GetSinceVersion();
+  }
   // Align NodeUnit to name as Index although returning Id since index is inaccessible.
-  size_t Index() const noexcept { return Ort::ConstNode(target_node_).GetId(); }
+  size_t Index() const noexcept {
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+    if (mock_overrides_) return mock_overrides_->index;
+#endif
+    return Ort::ConstNode(target_node_).GetId();
+  }
 
   const OrtNode& GetNode() const noexcept { return *target_node_; }
   const OrtNode* GetRedundantClipNode() const noexcept { return redundant_clip_node_; }
@@ -313,6 +354,17 @@ class OrtNodeUnit {
 
   std::vector<OrtNodeUnitIODef> inputs_;
   std::vector<OrtNodeUnitIODef> outputs_;
+
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+  struct MockOverrides {
+    std::string domain;
+    std::string op_type;
+    std::string name;
+    int since_version = 1;
+    size_t index = 0;
+  };
+  std::optional<MockOverrides> mock_overrides_;
+#endif
 };
 
 /**

@@ -239,6 +239,17 @@ OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api) : target_no
   }
 }
 
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+OrtNodeUnit::OrtNodeUnit(MockSpec spec)
+    : target_node_(nullptr),
+      type_(Type::SingleNode),
+      inputs_(std::move(spec.inputs)),
+      outputs_(std::move(spec.outputs)),
+      mock_overrides_(MockOverrides{
+          std::move(spec.domain), std::move(spec.op_type),
+          std::move(spec.name), spec.since_version, spec.index}) {}
+#endif
+
 OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& node_group, const OrtApi& ort_api)
     : dq_nodes_(node_group.dq_nodes),
       target_node_(node_group.target_node),

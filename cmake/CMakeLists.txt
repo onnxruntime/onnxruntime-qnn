@@ -81,6 +81,15 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
 
+# QNN EP accuracy/light unit-test phase. When ON, the per-op
+# clip_accuracy_test.cc / etc. compile in their session-routed accuracy
+# TESTs, which run the QNN-EP-built graph on the QAIRT HTP emulator and
+# diff against the in-process ORT-CPU EP reference. Implies ENABLE_COVERAGE
+# (the umbrella that enables QNN_EP_INTERNAL_SYMBOL_ACCESS and links the test
+# binary against the shared QNN EP). Linux x86_64 only — emulator
+# (libQnnHtp.so on x86_64-linux) is not available on other hosts.
+option(QNN_EP_ACCURACY_LIGHT_UT "Build QNN EP accuracy/light phase (Linux x86_64 only, requires ENABLE_COVERAGE)" OFF)
+
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
 cmake_dependent_option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS_ENABLE_DUMP_TO_SQLDB "Build dump debug information about node inputs and outputs with support for sql database." OFF "onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS" OFF)

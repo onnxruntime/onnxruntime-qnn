@@ -266,5 +266,8 @@ if(ENABLE_COVERAGE)
             -fprofile-abs-path
         )
         target_link_options(onnxruntime_providers_qnn PRIVATE --coverage)
+        # Enable test-only symbols (e.g. OrtNodeUnit::OrtNodeUnit(MockSpec)) so the
+        # test binary can call EP-internal functions guarded by QNN_EP_INTERNAL_SYMBOL_ACCESS.
+        target_compile_definitions(onnxruntime_providers_qnn PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
     endif()
 endif()

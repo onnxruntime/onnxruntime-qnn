@@ -73,7 +73,7 @@ namespace onnxruntime {
 namespace test {
 
 TEST(QnnUnit_ModelWrapperTest, GetQnnBackendType_ReturnsHTP) {
-  QnnModelWrapperTestContext ctx;
+  SnapshotTestContext ctx;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
   EXPECT_EQ(wrapper->GetQnnBackendType(), qnn::QnnBackendType::HTP);
@@ -95,7 +95,7 @@ Pick the lowest-cost layer that lets you write the test. Cost increases top to b
 |---|---|
 | Pure logic / utility — touches neither QNN nor ORT | Direct call, no fixture |
 | Needs `OrtApi` but no real graph/logger object | Declare an `OrtApi stub{}` locally and stub only the function pointers your test path exercises |
-| Needs `QnnModelWrapper`, no real graph/logger | Use `QnnModelWrapperTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
+| Needs `QnnModelWrapper`, no real graph/logger | Use `SnapshotTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
 | Needs the QNN backend interface but no real SDK | Zero-init `QNN_INTERFACE_VER_TYPE` and override the function pointers your test path exercises (lowest cost, fully controllable) |
 | Needs a real `Qnn_BackendHandle_t` (e.g., `backendValidateOpConfig`) | Use `QnnRealHtpBackendContext`: `dlopen` `libQnnHtp.so` + `backendCreate`. **Does not create a QNN context/session** — the validation path does not need one. Use `GTEST_SKIP()` when the SDK is unavailable |
 | Needs a real QNN context/session, graph operations | **No helper today.** Please raise it — we need a fixture-shared session (avoid rebuilding per test) before adding such tests |
@@ -147,7 +147,7 @@ Policy (must follow):
 3. Pick the lowest-cost mocking layer that works:
    - Pure logic: direct call, no fixture.
    - Needs OrtApi: local OrtApi stub{} + stub only the function pointers used.
-   - Needs QnnModelWrapper: QnnModelWrapperTestContext from qnn_unit_test_utils.h.
+   - Needs QnnModelWrapper: SnapshotTestContext from qnn_unit_test_utils.h.
    - Needs QNN backend interface only: zero-init QNN_INTERFACE_VER_TYPE + override
      the function pointers used.
    - Needs a real Qnn_BackendHandle_t: QnnRealHtpBackendContext + GTEST_SKIP if !IsValid().
