@@ -461,13 +461,22 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
 
 #define NODE_ATTR_ITER_VAL(iter) (iter)->second()
 
-OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNode& node) : node_(node) {}
+OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNode& node) : node_ptr_(&node) {}
 
-OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNodeUnit& node_unit) : node_(node_unit.GetNode()) {}
+OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNodeUnit& node_unit)
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+    // Null-safe: mock NodeUnits have no real OrtNode*; all Get() return defaults.
+    : node_ptr_(node_unit.IsMock() ? nullptr : &node_unit.GetNode()) {
+}
+#else
+    : node_ptr_(&node_unit.GetNode()) {
+}
+#endif
 
 float OrtNodeAttrHelper::Get(const std::string& key, float def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -478,8 +487,9 @@ float OrtNodeAttrHelper::Get(const std::string& key, float def_val) const {
 }
 
 int32_t OrtNodeAttrHelper::Get(const std::string& key, int32_t def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -490,8 +500,9 @@ int32_t OrtNodeAttrHelper::Get(const std::string& key, int32_t def_val) const {
 }
 
 uint32_t OrtNodeAttrHelper::Get(const std::string& key, uint32_t def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -502,8 +513,9 @@ uint32_t OrtNodeAttrHelper::Get(const std::string& key, uint32_t def_val) const 
 }
 
 int64_t OrtNodeAttrHelper::Get(const std::string& key, int64_t def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -514,8 +526,9 @@ int64_t OrtNodeAttrHelper::Get(const std::string& key, int64_t def_val) const {
 }
 
 std::string OrtNodeAttrHelper::Get(const std::string& key, std::string def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -526,8 +539,9 @@ std::string OrtNodeAttrHelper::Get(const std::string& key, std::string def_val) 
 }
 
 std::vector<std::string> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<std::string>& def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -538,8 +552,9 @@ std::vector<std::string> OrtNodeAttrHelper::Get(const std::string& key, const st
 }
 
 std::vector<int32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<int32_t>& def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -560,8 +575,9 @@ std::vector<int32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::v
 }
 
 std::vector<uint32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<uint32_t>& def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -582,8 +598,9 @@ std::vector<uint32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::
 }
 
 std::vector<int64_t> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<int64_t>& def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -594,8 +611,9 @@ std::vector<int64_t> OrtNodeAttrHelper::Get(const std::string& key, const std::v
 }
 
 std::vector<float> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<float>& def_val) const {
+  if (!node_ptr_) return def_val;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return def_val;
   }
@@ -606,8 +624,9 @@ std::vector<float> OrtNodeAttrHelper::Get(const std::string& key, const std::vec
 }
 
 std::optional<float> OrtNodeAttrHelper::GetFloat(const std::string& key) const {
+  if (!node_ptr_) return std::nullopt;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return std::nullopt;
   }
@@ -618,8 +637,9 @@ std::optional<float> OrtNodeAttrHelper::GetFloat(const std::string& key) const {
 }
 
 std::optional<int64_t> OrtNodeAttrHelper::GetInt64(const std::string& key) const {
+  if (!node_ptr_) return std::nullopt;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return std::nullopt;
   }
@@ -630,8 +650,9 @@ std::optional<int64_t> OrtNodeAttrHelper::GetInt64(const std::string& key) const
 }
 
 std::optional<std::vector<float>> OrtNodeAttrHelper::GetFloats(const std::string& key) const {
+  if (!node_ptr_) return std::nullopt;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return std::nullopt;
   }
@@ -642,8 +663,9 @@ std::optional<std::vector<float>> OrtNodeAttrHelper::GetFloats(const std::string
 }
 
 std::optional<std::vector<int64_t>> OrtNodeAttrHelper::GetInt64s(const std::string& key) const {
+  if (!node_ptr_) return std::nullopt;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return std::nullopt;
   }
@@ -654,8 +676,9 @@ std::optional<std::vector<int64_t>> OrtNodeAttrHelper::GetInt64s(const std::stri
 }
 
 std::optional<std::string> OrtNodeAttrHelper::GetString(const std::string& key) const {
+  if (!node_ptr_) return std::nullopt;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   if (!status.IsOK() || attr == nullptr) {
     return std::nullopt;
   }
@@ -666,8 +689,9 @@ std::optional<std::string> OrtNodeAttrHelper::GetString(const std::string& key) 
 }
 
 bool OrtNodeAttrHelper::HasAttr(const std::string& key) const {
+  if (!node_ptr_) return false;
   Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
+  Ort::Status status = Ort::ConstNode(node_ptr_).GetAttributeByName(key, attr);
   return status.IsOK() && attr != nullptr;
 }
 

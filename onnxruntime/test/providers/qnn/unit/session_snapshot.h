@@ -175,6 +175,127 @@ inline void AssertSessionSnapshotJson(
   }
 }
 
+// AssertSessionSnapshotJsonQDQ<AType>:
+//
+// Like AssertSessionSnapshotJson but for QDQ models where the output quant
+// params must match the actual F32 output range (not an estimate).
+//
+// Output qparams are stored in a sidecar file alongside the golden:
+//   <golden_dir>/<golden_basename>.qparams.json
+// Format: { "tensor_name": { "scale": float, "zero_point": int64 }, ... }
+//
+// QNN_UPDATE_GOLDENS=1:
+//   1. Runs build_f32_case on ORT CPU EP → computes output QuantParams
+//   2. Writes sidecar JSON
+//   3. Calls AssertSessionSnapshotJson (which writes golden + SKIPs)
+//
+// Normal run:
+//   1. Reads output QuantParams from sidecar JSON (no CPU inference)
+//   2. Calls build_qdq_case(builder, output_qparams) to build QDQ model
+//   3. Compile-only QNN EP session → dump JSON → compare golden
+//
+// This mirrors the setup in TestQDQModelAccuracy so snapshot and accuracy
+// tiers see identical quant params, enabling graph-level comparison.
+template <typename QuantType>
+inline void AssertSessionSnapshotJsonQDQ(
+    const GetTestModelFn& build_f32_case,
+    const GetTestQDQModelFn<QuantType>& build_qdq_case,
+    ProviderOptions provider_options,
+    int opset_version,
+    const std::string& golden_basename,
+    std::string golden_subdir = "",
+    std::optional<GraphOptimizationLevel> graph_opt_level = std::nullopt,
+    const char* caller_file = __builtin_FILE()) {
+  if (golden_subdir.empty()) {
+    golden_subdir = DeriveGoldenSubdirFromFile(caller_file);
+    ASSERT_FALSE(golden_subdir.empty())
+        << "AssertSessionSnapshotJsonQDQ: could not derive golden_subdir from "
+        << caller_file;
+  }
+
+  const std::string golden_dir = GetUnitTestSourceDir() + "/goldens/" + golden_subdir;
+  const std::string sidecar_path = golden_dir + "/" + golden_basename + ".qparams.json";
+
+  const std::unordered_map<std::string, int> domain_to_version = {
+      {"", opset_version}, {kMSDomain, 1}};
+
+  // Build F32 model — always needed to recover output tensor names.
+  ModelTestBuilder f32_helper;
+  build_f32_case(f32_helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    auto* opset_id_proto = f32_helper.model_.add_opset_import();
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  // Collect output tensor names from the model proto (no session needed).
+  std::vector<std::string> output_names;
+  for (const auto& output : f32_helper.model_.graph().output())
+    output_names.push_back(output.name());
+  ASSERT_FALSE(output_names.empty()) << "F32 model has no graph outputs";
+
+  const char* update_env = std::getenv("QNN_UPDATE_GOLDENS");
+  const bool update = (update_env != nullptr && std::string(update_env) == "1");
+
+  std::vector<QuantParams<QuantType>> output_qparams(output_names.size());
+
+  if (update) {
+    // Run F32 inference to compute qparams from actual output range.
+    std::string f32_model_data;
+    f32_helper.model_.SerializeToString(&f32_model_data);
+    std::vector<Ort::Value> cpu_f32_outputs;
+    InferenceModelCPU(f32_model_data, "qdq_snapshot_f32", f32_helper.feeds_,
+                      cpu_f32_outputs, graph_opt_level);
+    ASSERT_EQ(cpu_f32_outputs.size(), output_names.size());
+
+    for (size_t i = 0; i < cpu_f32_outputs.size(); i++) {
+      auto tensor_info = cpu_f32_outputs[i].GetTensorTypeAndShapeInfo();
+      if (tensor_info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        const float* data = cpu_f32_outputs[i].GetTensorData<float>();
+        size_t sz = tensor_info.GetElementCount();
+        output_qparams[i] = GetDataQuantParams<QuantType>(gsl::span<const float>(data, sz));
+      }
+    }
+
+    // Write sidecar: { "tensor_name": { "scale": f, "zero_point": i64 }, ... }
+    std::filesystem::create_directories(golden_dir);
+    nlohmann::json j;
+    for (size_t i = 0; i < output_names.size(); i++) {
+      j[output_names[i]] = {
+          {"scale", output_qparams[i].scale},
+          {"zero_point", static_cast<int64_t>(output_qparams[i].zero_point)}};
+    }
+    std::ofstream sidecar_out(sidecar_path);
+    ASSERT_TRUE(sidecar_out.is_open())
+        << "Failed to open qparams sidecar for writing: " << sidecar_path;
+    sidecar_out << j.dump(2) << "\n";
+  } else {
+    // Read qparams from sidecar (keyed by tensor name, in model output order).
+    std::ifstream sidecar_in(sidecar_path);
+    ASSERT_TRUE(sidecar_in.is_open())
+        << "qparams sidecar not found: " << sidecar_path
+        << "\nRun with QNN_UPDATE_GOLDENS=1 to generate.";
+    nlohmann::json j = nlohmann::json::parse(sidecar_in);
+
+    for (size_t i = 0; i < output_names.size(); i++) {
+      ASSERT_TRUE(j.contains(output_names[i]))
+          << "qparams sidecar missing entry for output: " << output_names[i];
+      output_qparams[i].scale = j[output_names[i]]["scale"].get<float>();
+      output_qparams[i].zero_point = static_cast<QuantType>(
+          j[output_names[i]]["zero_point"].get<int64_t>());
+    }
+  }
+
+  // Build QDQ model and run snapshot comparison.
+  AssertSessionSnapshotJson(
+      [&build_qdq_case, &output_qparams](ModelTestBuilder& builder) {
+        build_qdq_case(builder, output_qparams);
+      },
+      provider_options, opset_version, golden_basename,
+      golden_subdir, caller_file);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

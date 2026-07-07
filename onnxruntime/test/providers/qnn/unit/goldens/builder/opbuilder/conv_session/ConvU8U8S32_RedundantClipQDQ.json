@@ -1,0 +1,510 @@
+{
+  "Total MACs per inference": "",
+  "Total parameters": "",
+  "converter_command": "",
+  "copyright_str": "Copyright (c) Microsoft Corporation. All rights reserved.",
+  "graph": {
+    "nodes": {
+      "DequantizeLinear_token_11": {
+        "input_names": [
+          "QuantizeLinear_token_10_out0"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "qdq_out_dq_out"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {},
+        "type": "Dequantize"
+      },
+      "DequantizeLinear_token_9": {
+        "input_names": [
+          "QuantizeLinear_token_8_out0"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "Transpose_out0"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {},
+        "type": "Dequantize"
+      },
+      "Transpose_token_4": {
+        "input_names": [
+          "qdq_input_q_out"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "QuantizeLinear_token_8_out0"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {
+          "perm": {
+            "Transpose_token_4_15_perm": {
+              "axis_format": "NOT_YET_DEFINED",
+              "data": [
+                0,
+                2,
+                3,
+                1
+              ],
+              "dataFormat": 0,
+              "data_type": 306,
+              "dims": [
+                4
+              ],
+              "quant_params": {
+                "definition": 2147483647,
+                "encoding": 2147483647
+              },
+              "src_axis_format": "NOT_YET_DEFINED",
+              "type": 4
+            }
+          }
+        },
+        "type": "Transpose"
+      },
+      "Transpose_token_7": {
+        "input_names": [
+          "qdq_out_q"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "QuantizeLinear_token_10_out0"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {
+          "perm": {
+            "Transpose_token_7_18_perm": {
+              "axis_format": "NOT_YET_DEFINED",
+              "data": [
+                0,
+                3,
+                1,
+                2
+              ],
+              "dataFormat": 0,
+              "data_type": 306,
+              "dims": [
+                4
+              ],
+              "quant_params": {
+                "definition": 2147483647,
+                "encoding": 2147483647
+              },
+              "src_axis_format": "NOT_YET_DEFINED",
+              "type": 4
+            }
+          }
+        },
+        "type": "Transpose"
+      },
+      "qdq_clip_act": {
+        "input_names": [
+          "qdq_clip_conv"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "qdq_clip_act"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {
+          "max_value": {
+            "562": 2.0
+          },
+          "min_value": {
+            "562": -2.0
+          },
+          "operation": {
+            "306": 5
+          }
+        },
+        "tensor_params": {},
+        "type": "ElementWiseNeuron"
+      },
+      "qdq_clip_conv_token_1": {
+        "input_names": [
+          "Transpose_out0",
+          "qdq_weights_dq_out_transpose",
+          "bias_dq_out"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "qdq_clip_conv"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {
+          "group": {
+            "306": 1
+          }
+        },
+        "tensor_params": {
+          "dilation": {
+            "qdq_clip_conv_token_1_13_dilation": {
+              "axis_format": "NOT_YET_DEFINED",
+              "data": [
+                1,
+                1
+              ],
+              "dataFormat": 0,
+              "data_type": 306,
+              "dims": [
+                2
+              ],
+              "quant_params": {
+                "definition": 2147483647,
+                "encoding": 2147483647
+              },
+              "src_axis_format": "NOT_YET_DEFINED",
+              "type": 4
+            }
+          },
+          "pad_amount": {
+            "qdq_clip_conv_token_1_13_pad_amount": {
+              "axis_format": "NOT_YET_DEFINED",
+              "data": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  0
+                ]
+              ],
+              "dataFormat": 0,
+              "data_type": 306,
+              "dims": [
+                2,
+                2
+              ],
+              "quant_params": {
+                "definition": 2147483647,
+                "encoding": 2147483647
+              },
+              "src_axis_format": "NOT_YET_DEFINED",
+              "type": 4
+            }
+          },
+          "stride": {
+            "qdq_clip_conv_token_1_13_stride": {
+              "axis_format": "NOT_YET_DEFINED",
+              "data": [
+                1,
+                1
+              ],
+              "dataFormat": 0,
+              "data_type": 306,
+              "dims": [
+                2
+              ],
+              "quant_params": {
+                "definition": 2147483647,
+                "encoding": 2147483647
+              },
+              "src_axis_format": "NOT_YET_DEFINED",
+              "type": 4
+            }
+          }
+        },
+        "type": "Conv2d"
+      },
+      "qdq_input_q": {
+        "input_names": [
+          "input"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "qdq_input_q_out"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {},
+        "type": "Quantize"
+      },
+      "qdq_out_q": {
+        "input_names": [
+          "qdq_clip_act"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "qdq_out_q"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {},
+        "type": "Quantize"
+      },
+      "qdq_weights_dq_out_transposeTranspose": {
+        "input_names": [
+          "qdq_weights_dq_out"
+        ],
+        "macs_per_inference": "",
+        "output_names": [
+          "qdq_weights_dq_out_transpose"
+        ],
+        "package": "qti.aisw",
+        "scalar_params": {},
+        "tensor_params": {
+          "perm": {
+            "qdq_weights_dq_out_transpose_13_perm": {
+              "axis_format": "NOT_YET_DEFINED",
+              "data": [
+                2,
+                3,
+                1,
+                0
+              ],
+              "dataFormat": 0,
+              "data_type": 306,
+              "dims": [
+                4
+              ],
+              "quant_params": {
+                "definition": 2147483647,
+                "encoding": 2147483647
+              },
+              "src_axis_format": "NOT_YET_DEFINED",
+              "type": 4
+            }
+          }
+        },
+        "type": "Transpose"
+      }
+    },
+    "tensors": {
+      "QuantizeLinear_token_10_out0": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 1032,
+        "dims": [
+          1,
+          3,
+          3,
+          3
+        ],
+        "quant_params": {
+          "definition": 1,
+          "encoding": 0,
+          "scale_offset": {
+            "offset": -26,
+            "scale": 0.008750654757022858
+          }
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "QuantizeLinear_token_8_out0": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 1032,
+        "dims": [
+          1,
+          4,
+          4,
+          2
+        ],
+        "quant_params": {
+          "definition": 1,
+          "encoding": 0,
+          "scale_offset": {
+            "offset": 0,
+            "scale": 0.003921568859368563
+          }
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "Transpose_out0": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          1,
+          4,
+          4,
+          2
+        ],
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "bias_dq_out": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          3
+        ],
+        "params_count": "3",
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 4
+      },
+      "input": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          1,
+          2,
+          4,
+          4
+        ],
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 0
+      },
+      "qdq_clip_act": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          1,
+          3,
+          3,
+          3
+        ],
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "qdq_clip_conv": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          1,
+          3,
+          3,
+          3
+        ],
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "qdq_input_q_out": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 1032,
+        "dims": [
+          1,
+          2,
+          4,
+          4
+        ],
+        "quant_params": {
+          "definition": 1,
+          "encoding": 0,
+          "scale_offset": {
+            "offset": 0,
+            "scale": 0.003921568859368563
+          }
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "qdq_out_dq_out": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          1,
+          3,
+          3,
+          3
+        ],
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 1
+      },
+      "qdq_out_q": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 1032,
+        "dims": [
+          1,
+          3,
+          3,
+          3
+        ],
+        "quant_params": {
+          "definition": 1,
+          "encoding": 0,
+          "scale_offset": {
+            "offset": -26,
+            "scale": 0.008750654757022858
+          }
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      },
+      "qdq_weights_dq_out": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          3,
+          2,
+          2,
+          2
+        ],
+        "params_count": "24",
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 4
+      },
+      "qdq_weights_dq_out_transpose": {
+        "axis_format": "NOT_YET_DEFINED",
+        "dataFormat": 0,
+        "data_type": 562,
+        "dims": [
+          2,
+          2,
+          2,
+          3
+        ],
+        "quant_params": {
+          "definition": 2147483647,
+          "encoding": 2147483647
+        },
+        "src_axis_format": "NOT_YET_DEFINED",
+        "type": 3
+      }
+    }
+  },
+  "model.bin": "N/A",
+  "model.cpp": "N/A",
+  "op_types": [
+    "ElementWiseNeuron",
+    "Conv2d",
+    "Dequantize",
+    "Transpose",
+    "Quantize"
+  ]
+}

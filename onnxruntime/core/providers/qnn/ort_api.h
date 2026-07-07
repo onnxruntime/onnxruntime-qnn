@@ -364,6 +364,12 @@ class OrtNodeUnit {
     size_t index = 0;
   };
   std::optional<MockOverrides> mock_overrides_;
+
+ public:
+  // Returns true when this NodeUnit was constructed from a MockSpec (no real
+  // OrtNode* backing it). Used by OrtNodeAttrHelper to avoid dereferencing the
+  // null target_node_ when reading attributes.
+  bool IsMock() const noexcept { return mock_overrides_.has_value(); }
 #endif
 };
 
@@ -412,7 +418,7 @@ class OrtNodeAttrHelper {
   bool HasAttr(const std::string& key) const;
 
  private:
-  const OrtNode& node_;
+  const OrtNode* node_ptr_;  // null when constructed from a mock OrtNodeUnit
 };
 
 OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,

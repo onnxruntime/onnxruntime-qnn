@@ -44,13 +44,38 @@ inline std::string GetUnitTestSourceDir() {
 inline nlohmann::json& NormalizeQnnJSONGraph(nlohmann::json& graph) {
   auto graph_it = graph.find("graph");
   if (graph_it == graph.end() || !graph_it->is_object()) return graph;
+
+  // Remove unstable 'id' fields from top-level tensor descriptors.
   auto tensors_it = graph_it->find("tensors");
-  if (tensors_it == graph_it->end() || !tensors_it->is_object()) return graph;
-  for (auto& tensor : tensors_it->items()) {
-    if (tensor.value().is_object()) {
-      tensor.value().erase("id");
+  if (tensors_it != graph_it->end() && tensors_it->is_object()) {
+    for (auto& tensor : tensors_it->items()) {
+      if (tensor.value().is_object()) {
+        tensor.value().erase("id");
+      }
     }
   }
+
+  // Remove unstable 'id' fields from per-node tensor_params descriptors.
+  // These are param tensors (dilation, stride, pad_amount, etc.) whose QNN IDs
+  // depend on how many tensors were created earlier in the same process —
+  // i.e., they change when other tests run before this one.
+  auto nodes_it = graph_it->find("nodes");
+  if (nodes_it != graph_it->end() && nodes_it->is_object()) {
+    for (auto& node : nodes_it->items()) {
+      if (!node.value().is_object()) continue;
+      auto tp_it = node.value().find("tensor_params");
+      if (tp_it == node.value().end() || !tp_it->is_object()) continue;
+      for (auto& param_group : tp_it->items()) {  // e.g., "dilation"
+        if (!param_group.value().is_object()) continue;
+        for (auto& param_tensor : param_group.value().items()) {  // e.g., "conv_node_0_dilation"
+          if (param_tensor.value().is_object()) {
+            param_tensor.value().erase("id");
+          }
+        }
+      }
+    }
+  }
+
   return graph;
 }
 
