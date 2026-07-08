@@ -95,8 +95,6 @@ Ort::Status QuantizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
     return Ort::Status();
   }
 
-  const std::string& op_type = node_unit.OpType();
-
   if (do_op_validation) {
     RETURN_IF_ERROR(ValidateQdqNode(qnn_model_wrapper, node_unit));
   }
@@ -112,7 +110,7 @@ Ort::Status QuantizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),
                         /*param_tensor_names=*/{},
-                        logger, do_op_validation, GetQnnOpType(op_type));
+                        logger, do_op_validation, GetQnnOpType(node_unit.OpType()));
 }
 
 void CreateQuantizeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {

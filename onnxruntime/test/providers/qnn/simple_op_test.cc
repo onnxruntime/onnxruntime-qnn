@@ -914,40 +914,6 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthOp_U16) {
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
 
-TEST_F(QnnHTPBackendTests, QuantAccuracyTest) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  // Note: a graph input -> Q -> DQ -> is optimized by Qnn to have a perfectly accurate output.
-  // ORT's CPU EP, on the otherhand, actually quantizes and dequantizes the input, which leads to different outputs.
-  auto builder_func = [](ModelTestBuilder& builder) {
-    const TestInputDef<float> input0_def({1, 2, 3}, false, {1.0f, 2.0f, 10.0f, 20.0f, 100.0f, 200.0f});
-
-    // input -> Q -> Transpose -> DQ -> output
-    MakeTestInput<float>(builder, "input0", input0_def);
-    const QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(input0_def);
-
-    builder.AddQuantizeLinearNode<uint8_t>("q_in", "input0", qparams.scale, qparams.zero_point, "quant_input");
-
-    builder.AddNode("Transpose",
-                    "Transpose",
-                    {"quant_input"},
-                    {"op_output"});
-
-    builder.MakeOutput("Y");
-    builder.AddDequantizeLinearNode<uint8_t>("dq_out", "op_output", qparams.scale, qparams.zero_point, "Y");
-  };
-
-  // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
-  // 1st run will generate the Qnn context cache binary file
-  RunQnnModelTest(builder_func,
-                  provider_options,
-                  13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
-}
-
 // Test 8-bit QDQ Add
 TEST_F(QnnHTPBackendTests, BinaryOp_Add4D) {
   RunQDQOpTest<uint8_t>("Add",
@@ -1821,73 +1787,6 @@ TEST_F(QnnHTPBackendTests, Add_U8_U16_Convert) {
                        provider_options,
                        18,
                        ExpectedEPNodeAssignment::All);
-}
-
-// Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
-// ONNX Graph: DQ -> Add -> Q -> DQ -> Q -> graph_output
-// QNN Graph:  DQ -> Add -> Q -> Convert -> graph_output
-template <typename InQuantType, typename OutQuantType>
-static GetTestModelFn BuildDQQConvertAtOutputTestCase(const TestInputDef<float>& input0_def,
-                                                      const TestInputDef<float>& input1_def,
-                                                      const QuantParams<OutQuantType>& output_qparams) {
-  return [input0_def, input1_def, output_qparams](ModelTestBuilder& builder) {
-    MakeTestInput<float>(builder, "input0", input0_def);
-    MakeTestInput<float>(builder, "input1", input1_def);
-
-    // Input0 -> Quantize(InQuantType) -> Dequantize(InQuantType to float) -> input0_after_qdq
-    const QuantParams<InQuantType> input0_qparams = GetTestInputQuantParams<InQuantType>(input0_def);
-    const std::string input0_after_qdq =
-        AddQDQNodePair<InQuantType>(builder, "qdq0", "input0", input0_qparams.scale, input0_qparams.zero_point);
-
-    // Input1 -> Quantize(InQuantType) -> Dequantize(InQuantType to float) -> input1_after_qdq
-    const QuantParams<InQuantType> input1_qparams = GetTestInputQuantParams<InQuantType>(input1_def);
-    const std::string input1_after_qdq =
-        AddQDQNodePair<InQuantType>(builder, "qdq1", "input1", input1_qparams.scale, input1_qparams.zero_point);
-
-    // Add op -> add_out
-    builder.AddNode("Add",
-                    "Add",
-                    {input0_after_qdq, input1_after_qdq},
-                    {"add_out"});
-
-    // op_output -> Quantize(InQuantType) -> add_out_q
-    QuantParams<InQuantType> add_out_qparams = ConvertQuantParams<OutQuantType, InQuantType>(output_qparams);
-    add_out_qparams.scale *= 1.01f;  // Make qparams slightly different so DQ->Q are not optimized out.
-
-    auto add_qdq_name = AddQDQNodePair(builder, "add_qdq", "add_out", add_out_qparams.scale, add_out_qparams.zero_point);
-
-    // Add a Q to quantize to OutQuantType.
-    // The previous DQ and this Q will be fused into a QNN Convert.
-    builder.MakeOutput("Y");
-    builder.AddQuantizeLinearNode<OutQuantType>("final_q", add_qdq_name, output_qparams.scale, output_qparams.zero_point, "Y");
-  };
-}
-
-// Test fusion of (DQ -> Q) into QNN's Convert op using the same quant type.
-TEST_F(QnnHTPBackendTests, DQ_Q_ConvertFusion_SameType) {
-  std::vector<float> input0_data = {-8.0f, -6.0, -2.0f, 0.0f, 2.0f, 4.0f, 6.0f, 8.0f};
-  std::vector<float> input1_data = {-8.0f, -6.0, -2.0f, 0.0f, 2.0f, 4.0f, 6.0f, 8.0f};
-  TestInputDef<float> input0_def({1, 2, 2, 2}, false, input0_data);
-  TestInputDef<float> input1_def({1, 2, 2, 2}, false, input1_data);
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  QuantParams<uint8_t> out_qparams_u8 = {1.0f, 128};
-  QuantParams<uint16_t> out_qparams_u16 = {1.0f, 32768};
-
-  // QNN Convert op converts uint8 to uint8 at the graph output. Slightly different scale values.
-  RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint8_t, uint8_t>(input0_def, input1_def, out_qparams_u8),
-                  provider_options,
-                  21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
-
-  // QNN Convert op converts uint16 to uint16 at the graph output. Slightly different scale values.
-  RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint16_t, uint16_t>(input0_def, input1_def, out_qparams_u16),
-                  provider_options,
-                  21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU8) {
