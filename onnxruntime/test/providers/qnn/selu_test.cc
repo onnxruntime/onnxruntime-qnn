@@ -40,8 +40,7 @@ static void RunSeluTest(const std::vector<TestInputDef<float>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs a native FP16 Selu model on the QNN HTP backend.
@@ -62,8 +61,7 @@ static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<Ort::Float16_t>("Selu_node", "Selu", input_fp16_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 //
@@ -164,8 +162,7 @@ static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_def
   RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {

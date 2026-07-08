@@ -52,8 +52,7 @@ static void RunFusedMatMulTest(const TestInputDef<DataType>& input_a_def,
   RunQnnModelTest(model_builder,
                   provider_options,
                   13,  // opset version for contrib ops
-                  expected_ep_assignment,
-                  5e-3f);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(5e-3f)});
 }
 
 // Tests the accuracy of a QDQ FusedMatMul model on QNN EP by comparing to CPU EP.

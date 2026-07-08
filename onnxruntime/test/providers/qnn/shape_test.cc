@@ -215,7 +215,7 @@ static void RunShapeOpTest(TestInputDef<float> input_def,
   RunQnnModelTest(BuildOpTestCase<float>("shape_node", "Shape", {input_def}, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Builds a QDQ model wrapping ONNX Shape. Shape's output is int64 (data-independent), so only
@@ -328,7 +328,7 @@ TEST_F(QnnHTPBackendTests, Shape_Default_Float_HTP) {
                                          {}, {}),
                   provider_options,
                   15,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test that Shape with start=1 and end=3 works on QNN HTP backend (FP32 input).
@@ -345,7 +345,7 @@ TEST_F(QnnHTPBackendTests, Shape_StartEnd_Float_HTP) {
                                           test::MakeAttribute("end", static_cast<int64_t>(3))}),
                   provider_options,
                   15,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // QDQ (uint8) Shape with default attributes on HTP. Shape is data-independent so only the
@@ -386,7 +386,7 @@ TEST_F(QnnHTPBackendTests, Shape_RankGreaterThan4_Unsupported) {
                                          {}, {}),
                   provider_options,
                   15,
-                  ExpectedEPNodeAssignment::None);
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
 
 // Builds a model from `build_model`, runs it on the CPU EP and the QNN HTP EP, and compares each

@@ -38,6 +38,7 @@ struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
+  bool enable_block_quant_weight_optimization = false;
 };
 
 class QnnModelWrapper {
@@ -147,23 +148,29 @@ class QnnModelWrapper {
   // Find an initializer by name
   Ort::Status FindInitializer(const std::string& tensor_name,
                               const OrtValueInfo** found_value_info = nullptr) const {
-    size_t num_initializers = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph_, &num_initializers));
-
-    std::vector<const OrtValueInfo*> initializers(num_initializers);
-    RETURN_IF_ERROR(GetInitializerTensors(initializers));
-
-    for (const OrtValueInfo* value_info : initializers) {
-      const char* value_info_name = nullptr;
-      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name));
-
-      if (std::string(value_info_name) == tensor_name) {
-        *found_value_info = value_info;
+    // Walk the branch graph scope stack from innermost to outermost so that initializers
+    // defined inside an `If`/`Loop` branch shadow same-named initializers in the parent graph.
+    for (auto it = branch_graph_scope_stack_.rbegin(); it != branch_graph_scope_stack_.rend(); ++it) {
+      if (FindInitializerInGraph(*it, tensor_name, found_value_info).IsOK()) {
         return Ort::Status();
       }
     }
+    return FindInitializerInGraph(&ort_graph_, tensor_name, found_value_info);
+  }
 
-    return MAKE_EP_FAIL("Initializer not found");
+  // Push the given branch graph onto the scope stack. While pushed, FindInitializer (and
+  // therefore IsConstantInput / GetConstantTensor) will also consider this graph's
+  // initializers. Used by IfOpBuilder when recursively translating branch nodes so that
+  // ORT-folded branch-internal Constants (which live as initializers on the branch graph)
+  // resolve as STATIC tensors during op-builder dispatch.
+  void PushBranchGraphScope(const OrtGraph* branch_graph) {
+    branch_graph_scope_stack_.push_back(branch_graph);
+  }
+
+  void PopBranchGraphScope() {
+    if (!branch_graph_scope_stack_.empty()) {
+      branch_graph_scope_stack_.pop_back();
+    }
   }
 
   const OrtValueInfo* GetConstantTensor(const std::string& tensor_name) const {
@@ -258,6 +265,25 @@ class QnnModelWrapper {
                           QnnQuantParamsWrapper&& output_quant_params,
                           std::vector<uint32_t>&& output_shape,
                           bool do_op_validation);
+
+  // Adds a QNN_OP_DEQUANTIZE node: input (quantized) → output (float).
+  // output_data_type must be FLOAT_16 or FLOAT_32.
+  // Output tensor type is always QNN_TENSOR_TYPE_NATIVE.
+  Ort::Status AddDequantizeNode(const std::string& input_name,
+                                const std::string& output_name,
+                                Qnn_DataType_t output_data_type,
+                                std::vector<uint32_t> output_shape,
+                                bool do_op_validation);
+
+  // Adds a QNN_OP_QUANTIZE node: input (float) → output (fixed-point).
+  // output_data_type must be a SFIXED_POINT or UFIXED_POINT type.
+  Ort::Status AddQuantizeNode(const std::string& input_name,
+                              const std::string& output_name,
+                              Qnn_TensorType_t output_tensor_type,
+                              Qnn_DataType_t output_data_type,
+                              QnnQuantParamsWrapper output_quant_param,
+                              std::vector<uint32_t> output_shape,
+                              bool do_op_validation);
 
   Ort::Status AddReshapeNode(const std::string& input_name,
                              const std::string& output_name,
@@ -363,6 +389,8 @@ class QnnModelWrapper {
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
+  const Ort::Logger& GetLogger() const { return logger_; }
+
   const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
     return model_tensors_map_;
   }
@@ -385,17 +413,39 @@ class QnnModelWrapper {
 
     // Handle float scales
     if constexpr (std::is_same_v<T, float>) {
-      // Verify data type for float scales
-      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                    "Expected scale initializer to be of type FLOAT");
+      // Validate dtype up front so an unsupported type returns before any (potentially external)
+      // initializer read, mirroring the early RETURN_IF_NOT guard in the uint8_t branch below.
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+                    "Expected scale initializer to be of type FLOAT, FLOAT16, or BFLOAT16");
 
       std::vector<uint8_t> initializer_bytes;
       RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
-      gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
-                                                  initializer_bytes.size() / sizeof(float));
+      // Reinterpret the raw bytes as SrcT and append each element as a float. static_cast covers
+      // float (identity), Ort::Float16_t, and Ort::BFloat16_t (both have operator float()). fp16/bf16
+      // scale initializers are produced by quantization tools that match the scale dtype to the
+      // activation dtype (e.g. fp16 models); QNN quantization structs use float, so decode here.
+      auto append_scales = [&scales, &initializer_bytes](auto src_type_tag) {
+        using SrcT = decltype(src_type_tag);
+        gsl::span<const SrcT> src = gsl::make_span(reinterpret_cast<const SrcT*>(initializer_bytes.data()),
+                                                   initializer_bytes.size() / sizeof(SrcT));
+        scales.reserve(scales.size() + src.size());
+        for (const auto& val : src) {
+          scales.push_back(static_cast<float>(val));
+        }
+      };
 
-      scales.insert(scales.end(), src.begin(), src.end());
+      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        append_scales(float{});
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+        append_scales(Ort::Float16_t{});
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
+        // Spelled out (rather than a bare else) so a future dtype added to the guard above
+        // without a matching branch here fails to compile instead of silently aliasing BFLOAT16.
+        append_scales(Ort::BFloat16_t{});
+      }
     }
     // Handle uint8_t scales (for block quantization)
     else if constexpr (std::is_same_v<T, uint8_t>) {
@@ -439,6 +489,35 @@ class QnnModelWrapper {
   }
 
  private:
+  // Searches a single OrtGraph's initializer table for an entry with `tensor_name`.
+  // Returns OK on hit (with `found_value_info` populated) and an EP_FAIL on miss.
+  Ort::Status FindInitializerInGraph(const OrtGraph* graph,
+                                     const std::string& tensor_name,
+                                     const OrtValueInfo** found_value_info) const {
+    size_t num_initializers = 0;
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(graph, &num_initializers));
+
+    std::vector<const OrtValueInfo*> initializers(num_initializers);
+    if (num_initializers > 0) {
+      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(graph,
+                                                                         initializers.data(),
+                                                                         initializers.size()));
+    }
+
+    for (const OrtValueInfo* value_info : initializers) {
+      const char* value_info_name = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name));
+      if (std::string(value_info_name) == tensor_name) {
+        if (found_value_info != nullptr) {
+          *found_value_info = value_info;
+        }
+        return Ort::Status();
+      }
+    }
+
+    return MAKE_EP_FAIL("Initializer not found");
+  }
+
   Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
                               std::string& error_msg) const;
 
@@ -525,6 +604,12 @@ class QnnModelWrapper {
 
   // Tensor names produced by compile-time Q/DQ folds; chained across hops.
   std::unordered_set<std::string> folded_constant_tensors_;
+
+  // Stack of branch graphs (e.g., If::then_branch / else_branch) currently being translated.
+  // FindInitializer walks this from top to bottom before falling back to ort_graph_, which
+  // lets op-builders dispatched on branch nodes resolve branch-internal initializers
+  // (notably ORT-folded Constants) as STATIC tensors.
+  std::vector<const OrtGraph*> branch_graph_scope_stack_;
 
   // Non-owning pointer to the trace collector. Lifetime is managed by
   // QnnModel::ComposeGraph (stack-allocated unique_ptr).

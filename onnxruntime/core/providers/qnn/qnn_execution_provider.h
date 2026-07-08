@@ -53,6 +53,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                      OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
   friend struct GenieNodeComputeInfo;
+  friend class QnnEpFactory;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -243,6 +244,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.
   // This is potentially shared with HtpSharedMemoryAllocator which may be returned by CreatePreferredAllocators().
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
+
+  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;

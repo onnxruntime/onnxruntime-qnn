@@ -198,7 +198,15 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
     }
 
     return child_node_unit;
-  } catch (const Ort::Exception&) {
+  } catch (const Ort::Exception& e) {
+    // Treated as "no match" (the fusion matcher bails quietly), but log so a genuine
+    // API error is distinguishable from a normal non-match.
+    if (OrtLoggingManager::HasDefaultLogger()) {
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                  (std::string("GetChildNodeUnitAllowQdq: ignoring Ort::Exception during graph walk: ") +
+                   e.what())
+                      .c_str());
+    }
     return nullptr;
   }
 }
@@ -231,7 +239,14 @@ std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(
       return std::nullopt;
     }
     element_count = static_cast<size_t>(shape_tensor_dims[0]);
-  } catch (const Ort::Exception&) {
+  } catch (const Ort::Exception& e) {
+    // Treated as "no match", but log so a genuine API error is not silently swallowed.
+    if (OrtLoggingManager::HasDefaultLogger()) {
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                  (std::string("GetInitializerDataAsInt64: ignoring Ort::Exception while reading shape: ") +
+                   e.what())
+                      .c_str());
+    }
     return std::nullopt;
   }
 

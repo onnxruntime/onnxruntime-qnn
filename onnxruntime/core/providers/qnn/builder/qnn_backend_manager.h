@@ -23,6 +23,7 @@
 
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
+#include "GPU/QnnGpuBackend.h"
 #include "QnnLog.h"
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
@@ -273,6 +274,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
+  void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
+  QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
+
   Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }
@@ -357,6 +361,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
+  bool IsDx12SharedMemoryAllocatorSupported();
+
  private:
   Ort::Status LoadBackend();
 
@@ -367,7 +373,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       bool& initialized_flag,
                                       const std::string& backend_label);
 
-  Ort::Status InitializeBackend();
+  Ort::Status InitializeBackend(bool enable_gpu_weight_sharing = false);
 
   Ort::Status InitializeValidatorBackend();
 
@@ -643,6 +649,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Qnn_BackendHandle_t backend_handle_ = nullptr;
   Qnn_BackendHandle_t validator_backend_handle_ = nullptr;
   QnnBackend_Config_t** backend_config_ = nullptr;
+  // GPU backend weight sharing config (valid only when GPU backend is active, lifetime: owned by this class)
+  QnnGpuBackend_CustomConfig_t gpu_backend_custom_config_{};
+  QnnBackend_Config_t backend_config_wrapper_{};
+  QnnBackend_Config_t* backend_configs_ptr_[2]{nullptr, nullptr};
   Qnn_LogHandle_t log_handle_ = nullptr;
   Qnn_LogHandle_t validator_log_handle_ = nullptr;
   Qnn_DeviceHandle_t device_handle_ = nullptr;
@@ -705,6 +715,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // NPU backend requires quantized model
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+  QnnAllocatorType qnn_allocator_type_ = QnnAllocatorType::NONE;
+  std::optional<bool> dx12_shared_memory_allocator_supported_ = std::nullopt;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;
   ContextPriority context_priority_;
   std::string sdk_build_version_ = "";
