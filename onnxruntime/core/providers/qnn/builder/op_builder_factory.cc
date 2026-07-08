@@ -81,7 +81,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Atan", *this);
   CreateSimpleOpBuilder("Ceil", *this);
   CreateSimpleOpBuilder("Cos", *this);
-  CreateSimpleOpBuilder("DequantizeLinear", *this);
+  CreateQuantizeOpBuilder("DequantizeLinear", *this);
   CreateSimpleOpBuilder("DepthToSpace", *this);
   CreateSimpleOpBuilder("Div", *this);
   CreateSimpleOpBuilder("Elu", *this);
@@ -107,7 +107,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Or", *this);
   CreateSimpleOpBuilder("Pow", *this);
   CreateSimpleOpBuilder("PRelu", *this);
-  CreateSimpleOpBuilder("QuantizeLinear", *this);
+  CreateQuantizeOpBuilder("QuantizeLinear", *this);
   CreateSimpleOpBuilder("Relu", *this);
   CreateSimpleOpBuilder("Round", *this);
   CreateScatterElementsOpBuilder("ScatterElements", *this);
