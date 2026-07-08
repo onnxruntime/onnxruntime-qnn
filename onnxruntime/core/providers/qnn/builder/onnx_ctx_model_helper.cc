@@ -422,7 +422,7 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
         }
 
         attr = nullptr;
-        size_t max_size = static_cast<int64_t>(max_spill_fill_buffer_size);
+        int64_t max_size = static_cast<int64_t>(max_spill_fill_buffer_size);
         ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(MAX_SIZE.c_str(), &max_size, 1, ORT_OP_ATTR_INT, &attr));
         attributes.push_back(attr);
       }

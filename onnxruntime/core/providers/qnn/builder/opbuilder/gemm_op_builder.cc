@@ -1,12 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <unordered_map>
-
 #include <gsl/gsl>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -15,27 +14,6 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
-
-// HTP BQ Gemm/FC: supported weight bitwidths and their block_size divisor constraints.
-const std::unordered_map<uint32_t, int64_t> kHtpGemmBQBitsAndBlockSizeMultipliers{
-    {2, 16}, {4, 8}, {8, 4}};
-
-// Returns BQ weight bitwidth (2/4/8) from an ONNX element data type, or 0 if unsupported.
-uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
-  switch (onnx_type) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
-      return 2;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
-      return 4;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      return 8;
-    default:
-      return 0;
-  }
-}
 
 // Detects a block-quantized Gemm weight B, accounting for transB.
 // For transB=0: B is [K, N], scale is [K/block_size, N], blocked on axis 0.
@@ -59,15 +37,8 @@ bool IsBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitI
   }
   // For transB=0: B=[K,N], blocked on axis 0 → scale=[num_blocks, N], scale_shape[0] < weight_shape[0].
   // For transB=1: B=[N,K], blocked on axis 1 → scale=[N, num_blocks], scale_shape[1] < weight_shape[1].
-  const int blocked_axis = (trans_b == 0) ? 0 : 1;
-  if (scale_shape[blocked_axis] >= static_cast<int64_t>(weight_shape[blocked_axis])) {
-    return false;
-  }
-  const int64_t num_blocks = scale_shape[blocked_axis];
-  if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[blocked_axis]) % num_blocks != 0) {
-    return false;
-  }
-  return true;
+  const size_t block_axis = (trans_b == 0) ? 0 : 1;
+  return bq::IsBQScale(scale_shape, weight_shape, block_axis);
 }
 
 }  // namespace
@@ -281,24 +252,14 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
   {
     const std::string act_name = input_names[0];
     const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
-    const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
-    // BW_FLOAT_BLOCK FC requires FP16 activation. The only activation dtype reaching this
-    // path through the QDQ selector is INT16 (SFIXED or UFIXED), so anything else is unexpected.
-    RETURN_IF_NOT(act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16,
-                  "QNN EP: BQ Gemm activation must be INT16-quantized for the BW_FLOAT_BLOCK kernel");
-    // Reuse the original DequantizeLinear node's output name for the FP16 tensor.
-    const std::string fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
     const std::vector<uint32_t> act_shape_2d = act_wrapper.GetTensorDims();
-    QnnTensorWrapper fp16_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
-                                  QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                  std::vector<uint32_t>(act_shape_2d));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_wrapper)),
-                  "Failed to add FP16 activation tensor for BQ Gemm.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                      {act_name}, {fp16_name}, {}, do_op_validation),
-                  "Failed to add INT16→FP16 Dequantize node for BQ Gemm activation.");
+
+    // BW_FLOAT_BLOCK FC requires FP16 activation; dequantize the INT16 activation to FP16.
+    // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
+    // stays aligned with the ONNX graph naming.
+    const std::string fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+    RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
+                                                           fp16_name, do_op_validation, "Gemm"));
     input_names[0] = fp16_name;
 
     // transA=1: the FP16 activation is [K, M]; transpose to [M, K] for QNN FullyConnected.
@@ -326,28 +287,20 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
 
   // num_blocks is the number of blocks along K.
   const int64_t num_blocks = (trans_b == 0) ? scale_shape[0] : scale_shape[1];
-  RETURN_IF(num_blocks <= 0 || K % num_blocks != 0, "QNN EP: BQ Gemm K must be divisible by num_blocks");
-  const int64_t block_size = K / num_blocks;
-  const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
-  auto bq_it = kHtpGemmBQBitsAndBlockSizeMultipliers.find(bitwidth);
-  RETURN_IF(bq_it == kHtpGemmBQBitsAndBlockSizeMultipliers.end(),
-            ("QNN HTP Gemm BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
-  RETURN_IF(block_size % bq_it->second != 0,
-            ("QNN HTP Gemm BQ: block_size=" + std::to_string(block_size) +
-             " must be a multiple of " + std::to_string(bq_it->second) +
-             " for " + std::to_string(bitwidth) + "-bit weight")
-                .c_str());
+  int64_t block_size = 0;
+  RETURN_IF_ERROR(bq::ResolveBlockSize(inputs[1], K, num_blocks, "Gemm", block_size));
+  const uint32_t bitwidth = bq::GetBQBitwidth(inputs[1].type);
+  RETURN_IF_ERROR(bq::ValidateBQBitwidthAndBlockSize(bitwidth, block_size, "Gemm"));
 
   // Unpack weight to one byte per element (sub-byte INT2/INT4 expanded to INT8).
   std::vector<uint8_t> unpacked_weight;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_info.initializer_tensor, unpacked_weight));
 
   // For unsigned types, shift to signed domain.
-  const bool is_unsigned = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 ||
-                            inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
-                            inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+  const bool is_unsigned = bq::IsUnsignedBQType(inputs[1].type);
   if (is_unsigned) {
-    RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_weight, static_cast<int64_t>(bitwidth)));
+    RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_weight,
+                                                               static_cast<int64_t>(bitwidth)));
   }
 
   // Transpose B to [N, K] if transB=0 (ONNX B is [K, N]).
@@ -372,32 +325,16 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
                 "QNN EP: BQ Gemm scale size mismatch");
 
   // Float offsets: unsigned_bias - onnx_zp (matching Conv BQ convention).
-  const float unsigned_bias = is_unsigned ? static_cast<float>(1u << (bitwidth - 1)) : 0.0f;
-  std::vector<float> onnx_offsets(static_cast<size_t>(N * num_blocks), unsigned_bias);
-  if (inputs[1].quant_param->zero_point != nullptr) {
-    std::vector<int32_t> zp_values;
-    ONNXTensorElementDataType zp_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(inputs[1].quant_param->zero_point, zp_values, zp_type));
-    RETURN_IF_NOT(static_cast<int64_t>(zp_values.size()) == N * num_blocks,
-                  "QNN EP: BQ Gemm zero_point size must match N * num_blocks");
-    for (size_t i = 0; i < zp_values.size(); ++i) {
-      onnx_offsets[i] = unsigned_bias - static_cast<float>(zp_values[i]);
-    }
-  }
+  std::vector<float> onnx_offsets;
+  RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
+                                       is_unsigned, bitwidth, N * num_blocks, onnx_offsets));
 
   std::vector<float> scales_qnn, offsets_qnn;
   if (trans_b == 0) {
     // Transpose from [num_blocks, N] to [N, num_blocks].
-    scales_qnn.resize(static_cast<size_t>(N * num_blocks));
-    offsets_qnn.resize(static_cast<size_t>(N * num_blocks));
-    for (int64_t b = 0; b < num_blocks; ++b) {
-      for (int64_t n = 0; n < N; ++n) {
-        const size_t src = static_cast<size_t>(b * N + n);
-        const size_t dst = static_cast<size_t>(n * num_blocks + b);
-        scales_qnn[dst] = onnx_scales[src];
-        offsets_qnn[dst] = onnx_offsets[src];
-      }
-    }
+    const std::vector<uint32_t> transpose_shape = {static_cast<uint32_t>(num_blocks), static_cast<uint32_t>(N)};
+    RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_scales, transpose_shape, scales_qnn, logger));
+    RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_offsets, transpose_shape, offsets_qnn, logger));
   } else {
     scales_qnn = std::move(onnx_scales);
     offsets_qnn = std::move(onnx_offsets);
@@ -505,30 +442,25 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
     const Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    // FullyConnected → 2-D FP16 intermediate tensor. Reuse the original QL node's input name
-    // to keep the QNN graph aligned with the ONNX graph naming.
+    // FullyConnected → 2-D FP16 intermediate tensor, then Quantize to INT16.
+    // Reuse the original QuantizeLinear input name for the FP16 tensor so the QNN graph
+    // stays aligned with the ONNX graph naming.
     const std::string fc_fp16_out = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName();
-    QnnTensorWrapper fc_fp16_wrapper(fc_fp16_out, QNN_TENSOR_TYPE_NATIVE,
-                                     QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                     std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fc_fp16_wrapper)),
+    QnnTensorWrapper fp16_wrapper(fc_fp16_out, QNN_TENSOR_TYPE_NATIVE,
+                                  QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                                  std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_wrapper)),
                   "Failed to add FP16 BQ Gemm FC output tensor.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_FULLY_CONNECTED,
                                                   std::move(input_names), {fc_fp16_out},
                                                   {}, do_op_validation),
                   "Failed to add BQ FullyConnected node.");
-
-    // FP16 → INT16 quantized output.
-    QnnTensorWrapper int16_out_wrapper(org_output_name, out_tensor_type, output_info.qnn_data_type,
-                                       output_info.quant_param.Copy(), std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                  "Failed to add INT16 BQ Gemm output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(org_output_name, "_fp16_quantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                      {fc_fp16_out}, {org_output_name}, {}, do_op_validation),
-                  "Failed to add FP16→INT16 Quantize node for BQ Gemm output.");
+    RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
+                                                     fc_fp16_out, org_output_name,
+                                                     out_tensor_type, output_info.qnn_data_type,
+                                                     output_info.quant_param.Copy(),
+                                                     output_shape, do_op_validation));
     return Ort::Status();
   }
 

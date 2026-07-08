@@ -5,36 +5,13 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
-
-namespace {
-// HTP BQ Conv: supported bitwidths and their block_size divisor constraints.
-// block_size must be a multiple of the corresponding value (same as MatMulNBits HTP constraints).
-const std::unordered_map<uint32_t, int64_t> kHtpConvBQBitsAndBlockSizeMultipliers{
-    {2, 16}, {4, 8}, {8, 4}};
-
-// Returns BQ weight bitwidth (2/4/8) from an ONNX element data type, or 0 if unsupported.
-static uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
-  switch (onnx_type) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
-      return 2;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
-      return 4;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      return 8;
-    default:
-      return 0;
-  }
-}
-}  // namespace
 
 // ONNX convolution types supported by this builder.
 // We translate node_unit.OpType() into this enum to avoid repeated string comparisons.
@@ -155,24 +132,13 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                      weight_scale_shape[1] < weight_shape[1]);
         if (is_block_quant) {
           const int64_t num_blocks_per_oc = weight_scale_shape[1];
-          RETURN_IF(num_blocks_per_oc <= 0, "QNN EP: BQ num_blocks must be positive");
           const int64_t ic = static_cast<int64_t>(weight_shape[1]);
-          RETURN_IF(ic % num_blocks_per_oc != 0,
-                    "QNN EP: Conv BQ: IC must be divisible by num_blocks_per_oc");
 
           // Validate bitwidth (from weight element type) and block_size against HTP constraints.
-          const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
-          const int64_t block_size = ic / num_blocks_per_oc;
-          auto bq_it = kHtpConvBQBitsAndBlockSizeMultipliers.find(bitwidth);
-          RETURN_IF(bq_it == kHtpConvBQBitsAndBlockSizeMultipliers.end(),
-                    ("QNN HTP Conv BQ: unsupported weight bitwidth=" +
-                     std::to_string(bitwidth))
-                        .c_str());
-          RETURN_IF(block_size % bq_it->second != 0,
-                    ("QNN HTP Conv BQ: block_size=" + std::to_string(block_size) +
-                     " must be a multiple of " + std::to_string(bq_it->second) +
-                     " for " + std::to_string(bitwidth) + "-bit weight")
-                        .c_str());
+          const uint32_t bitwidth = bq::GetBQBitwidth(inputs[1].type);
+          int64_t block_size = 0;
+          RETURN_IF_ERROR(bq::ResolveBlockSize(inputs[1], ic, num_blocks_per_oc, "Conv", block_size));
+          RETURN_IF_ERROR(bq::ValidateBQBitwidthAndBlockSize(bitwidth, block_size, "Conv"));
 
           // Return success; full QNN validation is done in the NHWC IsOpSupported path.
           return Ort::Status();
@@ -287,22 +253,11 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
       const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
       if (act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
-        // Reuse the original DequantizeLinear node's output name (the target Conv's input[0]) for the
-        // FP16 tensor. That tensor is conceptually the dequantized activation — exactly what this
-        // INT16→FP16 Dequantize produces — and QNN EP otherwise skips it, so the name is free and
-        // keeps the QNN graph aligned with the ONNX graph naming.
+        // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
+        // stays aligned with the ONNX graph naming.
         const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-        std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
-        QnnTensorWrapper fp16_act_wrapper(fp16_act_name, QNN_TENSOR_TYPE_NATIVE,
-                                          QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                          std::vector<uint32_t>(act_shape));
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_act_wrapper)),
-                      "Failed to add FP16 activation tensor for BQ Conv.");
-        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                          QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                          {act_name}, {fp16_act_name}, {}, do_op_validation),
-                      "Failed to add INT16→FP16 Dequantize node for BQ Conv activation.");
+        RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
+                                                               fp16_act_name, do_op_validation, "Conv"));
         input_names[0] = fp16_act_name;
       }
     }
@@ -352,21 +307,13 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       // BQ path: manually build QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK quant params.
       const int64_t OC = static_cast<int64_t>(input_info.shape[0]);
       const int64_t IC = static_cast<int64_t>(input_info.shape[1]);
-      const int64_t nb = bq_scale_shape[1];  // num_blocks_per_oc (validated: IC % nb == 0)
-      const int64_t block_size = IC / nb;
-      const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
+      const int64_t nb = bq_scale_shape[1];  // num_blocks_per_oc
+      int64_t block_size = 0;
+      RETURN_IF_ERROR(bq::ResolveBlockSize(inputs[1], IC, nb, "Conv", block_size));
+      const uint32_t bitwidth = bq::GetBQBitwidth(inputs[1].type);
 
       // For unsigned types (UINT2/UINT4/UINT8), shift weight data to the signed domain.
-      // QNN BW_FLOAT_BLOCK only supports SFIXED_POINT_8 (signed); unsigned data must be converted.
-      // TransformUnsignedToSignedFixedPoint XORs the MSB of each packed element:
-      //   - UINT8 (bitwidth=8, mask=0x80): 1 byte/element — directly converts [0,255] → [-128,127].
-      //   - UINT4 (bitwidth=4, mask=0x88): after TransposeFromNchwToHwcn unpack, each byte holds
-      //     a UINT4 value in its lower nibble (upper nibble=0). XOR with 0x88 flips bits 3 and 7;
-      //     QNN reads only the lower nibble for bitwidth=4, so the result is equivalent to
-      //     flipping bit 3, which shifts [0,15] → signed-nibble-interpreted [-8,7] correctly.
-      const bool is_unsigned_weight = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 ||
-                                       inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
-                                       inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+      const bool is_unsigned_weight = bq::IsUnsignedBQType(inputs[1].type);
       if (is_unsigned_weight) {
         RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_tensor,
                                                                    static_cast<int64_t>(bitwidth)));
@@ -377,28 +324,16 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       const std::vector<uint32_t> block_size_arr = {1u, 1u, static_cast<uint32_t>(block_size), 1u};
 
       // Read ONNX per-block float scales: flat [OC * nb] in OC-major order.
+      // QNN BW_FLOAT_BLOCK expects scales in [OC, nb] order — same as ONNX, no reordering needed.
       std::vector<float> scales_qnn;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[1].quant_param->scale, scales_qnn));
       RETURN_IF_NOT(static_cast<int64_t>(scales_qnn.size()) == OC * nb,
                     "QNN EP: BQ Conv scale size mismatch");
-      // QNN BW_FLOAT_BLOCK expects scales in [OC, nb] order — same as ONNX, no reordering needed.
 
       // Float offsets in [OC, nb] order.
-      // Signed:   offset = -onnx_zp
-      // Unsigned: offset = (1 << (bits-1)) - onnx_zp   (compensates for unsigned→signed shift above)
-      const float unsigned_bias = is_unsigned_weight ? static_cast<float>(1u << (bitwidth - 1)) : 0.0f;
-      std::vector<float> offsets_qnn(static_cast<size_t>(OC * nb), unsigned_bias);
-      if (inputs[1].quant_param->zero_point != nullptr) {
-        std::vector<int32_t> zp_values;
-        ONNXTensorElementDataType zp_onnx_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(inputs[1].quant_param->zero_point,
-                                                           zp_values, zp_onnx_type));
-        RETURN_IF_NOT(static_cast<int64_t>(zp_values.size()) == OC * nb,
-                      "QNN EP: BQ Conv zero_point size must match OC * num_blocks");
-        for (size_t idx = 0; idx < static_cast<size_t>(OC * nb); ++idx) {
-          offsets_qnn[idx] = unsigned_bias - static_cast<float>(zp_values[idx]);
-        }
-      }
+      std::vector<float> offsets_qnn;
+      RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
+                                           is_unsigned_weight, bitwidth, OC * nb, offsets_qnn));
 
       QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
                                                                                   gsl::span<const float>(offsets_qnn),
@@ -1343,10 +1278,8 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     if (is_bq_conv && is_quantized_tensor) {
       // BQ Conv outputs FP16; downstream QDQ expects INT16.
       // Emit: Conv (FP16 output) → Quantize (FP16 → INT16 quantized output).
-      // Reuse the original QuantizeLinear node's input name (the target Conv's output[0]) for the
-      // FP16 tensor. That tensor is conceptually the un-quantized Conv output — exactly what this
-      // BQ Conv produces — and QNN EP otherwise skips it, so the name is free and keeps the QNN
-      // graph aligned with the ONNX graph naming.
+      // Reuse the original QuantizeLinear input name for the FP16 tensor so the QNN graph
+      // stays aligned with the ONNX graph naming.
       const std::string conv_fp16_out = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetName();
       QnnTensorWrapper fp16_out_wrapper(conv_fp16_out, QNN_TENSOR_TYPE_NATIVE,
                                         QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
@@ -1361,17 +1294,11 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                     std::move(param_tensor_names),
                                                     do_op_validation),
                     "Failed to add BQ Conv node.");
-      // INT16 quantized output tensor consumed by downstream nodes.
-      QnnTensorWrapper int16_out_wrapper(output_name, tensor_type, qnn_data_type,
-                                         std::move(output_quantize_param),
-                                         std::move(output_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                    "Failed to add INT16 BQ Conv output tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::UniqueNameGenerator().New(output_name, "_fp16_quantize"),
-                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                        {conv_fp16_out}, {output_name}, {}, do_op_validation),
-                    "Failed to add FP16→INT16 Quantize node for BQ Conv output.");
+      RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
+                                                       conv_fp16_out, output_name,
+                                                       tensor_type, qnn_data_type,
+                                                       std::move(output_quantize_param),
+                                                       std::move(output_shape), do_op_validation));
     } else {
       QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
                                             std::move(output_quantize_param), std::move(output_shape));
