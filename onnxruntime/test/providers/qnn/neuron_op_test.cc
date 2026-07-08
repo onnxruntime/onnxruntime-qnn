@@ -7,9 +7,6 @@
 #include <optional>
 #include <string>
 #include <filesystem>
-#include <variant>
-
-#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
