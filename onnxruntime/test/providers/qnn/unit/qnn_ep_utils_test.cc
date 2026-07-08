@@ -1739,4 +1739,155 @@ TEST(QnnUnit_EpUtilsTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
                          {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
+// =============================================================================
+// Additional selector Check() branches — targeted coverage for
+// qnn_ep_utils.cc L736/1037/1065/1093/1192/1206/1267
+// =============================================================================
+
+// OrtGemmNodeGroupSelector: dq_nodes.size() < 2 → returns false (L1037).
+// CheckQDQNodes passes because is_empty_q_nodes_allowed=true and node has 1 input.
+TEST(QnnUnit_EpUtilsTest, Gemm_RejectsFewerThan2Dq) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo dq_in{"a", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode dq_a{"dq_a", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"gemm", "Gemm", "", 11, {&dummy}, {&main_out}};
+
+  OrtGemmNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq_a.AsNode()}, {}));
+}
+
+// OrtGemmNodeGroupSelector: IsDisallowedType(dt_A|dt_B, allow_16bit_, allow_4bit_)
+// gate → returns false (L1065). Both inputs UINT16 with allow_16bit=false.
+TEST(QnnUnit_EpUtilsTest, Gemm_Rejects16BitWhenDisallowed) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {}};
+  FakeNode dq_a{"dq_a", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode dq_b{"dq_b", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"gemm", "Gemm", "", 11, {&dummy, &dummy}, {&main_out}};
+
+  OrtGemmNodeGroupSelector sel(/*allow_16bit=*/false);
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq_a.AsNode(), dq_b.AsNode()}, {}));
+}
+
+// OrtWhereNodeGroupSelector: CheckQDQNodes with num_dq_inputs=2 fails because
+// dq_nodes.size()=3 → returns false (L1093).
+TEST(QnnUnit_EpUtilsTest, Where_RejectsWrongDqCount) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode dq3{"dq3", "DequantizeLinear", "", 13, {&dq_in}, {}};  // extra
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"where", "Where", "", 9, {&dummy, &dummy, &dummy}, {&main_out}};
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  OrtWhereNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq1.AsNode(), dq2.AsNode(), dq3.AsNode()}, {q.AsNode()}));
+}
+
+// OrtBatchNormalizationNodeGroupSelector: CheckQDQNodes fails because
+// num_outputs (2) != q_nodes.size() (1) → returns false (L1192).
+TEST(QnnUnit_EpUtilsTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode dq_scale{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeValueInfo main_out1{"y1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo main_out2{"y2", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};  // extra output
+  FakeNode main_node{"bn", "BatchNormalization", "", 15, {&dummy, &dummy}, {&main_out1, &main_out2}};
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};  // only 1 Q for 2 outputs
+
+  OrtBatchNormalizationNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq_data.AsNode(), dq_scale.AsNode()}, {q.AsNode()}));
+}
+
+// OrtBatchNormalizationNodeGroupSelector: !has_float_output path,
+// dt_output.value() != dt_input.value() → returns false (L1206).
+TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo dq_data_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeValueInfo dq_scale_in{"s", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_data_in}, {}};
+  FakeNode dq_scale{"dq1", "DequantizeLinear", "", 13, {&dq_scale_in}, {}};
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"bn", "BatchNormalization", "", 15, {&dummy, &dummy}, {&main_out}};
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};  // ≠ UINT8 input
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  OrtBatchNormalizationNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq_data.AsNode(), dq_scale.AsNode()}, {q.AsNode()}));
+}
+
+// OrtTopKNodeGroupSelector: dt_input.value() != dt_output.value() → returns
+// false (L1267). Requires CanCreateNodeGroup to pass first.
+TEST(QnnUnit_EpUtilsTest, TopK_RejectsInputOutputTypeMismatch) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"topk", "TopK", "", 11, {&dummy}, {&main_out}};
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};  // ≠ UINT8 input
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  OrtTopKNodeGroupSelector sel;
+  OrtNodeGroupSelector& base = sel;
+  EXPECT_FALSE(base.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                          {dq.AsNode()}, {q.AsNode()}));
+}
+
+// File-scope handle for the Clip producer test stub — non-capturing lambdas
+// cannot bind to a specific DQ node, so we thread it through a static.
+namespace {
+const OrtNode* g_clip_producer_dq = nullptr;
+OrtStatus* FakeClipProducerStub(const OrtValueInfo* /*value_info*/,
+                                const OrtNode** producer,
+                                size_t* output_index) noexcept {
+  if (producer) *producer = g_clip_producer_dq;
+  if (output_index) *output_index = 0;
+  return nullptr;
+}
+}  // namespace
+
+// OrtClipNodeGroupSelector: CheckQuantTypes fails when input/output types
+// are UINT16 and allow_16bit_=false → returns false (L736).
+// Reaches L736 by installing a producer stub that returns the DQ node so
+// the L718 producer==nullptr guard passes.
+TEST(QnnUnit_EpUtilsTest, Clip_Rejects16BitWhenDisallowed) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {}};
+  FakeValueInfo clip_in{"ci", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {}};
+  FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode main_node{"clip", "Clip", "", 11, {&clip_in}, {&main_out}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+  FakeGraph graph{};
+
+  g_clip_producer_dq = dq.AsNode();
+  ctx.api.ValueInfo_GetValueProducer = &FakeClipProducerStub;
+
+  // Ort::ConstNode(producer).GetOperatorType() uses the global api.
+  OrtGlobalApiOverride global_guard(&ctx.api);
+  OrtClipNodeGroupSelector sel(/*allow_16bit=*/false);
+  OrtNodeGroupSelector& base = sel;
+  EXPECT_FALSE(base.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                          {dq.AsNode()}, {q.AsNode()}));
+  g_clip_producer_dq = nullptr;
+}
+
 #endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
