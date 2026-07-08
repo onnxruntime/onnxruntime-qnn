@@ -222,8 +222,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));
 
   const std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor_" + direction);
-  QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
-                                       QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+  QnnTensorWrapper null_tensor_wrapper = QnnTensorWrapper::MakeNull(null_tensor_name);
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
                 "Failed to add null tensor for GRU.");
 

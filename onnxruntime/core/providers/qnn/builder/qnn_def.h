@@ -232,6 +232,12 @@ Ort::Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn
 // TODO: split out separate files for Wrappers
 class QnnTensorWrapper {
  public:
+  // FLOAT_32 workaround for QnnIr rejecting UNDEFINED on null tensors
+  static QnnTensorWrapper MakeNull(const std::string& name) {
+    return QnnTensorWrapper(name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
+                            QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+  }
+
   QnnTensorWrapper(const std::string& name,
                    Qnn_TensorType_t tensor_type,
                    Qnn_DataType_t data_type,
