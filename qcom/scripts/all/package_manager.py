@@ -78,7 +78,7 @@ class FileCache:
         url_path = PurePosixPath(url_parts.path)
         cache_dir = self.__cache_dir / cache_key
         cache_file_path = cache_dir / url_path.name
-        if not cache_file_path.exists():
+        if not os.path.exists(cache_file_path):
             logging.info(f"Downloading {url} to {cache_file_path}")
 
             # Defer writing the final file so we don't leave partial downloads if we get killed.
