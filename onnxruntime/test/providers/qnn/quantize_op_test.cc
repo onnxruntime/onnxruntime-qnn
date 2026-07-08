@@ -15,17 +15,17 @@ namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// Verifies that Q and DQ nodes round-trip correctly when used as standalone ops in a
-// Q -> Transpose -> DQ graph. QNN optimizes away Q -> DQ on constant graph I/O, so
-// the output should be perfectly accurate relative to the float32 values.
+// Verifies that standalone Q and DQ nodes used around a Transpose produce bit-exact output
+// on QNN EP. QNN keeps the data in quantized form through the Transpose, so no precision is
+// lost. ORT CPU EP actually dequantizes, transposes in float, then re-quantizes, which can
+// introduce rounding differences — hence the test uses RunQnnModelTest (QNN vs CPU) rather
+// than TestQDQModelAccuracy.
 TEST_F(QnnHTPBackendTests, QuantAccuracyTest) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  // Note: a graph input -> Q -> DQ -> is optimized by Qnn to have a perfectly accurate output.
-  // ORT's CPU EP, on the otherhand, actually quantizes and dequantizes the input, which leads to different outputs.
   auto builder_func = [](ModelTestBuilder& builder) {
     const TestInputDef<float> input0_def({1, 2, 3}, false, {1.0f, 2.0f, 10.0f, 20.0f, 100.0f, 200.0f});
 
@@ -44,8 +44,6 @@ TEST_F(QnnHTPBackendTests, QuantAccuracyTest) {
     builder.AddDequantizeLinearNode<uint8_t>("dq_out", "op_output", qparams.scale, qparams.zero_point, "Y");
   };
 
-  // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
-  // 1st run will generate the Qnn context cache binary file
   RunQnnModelTest(builder_func,
                   provider_options,
                   13,
@@ -200,6 +198,38 @@ TEST_F(QnnHTPBackendTests, StandalonePerChannelDequantizeLinear_ConstInput_Folde
   provider_options["backend_type"] = "htp";
 
   // Constant per-channel DQ is folded to a STATIC tensor; the whole graph stays on QNN EP.
+  RunQnnModelTest(build_test_case,
+                  provider_options,
+                  21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
+// Per-channel Q on a CONSTANT input is constant-folded into a STATIC tensor and stays on QNN EP.
+TEST_F(QnnHTPBackendTests, StandalonePerChannelQuantizeLinear_ConstInput_Folded) {
+  auto build_test_case = [](ModelTestBuilder& builder) {
+    // Float weights as a constant initializer with shape [2, 3].
+    const std::vector<float> weights = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto* weights_init = builder.MakeInitializer<float>("weights", {2, 3}, weights);
+
+    // Per-channel scales/zero-points along axis 0 (2 channels).
+    const std::vector<float> scales = {0.1f, 0.2f};
+    const std::vector<uint8_t> zero_points = {0, 0};
+
+    // Q(const) -> DQ -> Mul(graph input) so the quantized output feeds a supported op
+    // and the graph output remains float (comparable between QNN EP and CPU EP).
+    builder.MakeInput<float>("activation", {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    builder.AddQuantizeLinearNode<uint8_t>("q", weights_init->name(), scales, zero_points, "q_out",
+                                           {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+    builder.AddDequantizeLinearNode<uint8_t>("dq", "q_out", scales, zero_points, "dq_out",
+                                             {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+    builder.AddNode("Mul", "Mul", {"dq_out", "activation"}, {"output"});
+    builder.MakeOutput("output");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  // Constant per-channel Q is folded to a STATIC tensor; the whole graph stays on QNN EP.
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,
