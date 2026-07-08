@@ -1,5 +1,5 @@
-// Copyright (c) Qualcomm. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
@@ -49,7 +49,7 @@ Ort::Status NeuronOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                          std::vector<std::string>&& input_names,
                                                          const Ort::Logger& logger,
                                                          bool do_op_validation) const {
-  if (input_names.size() < 1) {
+  if (input_names.empty()) {
     return Ort::Status();
   }
 
@@ -197,7 +197,7 @@ Ort::Status NeuronOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model
     RETURN_IF_NOT(output_index < outputs.size(),
                   ("Invalid output index in OverrideOutputQuantParam for op " + op_type).c_str());
 
-    const auto& output = node_unit.Outputs()[0];
+    const auto& output = node_unit.Outputs()[output_index];
     const std::string& output_name = output.name;
 
     if (quant_param.IsPerTensor(/*include_bw*/ false)) {
