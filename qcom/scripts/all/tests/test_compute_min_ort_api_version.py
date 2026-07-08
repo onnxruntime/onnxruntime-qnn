@@ -145,6 +145,76 @@ void f() {
 
 
 # ---------------------------------------------------------------------------
+# scan_ep_source: Ort:: wrapper method resolution via _WRAPPER_TO_C_API
+# ---------------------------------------------------------------------------
+
+
+def test_scan_ep_source_resolves_wrapper_methods(tmp_path: Path) -> None:
+    src = tmp_path / "ep"
+    src.mkdir()
+    (src / "use.cc").write_text(
+        """
+#include <onnxruntime_cxx_api.h>
+void f(const OrtNode* n) {
+  Ort::ConstNode(n).GetDomain();
+  Ort::ConstNode(n).GetOperatorType();
+}
+"""
+    )
+    names = scan_ep_source(src)
+    assert "Node_GetDomain" in names
+    assert "Node_GetOperatorType" in names
+
+
+def test_scan_ep_source_resolves_ambiguous_method(tmp_path: Path) -> None:
+    """GetName maps to Node_GetName, Graph_GetName, GetValueInfoName — all added."""
+    src = tmp_path / "ep"
+    src.mkdir()
+    (src / "use.cc").write_text(
+        """
+void f(const OrtNode* n) {
+  Ort::ConstNode(n).GetName();
+}
+"""
+    )
+    names = scan_ep_source(src)
+    assert "Node_GetName" in names
+    assert "Graph_GetName" in names
+    assert "GetValueInfoName" in names
+
+
+def test_scan_ep_source_tripwire_on_unknown_wrapper_method(tmp_path: Path) -> None:
+    """Unknown Ort:: wrapper method call triggers RuntimeError."""
+    src = tmp_path / "ep"
+    src.mkdir()
+    (src / "use.cc").write_text(
+        """
+void f(const OrtNode* n) {
+  Ort::ConstNode(n).BrandNewMethod();
+}
+"""
+    )
+    with pytest.raises(RuntimeError, match="Unknown Ort:: wrapper method"):
+        scan_ep_source(src)
+
+
+def test_scan_ep_source_ignores_non_ort_getname(tmp_path: Path) -> None:
+    """Files without Ort::Const should not resolve wrapper method names."""
+    src = tmp_path / "ep"
+    src.mkdir()
+    (src / "use.cc").write_text(
+        """
+void f() {
+  some_other_object.GetName();
+}
+"""
+    )
+    names = scan_ep_source(src)
+    assert "Node_GetName" not in names
+    assert "GetValueInfoName" not in names
+
+
+# ---------------------------------------------------------------------------
 # compute_floor: end-to-end max over actually-used members
 # ---------------------------------------------------------------------------
 

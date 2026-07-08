@@ -63,13 +63,21 @@
   # unchanged. ort_core_target dependency ensures the ORT headers are unpacked
   # before the script runs.
   # ----------------------------------------------------------------------------
+  if(NOT Python3_EXECUTABLE)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  endif()
+  if(onnxruntime_ORT_HOME)
+    set(QNN_EP_MIN_API_ORT_HEADERS "${onnxruntime_ORT_HOME}/include")
+  else()
+    set(QNN_EP_MIN_API_ORT_HEADERS "${ORT_SOURCE_DIR}/include")
+  endif()
   set(QNN_EP_MIN_API_HEADER ${CMAKE_CURRENT_BINARY_DIR}/qnn_ep_min_ort_api_version.h)
   set(QNN_EP_MIN_API_SCRIPT ${REPO_ROOT}/qcom/scripts/all/compute_min_ort_api_version.py)
   add_custom_command(
     OUTPUT ${QNN_EP_MIN_API_HEADER}
     COMMAND ${Python3_EXECUTABLE} ${QNN_EP_MIN_API_SCRIPT}
             --ep-source-root ${ONNXRUNTIME_ROOT}/core/providers/qnn
-            --ort-header-root ${ORT_SOURCE_DIR}/include
+            --ort-header-root ${QNN_EP_MIN_API_ORT_HEADERS}
             --write-header ${QNN_EP_MIN_API_HEADER}
     DEPENDS ort_core_target
     COMMENT "Computing QNN EP minimum ORT API version"

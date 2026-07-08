@@ -41,15 +41,16 @@ Exit codes:
      lint adapter) should surface this as an environment problem, not as a
      baseline-refresh request.
 
-Limitations: scans direct API calls (``ort_api->X``, ``ep_api.X`` etc.). Calls
-through ``Ort::`` C++ wrappers in ``onnxruntime_cxx_api.h`` are not seen here;
-if those become a concern, extend the patterns or wrap them.
+Limitations: scans direct API calls (``ort_api->X``, ``ep_api.X`` etc.) and resolves
+``Ort::`` C++ wrapper method calls via a hardcoded mapping to their backing C APIs.
+Unknown wrapper methods trigger a hard error (tripwire) to prevent silent blind spots.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import hashlib
 import io
 import json
@@ -57,10 +58,13 @@ import os
 import pathlib
 import re
 import shutil
+import ssl
 import sys
 import tempfile
 import urllib.request
 import zipfile
+
+import certifi
 
 # Lintrunner integration: in --lintrunner mode the script emits a lintrunner
 # JSON finding instead of exiting non-zero, routing the --check exit codes to
@@ -154,6 +158,50 @@ def build_since_map(header_root: pathlib.Path) -> dict[str, int]:
 
 _CALL_RE = re.compile(r"\b(?:ort_api|ep_api|model_editor_api|compile_api)\s*[.>\-]+\s*([A-Z]\w+)\s*\(")
 
+# Mapping from Ort:: C++ wrapper method names to their backing C API member(s).
+# Verified against onnxruntime_cxx_inline.h. Ambiguous names (e.g. GetName used
+# on Node, Graph, and ValueInfo) list all possible backing APIs — floor takes
+# max(\since) which is the safe (over-estimate) direction.
+_WRAPPER_TO_C_API: dict[str, list[str]] = {
+    "GetId": ["Node_GetId"],
+    "GetName": ["Node_GetName", "Graph_GetName", "GetValueInfoName"],
+    "GetDomain": ["Node_GetDomain"],
+    "GetOperatorType": ["Node_GetOperatorType"],
+    "GetSinceVersion": ["Node_GetSinceVersion"],
+    "GetAttributeByName": ["Node_GetAttributeByName"],
+    "GetInputs": ["Node_GetInputs", "Graph_GetInputs"],
+    "GetOutputs": ["Node_GetOutputs", "Graph_GetOutputs"],
+    "GetImplicitInputs": ["Node_GetImplicitInputs"],
+    "GetAttributes": ["Node_GetAttributes"],
+    "GetSubgraphs": ["Node_GetSubgraphs"],
+    "GetGraph": ["Node_GetGraph"],
+    "GetNodes": ["Graph_GetNodes"],
+    "GetInitializers": ["Graph_GetInitializers"],
+    "GetConsumers": ["ValueInfo_GetValueConsumers"],
+    "GetProducerNode": ["ValueInfo_GetValueProducer"],
+    "GetInitializerValue": ["ValueInfo_GetInitializerValue"],
+    "IsConstantInitializer": ["ValueInfo_IsConstantInitializer"],
+    "IsFromOuterScope": ["ValueInfo_IsFromOuterScope"],
+    "IsRequiredGraphInput": ["ValueInfo_IsRequiredGraphInput"],
+    "IsOptionalGraphInput": ["ValueInfo_IsOptionalGraphInput"],
+    "IsGraphOutput": ["ValueInfo_IsGraphOutput"],
+    "TypeInfo": ["GetValueInfoTypeInfo"],
+    "GetTensorTypeAndShapeInfo": ["CastTypeInfoToTensorInfo", "GetTensorTypeAndShape"],
+    "GetElementType": ["GetTensorElementType"],
+    "GetShape": ["GetDimensions"],
+    "GetElementCount": ["GetTensorShapeElementCount"],
+    "GetDimensionsCount": ["GetDimensionsCount"],
+    "IsOK": [],
+}
+
+_WRAPPER_METHOD_RE = re.compile(r"\.\s*(" + "|".join(re.escape(k) for k in _WRAPPER_TO_C_API) + r")\s*\(")
+
+# Matches Ort::Const<Type>(x).Method( or variable.Method( where the variable
+# was declared as an Ort:: wrapper type. We use this to detect unknown methods.
+_ORT_WRAPPER_CALL_RE = re.compile(
+    r"Ort::(?:Const)?\w+(?:<[^>]*>)?\s*(?:\([^)]*\)|&?\s*\w+)\s*[.)]\s*\.?\s*([A-Z]\w+)\s*\("
+)
+
 
 def scan_ep_source(ep_root: pathlib.Path) -> set[str]:
     names: set[str] = set()
@@ -165,6 +213,18 @@ def scan_ep_source(ep_root: pathlib.Path) -> set[str]:
                 continue
             for m in _CALL_RE.finditer(text):
                 names.add(m.group(1))
+            if "Ort::Const" in text:
+                for m in _WRAPPER_METHOD_RE.finditer(text):
+                    method = m.group(1)
+                    for c_api in _WRAPPER_TO_C_API[method]:
+                        names.add(c_api)
+                for m in _ORT_WRAPPER_CALL_RE.finditer(text):
+                    method = m.group(1)
+                    if method not in _WRAPPER_TO_C_API:
+                        raise RuntimeError(
+                            f"Unknown Ort:: wrapper method '{method}' in {path.relative_to(ep_root)}. "
+                            "Update _WRAPPER_TO_C_API in compute_min_ort_api_version.py."
+                        )
     return names
 
 
@@ -191,6 +251,13 @@ def compute_floor(ort_header_root: pathlib.Path, ep_source_root: pathlib.Path) -
             "Either _DECL_RE missed a declaration form, or these come from "
             "headers outside --ort-header-root."
         )
+    version_zero = sorted(n for n in used if since_map[n] == 0)
+    if version_zero:
+        print(
+            f"warning: {len(version_zero)} EP-used API member(s) resolved at version 0 "
+            f"(no \\since annotation): {version_zero[:5]}{'...' if len(version_zero) > 5 else ''}",
+            file=sys.stderr,
+        )
     return max(since_map[n] for n in used)
 
 
@@ -213,13 +280,9 @@ def find_ort_header_root(repo_root: pathlib.Path) -> pathlib.Path | None:
 
 def parse_deps_txt(deps_path: pathlib.Path, name: str) -> tuple[str, str]:
     """Return (url, sha1) for `name` from cmake/deps.txt. Raises if missing."""
-    for raw in deps_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = [p.strip() for p in line.split(";")]
-        if len(parts) >= 3 and parts[0] == name:
-            return parts[1], parts[2]
+    for row in csv.reader(deps_path.read_text(encoding="utf-8").splitlines(), delimiter=";"):
+        if row and not row[0].startswith("#") and row[0].strip() == name:
+            return row[1].strip(), row[2].strip()
     raise RuntimeError(f"{name} not found in {deps_path}")
 
 
@@ -248,7 +311,10 @@ def fetch_ort_headers(deps_path: pathlib.Path, cache_root: pathlib.Path | None =
     with tempfile.TemporaryDirectory(prefix="ort_core-dl-", dir=str(root)) as tmp:
         tmp_path = pathlib.Path(tmp)
         archive = tmp_path / "ort_core.zip"
-        with urllib.request.urlopen(url) as resp, open(archive, "wb") as out:
+        with (
+            urllib.request.urlopen(url, context=ssl.create_default_context(cafile=certifi.where())) as resp,
+            open(archive, "wb") as out,
+        ):
             shutil.copyfileobj(resp, out)
         digest = hashlib.sha1(archive.read_bytes()).hexdigest()
         if digest.lower() != sha1.lower():
