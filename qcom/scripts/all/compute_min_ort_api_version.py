@@ -64,7 +64,6 @@ import tempfile
 import urllib.request
 import zipfile
 
-import certifi
 
 # Lintrunner integration: in --lintrunner mode the script emits a lintrunner
 # JSON finding instead of exiting non-zero, routing the --check exit codes to
@@ -312,7 +311,7 @@ def fetch_ort_headers(deps_path: pathlib.Path, cache_root: pathlib.Path | None =
         tmp_path = pathlib.Path(tmp)
         archive = tmp_path / "ort_core.zip"
         with (
-            urllib.request.urlopen(url, context=ssl.create_default_context(cafile=certifi.where())) as resp,
+            urllib.request.urlopen(url, context=ssl.create_default_context(cafile=__import__("certifi").where())) as resp,
             open(archive, "wb") as out,
         ):
             shutil.copyfileobj(resp, out)
