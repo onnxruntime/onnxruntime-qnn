@@ -2399,7 +2399,7 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
 
-// Returns a function that builds a model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a model with EyeLike (CPU-only) + Add
 // to test partition-added inputs.
 static GetTestModelFn BuildPartitionAddedInputModel() {
   return [](ModelTestBuilder& builder) {
@@ -2408,14 +2408,14 @@ static GetTestModelFn BuildPartitionAddedInputModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create constant initializer for RandomNormalLike
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines graph input with partition-added input
-    builder.AddNode("add", "Add", {"input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2480,10 +2480,10 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   // ONNX-declared input first, partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
-// Returns a function that builds a QDQ model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a QDQ model with EyeLike (CPU-only) + Add
 // to test partition-added inputs with offload_graph_io_quantization.
 static GetTestModelFn BuildPartitionAddedInputQDQModel() {
   return [](ModelTestBuilder& builder) {
@@ -2492,8 +2492,8 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create initializers
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
     builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
     builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
 
@@ -2503,11 +2503,11 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // DequantizeLinear: q_input -> dq_input (goes to QNN)
     builder.AddNode("dequantize", "DequantizeLinear", {"q_input", "scale", "zero_point"}, {"dq_input"}, kOnnxDomain);
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines dequantized input with partition-added input
-    builder.AddNode("add", "Add", {"dq_input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"dq_input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2575,7 +2575,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   // partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
 // Returns a model where a single graph input fans out to two separate Q->DQ chains,
