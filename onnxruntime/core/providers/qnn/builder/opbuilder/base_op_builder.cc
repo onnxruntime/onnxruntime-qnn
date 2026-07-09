@@ -183,9 +183,9 @@ Ort::Status BaseOpBuilder::AddZeroBiasInput(QnnModelWrapper& qnn_model_wrapper,
   QnnQuantParamsWrapper bias_qparams;
 
   if (input1_qparams.IsPerChannel()) {
-    bias_qparams = QnnQuantParamsWrapper(bias_scales, bias_offsets, /*axis*/ 0, /*is_int4*/ false);
+    bias_qparams = QnnQuantParamsWrapper::PerChannel(bias_scales, bias_offsets, /*axis*/ 0);
   } else {
-    bias_qparams = QnnQuantParamsWrapper(bias_scales[0], bias_offsets[0]);
+    bias_qparams = QnnQuantParamsWrapper::PerTensor(bias_scales[0], bias_offsets[0]);
   }
 
   auto tensor_wrapper = QnnTensorWrapper(bias_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,

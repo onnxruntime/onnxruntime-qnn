@@ -38,6 +38,7 @@ struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
+  bool enable_block_quant_weight_optimization = false;
 };
 
 class QnnModelWrapper {
@@ -265,6 +266,25 @@ class QnnModelWrapper {
                           std::vector<uint32_t>&& output_shape,
                           bool do_op_validation);
 
+  // Adds a QNN_OP_DEQUANTIZE node: input (quantized) → output (float).
+  // output_data_type must be FLOAT_16 or FLOAT_32.
+  // Output tensor type is always QNN_TENSOR_TYPE_NATIVE.
+  Ort::Status AddDequantizeNode(const std::string& input_name,
+                                const std::string& output_name,
+                                Qnn_DataType_t output_data_type,
+                                std::vector<uint32_t> output_shape,
+                                bool do_op_validation);
+
+  // Adds a QNN_OP_QUANTIZE node: input (float) → output (fixed-point).
+  // output_data_type must be a SFIXED_POINT or UFIXED_POINT type.
+  Ort::Status AddQuantizeNode(const std::string& input_name,
+                              const std::string& output_name,
+                              Qnn_TensorType_t output_tensor_type,
+                              Qnn_DataType_t output_data_type,
+                              QnnQuantParamsWrapper output_quant_param,
+                              std::vector<uint32_t> output_shape,
+                              bool do_op_validation);
+
   Ort::Status AddReshapeNode(const std::string& input_name,
                              const std::string& output_name,
                              const std::vector<uint32_t>& input_shape,
@@ -369,6 +389,8 @@ class QnnModelWrapper {
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
+  const Ort::Logger& GetLogger() const { return logger_; }
+
   const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
     return model_tensors_map_;
   }
@@ -391,17 +413,39 @@ class QnnModelWrapper {
 
     // Handle float scales
     if constexpr (std::is_same_v<T, float>) {
-      // Verify data type for float scales
-      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                    "Expected scale initializer to be of type FLOAT");
+      // Validate dtype up front so an unsupported type returns before any (potentially external)
+      // initializer read, mirroring the early RETURN_IF_NOT guard in the uint8_t branch below.
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+                    "Expected scale initializer to be of type FLOAT, FLOAT16, or BFLOAT16");
 
       std::vector<uint8_t> initializer_bytes;
       RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
-      gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
-                                                  initializer_bytes.size() / sizeof(float));
+      // Reinterpret the raw bytes as SrcT and append each element as a float. static_cast covers
+      // float (identity), Ort::Float16_t, and Ort::BFloat16_t (both have operator float()). fp16/bf16
+      // scale initializers are produced by quantization tools that match the scale dtype to the
+      // activation dtype (e.g. fp16 models); QNN quantization structs use float, so decode here.
+      auto append_scales = [&scales, &initializer_bytes](auto src_type_tag) {
+        using SrcT = decltype(src_type_tag);
+        gsl::span<const SrcT> src = gsl::make_span(reinterpret_cast<const SrcT*>(initializer_bytes.data()),
+                                                   initializer_bytes.size() / sizeof(SrcT));
+        scales.reserve(scales.size() + src.size());
+        for (const auto& val : src) {
+          scales.push_back(static_cast<float>(val));
+        }
+      };
 
-      scales.insert(scales.end(), src.begin(), src.end());
+      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        append_scales(float{});
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+        append_scales(Ort::Float16_t{});
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
+        // Spelled out (rather than a bare else) so a future dtype added to the guard above
+        // without a matching branch here fails to compile instead of silently aliasing BFLOAT16.
+        append_scales(Ort::BFloat16_t{});
+      }
     }
     // Handle uint8_t scales (for block quantization)
     else if constexpr (std::is_same_v<T, uint8_t>) {

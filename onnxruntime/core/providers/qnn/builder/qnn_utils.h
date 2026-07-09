@@ -271,6 +271,34 @@ Ort::Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> 
                          /*out*/ gsl::span<uint8_t> quant_bytes, Qnn_DataType_t data_type,
                          std::optional<int64_t> axis = std::nullopt);
 
+// Converts ONNX block quantization (BQ) scales to QNN LPBQ (BLOCKWISE_EXPANSION) format.
+// Supports int4 (bitwidth=4) weight block quantization.
+//
+// The ONNX BQ scale tensor has shape [num_blocks_per_channel, num_channels] in block-major order
+// (i.e., the block axis is axis 0 and the channel axis is axis 1). If the ONNX block axis is 1
+// instead of 0, the caller must transpose the scale data before calling this function.
+//
+// Algorithm :
+//   max_int_scale             = 2^bitwidth  (16 for int4)
+//   per_channel_scale[c]      = max(bq_scales[:, c]) / max_int_scale
+//   per_block_int_scale[c, b] = clamp(round(bq_scales[b, c] / per_channel_scale[c]), 1, max_int_scale)
+//
+// The output per_block_int_scales is in channel-major order [num_channels * num_blocks_per_channel],
+// which is the layout required by QNN LPBQ (BLOCKWISE_EXPANSION).
+//
+// Returns failure if:
+//   - The encoding is asymmetric (non-zero offsets), which LPBQ does not support.
+//   - Any block scale is negative or non-finite.
+//   - Input sizes are inconsistent.
+Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
+                                          gsl::span<const int32_t> bq_offsets,
+                                          uint32_t num_blocks_per_channel,
+                                          uint32_t num_channels,
+                                          uint32_t bitwidth,
+                                          /*out*/ std::vector<float>& per_channel_scales,
+                                          /*out*/ std::vector<uint8_t>& per_block_int_scales,
+                                          /*out*/ std::vector<int32_t>& offsets);
+
 // Quantizes the given float data using the provided Low Power Block Quantization parameters
 // (float channel_scales, int block_scales and offsets)
 // The provided offsets must use the QNN convention where offset = -zero_point.

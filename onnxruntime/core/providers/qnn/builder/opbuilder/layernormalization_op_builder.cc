@@ -385,7 +385,7 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
     int32_t ln_offset = 0;
     RETURN_IF_ERROR(utils::GetQuantParams(-ln_abs_max, ln_abs_max, x_qnn_data_type,
                                           ln_scale, ln_offset, /*symmetric=*/false));
-    ln_intermediate_qp = QnnQuantParamsWrapper(ln_scale, ln_offset);
+    ln_intermediate_qp = QnnQuantParamsWrapper::PerTensor(ln_scale, ln_offset);
   } else {
     // FP path
     ln_intermediate_qp = final_output_info.quant_param.Copy();

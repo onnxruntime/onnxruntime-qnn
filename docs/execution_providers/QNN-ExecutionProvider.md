@@ -15,6 +15,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Pre-built Packages](#pre-built-packages)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
+- [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
 - [Supported ONNX operators](#supported-onnx-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
@@ -163,9 +164,13 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"qnn_context_priority"`|[Description](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_yielding.html)|
 |---|---|
 |'low'|Low priority.|
+|'normal_low'|Normal low priority.|
 |'normal'|Normal priority. Default.|
 |'normal_high'|Normal high priority.|
 |'high'|High priority.|
+|'high_plus'|High plus priority.|
+|'critical'|Critical priority.|
+|'critical_plus'|Critical plus priority.|
 
 |`"htp_graph_finalization_optimization_mode"`|Description|
 |---|---|
@@ -176,7 +181,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"soc_model"`|Description|
 |---|---|
-|Model number (string)|The SoC model number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid values. Defaults to "0" (unknown).|
+|Model number (string)|The SoC model number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid values. Defaults to "0" (unknown). Accepts a comma-separated list of model numbers (e.g. `"60,88"`). Supplying more than one value enables [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
 
 |`"htp_arch"`|Description|
 |---|---|
@@ -189,14 +194,16 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
 
+`htp_arch` accepts a comma-separated list of architectures (e.g. `"73,81"`). Supplying more than one value enables [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.
+
 |`"device_id"`|Description|
 |---|---|
 |Device ID (string)|The ID of the device to use when setting `htp_arch`. Defaults to "0" (for single device). Must be >= 0.|
 
 |`"enable_htp_fp16_precision"`|Description [Example](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)|
 |---|---|
-|'0'|Disabled. Inference with fp32 precision if it's fp32 model.|
-|'1'|Default. Enable the float32 model to be inferenced with fp16 precision.|
+|'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
+|'1'|Enable the float32 model to be inferenced with fp16 precision.|
 
 |`"disable_htp_monolithic_lstm"`|Description|
 |---|---|
@@ -212,6 +219,11 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |---|---|
 |'0'|Disabled. QNN EP will handle quantization and dequantization of graph I/O.|
 |'1'|Default. Enabled. Offload quantization and dequantization of graph I/O to CPU EP.|
+
+|`"enable_block_quant_weight_optimization"`|Description|
+|---|---|
+|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
@@ -308,6 +320,33 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |---|---|
 |'0'|Default. Disabled.|
 |'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
+
+### Flexible Context Binary (FCB) / multi-SoC EP context
+
+The Flexible Context Binary (FCB) feature packages one or more QNN context binaries into a single QNN DLC, so a single EPContext ONNX model can be deployed across multiple Snapdragon SoCs. It requires **QAIRT 2.48 or later (QNN API >= 2.37)**.
+
+Multi-SoC mode is enabled automatically when `soc_model` and/or `htp_arch` is given a comma-separated list of more than one value. In that case:
+
+- `soc_model` and `htp_arch` may each be given on their own; the other is then defaulted for every target SoC. If both are given as lists, they must contain the same number of values (one per target SoC), and `soc_model` takes priority if the two do not agree.
+- The following HTP backend options may each be given `0`, `1`, or `N` values (comma-separated), where `N` matches the number of SoCs. With `0` values the default is applied to every SoC; with `1` value it is duplicated across all SoCs; with `N` values each is applied to the corresponding SoC:
+  - `vtcm_mb`
+
+Constraints:
+
+- Supported only on **x86_64** hosts (offline preparation). On-device preparation will soon be supported in later QAIRT version.
+- Requires the EP context cache to be enabled (`ep.context_enable=1`). `enable_htp_prepare_only` is turned on automatically (preparation only, no inference).
+- Not supported together with shared EP contexts (`share_ep_contexts` / `stop_share_ep_contexts`).
+
+**Example (Python):**
+```python
+ep_options = {
+    "backend_type": "htp",
+    "htp_arch": "73,81",          # two target SoCs -> multi-SoC mode
+    "soc_model": "60,88",         # one SoC model per arch
+    "vtcm_mb": "8",               # single value duplicated to every SoC
+}
+# ep.context_enable must be set to 1; enable_htp_prepare_only is enabled automatically.
+```
 
 ### Run Options
 
@@ -427,6 +466,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Mod||
 |ai.onnx:Mul||
 |ai.onnx:Neg||
+|ai.onnx:NonMaxSuppression|max_output_boxes_per_class, iou_threshold, and score_threshold must be static constants; max_output_boxes_per_class must be > 0; center_point_box must be 0 (diagonal corners); GPU backend not supported|
 |ai.onnx:NonZero||
 |ai.onnx:Not||
 |ai.onnx:OneHot|depth and values inputs must be constant initializers|
@@ -1039,7 +1079,7 @@ session = ort.InferenceSession("model.onnx", sess_options=sess_options)
 
 ### Important Considerations
 #### Feature Disabled if Number of Subgraphs is Less Than 5
-While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance. 
+While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance.
 
 #### Feature Disabled if `num_graph_prepare_threads` is 1
 This defeats the purpose of the feature, and enabling the feature will only add additional overhead from thread pool creation.

@@ -237,7 +237,7 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                                     cast_output_name,
                                                     QNN_TENSOR_TYPE_NATIVE,
                                                     QNN_DATATYPE_UFIXED_POINT_8,
-                                                    QnnQuantParamsWrapper(1.0f, 0),
+                                                    QnnQuantParamsWrapper::PerTensor(1.0f, 0),
                                                     std::vector<uint32_t>(input0_info.shape),
                                                     do_op_validation));
     }
@@ -290,7 +290,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 
     const std::string gather_output_name = utils::UniqueNameGenerator().New(output_name, "_u8_to_bool_in");
-    QnnQuantParamsWrapper gather_quant_params(1.0f, 0);
+    QnnQuantParamsWrapper gather_quant_params = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
     QnnTensorWrapper gather_output_wrapper(gather_output_name,
                                            QNN_TENSOR_TYPE_NATIVE,
                                            QNN_DATATYPE_UFIXED_POINT_8,
@@ -430,7 +430,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   QnnQuantParamsWrapper gather_quant_params = quantize_param.Copy();
   if (cast_plan.needs_bool_cast) {
     gather_qnn_data_type = QNN_DATATYPE_UFIXED_POINT_8;
-    gather_quant_params = QnnQuantParamsWrapper(1.0f, 0);
+    gather_quant_params = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
   }
 
   Qnn_TensorType_t tensor_type = (!reshape_required && is_graph_output && !cast_plan.needs_bool_cast && !cast_plan.needs_int64_cast)

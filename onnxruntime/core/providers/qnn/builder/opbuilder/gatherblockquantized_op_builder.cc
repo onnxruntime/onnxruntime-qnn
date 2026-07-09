@@ -256,10 +256,9 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     RETURN_IF_NOT(static_cast<int64_t>(weight_shape[1]) * 2 ==
                       static_cast<int64_t>(scale_shape[1]) * block_size,
                   "GatherBlockQuantized: weight packed bytes mismatch with scales * block_size");
-    QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(float_scale,
-                                                                 int32_offset,
-                                                                 block_sizes,
-                                                                 QNN_DATATYPE_SFIXED_POINT_4);
+    QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::Block(float_scale,
+                                                                        int32_offset,
+                                                                        block_sizes);
     std::vector<uint32_t> weight_shape_ = {static_cast<uint32_t>(weight_shape[0]),
                                            static_cast<uint32_t>(scale_shape[1] * block_size)};
     QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,

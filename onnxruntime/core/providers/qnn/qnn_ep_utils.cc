@@ -1617,6 +1617,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"LogSoftmax", {}},
       {"LpNormalization", {}},
       {"Neg", {}},
+      {"ReduceL2", {}},
       {"ReduceLogSumExp", {}},
       {"ReduceMax", {}},
       {"ReduceMean", {}},
