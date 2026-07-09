@@ -113,6 +113,10 @@ struct FakeOrtValue {
     return r;
   }
 };
+static_assert(offsetof(FakeOrtValue, dummy_name) == offsetof(FakeValueInfo, name),
+              "FakeOrtValue/FakeValueInfo layout drift: name offset mismatch");
+static_assert(offsetof(FakeOrtValue, elem_type) == offsetof(FakeValueInfo, elem_type),
+              "FakeOrtValue/FakeValueInfo layout drift: elem_type offset mismatch");
 
 // ---------------------------------------------------------------------------
 // FakeNode
@@ -387,7 +391,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
         reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(v));
     return nullptr;
   };
-  // GetTensorMutableData: return a pointer to float_data or double_data.
+  // GetTensorMutableData: production code (qnn_ep_utils.cc) calls the mutable variant via api_ptrs_.
   api.GetTensorMutableData = [](OrtValue* v, void** out) noexcept -> OrtStatus* {
     auto* fov = reinterpret_cast<FakeOrtValue*>(v);
     *out = (fov->elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)

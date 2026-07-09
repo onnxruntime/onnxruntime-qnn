@@ -1861,6 +1861,10 @@ OrtStatus* FakeClipProducerStub(const OrtValueInfo* /*value_info*/,
   if (output_index) *output_index = 0;
   return nullptr;
 }
+struct ClipProducerGuard {
+  explicit ClipProducerGuard(const OrtNode* n) { g_clip_producer_dq = n; }
+  ~ClipProducerGuard() { g_clip_producer_dq = nullptr; }
+};
 }  // namespace
 
 // OrtClipNodeGroupSelector: CheckQuantTypes fails when input/output types
@@ -1878,7 +1882,7 @@ TEST(QnnUnit_EpUtilsTest, Clip_Rejects16BitWhenDisallowed) {
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
   FakeGraph graph{};
 
-  g_clip_producer_dq = dq.AsNode();
+  ClipProducerGuard guard(dq.AsNode());
   ctx.api.ValueInfo_GetValueProducer = &FakeClipProducerStub;
 
   // Ort::ConstNode(producer).GetOperatorType() uses the global api.
@@ -1887,7 +1891,6 @@ TEST(QnnUnit_EpUtilsTest, Clip_Rejects16BitWhenDisallowed) {
   OrtNodeGroupSelector& base = sel;
   EXPECT_FALSE(base.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
                           {dq.AsNode()}, {q.AsNode()}));
-  g_clip_producer_dq = nullptr;
 }
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
