@@ -1,4 +1,4 @@
-
+﻿
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 #if !defined(ORT_MINIMAL_BUILD)
@@ -332,6 +332,15 @@ TEST_F(QnnCPUBackendTests, Resize_DownSample_Linear_HalfPixel_scales) {
   RunCPUResizeOpTestWithScales(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
                                {1.0f, 1.0f, 0.5f, 0.5f}, "linear", "half_pixel", "",
                                ExpectedEPNodeAssignment::All);
+}
+// Test CPU Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "floor". The CPU backend lowers via the same Resize(2x, ASYMMETRIC) + StridedSlice
+// decomposition as HTP (the tf dispatch is not gated on is_npu_backend).
+TEST_F(QnnCPUBackendTests, Resize2xNearestTfHalfPixelForNNFloor) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                     {1, 3, 8, 8}, "nearest", "tf_half_pixel_for_nn", "floor",
+                     ExpectedEPNodeAssignment::All);
 }
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
@@ -677,7 +686,7 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestTfHalfPixelForNNRoundPreferCeil_Uns
                               ExpectedEPNodeAssignment::None);
 }
 // Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
-// nearest_mode: "floor". Maps to QNN ResizeNearestNeighbor(2x, ASYMMETRIC) + StridedSlice.
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
 TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestTfHalfPixelForNNFloor) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
@@ -693,7 +702,7 @@ TEST_F(QnnHTPBackendTests, ResizeU8_HalfNearestAsymmetricFloor) {
                               ExpectedEPNodeAssignment::All);
 }
 // Test 0.5x QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
-// nearest_mode: "floor". Maps to QNN ResizeNearestNeighbor(2x, ASYMMETRIC) + StridedSlice.
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
 TEST_F(QnnHTPBackendTests, ResizeU8_HalfNearestTfHalfPixelForNNFloor) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
@@ -701,12 +710,32 @@ TEST_F(QnnHTPBackendTests, ResizeU8_HalfNearestTfHalfPixelForNNFloor) {
                               ExpectedEPNodeAssignment::All);
 }
 // Test QDQ Resize downsample with mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
-// nearest_mode: "floor". Maps to QNN ResizeNearestNeighbor(2x, ASYMMETRIC) + StridedSlice.
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
 TEST_F(QnnHTPBackendTests, Resize_DownSample_Nearest_TfHalfPixelForNN) {
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                              {1, 1, 1, 2}, "nearest", "tf_half_pixel_for_nn", "floor",
-                              ExpectedEPNodeAssignment::All);
+                                                             {1, 1, 1, 2}, "nearest", "tf_half_pixel_for_nn", "floor",
+                               ExpectedEPNodeAssignment::All);
+}
+// Tripwire: linear + tf_half_pixel_for_nn is not supported on QNN HTP.
+// IsOpSupported rejects it (only nearest+floor is admitted); the node falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearTfHalfPixelForNN_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "linear", "tf_half_pixel_for_nn", "",
+                              ExpectedEPNodeAssignment::None);
+}
+// Tripwire: cubic + tf_half_pixel_for_nn is not supported on QNN HTP.
+// IsOpSupported rejects it (only nearest+floor is admitted); the node falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicTfHalfPixelForNN_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "cubic", "tf_half_pixel_for_nn", "",
+                              ExpectedEPNodeAssignment::None,
+                              19,
+                              QDQTolerance(),
+                              {},
+                              GraphOptimizationLevel::ORT_DISABLE_ALL);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 }  // namespace test
