@@ -710,12 +710,12 @@ TEST_F(QnnHTPBackendTests, ResizeU8_HalfNearestTfHalfPixelForNNFloor) {
                               ExpectedEPNodeAssignment::All);
 }
 // Test QDQ Resize downsample with mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
-// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.g
 TEST_F(QnnHTPBackendTests, Resize_DownSample_Nearest_TfHalfPixelForNN) {
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
-                                                             {1, 1, 1, 2}, "nearest", "tf_half_pixel_for_nn", "floor",
-                               ExpectedEPNodeAssignment::All);
+                              {1, 1, 1, 2}, "nearest", "tf_half_pixel_for_nn", "floor",
+                              ExpectedEPNodeAssignment::All);
 }
 // Tripwire: linear + tf_half_pixel_for_nn is not supported on QNN HTP.
 // IsOpSupported rejects it (only nearest+floor is admitted); the node falls back to CPU EP.

@@ -176,9 +176,9 @@ static Ort::Status ProcessTfHalfPixelForNN(QnnModelWrapper& qnn_model_wrapper,
   // Output tensor names are always unique in a valid ONNX graph, even when node Name() is empty.
   const std::string name_base = node_unit.Outputs()[0].name;
 
-  const std::string resize_out_name  = name_base + "_tfhp_resize_out";
+  const std::string resize_out_name = name_base + "_tfhp_resize_out";
   const std::string resize_node_name = name_base + "_tfhp_resize";
-  const std::string slice_node_name  = name_base + "_tfhp_slice";
+  const std::string slice_node_name = name_base + "_tfhp_slice";
 
   // Compute 2x output shape: double only the spatial dims (indices 1 .. rank-2 in NHWC).
   std::vector<uint32_t> double_output_shape = output_shape;
@@ -247,13 +247,13 @@ static Ort::Status ProcessTfHalfPixelForNN(QnnModelWrapper& qnn_model_wrapper,
   for (size_t i = 0; i < input_rank; ++i) {
     const bool is_spatial = (i >= 1 && i < input_rank - 1);  // H, W (and D for rank-5) in NHWC
     if (is_spatial) {
-      ranges_data.push_back(1u);                                              // start = 1 (first odd index)
+      ranges_data.push_back(1u);                                             // start = 1 (first odd index)
       ranges_data.push_back(static_cast<uint32_t>(double_output_shape[i]));  // end = 2 * output_size
-      ranges_data.push_back(2u);                                              // stride = 2
+      ranges_data.push_back(2u);                                             // stride = 2
     } else {
-      ranges_data.push_back(0u);                                              // start = 0
+      ranges_data.push_back(0u);                                             // start = 0
       ranges_data.push_back(static_cast<uint32_t>(double_output_shape[i]));  // end = full dim
-      ranges_data.push_back(1u);                                              // stride = 1
+      ranges_data.push_back(1u);                                             // stride = 1
     }
   }
 
