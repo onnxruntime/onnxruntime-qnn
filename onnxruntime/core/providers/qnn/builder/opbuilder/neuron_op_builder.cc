@@ -77,7 +77,7 @@ Ort::Status NeuronOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
         ORT_CXX_LOG(logger,
                     ORT_LOGGING_LEVEL_INFO,
                     ("Skipping QNN validation for Tanh node '" + node_unit.Name() +
-                     "' with quantized unit16 output.")
+                     "' with quantized uint16 output.")
                         .c_str());
         return Ort::Status();
       }
