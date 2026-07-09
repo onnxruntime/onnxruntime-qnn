@@ -163,6 +163,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
 
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
+  bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
   if (is_embed_mode) {
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
@@ -170,7 +171,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                "",
                                                                main_context_node_name,
                                                                qnn_models,
-                                                               max_spill_fill_size);
+                                                               max_spill_fill_size,
+                                                               is_multi_soc_ep_context);
   }
 
   std::filesystem::path folder_path = std::filesystem::path(ctx_onnx_model_path).parent_path();
@@ -215,7 +217,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                context_binary_path_str,
                                                                main_context_node_name,
                                                                qnn_models,
-                                                               max_spill_fill_size);
+                                                               max_spill_fill_size,
+                                                               is_multi_soc_ep_context);
   }
 #endif
 
@@ -239,7 +242,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                              context_binary_path_str,
                                                              main_context_node_name,
                                                              qnn_models,
-                                                             max_spill_fill_size);
+                                                             max_spill_fill_size,
+                                                             is_multi_soc_ep_context);
 }
 
 Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
@@ -329,7 +333,8 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  bool share_ep_contexts,
                                  bool stop_share_ep_contexts,
                                  const std::string& ep_name,
-                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides) {
+                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides,
+                                 bool enable_multi_soc_ep_context) {
   // Still need more work to support multiple partition, it's out of EP's scope.
   // Already have code to make sure it's single partition before this method get invoked.
   for (size_t idx = 0; idx < count; ++idx) {
@@ -455,6 +460,15 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                                     graph_name.c_str(),
                                                     static_cast<int>(graph_name.length()),
                                                     ORT_OP_ATTR_STRING,
+                                                    &attr));
+    attributes.push_back(attr);
+
+    attr = nullptr;
+    int64_t is_multi_soc_ep_context = enable_multi_soc_ep_context ? static_cast<int64_t>(1) : static_cast<int64_t>(0);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(IS_MULTI_SOC_EP_CONTEXT.c_str(),
+                                                    &is_multi_soc_ep_context,
+                                                    1,
+                                                    ORT_OP_ATTR_INT,
                                                     &attr));
     attributes.push_back(attr);
 
