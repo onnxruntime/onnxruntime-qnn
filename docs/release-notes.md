@@ -40,6 +40,9 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 
 ## Improvements
 
+- **Gather block quantize (GPU)** — Added quantization support for gather blocks in LLMs, enabling execution on Qualcomm GPU through EpContextBinary. ([#356](https://github.com/onnxruntime/onnxruntime-qnn/pull/356))
+- **GroupQueryAttention (GPU)** — Support `com.Microsoft.GroupQueryAttention` by mapping onto `QNN_OP_GROUP_QUERY_ATTENTION`, enabling GQA nodes in LLMs to run on GPU for better performance. ([#424](https://github.com/onnxruntime/onnxruntime-qnn/pull/424))
+- **DX12 shared memory (GPU)** — Added DX12 shared memory allocator via `enable_dx12_shared_memory_allocator` provider option, leveraging `QNN_MEM_TYPE_DX12` mem-handles. Eliminates CPU↔GPU copies of KV cache tensors for improved LLM inferencing speed. ([#213](https://github.com/onnxruntime/onnxruntime-qnn/pull/213))
 - **MatMul / Gemm** — Block-quantized (`BW_FLOAT_BLOCK`) weight support on HTP. INT4/UINT4/INT8/UINT8 weights. Requires QAIRT >= 2.47. ([#476](https://github.com/onnxruntime/onnxruntime-qnn/pull/476), [#477](https://github.com/onnxruntime/onnxruntime-qnn/pull/477))
 - **LayerNormalization** — Decomposes into `LN → Mul + Add` when scale/bias rank is not aligned with the normalization axes. ([#417](https://github.com/onnxruntime/onnxruntime-qnn/pull/417))
 - **Resize** — Routes rank-4 linear `pytorch_half_pixel` Resize to `ResizeBilinear`. ([#393](https://github.com/onnxruntime/onnxruntime-qnn/pull/393))
@@ -63,6 +66,7 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - **GetGenieCapability** — Fix crash from dangling `session_options_` reference on Windows ARM64 LLM model load. ([#513](https://github.com/onnxruntime/onnxruntime-qnn/pull/513))
 - **Linux ARM64 NPU detection** — QNN EP now registers an NPU device on Linux ARM64 by probing `/dev/fastrpc-cdsp*`, fixing "No QNN EP devices found". ([#557](https://github.com/onnxruntime/onnxruntime-qnn/pull/557))
 - **offload_graph_io_quantization** — Fix crash on EPContext load by serializing the tensor-name rename map into the EPContext node at compile time. Backward compatible with previously generated context binaries. ([#544](https://github.com/onnxruntime/onnxruntime-qnn/pull/544))
+- **Quantized Gelu ↔ Erf fusion** — Support `Div`/`Mul` as the parent of `Erf` (optimizers can rewrite `Div(sqrt(2))` as `Mul(1/sqrt(2))`), canonicalize duplicated intermediate root tensor names produced by ORT, validate against outer quantized I/O when wrapped by DQ/Q, and reject fusion when intermediate QDQGroups are present to avoid accuracy loss. ([#309](https://github.com/onnxruntime/onnxruntime-qnn/pull/309))
 
 **Full Changelog:** [rel-2.3.0...rel-2.4.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.3.0...rel-2.4.0)
 
@@ -70,7 +74,7 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 
 This release includes contributions from:
 
-[Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Mu-Chien Hsu](https://github.com/quic-muchhsu), [Nischay Mamidi](https://github.com/qti-niscmami), [Simon Janezic](https://github.com/simejanko), [Shubham Patel](https://github.com/qti-shubham),  [Tirupathi Reddy T](https://github.com/tirupath-qti), [Yathindra Kota](https://github.com/quic-ykota), [Yuduo Wu](https://github.com/qti-yuduo), [Yu-Hung Chuang](https://github.com/yuhuchua-qti)
+[Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Mu-Chien Hsu](https://github.com/quic-muchhsu), [Nischay Mamidi](https://github.com/qti-niscmami), [Sachin Jangid](https://github.com/sachjang-qti), [Simon Janezic](https://github.com/simejanko), [Shubham Patel](https://github.com/qti-shubham),  [Tirupathi Reddy T](https://github.com/tirupath-qti), [Vineeth Jatoth](https://github.com/vjatoth-qti), [Yathindra Kota](https://github.com/yath1), [Yuduo Wu](https://github.com/qti-yuduo), [Yu-Hung Chuang](https://github.com/yuhuchua-qti)
 
 ---
 
