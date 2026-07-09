@@ -440,7 +440,19 @@ class PackageManager:
     @staticmethod
     def __parse_config(config_path: Path) -> dict[str, dict[str, Any]]:
         with config_path.open() as config_file:
-            return yaml.safe_load(config_file)
+            config = yaml.safe_load(config_file)
+
+        # Every package must pin a checksum. Without one we cannot detect a corrupt/partial/wrong
+        # download, which is what lets a poisoned entry get stuck in the persistent CI cache.
+        without_checksum = [
+            name for name, atts in config.items() if not any(k in atts for k in ("sha256", "sha1", "md5"))
+        ]
+        if without_checksum:
+            raise ValueError(
+                f"The following packages in {config_path} are missing a required checksum "
+                f"(sha256, sha1, or md5): {', '.join(sorted(without_checksum))}."
+            )
+        return config
 
     @classmethod
     def __uninstall(cls, subdir: Path) -> None:
