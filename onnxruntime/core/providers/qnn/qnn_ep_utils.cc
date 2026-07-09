@@ -876,7 +876,9 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
         return false;
       }
       const OrtNode* producer = nullptr;
-      ort_api.ValueInfo_GetValueProducer(inputs[slot], &producer, nullptr);
+      if (ort_api.ValueInfo_GetValueProducer(inputs[slot], &producer, nullptr) != nullptr) {
+        return false;
+      }
       if (producer == nullptr ||
           Ort::ConstNode(producer).GetOperatorType() != "DequantizeLinear") {
         return false;  // inputs[0] and inputs[1] must be DQ-produced; only inputs[2] (bias) may be float.
