@@ -24,6 +24,11 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 |---|---|---|
 | `qnn_def_test.cc` | `QnnUnit_DefTest` | `builder/qnn_def.cc` |
 | `qnn_model_wrapper_test.cc` | `QnnUnit_ModelWrapperTest` | `builder/qnn_model_wrapper.cc` |
+| `qnn_quant_params_wrapper_test.cc` | `QnnUnit_QuantParamsWrapperTest` | `builder/qnn_quant_params_wrapper.cc` |
+| `qnn_model_test.cc` | `QnnUnit_ModelTest` | `builder/qnn_model.cc` |
+| `qnn_utils_test.cc` | `QnnUnit_UtilsTest` | `builder/qnn_utils.cc` |
+| `qnn_ep_utils_test.cc` | `QnnUnit_EpUtilsTest` | `qnn_ep_utils.cc` |
+| `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 
 ## Benefits
 
@@ -100,6 +105,38 @@ Pick the lowest-cost layer that lets you write the test. Cost increases top to b
 | Needs a real `Qnn_BackendHandle_t` (e.g., `backendValidateOpConfig`) | Use `QnnRealHtpBackendContext`: `dlopen` `libQnnHtp.so` + `backendCreate`. **Does not create a QNN context/session** — the validation path does not need one. Use `GTEST_SKIP()` when the SDK is unavailable |
 | Needs a real QNN context/session, graph operations | **No helper today.** Please raise it — we need a fixture-shared session (avoid rebuilding per test) before adding such tests |
 | Needs a real `OrtGraph` or `Ort::Logger` object | **Not currently possible** — public ORT headers are insufficient and private ORT headers are forbidden. Redesign the test to remove this dependency |
+
+**Fake graph infrastructure (`qnn_fake_ort_graph.h`)**
+
+ORT's graph types (`OrtGraph`, `OrtNode`, `OrtValueInfo`, etc.) are opaque C handles — the EP
+never dereferences these pointers directly, only passes them to `OrtApi` function pointers.
+This means tests can substitute lightweight POD structs (`FakeNode`, `FakeValueInfo`,
+`FakeGraph`, `FakeOrtValue`) and install stub lambdas that cast back to the fake type:
+
+```
+Test:  FakeNode dq{"dq", "DequantizeLinear", "", 13, {&input}, {}};
+       passes dq.AsNode() [= reinterpret_cast<const OrtNode*>(&dq)] to EP code
+         ↓
+EP:    api.Node_GetOperatorType(node, &out)   // EP never dereferences `node`
+         ↓
+Stub:  reinterpret_cast<const FakeNode*>(node)->op_type  →  "DequantizeLinear"
+```
+
+The pointer round-trips safely because only the original type (`FakeNode*`) is used to
+read memory — the opaque handle is just a passthrough token.
+
+| Type | Acts as | Key detail |
+|------|---------|------------|
+| `FakeValueInfo` | `OrtValueInfo*`, `OrtTypeInfo*`, `OrtTensorTypeAndShapeInfo*` | One struct serves three handle roles |
+| `FakeOrtValue` | `OrtValue*`, `OrtTensorTypeAndShapeInfo*` | First 3 fields layout-compatible with `FakeValueInfo` (verified by `static_assert`) |
+| `FakeNode` | `OrtNode*` | Holds input/output `FakeValueInfo*` vectors |
+| `FakeGraph` | `OrtGraph*` | Owns nodes; observes inputs/outputs/initializers |
+
+`InstallFakeGraphApiStubs(api)` installs all stubs at once. Override individual stubs
+afterward for test-specific behaviour (e.g., `api.ValueInfo_GetValueProducer = ...`).
+
+For tests that use `Ort::ConstNode` wrappers (which call `Ort::GetApi()` internally),
+wrap with `OrtGlobalApiOverride` from `qnn_unit_test_utils.h` to redirect the global API.
 
 **Constraints — common traps to avoid**
 - **No private ORT headers.** Only the public C API (`onnxruntime_c_api.h`) and the EP's own headers under `core/providers/qnn/` are allowed. ORT's internal source tree (`core/graph/...`, `core/framework/...`) and ORT's internal test infrastructure (`test/util/include/...`) are off-limits.
