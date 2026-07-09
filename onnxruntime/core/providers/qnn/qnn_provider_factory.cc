@@ -94,18 +94,32 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   GetNumCustomOpDomains = GetNumCustomOpDomainsImpl;
   GetCustomOpDomains = GetCustomOpDomainsImpl;
 
-  // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
-  // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
-  // so we parse once here at factory construction and cache the result for all sessions.
-  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
-  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
-  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
-
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
 #else
   CreateExternalResourceImporterForDevice = nullptr;
 #endif
+
+  // Register QNN-only placeholder ops for the qti_aisw block ops so models that use them pass ORT
+  // model validation (Graph::Resolve) when this EP is appended. Their fixed OPTIONAL schema
+  // preserves empty ONNX RNN input slots. QNN fuses/compiles supported nodes; unsupported block
+  // ops have no CPU fallback and fail during session initialization.
+  {
+    Ort::CustomOpDomain qti_aisw_domain{kQtiAiswDomain};
+    for (const char* op_name : kQtiAiswBlockOpNames) {
+      qti_aisw_op_objects_.push_back(
+          std::make_unique<qnn::QtiAiswPlaceholderOp>(op_name, ep_name_));
+      qti_aisw_domain.Add(qti_aisw_op_objects_.back().get());
+    }
+    custom_op_domains_.push_back(std::move(qti_aisw_domain));
+  }
+
+  // Build additional custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var (env-var UDO ops).
+  // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
+  // so we parse once here at factory construction and cache the result for all sessions.
+  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
+  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
+  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
 
   // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
