@@ -236,6 +236,25 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
                        "htp");
 }
 
+// Cast float to bool on HTP with negative inputs. Greater(X, 0) would return false for negatives,
+// but Greater(Abs(X), 0) correctly returns true for any nonzero value including negatives.
+TEST_F(QnnHTPBackendTests, TestCastFloatToBoolNegativeHTP) {
+  RunQnnModelTest(
+      [](ModelTestBuilder& builder) {
+        auto input_def = TestInputDef<float>({2, 3}, false, {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -5.0f});
+        MakeTestInput<float>(builder, "X", input_def);
+        std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+        attributes.push_back(
+            builder.MakeScalarAttribute("to",
+                                        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_BOOL)));
+        builder.AddNode("cast", "Cast", {"X"}, {"Y"}, "", attributes);
+        builder.MakeOutput("Y");
+      },
+      GetProviderOption("htp", false),
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
 // Cast float16 to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
   RunCastFP16HTPTest({3, 3},
