@@ -26,11 +26,11 @@ static void RunSkipSimplifiedLayerNormHtpFloatTest(const TestInputDef<float>& in
 
   RunQnnModelTest(
       BuildOpTestCase<float, float>("skip_simplified_layernorm",
-                                   "SkipSimplifiedLayerNormalization",
-                                   {input_def, skip_def, gamma_def},
-                                   bias_defs,
-                                   attrs,
-                                   kMSDomain),
+                                    "SkipSimplifiedLayerNormalization",
+                                    {input_def, skip_def, gamma_def},
+                                    bias_defs,
+                                    attrs,
+                                    kMSDomain),
       provider_options,
       13,  // ai.onnx opset for the graph
       EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-3f)});
