@@ -17,13 +17,25 @@ namespace qnn {
 // ORT's model-load schema validation; it must never actually execute. Returning
 // an explicit error (rather than a silent no-op) prevents wrong results if a UDO
 // node is accidentally not fused.
+//
+// Shared by both env-var UDO ops (QnnUdoPlaceholderOp) and the built-in qti_aisw
+// block ops (QtiAiswPlaceholderOp). The optional op name is folded into the error
+// message for diagnostics; the message always contains "fused" for the QNN path.
 struct QnnUdoPlaceholderKernel {
+  QnnUdoPlaceholderKernel() = default;
+  explicit QnnUdoPlaceholderKernel(std::string op_name) : op_name_(std::move(op_name)) {}
+
   OrtStatusPtr ComputeV2(OrtKernelContext* /*context*/) {
-    return Ort::GetApi().CreateStatus(
-        ORT_FAIL,
-        "QnnUdoPlaceholderOp kernel must never execute; "
-        "the node should be fused and compiled by QNN EP.");
+    std::string msg = "QnnUdoPlaceholderOp kernel";
+    if (!op_name_.empty()) {
+      msg += " for '" + op_name_ + "'";
+    }
+    msg += " must never execute; the node should be fused and compiled by QNN EP.";
+    return Ort::GetApi().CreateStatus(ORT_FAIL, msg.c_str());
   }
+
+ private:
+  std::string op_name_;
 };
 
 // A variadic-input/variadic-output placeholder OrtCustomOp used by QnnEpFactory to

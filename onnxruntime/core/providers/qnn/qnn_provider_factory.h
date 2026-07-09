@@ -8,6 +8,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 
 namespace onnxruntime {
@@ -83,11 +84,15 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
 
-  // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
-  // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
-  // domain.Add(op*) does NOT transfer ownership; op objects must be kept alive here.
+  // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
+  // domain (always registered) and any domains built from ORT_QNN_CUSTOM_OP_DOMAINS.
+  // The domains and the op objects below must outlive any session that uses this factory
+  // (factory is a per-library singleton); domain.Add(op*) does NOT transfer ownership.
   std::vector<Ort::CustomOpDomain> custom_op_domains_;
+  // Placeholder ops built from ORT_QNN_CUSTOM_OP_DOMAINS (env-var UDO ops).
   std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>> custom_op_objects_;
+  // Placeholder ops for the qti_aisw block ops (Buffer, StatefulLstm, StatefulGru).
+  std::vector<std::unique_ptr<qnn::QtiAiswPlaceholderOp>> qti_aisw_op_objects_;
 };
 
 }  // namespace onnxruntime

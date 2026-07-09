@@ -104,6 +104,14 @@ class EpStubContext : public OrtApiStubContext {
   // Installs the EP-ctor stubs on top of the initializer-query stubs already
   // set by the OrtApiStubContext base constructor (which MakeApiPtrs() validates).
   void InstallStubs() {
+    // QnnEpFactory constructs and owns a real Ort::CustomOpDomain. Keep these
+    // callbacks backed by the real API so the domain can be released safely
+    // after the temporary global API override is removed.
+    const OrtApi* real_ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    stub_ort_api.CreateCustomOpDomain = real_ort_api->CreateCustomOpDomain;
+    stub_ort_api.ReleaseCustomOpDomain = real_ort_api->ReleaseCustomOpDomain;
+    stub_ort_api.CustomOpDomain_Add = real_ort_api->CustomOpDomain_Add;
+
     // Status helpers used by RETURN_IF_NOT_NULL / error paths.
     stub_ort_api.CreateStatus = [](OrtErrorCode code, const char* msg) noexcept -> OrtStatus* {
       return reinterpret_cast<OrtStatus*>(new StatusRecord{code, msg ? msg : ""});
@@ -225,6 +233,10 @@ static std::string EPKey(const std::string& key) {
 }
 
 static std::unique_ptr<QnnEpFactory> MakeFactory(EpStubContext& ctx) {
+  // Keep the stub API active while the factory queries the default logger.
+  // Custom-op-domain callbacks in EpStubContext are forwarded to the real
+  // API, so the factory's owned domains retain a valid lifetime after this
+  // helper returns.
   UseGlobalEpStubs use(ctx);
   return std::make_unique<QnnEpFactory>("QNNExecutionProvider", ctx.MakeApiPtrs());
 }
