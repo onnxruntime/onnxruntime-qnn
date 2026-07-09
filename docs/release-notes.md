@@ -1,7 +1,7 @@
 # ONNX Runtime QNN Execution Provider v2.4.0
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.26.0)<br>
-**QAIRT SDK Compatibility:** 2.48.0
+**QAIRT SDK Compatibility:** 2.48.40
 
 ```
 pip install onnxruntime==1.26.0
@@ -34,14 +34,14 @@ pip install onnxruntime-qnn==2.4.0
 - **OneHot** — `depth` and `values` must be constant initializers. HTP supports FP16/BF16 (V81+) and QDQ. Negative indices fall back to CPU EP. ([#466](https://github.com/onnxruntime/onnxruntime-qnn/pull/466))
 - **Selu** — CPU, HTP, and GPU. FP32/FP16. ([#404](https://github.com/onnxruntime/onnxruntime-qnn/pull/404))
 - **Xor** ([#402](https://github.com/onnxruntime/onnxruntime-qnn/pull/402))
+- **Gather block quantize (GPU)** — Added quantization support for gather blocks in LLMs, enabling execution on Qualcomm GPU through EpContextBinary. ([#356](https://github.com/onnxruntime/onnxruntime-qnn/pull/356))
+- **GroupQueryAttention (GPU)** — Support `com.Microsoft.GroupQueryAttention` by mapping onto `QNN_OP_GROUP_QUERY_ATTENTION`, enabling GQA nodes in LLMs to run on GPU for better performance. ([#424](https://github.com/onnxruntime/onnxruntime-qnn/pull/424))
 - **DynamicQuantizeLinear → DequantizeLinear** — Fuses DQL+DQ round-trips into an identity Transpose, eliminating CPU fallback in models with incomplete quantization conversion. ([#490](https://github.com/onnxruntime/onnxruntime-qnn/pull/490))
 
 For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
 
 ## Improvements
 
-- **Gather block quantize (GPU)** — Added quantization support for gather blocks in LLMs, enabling execution on Qualcomm GPU through EpContextBinary. ([#356](https://github.com/onnxruntime/onnxruntime-qnn/pull/356))
-- **GroupQueryAttention (GPU)** — Support `com.Microsoft.GroupQueryAttention` by mapping onto `QNN_OP_GROUP_QUERY_ATTENTION`, enabling GQA nodes in LLMs to run on GPU for better performance. ([#424](https://github.com/onnxruntime/onnxruntime-qnn/pull/424))
 - **DX12 shared memory (GPU)** — Added DX12 shared memory allocator via `enable_dx12_shared_memory_allocator` provider option, leveraging `QNN_MEM_TYPE_DX12` mem-handles. Eliminates CPU↔GPU copies of KV cache tensors for improved LLM inferencing speed. ([#213](https://github.com/onnxruntime/onnxruntime-qnn/pull/213))
 - **MatMul / Gemm** — Block-quantized (`BW_FLOAT_BLOCK`) weight support on HTP. INT4/UINT4/INT8/UINT8 weights. Requires QAIRT >= 2.47. ([#476](https://github.com/onnxruntime/onnxruntime-qnn/pull/476), [#477](https://github.com/onnxruntime/onnxruntime-qnn/pull/477))
 - **LayerNormalization** — Decomposes into `LN → Mul + Add` when scale/bias rank is not aligned with the normalization axes. ([#417](https://github.com/onnxruntime/onnxruntime-qnn/pull/417))
