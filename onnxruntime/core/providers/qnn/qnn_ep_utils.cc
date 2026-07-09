@@ -9,6 +9,7 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 
 namespace onnxruntime {
 namespace QDQ {
@@ -1806,7 +1807,9 @@ void OrtSelectorManager::CreateSelectors() {
   ort_selectors_.RegisterSelector(gemm_ops, std::make_unique<OrtGemmNodeGroupSelector>());
 
   // Register GRU ops
-  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
+  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {
+      {"GRU", {}},
+      {"StatefulGru", {}}};
   ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 
   // Register instance and layer normalization ops
@@ -1907,7 +1910,11 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
     // Check domain (similar to the GraphViewer version)
     std::string domain_str(domain);
-    if (domain_str != kOnnxDomain && domain_str != kMSInternalNHWCDomain && domain_str != kMSDomain && domain_str != kMLOnnxDomain) {
+    if (domain_str != kOnnxDomain &&
+        domain_str != kMSInternalNHWCDomain &&
+        domain_str != kMSDomain &&
+        domain_str != kMLOnnxDomain &&
+        domain_str != kQtiAiswDomain) {
       continue;
     }
 
