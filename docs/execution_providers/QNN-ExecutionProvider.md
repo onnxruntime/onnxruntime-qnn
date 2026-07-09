@@ -505,7 +505,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
-|ai.onnx:Selu|Decomposed into QNN_OP_ELEMENT_WISE_NEURON (ELU, alpha=1.6732) + QNN_OP_ELEMENT_WISE_BINARY (Mul, gamma=1.0507)|
+|ai.onnx:Selu||
 |ai.onnx:Shape|start/end attributes supported (ONNX opset 15+); output is int64 (upcast from QNN int32); empty-slice (end <= start) not supported|
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
