@@ -103,6 +103,7 @@ void CreateReduceOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateReshapeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateResizeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRMSNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateSkipSimplifiedLayerNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRoiAlignOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRotaryEmbeddingOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateScatterElementsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
