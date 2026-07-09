@@ -294,7 +294,6 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
       // stays aligned with the ONNX graph naming.
       const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-      std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
       RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
                                                              fp16_act_name, do_op_validation, "Conv"));
       input_names[0] = fp16_act_name;
@@ -644,14 +643,13 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
             const size_t num_channels = bias_info.shape[0];
             RETURN_IF_NOT(original_bias_data.size() == num_channels * sizeof(float),
                           "Unexpected bias data size for float bias quantization");
-            const float* bias_float_data = reinterpret_cast<const float*>(original_bias_data.data());
+            auto bias_float_data = gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels);
 
             std::vector<uint8_t> quantized_bias_data;
             std::vector<float> new_scales;
             std::vector<int32_t> new_offsets;
             RETURN_IF_ERROR(utils::QuantizeFloatBiasTensor(
-                gsl::span<const float>(bias_float_data, num_channels),
-                weights_scales, activation_scale,
+                bias_float_data, weights_scales, activation_scale,
                 quantized_bias_data, new_scales, new_offsets));
 
             QnnQuantParamsWrapper new_quant_params;
