@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kuan-Yu Lin <kuanyul@qti.qualcomm.com>
+Date: Sun, 13 Jul 2026 00:00:00 +0000
+Subject: [PATCH] Deduplicate custom op domains from multiple EP devices
+
+When an EP factory exposes GetCustomOpDomains, ORT iterates every
+OrtEpDevice backed by that factory and calls GetCustomOpDomainsFromEpDevice
+once per device.  The accumulator list (all_ep_custom_op_domains) was
+only checked against session_options.custom_op_domains_, not against
+itself, so a factory with N devices would add the same domain N times.
+CreateCustomRegistry then called RegisterOpSet for the same domain N
+times on a fresh CustomRegistry, and the second call hit
+"Domain already set in registry".
+
+Fix: also check all_ep_custom_op_domains when deciding whether to add.
+Both auto-EP enumeration blocks (file/URI load and buffer load) get the
+same fix.
+---
+ onnxruntime/core/session/utils.cc | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/onnxruntime/core/session/utils.cc b/onnxruntime/core/session/utils.cc
+--- a/onnxruntime/core/session/utils.cc
++++ b/onnxruntime/core/session/utils.cc
+@@ -426,8 +426,9 @@ OrtStatusPtr CreateSessionAndLoadModel(_In_ const OrtSessionOptions* options,
+       InlinedVector<OrtCustomOpDomain*> domains;
+       ORT_API_RETURN_IF_STATUS_NOT_OK(GetCustomOpDomainsFromEpDevice(*ep_device, domains));
+
+       for (auto domain : domains) {
+-        if (ShouldAddDomain(domain, options->custom_op_domains_)) {
++        if (ShouldAddDomain(domain, options->custom_op_domains_) &&
++            ShouldAddDomain(domain, all_ep_custom_op_domains)) {
+           all_ep_custom_op_domains.push_back(domain);
+         }
+       }
+@@ -624,8 +624,9 @@ OrtStatusPtr CreateSessionAndLoadModel(_In_ const OrtSessionOptions* options,
+       InlinedVector<OrtCustomOpDomain*> domains;
+       ORT_API_RETURN_IF_STATUS_NOT_OK(GetCustomOpDomainsFromEpDevice(*ep_device, domains));
+
+       for (auto domain : domains) {
+-        if (ShouldAddDomain(domain, options->custom_op_domains_)) {
++        if (ShouldAddDomain(domain, options->custom_op_domains_) &&
++            ShouldAddDomain(domain, all_ep_custom_op_domains)) {
+           all_ep_custom_op_domains.push_back(domain);
+         }
+       }
+--
+2.34.1

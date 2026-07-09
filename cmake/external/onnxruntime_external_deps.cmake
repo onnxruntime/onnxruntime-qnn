@@ -489,7 +489,8 @@ onnxruntime_fetchcontent_declare(
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0004-Update-argument-for-monolithic-lstm.patch &&
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0005-Suppress-C4875-for-MSVC-14.51.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0006-perftest-QnnHtpShared-zerocopy-plugin-ep.patch # TODO: review on ORT core uplevel — see patch header
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0006-perftest-QnnHtpShared-zerocopy-plugin-ep.patch && # TODO: review on ORT core uplevel — see patch header
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0008-Deduplicate-custom-op-domains-from-multiple-EP-devices.patch
   EXCLUDE_FROM_ALL)
 FetchContent_Populate(ort_core)
 

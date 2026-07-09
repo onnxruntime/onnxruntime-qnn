@@ -17,6 +17,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateAttentionOpBuilder("Attention", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateBernoulliOpBuilder("Bernoulli", *this);
+  CreateBufferOpBuilder("Buffer", *this);
   CreateCastOpBuilder("Cast", *this);
   CreateCastOpBuilder("CastLike", *this);
   CreateClipOpBuilder("Clip", *this);
@@ -136,6 +137,8 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSoftmaxOpBuilder("LogSoftmax", *this);
   CreateSoftmaxOpBuilder("Softmax", *this);
   CreateSplitOpBuilder("Split", *this);
+  CreateStatefulGruOpBuilder("StatefulGru", *this);
+  CreateStatefulLstmOpBuilder("StatefulLstm", *this);
   CreateSTFTOpBuilder("STFT", *this);
   CreateTanOpBuilder("Tan", *this);
   CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
