@@ -850,12 +850,38 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
-  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, static_cast<int>(dq_nodes.size()))) {
+  // Conv allows the bias (input[2]) to lack a DQ node; inputs[0] (data) and inputs[1] (weight)
+  // must always be DQ-produced. Unlike ORT-core ConvNodeGroupSelector (which requires all inputs
+  // to be quantized), we relax the count to [2,3] to support a float bias at input[2].
+  const size_t num_dq_nodes = dq_nodes.size();
+  if (num_dq_nodes < 2 || num_dq_nodes > 3) {
+    return false;
+  }
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, static_cast<int>(num_dq_nodes))) {
     return false;
   }
 
-  if (dq_nodes.size() < 2) {
-    return false;  // Conv requires at least DQ nodes for input and weight
+  // DQ nodes are positional. Verify explicitly that both inputs[0] (data) and inputs[1] (weight) are DQ-produced.
+  {
+    size_t num_inputs = 0;
+    if (ort_api.Node_GetNumInputs(node, &num_inputs) != nullptr || num_inputs < 2) {
+      return false;
+    }
+    std::vector<const OrtValueInfo*> inputs(num_inputs);
+    if (ort_api.Node_GetInputs(node, inputs.data(), inputs.size()) != nullptr) {
+      return false;
+    }
+    for (int slot : {0, 1}) {
+      if (inputs[slot] == nullptr) {
+        return false;
+      }
+      const OrtNode* producer = nullptr;
+      ort_api.ValueInfo_GetValueProducer(inputs[slot], &producer, nullptr);
+      if (producer == nullptr ||
+          Ort::ConstNode(producer).GetOperatorType() != "DequantizeLinear") {
+        return false;  // inputs[0] and inputs[1] must be DQ-produced; only inputs[2] (bias) may be float.
+      }
+    }
   }
 
   // Input and output types need to be same
