@@ -148,6 +148,14 @@ class FactoryStubContext {
   int clone_session_options_calls = 0;
 
   FactoryStubContext() {
+    // QnnEpFactory owns the real Ort::CustomOpDomain objects it registers in
+    // its constructor. Forward these callbacks to the real ORT API so the
+    // domains can be released safely while the global stub API is installed.
+    const OrtApi* real_ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    stub_ort_api.CreateCustomOpDomain = real_ort_api->CreateCustomOpDomain;
+    stub_ort_api.ReleaseCustomOpDomain = real_ort_api->ReleaseCustomOpDomain;
+    stub_ort_api.CustomOpDomain_Add = real_ort_api->CustomOpDomain_Add;
+
     InstallOrtApiStubs();
     InstallOrtEpApiStubs();
   }

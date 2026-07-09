@@ -17,6 +17,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Configuration Options](#configuration-options)
 - [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
 - [Supported ONNX operators](#supported-onnx-operators)
+- [QTI AISW block operators](#qti-aisw-block-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
@@ -740,8 +741,21 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:RMSNormalization||
 |com.microsoft:QuickGelu||
 |com.microsoft:SimplifiedLayerNormalization||
+|qti_aisw:Buffer|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
+|qti_aisw:StatefulGru|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
+|qti_aisw:StatefulLstm|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+### QTI AISW block operators
+
+QNN EP also supports the following Qualcomm block operators in the `qti_aisw` domain. Their definitions are distinct from standard ONNX operators. Please refer to [this page](https://docs.qualcomm.com/doc/80-63442-10/topic/blockop_definitions.html) for Qualcomm's Block-op definitions.
+
+|Operator|Inputs|Outputs|Attributes|
+|---|---|---|---|
+|`qti_aisw:Buffer`|`data` (rank N); optional scalar-BOOL `reset`|`out`: same rank and type as `data`, with dimension `buffer_dim` set to `buffer_size`|Required: `buffer_size`, `buffer_dim`. Optional: `buffer_padding=0`, `stride=1`, `mode=0` (`BLOCKING`). Note: QNN EP's HTP backend requires `mode=1` (`NON_BLOCKING_LEFT`) or `mode=2` (`NON_BLOCKING_RIGHT`).|
+|`qti_aisw:StatefulGru`|`X [seq, batch, input]`, `W [directions, 3×hidden, input]`, `R [directions, 3×hidden, hidden]`; optional `B [directions, 6×hidden]`, `sequence_lens [batch]`, `initial_h [directions, batch, hidden]`, and scalar-BOOL `reset`|Optional `Y [seq, directions, batch, hidden]`, `Y_h [directions, batch, hidden]`|Required: `hidden_size`. Optional: `clip`, `direction=forward`, `linear_before_reset=0`. The op has fixed sigmoid/tanh activations and sequence-major layout.|
+|`qti_aisw:StatefulLstm`|`X [seq, batch, input]`, `W [directions, 4×hidden, input]`, `R [directions, 4×hidden, hidden]`; optional `B [directions, 8×hidden]`, `sequence_lens [batch]`, `initial_h [directions, batch, hidden]`, `initial_c [directions, batch, hidden]`, `P [directions, 3×hidden]`, and scalar-BOOL `reset`|Optional `Y [seq, directions, batch, hidden]`, `Y_h [directions, batch, hidden]`, `Y_c [directions, batch, hidden]`|Required: `hidden_size`. Optional: `clip`, `direction=forward`, `input_forget=0`. The op has fixed sigmoid/tanh/tanh activations and sequence-major layout.|
 
 ## Supported operator fusions
 
