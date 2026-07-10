@@ -143,6 +143,88 @@ TEST_F(QnnHTPBackendTests, SkipSimplifiedLayerNorm_Float_3D_WithBiasAndOutput3) 
 }
 
 #endif  // aarch64 / ARM64 / linux
+
+#if defined(_M_ARM64)
+
+static void RunSkipSimplifiedLayerNormGpuFloatTest(const TestInputDef<float>& input_def,
+                                                   const TestInputDef<float>& skip_def,
+                                                   const TestInputDef<float>& gamma_def,
+                                                   const std::vector<TestInputDef<float>>& bias_defs,
+                                                   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                   ExpectedEPNodeAssignment expected_ep_assignment) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildOpTestCase<float, float>("skip_simplified_layernorm",
+                                    "SkipSimplifiedLayerNormalization",
+                                    {input_def, skip_def, gamma_def},
+                                    bias_defs,
+                                    attrs,
+                                    kMSDomain),
+      provider_options,
+      13,  // ai.onnx opset for the graph
+      EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-4f)});
+}
+
+// GPU: 2D float, no bias.
+TEST_F(QnnGPUBackendTests, SkipSimplifiedLayerNorm_Float_2D_NoBias) {
+  RunSkipSimplifiedLayerNormGpuFloatTest(
+      TestInputDef<float>({2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({4}, true, GetFloatDataInRange(0.5f, 1.5f, 4)),
+      {},
+      {test::MakeAttribute("epsilon", 1e-5f)},
+      ExpectedEPNodeAssignment::All);
+}
+
+// GPU: 3D float, no bias.
+TEST_F(QnnGPUBackendTests, SkipSimplifiedLayerNorm_Float_3D_NoBias) {
+  RunSkipSimplifiedLayerNormGpuFloatTest(
+      TestInputDef<float>({1, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({1, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({4}, true, GetFloatDataInRange(0.5f, 1.5f, 4)),
+      {},
+      {test::MakeAttribute("epsilon", 1e-5f)},
+      ExpectedEPNodeAssignment::All);
+}
+
+// GPU: 3D float with bias.
+TEST_F(QnnGPUBackendTests, SkipSimplifiedLayerNorm_Float_3D_WithBias) {
+  RunSkipSimplifiedLayerNormGpuFloatTest(
+      TestInputDef<float>({1, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({1, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({4}, true, GetFloatDataInRange(0.5f, 1.5f, 4)),
+      {TestInputDef<float>({4}, true, GetFloatDataInRange(-0.1f, 0.1f, 4))},
+      {test::MakeAttribute("epsilon", 1e-5f)},
+      ExpectedEPNodeAssignment::All);
+}
+
+// GPU: output[3] (input_skip_bias_sum) exposed as graph output.
+TEST_F(QnnGPUBackendTests, SkipSimplifiedLayerNorm_Float_3D_WithOutput3) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {1, 2, 4}, -1.0f, 1.0f);
+    builder.MakeInput<float>("skip", {1, 2, 4}, -1.0f, 1.0f);
+    builder.MakeInitializer<float>("gamma", {4}, 0.5f, 1.5f);
+    builder.MakeOutput("output_y");
+    builder.MakeOutput("output_sum");
+    builder.AddNode("skip_sln", "SkipSimplifiedLayerNormalization",
+                    {"input", "skip", "gamma"},
+                    {"output_y", "", "", "output_sum"},
+                    kMSDomain,
+                    {test::MakeAttribute("epsilon", 1e-5f)});
+  };
+
+  RunQnnModelTest(build_model, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+}
+
+#endif  // defined(_M_ARM64) GPU tests
 }  // namespace test
 }  // namespace onnxruntime
 
