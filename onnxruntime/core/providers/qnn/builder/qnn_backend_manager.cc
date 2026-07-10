@@ -2041,7 +2041,6 @@ Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_clie
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
   // set an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
   RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
-  std::lock_guard<std::mutex> lock(htp_power_config_manager_mutex_);
   RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time, *logger_ptr_));
   RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency, *logger_ptr_));
   RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(htp_performance_mode,
@@ -2059,8 +2058,6 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
   if (!GetPerThreadHtpPowerConfigMapping(thread_id, htp_power_configs)) {
     return Ort::Status();
   }
-
-  std::lock_guard<std::mutex> lock(htp_power_config_manager_mutex_);
 
   auto htp_power_config_id = htp_power_configs.power_config_id;
   if (pre_run) {

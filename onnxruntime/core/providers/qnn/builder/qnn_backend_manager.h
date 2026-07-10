@@ -684,11 +684,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool skip_qnn_version_check_ = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
-  // Guards htp_power_config_manager_, which accumulates config state across an
-  // Add*() -> SetPowerConfig() sequence. Multiple threads can call SetHtpPowerConfigs()/
-  // SetPerThreadHtpPowerConfigs() concurrently (e.g. one session run per thread), so that
-  // sequence must be atomic per logical power-config transaction.
-  std::mutex htp_power_config_manager_mutex_;
 
   // Mapping of thread id to on-run-start/end power configs
   std::mutex per_thread_power_configs_mutex_;
