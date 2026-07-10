@@ -130,13 +130,29 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
                                                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                   const Ort::Logger& logger) {
   if (!power_configs_.empty()) {
+    // Always clear pending state after attempting to apply it, even on failure. Otherwise a single
+    // failed driver call (e.g. no HTP hardware/simulator environment) permanently poisons the manager:
+    // every subsequent Add*() call would hit "already pending" and fail, even though nothing is
+    // actually still queued.
+    auto config_reset = [this]() {
+      rpc_polling_time_set_ = false;
+      rpc_control_latency_set_ = false;
+      htp_performance_mode_set_ = false;
+      power_configs_.clear();
+    };
+
     QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
     auto status = qnn_interface.deviceGetInfrastructure(&qnn_device_infra);
-    RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
+    if (QNN_SUCCESS != status) {
+      config_reset();
+      return MAKE_EP_FAIL("backendGetPerfInfrastructure failed.");
+    }
 
     auto* htp_infra = static_cast<QnnHtpDevice_Infrastructure_t*>(qnn_device_infra);
-    RETURN_IF(QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType,
-              ("HTP infra type = " + std::to_string(htp_infra->infraType) + ", which is not perf infra type.").c_str());
+    if (QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType) {
+      config_reset();
+      return MAKE_EP_FAIL(("HTP infra type = " + std::to_string(htp_infra->infraType) + ", which is not perf infra type.").c_str());
+    }
     QnnHtpDevice_PerfInfrastructure_t& htp_perf_infra = htp_infra->perfInfra;
 
     std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t*> perf_power_configs_ptr;
@@ -147,12 +163,8 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
     perf_power_configs_ptr.push_back(nullptr);
 
     status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
+    config_reset();
     RETURN_IF(QNN_SUCCESS != status, "SetPowerConfig failed.");
-
-    rpc_polling_time_set_ = false;
-    rpc_control_latency_set_ = false;
-    htp_performance_mode_set_ = false;
-    power_configs_.clear();
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
   }
