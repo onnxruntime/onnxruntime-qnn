@@ -58,7 +58,8 @@ class QnnModelWrapper {
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
-                  OpTraceCollector* op_trace_collector = nullptr)
+                  OpTraceCollector* op_trace_collector = nullptr,
+                  bool is_post_layout_transform = false)
       : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
@@ -68,6 +69,7 @@ class QnnModelWrapper {
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
+        is_post_layout_transform_(is_post_layout_transform),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides),
@@ -387,6 +389,10 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
+  /// Returns true if this GetCapability call is after ORT's Layout Transformer has run.
+  /// Fusion passes can use this to distinguish 1st call (pre-LT) from 2nd call (post-LT).
+  bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
+
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
   const Ort::Logger& GetLogger() const { return logger_; }
@@ -596,6 +602,7 @@ class QnnModelWrapper {
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+  bool is_post_layout_transform_ = false;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
   const ApiPtrs api_ptrs_;

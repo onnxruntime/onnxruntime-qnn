@@ -20,6 +20,55 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
+namespace {
+
+// Build a bare RTR graph: Input -> Reshape -> Transpose -> Reshape -> Output
+// No Conv or other layout-sensitive ops — Layout Transformer won't insert transposes.
+// Used for RTR-only (3-node) SpaceToDepth fusion tests.
+GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& input_shape,
+                                                int64_t block_height,
+                                                int64_t block_width,
+                                                const std::vector<int64_t>& perm) {
+  return [=](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("spacetodepth_bare_rtr_graph");
+
+    const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    const int64_t n = input_shape[0];
+    const int64_t c = input_shape[1];
+    const int64_t h = input_shape[2];
+    const int64_t w = input_shape[3];
+    const int64_t h_div = h / block_height;
+    const int64_t w_div = w / block_width;
+
+    // Reshape1: [N, C, H, W] -> [N, C, H/bh, bh, W/bw, bw]
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {n, c, h_div, block_height, w_div, block_width});
+    builder.AddNode("Reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
+
+    // Transpose: 6D permutation (CRD or DCR)
+    builder.AddNode("Transpose", "Transpose", {"reshape1_out"}, {"transpose_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", perm)});
+
+    // Reshape2: -> [N, C*bh*bw, H/bh, W/bw]
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {n, c * block_height * block_width, h_div, w_div});
+    builder.AddNode("Reshape2", "Reshape", {"transpose_out", "reshape2_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Shared across guarded (HTP/linux) and unguarded (x86_64 QNN CPU) tests, so it
+// must live outside the platform guard below.
+ProviderOptions GetProviderOptions(const std::string& backend_type) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_type;
+  provider_options["offload_graph_io_quantization"] = "0";
+  return provider_options;
+}
+
+}  // namespace
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 namespace {
@@ -246,13 +295,6 @@ GetTestModelFn BuildTailWrappedSpaceToDepthTestCase(bool use_qdq,
                     attrs);
     builder.MakeOutput("Y");
   };
-}
-
-ProviderOptions GetProviderOptions(const std::string& backend_type) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = backend_type;
-  provider_options["offload_graph_io_quantization"] = "0";
-  return provider_options;
 }
 
 template <typename QuantType = uint8_t>
@@ -583,7 +625,78 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_DynamicBatch) {
                             /*fp32_abs_err=*/2.9e-2f);
 }
 
+// RTR-only CRD on HTP backend.
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_Float_CRD) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "SpaceToDepthFusion_BareRTR_Float_CRD_HTP";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions("htp");
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 3, 4, 4}, 2, 2, {0, 1, 3, 5, 2, 4}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 2);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+// ============================================================================
+// RTR-only (3-node) CPU backend tests — no adjacent layout-sensitive ops.
+// Verifies that the bare Reshape->Transpose->Reshape pattern (without wrapping
+// NHWC<->NCHW Transposes from Layout Transformer) is correctly fused into
+// SpaceToDepth with self-added pre/post Transposes.
+// Also guards against redundant Transpose pairs (PR #171 concern).
+// ============================================================================
+
+// RTR-only CRD on CPU backend: verifies fusion fires and produces exactly
+// pre-Transpose + SpaceToDepth + post-Transpose (no redundant Transposes).
+TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_BareRTR_Float_CRD) {
+  const std::filesystem::path json_qnn_graph_dir = "SpaceToDepthFusion_BareRTR_Float_CRD";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions("cpu");
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 3, 4, 4}, 2, 2, {0, 1, 3, 5, 2, 4}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+
+  // Fusion must produce: Transpose(NCHW->NHWC) + SpaceToDepth(CRD) + Transpose(NHWC->NCHW)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 2);
+}
+
+// RTR-only DCR on CPU backend.
+TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_BareRTR_Float_DCR) {
+  const std::filesystem::path json_qnn_graph_dir = "SpaceToDepthFusion_BareRTR_Float_DCR";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions("cpu");
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 2, 4, 4}, 2, 2, {0, 3, 5, 1, 2, 4}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 2);
+}
 
 }  // namespace test
 }  // namespace onnxruntime

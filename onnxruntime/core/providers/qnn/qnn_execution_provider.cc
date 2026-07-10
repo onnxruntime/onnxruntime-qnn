@@ -1520,7 +1520,10 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                                 model_outputs,
                                                 qnn_backend_manager_->GetQnnBackendType(),
                                                 model_settings_,
-                                                &tensor_name_overrides_);
+                                                &tensor_name_overrides_,
+                                                /*op_trace_collector=*/nullptr,
+                                                /*is_post_layout_transform=*/
+                                                get_capability_call_count_ > 1);
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_size);
@@ -1897,6 +1900,15 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   if (parent_node != nullptr) {
     return nullptr;
   }
+
+  // Count this top-level GetCapability pass. ORT invokes GetCapability twice for
+  // layout-sensitive EPs (pre- then post-Layout-Transform); node-group fusions
+  // that are only safe post-layout-transform read this via
+  // QnnModelWrapper::IsPostLayoutTransform() (count > 1). Placed before the
+  // empty-graph check so every top-level pass increments the counter 1:1 with
+  // ORT's passes, keeping the pre/post distinction correct even if a pass is
+  // empty.
+  ++ep->get_capability_call_count_;
 
   size_t num_nodes_in_graph = 0;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetNumNodes(graph, &num_nodes_in_graph));

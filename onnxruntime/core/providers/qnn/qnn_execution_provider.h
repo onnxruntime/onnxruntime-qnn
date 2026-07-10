@@ -293,6 +293,16 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // times (e.g. initial pass + EPContext re-pass).
   bool hnrd_warning_emitted_ = false;
 
+  // Counts top-level GetCapability passes for this session. ORT invokes
+  // GetCapability twice for layout-sensitive EPs: the 1st pass runs before
+  // ORT's Layout Transformer, the 2nd pass runs after it inserts NCHW<->NHWC
+  // Transposes around layout-sensitive ops. Node-group fusions that must only
+  // run post-layout-transform (e.g. RTR-only SpaceToDepth) query this through
+  // QnnModelWrapper::IsPostLayoutTransform(). Incremented once per top-level
+  // graph (parent_node == nullptr) in GetCapabilityImpl; subgraphs do not
+  // count. GetCapabilityImpl runs single-threaded, so plain size_t suffices.
+  size_t get_capability_call_count_ = 0;
+
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).
   mutable std::unordered_map<std::string, std::string> tensor_name_overrides_;
