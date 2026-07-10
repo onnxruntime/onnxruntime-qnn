@@ -12,7 +12,8 @@ namespace qnn {
 // Handles com.microsoft.SkipSimplifiedLayerNormalization.
 //
 // Inputs:  [0] input, [1] skip, [2] gamma, [3] bias (optional)
-// Outputs: [0] output (required); training outputs [1],[2],[3] are not supported.
+// Outputs: [0] output (required); [1] mean, [2] inv_std_var (training only, not supported);
+//          [3] input_skip_bias_sum (optional residual passthrough, supported)
 //
 // Decomposed as:
 //   sum = Add(input, skip)
@@ -55,8 +56,14 @@ Ort::Status SkipSimplifiedLayerNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
 
-  RETURN_IF(outputs.size() > 1,
-            "QNN EP SkipSimplifiedLayerNorm: only single output (Y) is supported.");
+  // output[0] = Y (required)
+  // output[1] = mean (training only, not supported)
+  // output[2] = inv_std_var (training only, not supported)
+  // output[3] = input_skip_bias_sum (residual passthrough, supported)
+  const bool has_mean = outputs.size() > 1 && outputs[1].Exists();
+  const bool has_inv_std_var = outputs.size() > 2 && outputs[2].Exists();
+  RETURN_IF(has_mean || has_inv_std_var,
+            "QNN EP SkipSimplifiedLayerNorm: training outputs (mean, inv_std_var) are not supported.");
 
   constexpr size_t INPUT_IDX = 0;
   constexpr size_t SKIP_IDX = 1;
@@ -87,7 +94,9 @@ Ort::Status SkipSimplifiedLayerNormOpBuilder::EmitAddNode(QnnModelWrapper& qnn_m
                                                           const std::string& output_name,
                                                           const TensorInfo& output_info,
                                                           bool do_op_validation) const {
-  QnnTensorWrapper out_tensor(output_name, QNN_TENSOR_TYPE_NATIVE,
+  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+  const Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper out_tensor(output_name, tensor_type,
                               output_info.qnn_data_type, output_info.quant_param.Copy(),
                               std::vector<uint32_t>(output_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(out_tensor)),
@@ -127,7 +136,9 @@ Ort::Status SkipSimplifiedLayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn
   constexpr size_t GAMMA_IDX = 2;
   constexpr size_t BIAS_IDX = 3;
 
+  const auto& outputs = node_unit.Outputs();
   const bool has_bias = inputs.size() > BIAS_IDX && inputs[BIAS_IDX].Exists();
+  const bool expose_sum = outputs.size() > 3 && outputs[3].Exists();
 
   std::vector<std::string> add_inputs;
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[INPUT_IDX], logger, add_inputs));
@@ -137,7 +148,9 @@ Ort::Status SkipSimplifiedLayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[INPUT_IDX], input_info));
 
-  const std::string sum_name = node_unit.Name() + "_skip_sum";
+  // If only one Add needed and output[3] is requested, name it directly after output[3].
+  const std::string sum_name = (!has_bias && expose_sum) ? outputs[3].name
+                                                         : utils::UniqueNameGenerator().New(node_unit, "_skip_sum");
   RETURN_IF_ERROR(EmitAddNode(qnn_model_wrapper, node_unit,
                               add_inputs[0], add_inputs[1], sum_name, input_info, do_op_validation));
 
@@ -147,7 +160,9 @@ Ort::Status SkipSimplifiedLayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn
     std::vector<std::string> bias_names;
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[BIAS_IDX], logger, bias_names));
 
-    const std::string sum_bias_name = node_unit.Name() + "_skip_bias_sum";
+    // If output[3] is requested, use its name so QNN exposes it as a graph output.
+    const std::string sum_bias_name = expose_sum ? outputs[3].name
+                                                 : utils::UniqueNameGenerator().New(node_unit, "_skip_bias_sum");
     RETURN_IF_ERROR(EmitAddNode(qnn_model_wrapper, node_unit,
                                 sum_name, bias_names[0], sum_bias_name, input_info, do_op_validation));
     final_sum_name = sum_bias_name;
@@ -175,7 +190,7 @@ Ort::Status SkipSimplifiedLayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn
 
     const size_t beta_size = utils::GetQnnTensorDataSizeInBytes(scale_info.shape, beta_data_type);
     std::vector<uint8_t> beta_data(beta_size, 0);
-    const std::string beta_name = node_unit.Name() + "_beta_dummy";
+    const std::string beta_name = utils::UniqueNameGenerator().New(node_unit, "_beta_dummy");
     QnnTensorWrapper beta_tensor(beta_name, QNN_TENSOR_TYPE_STATIC, beta_data_type,
                                  std::move(beta_quant_param), std::move(scale_info.shape),
                                  std::move(beta_data));
