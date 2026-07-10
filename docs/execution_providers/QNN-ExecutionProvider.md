@@ -379,7 +379,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Gemm||
 |ai.onnx:GlobalAveragePool||
 |ai.onnx:GlobalMaxPool||
-|ai.onnx:GRU|Default activations only (Sigmoid/Tanh). Dynamic sequence lengths and layout=1 not supported.|
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
@@ -390,9 +389,8 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
-|ai.onnx:IsInf|float32 and float16 inputs only|
+|ai.onnx:IsInf|float32 and float16 inputs only; CPU backend only|
 |ai.onnx:IsNaN||
-|ai.onnx:IsInf|CPU backend only|
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
 |ai.onnx:LayerNormalization||
@@ -414,7 +412,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Neg||
 |ai.onnx:NonZero||
 |ai.onnx:Not||
-|ai.onnx:OneHot|depth and values inputs must be constant initializers|
 |ai.onnx:Or||
 |ai.onnx:OneHot|depth and values must be constant initializers; indices must be int32, int64, or uint32|
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
@@ -441,7 +438,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
 |ai.onnx:Selu||
-|ai.onnx:Shape|start/end attributes supported (ONNX opset 15+); output is int64 (upcast from QNN int32); empty-slice (end <= start) not supported|
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
@@ -490,7 +486,6 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
 | `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | ConvInteger is supported exclusively via this fusion. Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
 | `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | MatMulInteger is supported exclusively via this fusion. Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
-| `DynamicQuantizeLinear → DequantizeLinear` | Identity `QNN_OP_TRANSPOSE` | Fake-quantize round-trip bypass: DQL output consumed exclusively by a DQ node returning to float32. All three DQL outputs must flow only into matching DQ nodes. |
 
 ### Low-Power Block Quantization (LPBQ) fusions
 
@@ -508,8 +503,6 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
 | `Reshape(ND→2D) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Input Reshape must not be shared; Gemm: transA=0, transB=0, alpha=1, beta=1; weight must be a constant; input rank ≤ 4. CPU and HTP backends only. |
-| `Reshape(ND→2D) → Gemm → Reshape(2D→MD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 3-node variant; quantized weights supported. |
-| `Reshape(ND→2D) → Gemm → Reshape(2D→MD) → Reshape(MD→PD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 4-node variant; two consecutive output Reshapes. |
 
 ### Layout and reshape fusions
 
@@ -520,14 +513,12 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(4D→6D) → Einsum(transpose-equivalent) → Reshape(6D→4D)` | `QNN_OP_DEPTH_TO_SPACE + QNN_OP_TRANSPOSE` | Matches Einsum used as a rank-6 permutation with perm `[0,5,1,3,2,4]` (DCR DepthToSpace). |
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
-| `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
 
 ### Miscellaneous fusions
 
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `[DQ inputs →] Custom UDO op [→ Q outputs]` | Custom QNN UDO | Strips surrounding DQ/Q nodes and passes quantization parameters directly into the user-defined operator. |
-| `Reshape(batch-flatten) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Reshape must flatten all batch dimensions into a 2D tensor. Gemm weight must be a non-quantized constant initializer. Reshape output must be consumed exclusively by the Gemm node. |
 
 ## Running a model with QNN EP's HTP backend (Python)
 <p align="center"><img width="100%" src="../images/qnn_ep_quant_workflow.png" alt="Offline workflow for quantizing an ONNX model for use on QNN EP"/></p>
