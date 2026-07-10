@@ -792,6 +792,72 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   }
 }
 
+// Creates a CPU-backend QNN EP session for an Add model with the supplied extra provider
+// options. Returns without throwing on success. Used by the option-parsing hardening tests
+// below to confirm that malformed integer options never escape as exceptions across the
+// C API boundary and instead fall back to defaults.
+static void RunAdd3WithProviderOptions(const ProviderOptions& extra_options) {
+  std::unique_ptr<ModelAndBuilder> model;
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::vector<int64_t> shape = {1, 3, 2};
+  std::vector<std::vector<int64_t>> output_shapes = {shape};
+  std::vector<std::vector<float>> output_values = {{3.0f, 6.0f, 9.0f, 12.0f, 15.0f, 18.0f}};
+
+  CreateModelInMemory(model,
+                      F32BuildAdd3Tensors(TestInputDef<float>(shape, false, input_data),
+                                          TestInputDef<float>(shape, false, input_data),
+                                          TestInputDef<float>(shape, false, input_data)));
+
+  ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
+  for (const auto& kv : extra_options) {
+    options[kv.first] = kv.second;
+  }
+
+  Ort::SessionOptions session_opts;
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts));
+
+  RunSessionAndVerify(scoped.session(), Ort::RunOptions{nullptr}, model->builder.feeds_,
+                      output_shapes, output_values, /*loop_count=*/1);
+}
+
+// Malformed integer provider options must not throw across the C API boundary; they should be
+// rejected by TryParseInt64/TryParseUint32 and fall back to defaults so the session still runs.
+// Covers non-numeric, trailing-garbage, leading-whitespace, signed, and out-of-range inputs for
+// the options parsed unconditionally in the EP constructor on every platform.
+TEST_F(QnnCPUBackendTests, InvalidIntegerProviderOptionsFallBackToDefaults) {
+  const std::array<const char*, 6> invalid_ints = {
+      "abc",          // non-numeric
+      "12abc",        // trailing garbage
+      "  10",         // leading whitespace (std::stoll would otherwise accept)
+      "+10",          // explicit sign (std::stoll would otherwise accept)
+      "-1",           // negative
+      "4294967296"};  // UINT32_MAX + 1 (would be silently truncated without an upper-bound check)
+
+  for (const char* bad : invalid_ints) {
+    EXPECT_NO_THROW(RunAdd3WithProviderOptions({{"device_id", bad}})) << "device_id='" << bad << "'";
+    EXPECT_NO_THROW(RunAdd3WithProviderOptions({{"soc_model", bad}})) << "soc_model='" << bad << "'";
+    EXPECT_NO_THROW(RunAdd3WithProviderOptions({{"rpc_control_latency", bad}}))
+        << "rpc_control_latency='" << bad << "'";
+  }
+}
+
+// A well-formed in-range integer option is still accepted after the hardening change.
+TEST_F(QnnCPUBackendTests, ValidIntegerProviderOptionsAreAccepted) {
+  EXPECT_NO_THROW(RunAdd3WithProviderOptions({{"device_id", "0"}}));
+  EXPECT_NO_THROW(RunAdd3WithProviderOptions({{"soc_model", "0"}}));
+  EXPECT_NO_THROW(RunAdd3WithProviderOptions({{"rpc_control_latency", "100"}}));
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Returns a function that builds a QDQ model that adds 3 tensors. Forces all scales and zero-points to be (1.0f, 0),
