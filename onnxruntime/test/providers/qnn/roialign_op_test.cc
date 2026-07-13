@@ -95,7 +95,7 @@ static void RunRoiAlignOpTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(BuildRoialignTestCase(input_def, roi_def, batch_indices_def, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment, f32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(f32_abs_err)});
 }
 
 // Runs a QDQ Roialign model on the QNN HTP backend. Checks the graph node assignment, and that inference

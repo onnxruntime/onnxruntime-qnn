@@ -64,9 +64,8 @@ Ort::Status RMSNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_
   // Additional constraints for NPU backend
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
-    int32_t axis = -1;
-    Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis));
+    int32_t axis = 0;
+    RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
     RETURN_IF(static_cast<size_t>(axis) != input_rank - 1,
               "QNN RMSNorm for NPU backend only supports axis with last input dimension");
   }
@@ -88,9 +87,15 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[X_IDX], logger, input_names));
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names));
 
-  // Create dummy beta tensor for NPU backend
+#if !defined(QNN_SDK_VERSION_MINOR) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 49)
+  // QNN SDK < 2.49 requires an explicit beta/bias input for QNN_OP_RMS_NORM on NPU.
+  // SDK 2.49+ accepts beta as optional, so the dummy tensor is only needed for older SDKs.
+  // Note: SDK 2.47 and 2.48 share the same QNN API version (2.36), so QNN_SDK_VERSION_MINOR
+  // derived from CMake is used here instead of QNN_API_VERSION_MINOR.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("RMSNorm node " + node_unit.Name() + ": adding dummy beta tensor (SDK < 2.49).").c_str());
     TensorInfo scale_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[SCALE_IDX], scale_info));
 
@@ -108,7 +113,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
     if (scale_info.quant_param.IsQuantized()) {
       float quant_scale = 1.0f;
       int32_t zero_point = 0;
-      beta_quant_param = QnnQuantParamsWrapper(quant_scale, zero_point);
+      beta_quant_param = QnnQuantParamsWrapper::PerTensor(quant_scale, zero_point);
     }
 
     const size_t beta_size_in_bytes = utils::GetQnnTensorDataSizeInBytes(beta_shape, beta_data_type);
@@ -125,6 +130,12 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
                   "Failed to add dummy beta tensor for QNN RMSNorm node.");
     input_names.push_back(beta_tensor_name);
   }
+#else
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("RMSNorm node " + node_unit.Name() + ": skipping dummy beta tensor (SDK >= 2.49).").c_str());
+  }
+#endif  // !defined(QNN_SDK_VERSION_MINOR) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 49)
 
   return Ort::Status();
 }
@@ -147,8 +158,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape of Input 0");
   const size_t input_rank = input_shape.size();
   int32_t axis = -1;
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis));
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
   size_t axes_rank = input_rank - static_cast<size_t>(axis);
   std::vector<uint32_t> axes(axes_rank, 0);
   std::vector<uint32_t> axes_shape{SafeInt<uint32_t>(axes_rank)};

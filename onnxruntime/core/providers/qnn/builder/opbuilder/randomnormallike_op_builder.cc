@@ -152,7 +152,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
     float quant_scale = 0.0f;
     int32_t zero_point = 0;
     RETURN_IF_ERROR(utils::GetQuantParams(quant_min, quant_max, QNN_DATATYPE_UFIXED_POINT_8, quant_scale, zero_point));
-    QnnQuantParamsWrapper quantize_param(quant_scale, zero_point);
+    QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::PerTensor(quant_scale, zero_point);
 
     QnnTensorWrapper intermediate_output_wrapper(intermediate_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,

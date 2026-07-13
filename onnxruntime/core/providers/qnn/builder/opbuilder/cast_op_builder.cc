@@ -191,14 +191,9 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   std::vector<std::string> param_tensor_names;
   const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
   if (is_fp_to_bool_cast) {
-    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
-    op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL;
-    QnnParamWrapper op_param(node_unit.Index(), cast_node_name,
-                             QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
-    param_tensor_names.push_back(op_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(op_param)),
-                  "Failed to add NotEqual operation param for FP-to-bool Cast.");
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), cast_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, param_tensor_names));
   }
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,

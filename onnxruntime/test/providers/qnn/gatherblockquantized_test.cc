@@ -153,8 +153,7 @@ static void RunGatherBlockQuantizedTest(
       model_builder,
       provider_options,
       13,  // opset
-      expected_ep_assignment,
-      fp32_abs_err);
+      EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // =============================================================

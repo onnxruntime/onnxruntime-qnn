@@ -384,8 +384,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
 
   // Common LSTM cell inputs
   const std::string null_tensor_name = "null_tensor";
-  QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
-                                       QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+  QnnTensorWrapper null_tensor_wrapper = QnnTensorWrapper::MakeNull(null_tensor_name);
 
   qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper));
 
