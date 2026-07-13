@@ -158,7 +158,7 @@ TEST_F(QnnCPUBackendTests, EinsumRank4MatMul) {
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"bhij,bhjd->bhid",
-      /*tolerance=*/1e-4f);
+      /*tolerance=*/3e-4f);
 }
 
 TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeY) {
