@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -114,6 +115,26 @@ def discover_packages(input_dir):
     return arm64_pkg, x64_pkg
 
 
+def _nuspec_ignoring_version(data):
+    """Return nuspec XML with the <version> element blanked out.
+
+    The two per-arch builds run as separate CI jobs and each stamps its own
+    dev-build timestamp (see OnnxRuntime.CSharp.proj's CurrentDate/CurrentTime)
+    into <version>, so it legitimately differs between otherwise-identical
+    nuspecs from the same commit. Blank it out before the byte-identical
+    comparison so that expected skew doesn't block the merge.
+    """
+    text = data.decode("utf-8", errors="replace")
+    text = re.sub(r"(<version>)\s*.*?\s*(</version>)", r"\1\2", text, flags=re.IGNORECASE | re.DOTALL)
+    return text.encode("utf-8")
+
+
+def _shared_file_contents_match(norm, base_data, other_data):
+    if norm.endswith(".nuspec"):
+        return _nuspec_ignoring_version(base_data) == _nuspec_ignoring_version(other_data)
+    return base_data == other_data
+
+
 def merge(arm64_pkg, x64_pkg, output_dir):
     """Merge the x64 runtimes tree into the arm64x base package."""
     with zipfile.ZipFile(arm64_pkg) as base_zip, zipfile.ZipFile(x64_pkg) as x64_zip:
@@ -127,14 +148,15 @@ def merge(arm64_pkg, x64_pkg, output_dir):
             raise SystemExit(f"error: '{x64_pkg.name}' contains no '{X64_RUNTIME_PREFIX}' entries.")
 
         # Verify every shared (non-runtimes) file is byte-identical between the two
-        # packages, so picking the base copy is safe.
+        # packages (ignoring an expected <version> skew in the .nuspec), so picking
+        # the base copy is safe.
         for norm, x64_name in sorted(x64_names.items()):
             if norm.startswith(X64_RUNTIME_PREFIX) or norm.startswith(ARM64_RUNTIME_PREFIX):
                 continue
             if norm not in base_names:
                 # x64-only shared file (unexpected) -- carry it over rather than drop it.
                 continue
-            if base_zip.read(base_names[norm]) != x64_zip.read(x64_name):
+            if not _shared_file_contents_match(norm, base_zip.read(base_names[norm]), x64_zip.read(x64_name)):
                 raise SystemExit(
                     f"error: shared file '{norm}' differs between the arm64x and x64 packages; "
                     "cannot safely merge (metadata/version mismatch?)."
