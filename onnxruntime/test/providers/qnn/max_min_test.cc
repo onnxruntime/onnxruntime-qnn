@@ -48,6 +48,25 @@ static void RunQDQMinOrMaxOpTest(const std::string& op_type,
                        expected_ep_assignment);
 }
 
+// Runs an int32 Max/Min model on the given QNN backend ("cpu" or "htp"). Checks the graph node
+// assignment, and that inference outputs for QNN EP and ORT CPU EP match exactly (int32 has no
+// quantization tolerance to account for).
+static void RunInt32MinOrMaxOpTest(const std::string& op_type,
+                                   const std::vector<TestInputDef<int32_t>>& input_defs,
+                                   ExpectedEPNodeAssignment expected_ep_assignment,
+                                   const std::string& backend_name,
+                                   int opset = 13) {
+  ProviderOptions provider_options;
+
+  provider_options["backend_type"] = backend_name;
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<int32_t>(op_type + "_node", op_type, input_defs, {}, {}, kOnnxDomain),
+                  provider_options,
+                  opset,
+                  EPVerificationParams{expected_ep_assignment});
+}
+
 //
 // CPU tests:
 //
@@ -82,6 +101,26 @@ TEST_F(QnnCPUBackendTests, Max_2Inputs) {
                        {TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                         TestInputDef<float>({1, 3, 4, 4}, false, input_data)},
                        ExpectedEPNodeAssignment::All, 13);
+}
+
+// Test int32 Min with 2 inputs on CPU backend.
+TEST_F(QnnCPUBackendTests, Min_2Inputs_Int32) {
+  std::vector<int32_t> input0_data = {-10, -5, 0, 5, 10, -3, 7, -8, 2, -1, 9, -6};
+  std::vector<int32_t> input1_data = {3, -5, 1, -2, 6, -3, -7, 8, 2, 4, -9, 6};
+  RunInt32MinOrMaxOpTest("Min",
+                         {TestInputDef<int32_t>({3, 4}, false, input0_data),
+                          TestInputDef<int32_t>({3, 4}, false, input1_data)},
+                         ExpectedEPNodeAssignment::All, "cpu", 13);
+}
+
+// Test int32 Max with 2 inputs on CPU backend.
+TEST_F(QnnCPUBackendTests, Max_2Inputs_Int32) {
+  std::vector<int32_t> input0_data = {-10, -5, 0, 5, 10, -3, 7, -8, 2, -1, 9, -6};
+  std::vector<int32_t> input1_data = {3, -5, 1, -2, 6, -3, -7, 8, 2, 4, -9, 6};
+  RunInt32MinOrMaxOpTest("Max",
+                         {TestInputDef<int32_t>({3, 4}, false, input0_data),
+                          TestInputDef<int32_t>({3, 4}, false, input1_data)},
+                         ExpectedEPNodeAssignment::All, "cpu", 13);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -119,6 +158,42 @@ TEST_F(QnnHTPBackendTests, Max_2Inputs) {
                                 {TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                                  TestInputDef<float>({1, 3, 4, 4}, false, input_data)},
                                 ExpectedEPNodeAssignment::All, 13);
+}
+
+// Test int32 Min with 2 inputs on HTP backend.
+TEST_F(QnnHTPBackendTests, Min_2Inputs_Int32) {
+  std::vector<int32_t> input0_data = {-10, -5, 0, 5, 10, -3, 7, -8, 2, -1, 9, -6};
+  std::vector<int32_t> input1_data = {3, -5, 1, -2, 6, -3, -7, 8, 2, 4, -9, 6};
+  RunInt32MinOrMaxOpTest("Min",
+                         {TestInputDef<int32_t>({3, 4}, false, input0_data),
+                          TestInputDef<int32_t>({3, 4}, false, input1_data)},
+                         ExpectedEPNodeAssignment::All, "htp", 13);
+}
+
+// Test int32 Max with 2 inputs on HTP backend.
+TEST_F(QnnHTPBackendTests, Max_2Inputs_Int32) {
+  std::vector<int32_t> input0_data = {-10, -5, 0, 5, 10, -3, 7, -8, 2, -1, 9, -6};
+  std::vector<int32_t> input1_data = {3, -5, 1, -2, 6, -3, -7, 8, 2, 4, -9, 6};
+  RunInt32MinOrMaxOpTest("Max",
+                         {TestInputDef<int32_t>({3, 4}, false, input0_data),
+                          TestInputDef<int32_t>({3, 4}, false, input1_data)},
+                         ExpectedEPNodeAssignment::All, "htp", 13);
+}
+
+// NEGATIVE: int32 Min with 1 input is still *NOT* supported on HTP backend (ExplicitOpCheck's
+// 2-input restriction is dtype-agnostic; unchanged by int32 enablement).
+TEST_F(QnnHTPBackendTests, Min_1Input_NotSupported_Int32) {
+  RunInt32MinOrMaxOpTest("Min",
+                         {TestInputDef<int32_t>({1, 3, 4, 4}, false, std::vector<int32_t>(48, 1))},
+                         ExpectedEPNodeAssignment::None, "htp", 13);
+}
+
+// NEGATIVE: int32 Max with 1 input is still *NOT* supported on HTP backend (ExplicitOpCheck's
+// 2-input restriction is dtype-agnostic; unchanged by int32 enablement).
+TEST_F(QnnHTPBackendTests, Max_1Input_NotSupported_Int32) {
+  RunInt32MinOrMaxOpTest("Max",
+                         {TestInputDef<int32_t>({1, 3, 4, 4}, false, std::vector<int32_t>(48, 1))},
+                         ExpectedEPNodeAssignment::None, "htp", 13);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -15,6 +15,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Pre-built Packages](#pre-built-packages)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
+- [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
 - [Supported ONNX operators](#supported-onnx-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
@@ -41,9 +42,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.3.0         | v2.47.0           | v1.24.4              |
+| v2.4.0         | v2.48.40           | v1.26.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.4.0 was built and tested with ORT 1.26.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -180,7 +181,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"soc_model"`|Description|
 |---|---|
-|Model number (string)|The SoC model number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid values. Defaults to "0" (unknown).|
+|Model number (string)|The SoC model number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid values. Defaults to "0" (unknown). Accepts a comma-separated list of model numbers (e.g. `"60,88"`). Supplying more than one value enables [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
 
 |`"htp_arch"`|Description|
 |---|---|
@@ -193,14 +194,16 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
 
+`htp_arch` accepts a comma-separated list of architectures (e.g. `"73,81"`). Supplying more than one value enables [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.
+
 |`"device_id"`|Description|
 |---|---|
 |Device ID (string)|The ID of the device to use when setting `htp_arch`. Defaults to "0" (for single device). Must be >= 0.|
 
 |`"enable_htp_fp16_precision"`|Description [Example](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)|
 |---|---|
-|'0'|Disabled. Inference with fp32 precision if it's fp32 model.|
-|'1'|Default. Enable the float32 model to be inferenced with fp16 precision.|
+|'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
+|'1'|Enable the float32 model to be inferenced with fp16 precision.|
 
 |`"disable_htp_monolithic_lstm"`|Description|
 |---|---|
@@ -318,6 +321,38 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. Disabled.|
 |'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
 
+|`"session.disable_cpu_ep_fallback"`|Description|
+|---|---|
+|'0'|Default. Unsupported operators fall back to the CPU EP.|
+|'1'|Disable CPU EP fallback. Returns an error if any operator cannot be handled by QNN EP. Set via `session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1")`.|
+
+### Flexible Context Binary (FCB) / multi-SoC EP context
+
+The Flexible Context Binary (FCB) feature packages one or more QNN context binaries into a single QNN DLC, so a single EPContext ONNX model can be deployed across multiple Snapdragon SoCs. It requires **QAIRT 2.48 or later (QNN API >= 2.37)**.
+
+Multi-SoC mode is enabled automatically when `soc_model` and/or `htp_arch` is given a comma-separated list of more than one value. In that case:
+
+- `soc_model` and `htp_arch` may each be given on their own; the other is then defaulted for every target SoC. If both are given as lists, they must contain the same number of values (one per target SoC), and `soc_model` takes priority if the two do not agree.
+- The following HTP backend options may each be given `0`, `1`, or `N` values (comma-separated), where `N` matches the number of SoCs. With `0` values the default is applied to every SoC; with `1` value it is duplicated across all SoCs; with `N` values each is applied to the corresponding SoC:
+  - `vtcm_mb`
+
+Constraints:
+
+- Supported only on **x86_64** hosts (offline preparation). On-device preparation will soon be supported in later QAIRT version.
+- Requires the EP context cache to be enabled (`ep.context_enable=1`). `enable_htp_prepare_only` is turned on automatically (preparation only, no inference).
+- Not supported together with shared EP contexts (`share_ep_contexts` / `stop_share_ep_contexts`).
+
+**Example (Python):**
+```python
+ep_options = {
+    "backend_type": "htp",
+    "htp_arch": "73,81",          # two target SoCs -> multi-SoC mode
+    "soc_model": "60,88",         # one SoC model per arch
+    "vtcm_mb": "8",               # single value duplicated to every SoC
+}
+# ep.context_enable must be set to 1; enable_htp_prepare_only is enabled automatically.
+```
+
 ### Run Options
 
 Run options can be set dynamically at runtime using the ORT Run API. These options allow you to configure QNN EP behavior on a per-inference basis.
@@ -328,6 +363,7 @@ Run options can be set dynamically at runtime using the ORT Run API. These optio
 |`"qnn.rpc_control_latency"`|RPC control latency in microseconds for this inference run. Overrides the EP provider option `rpc_control_latency` for this run.|
 |`"qnn.lora_config"`|LoRAv2 config file path. Format: `<graph name>;<adapter binary section path>`. See **LoRAv2 support** section for details.|
 |`"kvcache_rewind"`|Genie KV-cache reset. Set to `"0"` to reset the KV cache before the next inference (useful at the start of a new conversation). Set to `"1"` (default) to skip the reset. Only applies when using the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend).|
+|`"ep.dynamic.workload_type"`|EP workload type. `'Default'` resets to the default context priority. `'Efficient'` sets context priority to `low`, reducing resource usage at the cost of throughput. HTP backend only. Set via the `SetDynamicOptions` API.|
 
 **Example usage (Python):**
 ```python
@@ -404,9 +440,11 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Gemm||
 |ai.onnx:GlobalAveragePool||
 |ai.onnx:GlobalMaxPool||
+|ai.onnx:GRU|Default activations only (Sigmoid/Tanh). Dynamic sequence lengths and layout=1 not supported.|
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
+|ai.onnx:GRU|layout=0 (batch-first) only; fixed-length sequences; default activations (sigmoid/tanh); no clip; no initial hidden/cell state from ONNX|
 |ai.onnx:GroupNormalization||
 |ai.onnx:HardSigmoid||
 |ai.onnx:HardSwish||
@@ -414,7 +452,9 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
+|ai.onnx:IsInf|float32 and float16 inputs only|
 |ai.onnx:IsNaN||
+|ai.onnx:IsInf|CPU backend only|
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
 |ai.onnx:LayerNormalization||
@@ -424,6 +464,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Log||
 |ai.onnx:LogSoftmax||
 |ai.onnx:LpNormalization|p == 2|
+|ai.onnx:LpPool|p=1 or p=2 only; rank-5 (3D pooling) requires GPU backend or HTP with bf16_mode=1|
 |ai.onnx:MatMul|Supported input data types on HTP backend: (uint8, uint8), (uint8, uint16), (uint16, uint8)|
 |ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
@@ -436,7 +477,9 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:NonMaxSuppression|max_output_boxes_per_class, iou_threshold, and score_threshold must be static constants; max_output_boxes_per_class must be > 0; center_point_box must be 0 (diagonal corners); GPU backend not supported|
 |ai.onnx:NonZero||
 |ai.onnx:Not||
+|ai.onnx:OneHot|depth and values inputs must be constant initializers|
 |ai.onnx:Or||
+|ai.onnx:OneHot|depth and values must be constant initializers; indices must be int32, int64, or uint32|
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
@@ -462,6 +505,8 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
+|ai.onnx:Selu||
+|ai.onnx:Shape|start/end attributes supported (ONNX opset 15+); output is int64 (upcast from QNN int32); empty-slice (end <= start) not supported|
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
@@ -483,9 +528,12 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Unsqueeze||
 |ai.onnx:Upsample||
 |ai.onnx:Where||
+|ai.onnx:Xor||
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
+|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
+|com.microsoft:GroupQueryAttention|GPU backend only; requires QAIRT SDK ≥ 2.48 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
 |com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:QuickGelu||
@@ -503,9 +551,11 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `DequantizeLinear → QuantizeLinear` | `QNN_OP_CONVERT` | Eliminates redundant re-quantization between compatible quantization schemes. Scalar scale/zero-point required. |
+| `DynamicQuantizeLinear → DequantizeLinear` | `QNN_OP_TRANSPOSE` (identity) | Fuses a quantize+dequantize round-trip into a pass-through when all three DQL outputs are consumed exclusively by a single DQ node and the DQ output is float32. |
 | `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
 | `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | ConvInteger is supported exclusively via this fusion. Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
 | `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | MatMulInteger is supported exclusively via this fusion. Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
+| `DynamicQuantizeLinear → DequantizeLinear` | Identity `QNN_OP_TRANSPOSE` | Fake-quantize round-trip bypass: DQL output consumed exclusively by a DQ node returning to float32. All three DQL outputs must flow only into matching DQ nodes. |
 
 ### Low-Power Block Quantization (LPBQ) fusions
 
@@ -522,6 +572,9 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `HardSigmoid(α=1/6, β=0.5) → Mul` (shared input) | `QNN_OP_ELEMENT_WISE_NEURON` (HardSwish) | Both inputs to Mul must originate from the same source tensor. |
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
+| `Reshape(ND→2D) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Input Reshape must not be shared; Gemm: transA=0, transB=0, alpha=1, beta=1; weight must be a constant; input rank ≤ 4. CPU and HTP backends only. |
+| `Reshape(ND→2D) → Gemm → Reshape(2D→MD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 3-node variant; quantized weights supported. |
+| `Reshape(ND→2D) → Gemm → Reshape(2D→MD) → Reshape(MD→PD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 4-node variant; two consecutive output Reshapes. |
 
 ### Layout and reshape fusions
 
@@ -532,12 +585,14 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(4D→6D) → Einsum(transpose-equivalent) → Reshape(6D→4D)` | `QNN_OP_DEPTH_TO_SPACE + QNN_OP_TRANSPOSE` | Matches Einsum used as a rank-6 permutation with perm `[0,5,1,3,2,4]` (DCR DepthToSpace). |
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
+| `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
 
 ### Miscellaneous fusions
 
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `[DQ inputs →] Custom UDO op [→ Q outputs]` | Custom QNN UDO | Strips surrounding DQ/Q nodes and passes quantization parameters directly into the user-defined operator. |
+| `Reshape(batch-flatten) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Reshape must flatten all batch dimensions into a 2D tensor. Gemm weight must be a non-quantized constant initializer. Reshape output must be consumed exclusively by the Gemm node. |
 
 ## Running a model with QNN EP's HTP backend (Python)
 <p align="center"><img width="100%" src="../images/qnn_ep_quant_workflow.png" alt="Offline workflow for quantizing an ONNX model for use on QNN EP"/></p>

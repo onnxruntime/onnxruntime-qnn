@@ -15,6 +15,7 @@ import jsonc
 import numpy as np
 import onnx
 import onnxruntime_qnn
+import pytest
 
 import onnxruntime
 
@@ -114,36 +115,48 @@ class ModelTestCase:
         ]
 
     def run(self) -> None:
-        inputs = self.load_inputs()
-        expected = self.load_outputs()
+        try:
+            inputs = self.load_inputs()
+            expected = self.load_outputs()
 
-        if len(inputs) == 0:
-            logging.info(f"{self.__model_root.name} has no reference data.")
-            return
+            if len(inputs) == 0:
+                logging.info(f"{self.__model_root.name} has no reference data.")
+                return
 
-        logging.info(f"Evaluating {self.__model_root.name} with {len(inputs)} reference datasets.")
-        assert len(inputs) == len(expected)
+            logging.info(f"Evaluating {self.__model_root.name} with {len(inputs)} reference datasets.")
+            assert len(inputs) == len(expected)
 
-        for ds_idx in range(len(inputs)):
-            logging.debug(f"Inputs: { {n: t.shape for n, t in inputs[ds_idx].items()} }")
-            logging.debug(f"Expected outputs: { {n: t.shape for n, t in expected[ds_idx].items()} }")
-            actual = dict(
-                zip(self.output_names, cast(Sequence[np.ndarray], self.__session.run([], inputs[ds_idx])), strict=False)
-            )
-            for name in expected[ds_idx]:
-                if name not in actual:
-                    logging.debug(f"Actual outputs: { {n: t.shape for n, t in actual.items()} }")
-                    raise ValueError(f"Output {name} not found in actual.")
-                atol = self.__atol[name]
-                rtol = self.__rtol[name]
-                cosine_similarity = self.__cosine_similarity.get(name, None)
-                logging.info(f"Comparing actual outputs for {name} to reference.")
-                if cosine_similarity is not None:
-                    am.assert_cosine_similar(actual[name], expected[ds_idx][name], cosine_similarity)
-                    logging.info(f"{name} is cosine-similar enough (threshold: {cosine_similarity})")
-                else:
-                    np.testing.assert_allclose(actual[name], expected[ds_idx][name], atol=atol, rtol=rtol)
-                    logging.info(f"{name} is close enough (rtol: {rtol}; atol: {atol})")
+            for ds_idx in range(len(inputs)):
+                logging.debug(f"Inputs: { {n: t.shape for n, t in inputs[ds_idx].items()} }")
+                logging.debug(f"Expected outputs: { {n: t.shape for n, t in expected[ds_idx].items()} }")
+                actual = dict(
+                    zip(
+                        self.output_names,
+                        cast(Sequence[np.ndarray], self.__session.run([], inputs[ds_idx])),
+                        strict=False,
+                    )
+                )
+                for name in expected[ds_idx]:
+                    if name not in actual:
+                        logging.debug(f"Actual outputs: { {n: t.shape for n, t in actual.items()} }")
+                        raise ValueError(f"Output {name} not found in actual.")
+                    atol = self.__atol[name]
+                    rtol = self.__rtol[name]
+                    cosine_similarity = self.__cosine_similarity.get(name, None)
+                    logging.info(f"Comparing actual outputs for {name} to reference.")
+                    if cosine_similarity is not None:
+                        am.assert_cosine_similar(actual[name], expected[ds_idx][name], cosine_similarity)
+                        logging.info(f"{name} is cosine-similar enough (threshold: {cosine_similarity})")
+                    else:
+                        np.testing.assert_allclose(actual[name], expected[ds_idx][name], atol=atol, rtol=rtol)
+                        logging.info(f"{name} is close enough (rtol: {rtol}; atol: {atol})")
+        finally:
+            # Explicitly release the InferenceSession so GPU resources in the QNN
+            # context memory are freed before the next test begins rather
+            # than waiting for the garbage collector. Without this, accumulated sessions
+            # across a test suite run can exhaust GPU memory and cause non-deterministic
+            # failures in later tests.
+            del self.__session
 
 
 class ModelTestSuite:
@@ -281,6 +294,10 @@ def get_qnn_ep_device(backend_type: BackendT) -> tuple[onnxruntime.OrtEpDevice, 
     qnn_ep_devices = [ed for ed in onnxruntime.get_ep_devices() if ed.ep_name == ep_names[0]]
 
     eps_and_devices = {get_backend_type(ed.device.type): ed for ed in qnn_ep_devices}
+
+    if backend_type not in eps_and_devices:
+        pytest.skip(f"QNN {backend_type.upper()} backend device not available on this machine")
+
     ep_device = eps_and_devices[backend_type]
 
     return ep_device, get_qnn_backend_path(backend_type)

@@ -10,17 +10,19 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "HTP/QnnHtpGraph.h"
 
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
+#include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"
+#include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/qnn_node_compute_info_base.h"
@@ -99,7 +101,23 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                std::vector<const OrtNode*>& supported_nodes,
                                std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
+  OrtStatus* GetMultiSocSupportedNodes(const OrtGraph* graph,
+                                       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                       const size_t node_unit_size,
+                                       std::vector<const OrtNode*>& supported_nodes) const;
+
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
+
+  OrtStatus* CompileOnnxModel(const OrtGraph** graphs,
+                              const OrtNode** fused_nodes,
+                              size_t count,
+                              OrtNodeComputeInfo** node_compute_infos,
+                              const qnn::HtpGraphConfigs_t& htp_graph_configs);
+
+  OrtStatus* CompileMultiSocOnnxModel(const OrtGraph** graphs,
+                                      const OrtNode** fused_nodes,
+                                      size_t count,
+                                      OrtNodeComputeInfo** node_compute_infos);
 
   OrtStatus* CompileContextModel(const OrtGraph** graphs,
                                  const OrtNode** fused_nodes,
@@ -117,11 +135,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                   size_t count,
                                   OrtNode** ep_context_nodes);
 
-  // // Helper functions
-  // int GenerateMetadefId(const OrtGraph* graph, uint64_t& model_hash);
-  // std::string MakeMetadefName(const OrtGraph* graph);
-  void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
-                                                 const Ort::Logger& logger);
+  // Helper functions
+  void ParsePerSocHtpConfigs();
 
   // Framework op trace helpers. trace_ is populated incrementally during
   // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
@@ -134,7 +149,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
+      const qnn::HtpGraphConfigs_t& configs,
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
+
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
 
   std::string FormatEPConfigKey(const std::string& key) const {
@@ -161,6 +178,19 @@ class QnnEp : public OrtEp, public ApiPtrs {
     size_t graph_idx;
 
   } GraphFinalizationInfo_t;
+
+  // RAII guard to complete backend setup and release resource during exit.
+  // This is expected to be used in GetCapability and Compile for multi-SoC EP context.
+  struct ScopedPerSocQnnBackendSetup {
+    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {};
+    ~ScopedPerSocQnnBackendSetup();
+    ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ScopedPerSocQnnBackendSetup);
+
+    Ort::Status Init(size_t per_soc_idx);
+
+   private:
+    const QnnEp& ep_;
+  };
 
   // Will return true if any power config options need to be updated
   bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
@@ -211,10 +241,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
-  qnn::HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
-  int32_t vtcm_size_in_mb_ = 0;
-  bool enable_HTP_FP16_precision_ = true;
-  bool disable_htp_monolithic_lstm_ = false;
+  qnn::HtpGraphConfigs_t htp_graph_configs_;
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
@@ -241,6 +268,15 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool enable_htp_extended_udma_mode_ = false;
 
+  // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
+  bool enable_multi_soc_ep_context_ = false;
+  // Per-SoC HTP backend configurations. The size of below arrays are enforced to be the same.
+  std::vector<QnnHtpDevice_Arch_t> htp_arch_per_soc_;
+  std::vector<uint32_t> soc_model_per_soc_;
+  std::vector<qnn::HtpGraphConfigs_t> htp_graph_configs_per_soc_;
+  // Internal option, could not be speicified by provider options.
+  bool enable_htp_ref_weight_sharing_ = true;
+
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.
   // This is potentially shared with HtpSharedMemoryAllocator which may be returned by CreatePreferredAllocators().
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
@@ -249,8 +285,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;
-  qnn::QnnCompatibilityInfo compatibility_info_;
-  // Format: <BackendId>:<SDK>:<BackendApi>:<ContextBlob>:<HtpArch>:<IsHtpUsrDrv>.
+  qnn::QnnCompatibilityInfo compatibility_info_ = QNN_COMPATIBILITY_INFO_INIT;
   std::string compatibility_info_string_ = "";
 
   // One-shot guard so the HNRD fallback warning emitted by WarnIfHnrdPathActive()
