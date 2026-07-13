@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-// Tests for ReciprocalMulFusion: validates fusion of Reciprocal->Mul into ElementWiseDivide.
+// Tests for ReciprocalMulFusion: validates fusion of Reciprocal->Mul into ElementWiseBinary (DIVIDE).
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -201,6 +201,29 @@ GetTestModelFn BuildReciprocalOutputIsGraphOutputTestCase(const TestInputDef<flo
   };
 }
 
+// No-fusion case: Both Mul inputs are the same Reciprocal output.
+GetTestModelFn BuildReciprocalBothMulInputsSameTestCase(const TestInputDef<float>& denominator_def) {
+  return [denominator_def](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reciprocal_both_mul_inputs_same_graph");
+
+    MakeTestInput<float>(builder, "denominator", denominator_def);
+
+    builder.AddNode("Reciprocal_node",
+                    "Reciprocal",
+                    {"denominator"},
+                    {"recip_out"},
+                    kOnnxDomain);
+
+    builder.AddNode("Mul_node",
+                    "Mul",
+                    {"recip_out", "recip_out"},
+                    {"output"},
+                    kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -236,7 +259,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
 }
 
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
@@ -262,7 +285,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
 }
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
@@ -291,7 +314,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
                         /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                         /*tolerance=*/0.004f);
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/1);
 }
 
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion) {
@@ -345,6 +368,34 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/3);
+}
+
+TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_BothMulInputsSame_NoFusion) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "FP32 HTP test skipped on architecture <= 68";
+  }
+
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_BothMulInputsSame_NoFusion";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
+
+  RunQnnModelTest(BuildReciprocalBothMulInputsSameTestCase(denominator_def),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/3e-3f);
+
+  // Should NOT fuse: fusion expects pattern a * (1/b) = a/b, but Mul(1/b, 1/b) = 1/b²
+  // is a different semantic pattern (squaring the reciprocal).
+  // Expect: 1 ElementWiseBinary for Reciprocal (1/b), 1 ElementWiseBinary for Mul (multiply)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/2);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-// ReciprocalMulFusion: Fuses SingleNode Reciprocal->Mul into ElementWiseDivide.
+// ReciprocalMulFusion: Fuses SingleNode Reciprocal->Mul into ElementWiseBinary (DIVIDE).
 // QDQGroup pattern avoided to preserve separate quantization of 1/b.
 
 #include "core/providers/qnn/builder/qnn_node_group/reciprocal_mul_fusion.h"
@@ -139,13 +139,20 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(denominator_def, denominator_tensor));
     RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
+    // Create operation parameter for DIVIDE
+    Qnn_Scalar_t div_op_scalar = QNN_SCALAR_INIT;
+    div_op_scalar.dataType = QNN_DATATYPE_UINT_32;
+    div_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE;
+    QnnParamWrapper div_op_param(reciprocal_node_unit.Index(), node_name,
+                                 QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_op_scalar);
+
     RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(
         node_name,
         QNN_OP_PACKAGE_NAME_QTI_AISW,
-        QNN_OP_ELEMENT_WISE_DIVIDE,
+        QNN_OP_ELEMENT_WISE_BINARY,
         /*input_tensors=*/{numerator_tensor.GetQnnTensor(), denominator_tensor.GetQnnTensor()},
         /*output_tensors=*/{output_tensor.GetQnnTensor()},
-        /*params=*/{}));
+        /*params=*/{div_op_param.GetQnnParam()}));
   } else {
     // Build path: register tensors and create QNN node.
 
@@ -170,17 +177,23 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                     "ReciprocalMulFusion: failed to add output tensor wrapper.");
     }
 
-    // Create fused ElementWiseDivide node.
+    // Add operation parameter for DIVIDE
+    std::vector<std::string> div_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, reciprocal_node_unit.Index(), node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
+
+    // Create fused ElementWiseBinary node with DIVIDE operation.
     RETURN_IF_NOT(
         qnn_model_wrapper.CreateQnnNode(
             node_name,
             QNN_OP_PACKAGE_NAME_QTI_AISW,
-            QNN_OP_ELEMENT_WISE_DIVIDE,
+            QNN_OP_ELEMENT_WISE_BINARY,
             /*input_names=*/{numerator_def.name, denominator_def.name},
             /*output_names=*/{output_def.name},
-            /*param_tensor_names=*/{},
+            /*param_tensor_names=*/std::move(div_param_names),
             /*do_op_validation=*/validate),
-        "ReciprocalMulFusion: failed to create fused ElementWiseDivide node.");
+        "ReciprocalMulFusion: failed to create fused ElementWiseBinary node.");
   }
 
   return Ort::Status();

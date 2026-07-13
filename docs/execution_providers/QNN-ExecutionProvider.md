@@ -493,6 +493,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `[Div/Mul(√2)] → Erf → [Mul(0.5) →] Add(1) → Mul → [Mul(0.5)]` | `QNN_OP_GELU` | Matches two common Gelu decomposition variants (ErfAdd and ErfMul). Surrounding DQ nodes are also handled. |
 | `HardSigmoid(α=1/6, β=0.5) → Mul` (shared input) | `QNN_OP_ELEMENT_WISE_NEURON` (HardSwish) | Both inputs to Mul must originate from the same source tensor. |
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
+| `Reciprocal → Mul` (single consumer) | `QNN_OP_ELEMENT_WISE_BINARY` (DIVIDE) | Reciprocal must be SingleNode (preserves separate quantization of 1/b), single Mul consumer, Reciprocal output not a graph output. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
 
 ### Layout and reshape fusions
