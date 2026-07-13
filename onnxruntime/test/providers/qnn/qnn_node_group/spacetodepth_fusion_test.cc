@@ -22,9 +22,12 @@ namespace test {
 
 namespace {
 
-// Build a bare RTR graph: Input -> Reshape -> Transpose -> Reshape -> Output
-// No Conv or other layout-sensitive ops — Layout Transformer won't insert transposes.
-// Used for RTR-only (3-node) SpaceToDepth fusion tests.
+// Build a bare RTR graph plus a side-branch 1x1 Conv that shares the graph input.
+// The RTR chain is still "bare" from the fusion's perspective (no Transpose adjacent
+// to Reshape1/Reshape2), but the side Conv is layout-sensitive, which is required to
+// trigger ORT's Layout Transformer and thus the 2nd GetCapability pass. Without a
+// layout-sensitive op anywhere in the graph, ORT skips the 2nd pass and the post-LT
+// bare-RTR fusion in SpaceToDepthFusion is never reached (per graph_partitioner.cc).
 GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& input_shape,
                                                 int64_t block_height,
                                                 int64_t block_width,
@@ -55,6 +58,14 @@ GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& inpu
     builder.AddNode("Reshape2", "Reshape", {"transpose_out", "reshape2_shape"}, {"output"}, kOnnxDomain);
 
     builder.MakeOutput("output");
+
+    // Side-branch 1x1 Conv on the same graph input — layout-sensitive op used only to
+    // force ORT to run Layout Transformer and issue a 2nd GetCapability pass. It is
+    // NOT adjacent to the RTR chain, so the RTR pattern remains bare (node_count==3).
+    const std::vector<int64_t> side_conv_weight_shape = {c, c, 1, 1};
+    builder.MakeInitializer<float>("side_conv_weight", side_conv_weight_shape, -1.0f, 1.0f);
+    builder.AddNode("SideConv", "Conv", {"input", "side_conv_weight"}, {"side_output"}, kOnnxDomain);
+    builder.MakeOutput("side_output");
   };
 }
 
@@ -643,7 +654,37 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_Float_CRD) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 2);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", 1);
+  // 4 Transposes: (2) NCHW<->NHWC boundary pair around the side-branch Conv (added
+  // by ORT Layout Transformer) + (2) the fused SpaceToDepth's own NCHW<->NHWC
+  // pre/post pair (added by CreateOrValidateOnQnn since QNN SpaceToDepth is NHWC).
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 4);
+}
+
+// RTR-only DCR on HTP backend. Structural coverage of the RTR-only fusion path
+// with DCR perm; disabled because HTP's SpaceToDepth DCR kernel produces
+// element-wise mismatch (same failure signature as the pre-existing DISABLED_
+// SpaceToDepthFusion_Float_DCR and DISABLED_SpaceToDepthFusion_UnequalBlockSize_DCR).
+// * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
+TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_BareRTR_Float_DCR) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "SpaceToDepthFusion_BareRTR_Float_DCR_HTP";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions("htp");
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 3, 4, 4}, 2, 2, {0, 3, 5, 1, 2, 4}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 4);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
