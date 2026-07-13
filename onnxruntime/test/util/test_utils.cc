@@ -154,12 +154,10 @@ void VerifyOutput(const std::string& output_name,
       break;
     }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL: {
-      const uint8_t* expected_data = expected_value.GetTensorData<uint8_t>();
-      const uint8_t* actual_data = actual_value.GetTensorData<uint8_t>();
+      const bool* expected_data = expected_value.GetTensorData<bool>();
+      const bool* actual_data = actual_value.GetTensorData<bool>();
       for (size_t i = 0; i < element_count; ++i) {
-        // Compare as bool (nonzero = true): QNN's Bool output may return 0xFF instead of 0x01,
-        // which causes MSVC's EXPECT_EQ to fail despite both values printing as "true".
-        EXPECT_EQ(expected_data[i] != 0, actual_data[i] != 0) << "Element " << i << " mismatch for " << output_name;
+        EXPECT_EQ(expected_data[i], actual_data[i]) << "Element " << i << " mismatch for " << output_name;
       }
       break;
     }
