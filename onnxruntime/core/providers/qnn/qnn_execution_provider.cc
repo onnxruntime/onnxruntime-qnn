@@ -1909,6 +1909,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // ORT's passes, keeping the pre/post distinction correct even if a pass is
   // empty.
   ++ep->get_capability_call_count_;
+  // Verbose trace for pass sequencing: a missing 2nd pass would silently disable
+  // fusions gated on post-LT (e.g. RTR-only SpaceToDepth). Cheap observability.
+  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              ("GetCapability pass #" + std::to_string(ep->get_capability_call_count_) +
+               " (post-LT=" +
+               (ep->get_capability_call_count_ > 1 ? "true" : "false") +
+               ")").c_str());
 
   size_t num_nodes_in_graph = 0;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetNumNodes(graph, &num_nodes_in_graph));
