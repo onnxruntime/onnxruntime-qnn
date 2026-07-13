@@ -256,8 +256,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
   RunQnnModelTest(BuildReciprocalMulTestCase(numerator_def, denominator_def, /*commute=*/false),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
 }
@@ -282,8 +281,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
   RunQnnModelTest(BuildReciprocalMulTestCase(numerator_def, denominator_def, /*commute=*/true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
 }
@@ -337,8 +335,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoF
   RunQnnModelTest(BuildReciprocalOutputIsGraphOutputTestCase(numerator_def, denominator_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/2);
 }
@@ -389,8 +386,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_BothMulInputsSame_NoFusion) {
   RunQnnModelTest(BuildReciprocalBothMulInputsSameTestCase(denominator_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/3e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(3e-3f)});
 
   // Should NOT fuse: fusion expects pattern a * (1/b) = a/b, but Mul(1/b, 1/b) = 1/b²
   // is a different semantic pattern (squaring the reciprocal).
