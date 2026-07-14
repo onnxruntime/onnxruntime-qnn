@@ -755,7 +755,8 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                   ("SSR POISON DETECTED: context handle " +
                    std::to_string(reinterpret_cast<uintptr_t>(ctx)) +
                    " for graph " + graph_info_->Name() +
-                   " was freed by sibling recovery. Proactive recovery will follow.").c_str());
+                   " was freed by sibling recovery. Proactive recovery will follow.")
+                      .c_str());
     }
   }
 
