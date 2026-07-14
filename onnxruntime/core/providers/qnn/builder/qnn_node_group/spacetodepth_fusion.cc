@@ -171,32 +171,14 @@ bool HasSpaceToDepthCoreSignature(
     return false;
   }
 
-  // check ranks of Reshape 'shape' to be 6 and 4.
-  auto shape_6d = GetInitializerDataAsInt64(qnn_model_wrapper, reshape1.Inputs()[1]);
-  auto shape_4d = GetInitializerDataAsInt64(qnn_model_wrapper, reshape2.Inputs()[1]);
-  if (!shape_6d.has_value() || !shape_4d.has_value()) {
+  // Read the *resolved* 6D shape from Reshape1's output ValueInfo (== Transpose's input).
+  // Shape inference has already replaced any -1 in the Reshape shape initializer with the
+  // concrete value the exporter meant, which lets us accept exporter-convenience patterns
+  // like reshape(1, -1, H, b, W, b) without special-casing -1 at each position. Same
+  // reasoning for the 4D shape via output_shape above.
+  std::vector<uint32_t> shape_6d;
+  if (!qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
     return false;
-  }
-
-  if (shape_6d->size() != kRank6 || shape_4d->size() != kRank4) {
-    return false;
-  }
-
-  // check Reshape 'shape' dimensions to be positive (allow -1 only for the batch dim at index 0).
-  for (size_t i = 0; i < shape_6d->size(); ++i) {
-    const int64_t v = (*shape_6d)[i];
-    if (i == 0 && v == -1) continue;  // dynamic batch
-    if (v <= 0) {
-      return false;
-    }
-  }
-
-  for (size_t i = 0; i < shape_4d->size(); ++i) {
-    const int64_t v = (*shape_4d)[i];
-    if (i == 0 && v == -1) continue;  // dynamic batch
-    if (v <= 0) {
-      return false;
-    }
   }
 
   // [N, C, H, W]
@@ -205,16 +187,16 @@ bool HasSpaceToDepthCoreSignature(
   const int64_t h = static_cast<int64_t>(input_shape[2]);
   const int64_t w = static_cast<int64_t>(input_shape[3]);
 
-  // [N, C, H / b0, b0, W / b1, b1]
-  const int64_t r_n = (*shape_6d)[0];
-  const int64_t r_c = (*shape_6d)[1];
-  const int64_t h_div = (*shape_6d)[2];
-  const int64_t b0 = (*shape_6d)[3];
-  const int64_t w_div = (*shape_6d)[4];
-  const int64_t b1 = (*shape_6d)[5];
+  // [N, C, H / b0, b0, W / b1, b1] — fully concrete via shape inference.
+  const int64_t r_n = static_cast<int64_t>(shape_6d[0]);
+  const int64_t r_c = static_cast<int64_t>(shape_6d[1]);
+  const int64_t h_div = static_cast<int64_t>(shape_6d[2]);
+  const int64_t b0 = static_cast<int64_t>(shape_6d[3]);
+  const int64_t w_div = static_cast<int64_t>(shape_6d[4]);
+  const int64_t b1 = static_cast<int64_t>(shape_6d[5]);
 
-  // r_ are expected to match input [N,C]; allow r_n = -1 for dynamic batch.
-  if ((r_n != -1 && r_n != n) || r_c != c || b0 < 1 || b1 < 1) {
+  // r_ are expected to match input [N,C].
+  if (r_n != n || r_c != c || b0 < 1 || b1 < 1) {
     return false;
   }
 
@@ -230,9 +212,7 @@ bool HasSpaceToDepthCoreSignature(
   const int64_t expected_c = c * b0 * b1;
   const std::array<int64_t, 4> expected_shape_4d = {n, expected_c, h / b0, w / b1};
   for (size_t i = 0; i < 4; ++i) {
-    // Allow -1 only for the batch dimension (index 0) in the output shape.
-    if (i == 0 && (*shape_4d)[i] == -1) continue;
-    if ((*shape_4d)[i] != expected_shape_4d[i]) {
+    if (static_cast<int64_t>(output_shape[i]) != expected_shape_4d[i]) {
       return false;
     }
   }

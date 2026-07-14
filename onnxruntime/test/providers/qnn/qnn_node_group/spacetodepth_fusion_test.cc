@@ -30,7 +30,8 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
                                          int64_t block_width,
                                          const std::vector<int64_t>& perm,
                                          bool use_qdq,
-                                         bool use_contrib_qdq) {
+                                         bool use_contrib_qdq,
+                                         bool use_channel_placeholder = false) {
   return [=](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("spacetodepth_fusion_graph");
 
@@ -64,8 +65,15 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
     const int64_t h_div = h / block_height;
     const int64_t w_div = w / block_width;
 
+    // When use_channel_placeholder=true, exercise the exporter-convenience pattern
+    // reshape(N, -1, H/b, b, W/b, b) that PyTorch commonly emits: channel dim is -1,
+    // to be inferred at load time by ONNX shape inference from the concrete input.
+    const int64_t r_c = use_channel_placeholder ? static_cast<int64_t>(-1) : c;
+    const int64_t r_out_c = use_channel_placeholder ? static_cast<int64_t>(-1)
+                                                    : c * block_height * block_width;
+
     // Reshape1: NCHW -> [N, C, H/block_h, block_h, W/block_w, block_w]
-    builder.Make1DInitializer<int64_t>("reshape1_shape", {n, c, h_div, block_height, w_div, block_width});
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {n, r_c, h_div, block_height, w_div, block_width});
     builder.AddNode("Reshape1",
                     "Reshape",
                     {reshape1_input, "reshape1_shape"},
@@ -88,7 +96,7 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
                     {builder.MakeIntsAttribute("perm", perm)});
 
     // Reshape2: rank-6 -> [N, C*block_h*block_w, H/block_h, W/block_w]
-    builder.Make1DInitializer<int64_t>("reshape2_shape", {n, c * block_height * block_width, h_div, w_div});
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {n, r_out_c, h_div, w_div});
     builder.AddNode("Reshape2",
                     "Reshape",
                     {"transpose_out", "reshape2_shape"},
@@ -264,7 +272,8 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                                bool use_qdq,
                                bool use_contrib_qdq,
                                const std::string& backend_type,
-                               float fp32_abs_err = 1e-2f) {
+                               float fp32_abs_err = 1e-2f,
+                               bool use_channel_placeholder = false) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
@@ -279,7 +288,8 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
-  RunQnnModelTest(BuildSpaceToDepthTestCase<QuantType>(input_shape, block_height, block_width, perm, use_qdq, use_contrib_qdq),
+  RunQnnModelTest(BuildSpaceToDepthTestCase<QuantType>(input_shape, block_height, block_width, perm,
+                                                       use_qdq, use_contrib_qdq, use_channel_placeholder),
                   provider_options,
                   /*opset_version=*/13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)},
@@ -581,6 +591,38 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_DynamicBatch) {
                             /*use_contrib_qdq=*/false,
                             /*backend_type=*/"htp",
                             /*fp32_abs_err=*/2.9e-2f);
+}
+
+// Regression test: HasSpaceToDepthCoreSignature was rejecting -1 outside batch dim.
+// PyTorch commonly exports SpaceToDepth as reshape(N, -1, H/b, b, W/b, b) — channel is the
+// placeholder, not batch. Concrete channel is resolved by ONNX shape inference from the
+// input tensor.
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_ChannelPlaceholder) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_ChannelPlaceholder",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/1e-2f,
+                            /*use_channel_placeholder=*/true);
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_ChannelPlaceholder) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_ChannelPlaceholder",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/true,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/2.9e-2f,
+                            /*use_channel_placeholder=*/true);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
