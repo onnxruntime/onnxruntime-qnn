@@ -22,12 +22,9 @@ namespace test {
 
 namespace {
 
-// Build a bare RTR graph plus a side-branch 1x1 Conv that shares the graph input.
-// The RTR chain is still "bare" from the fusion's perspective (no Transpose adjacent
-// to Reshape1/Reshape2), but the side Conv is layout-sensitive, which is required to
-// trigger ORT's Layout Transformer and thus the 2nd GetCapability pass. Without a
-// layout-sensitive op anywhere in the graph, ORT skips the 2nd pass and the post-LT
-// bare-RTR fusion in SpaceToDepthFusion is never reached (per graph_partitioner.cc).
+// Bare R->T->R chain plus an unrelated 1x1 Conv on the graph input. The side Conv
+// is a layout-sensitive op that forces ORT to issue the 2nd GetCapability pass;
+// the RTR itself is still "bare" for fusion purposes (no adjacent Transpose).
 GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& input_shape,
                                                 int64_t block_height,
                                                 int64_t block_width,
@@ -59,9 +56,8 @@ GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& inpu
 
     builder.MakeOutput("output");
 
-    // Side-branch 1x1 Conv on the same graph input — layout-sensitive op used only to
-    // force ORT to run Layout Transformer and issue a 2nd GetCapability pass. It is
-    // NOT adjacent to the RTR chain, so the RTR pattern remains bare (node_count==3).
+    // Unrelated side-branch 1x1 Conv on the same input — layout-sensitive op that
+    // forces ORT to issue the 2nd GetCapability pass. Not adjacent to the RTR.
     const std::vector<int64_t> side_conv_weight_shape = {c, c, 1, 1};
     builder.MakeInitializer<float>("side_conv_weight", side_conv_weight_shape, -1.0f, 1.0f);
     builder.AddNode("SideConv", "Conv", {"input", "side_conv_weight"}, {"side_output"}, kOnnxDomain);
@@ -655,17 +651,13 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_Float_CRD) {
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", 1);
-  // 4 Transposes: (2) NCHW<->NHWC boundary pair around the side-branch Conv (added
-  // by ORT Layout Transformer) + (2) the fused SpaceToDepth's own NCHW<->NHWC
-  // pre/post pair (added by CreateOrValidateOnQnn since QNN SpaceToDepth is NHWC).
+  // 4 = side-Conv NCHW<->NHWC pair (LT) + fused S2D NCHW<->NHWC pre/post pair.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 4);
 }
 
-// RTR-only DCR on HTP backend. Structural coverage of the RTR-only fusion path
-// with DCR perm; disabled because HTP's SpaceToDepth DCR kernel produces
-// element-wise mismatch (same failure signature as the pre-existing DISABLED_
-// SpaceToDepthFusion_Float_DCR and DISABLED_SpaceToDepthFusion_UnequalBlockSize_DCR).
-// * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
+// Bare-RTR DCR structural coverage; disabled — HTP's SpaceToDepth DCR kernel mismatches
+// element-wise (same as pre-existing DISABLED_SpaceToDepthFusion_Float_DCR).
+// Tracking: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
 TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_BareRTR_Float_DCR) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "SpaceToDepthFusion_BareRTR_Float_DCR_HTP";

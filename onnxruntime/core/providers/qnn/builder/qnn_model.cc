@@ -297,13 +297,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
-                                                      // ComposeGraph always runs during Compile, which is
-                                                      // strictly after ORT's Layout Transformer. RTR-only
-                                                      // SpaceToDepth fusion claimed in the 2nd GetCapability
-                                                      // pass must also be built here, so this wrapper reports
-                                                      // post-layout-transform = true (see
-                                                      // QnnModelWrapper::IsPostLayoutTransform() and
-                                                      // spacetodepth_fusion.cc's node_count==3 gate).
+                                                      // Compile runs strictly after Layout Transformer.
                                                       /*is_post_layout_transform=*/true);
 
   qnn::profile::ProfilingInfo profiling_info;

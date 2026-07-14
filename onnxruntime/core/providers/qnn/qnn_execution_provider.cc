@@ -1901,16 +1901,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
-  // Count this top-level GetCapability pass. ORT invokes GetCapability twice for
-  // layout-sensitive EPs (pre- then post-Layout-Transform); node-group fusions
-  // that are only safe post-layout-transform read this via
-  // QnnModelWrapper::IsPostLayoutTransform() (count > 1). Placed before the
-  // empty-graph check so every top-level pass increments the counter 1:1 with
-  // ORT's passes, keeping the pre/post distinction correct even if a pass is
-  // empty.
+  // Count top-level GetCapability passes (subgraphs excluded, empty passes still count).
+  // Node-group fusions read this via QnnModelWrapper::IsPostLayoutTransform() to
+  // distinguish pre-LT (count == 1) from post-LT (count > 1).
   ++ep->get_capability_call_count_;
-  // Verbose trace for pass sequencing: a missing 2nd pass would silently disable
-  // fusions gated on post-LT (e.g. RTR-only SpaceToDepth). Cheap observability.
+  // A missing 2nd pass silently disables post-LT-gated fusions; log for visibility.
   ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
               ("GetCapability pass #" + std::to_string(ep->get_capability_call_count_) +
                " (post-LT=" +

@@ -341,16 +341,10 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   SpaceToDepthPattern core = BuildPattern(reshape1, *transpose, *reshape2,
                                           matched_head_transpose, matched_tail_transpose);
 
-  // RTR-only (3-node) pattern handling:
-  // A bare Reshape->Transpose->Reshape with no wrapping Transposes must only be
-  // fused after ORT's Layout Transformer has run (2nd GetCapability pass). In the
-  // 1st pass (pre-Layout-Transform), claiming it as a MetaDef fusion group hides
-  // the 6D internal complexity from ORT's TransposeOptimizer, which then pushes
-  // layout conversions into the Reshape shape constant and breaks the 5-node
-  // pattern that Conv->RTR->Conv relies on. By the 2nd pass, node_count == 3
-  // means Layout Transformer found no adjacent layout-sensitive op to wrap (it
-  // would have inserted NCHW<->NHWC Transposes otherwise), so fusing RTR-only is
-  // safe — CreateOrValidateOnQnn adds its own pre/post Transpose for the NHWC S2D.
+  // Bare RTR (no wrapping Transposes): fuse only after Layout Transformer runs.
+  // Pass-1 fusion would hide the R/T/R from ORT's TransposeOptimizer, which then
+  // pushes NHWC conversions into the Reshape shape constant and breaks the 5-node
+  // Conv->RTR->Conv pattern. Post-LT is safe: CreateOrValidateOnQnn adds pre/post T.
   if (core.node_count == 3 && !qnn_model_wrapper.IsPostLayoutTransform()) {
     return std::nullopt;
   }
