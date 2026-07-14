@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -348,25 +347,21 @@ bool ValidateAndComputeParams(
   // Core structural validation is already done in HasSpaceToDepthCoreSignature from MatchPattern.
   // Here we only extract params needed for QNN op creation and backend-specific guards.
 
-  // 1. Read shape_6d to obtain block sizes.
-  auto shape_6d = GetInitializerDataAsInt64(qnn_model_wrapper, reshape1.Inputs()[1]);
-  if (!shape_6d.has_value() || shape_6d->size() != kRank6) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: reshape1 shape initializer missing/invalid.");
+  // 1. Read the resolved 6D shape from Reshape1's output ValueInfo to obtain block sizes —
+  // the same source HasSpaceToDepthCoreSignature gates on. GetOnnxShape yields concrete,
+  // non-negative uint32 dims (shape inference has resolved any -1), so no separate overflow
+  // or negativity guard is needed here.
+  std::vector<uint32_t> shape_6d;
+  if (!qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: reshape1 output shape unresolved/invalid.");
     return false;
   }
 
   // [N, C, H / b0, b0, W / b1, b1]
-  const int64_t b0 = (*shape_6d)[3];
-  const int64_t b1 = (*shape_6d)[5];
+  const uint32_t b0 = shape_6d[3];
+  const uint32_t b1 = shape_6d[5];
 
-  // 2. explicit uint32 range checks for final QNN param conversion.
-  if (b0 > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
-      b1 > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: block size overflows uint32.");
-    return false;
-  }
-
-  // 3. Validate transpose permutation and resolve mode (DCR / CRD).
+  // 2. Validate transpose permutation and resolve mode (DCR / CRD).
   OrtNodeAttrHelper transpose_attrs(transpose);
   std::vector<int64_t> perm = transpose_attrs.Get(kAttrTransposePerm, std::vector<int64_t>{});
 
@@ -384,7 +379,7 @@ bool ValidateAndComputeParams(
    * SpaceToDepth kernel limitations are fixed.
    * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
    */
-  // 4. Backend-specific constraints for known kernel limitations.
+  // 3. Backend-specific constraints for known kernel limitations.
   const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
 
   if (IsCpuBackend(backend_type) && b0 != b1) {
@@ -394,8 +389,8 @@ bool ValidateAndComputeParams(
   }
   // ============ Backend-specific constraints end =============.
 
-  block_height = static_cast<uint32_t>(b0);
-  block_width = static_cast<uint32_t>(b1);
+  block_height = b0;
+  block_width = b1;
   return true;
 }
 
