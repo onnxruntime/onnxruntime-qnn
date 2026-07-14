@@ -1884,20 +1884,19 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     // the graph name from the context binary may not match the EPContext node name
     auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
     RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[0], context));
-    // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
-    if (!context_bin_filepath.empty()) {
-      qnn_model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
-    }
     qnn_models.emplace(node_name, std::move(qnn_model));
   } else {
     for (uint32_t i = 0; i < graph_count; ++i) {
       auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
       RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[i], context));
-      // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
-      if (!context_bin_filepath.empty()) {
-        qnn_model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
-      }
       qnn_models.emplace(graphs_info[i].graphInfoV1.graphName, std::move(qnn_model));
+    }
+  }
+
+  // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
+  if (!context_bin_filepath.empty()) {
+    for (auto& [name, model] : qnn_models) {
+      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
     }
   }
 
