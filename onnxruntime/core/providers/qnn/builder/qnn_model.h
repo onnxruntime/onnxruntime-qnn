@@ -162,6 +162,13 @@ class QnnModel {
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& logger);
 
+  // Bind ORT tensors to QNN tensors and execute the graph once.
+  // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
+  // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
+  Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
+                                  const Ort::Logger& logger,
+                                  Qnn_ErrorHandle_t& execute_status);
+
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
 

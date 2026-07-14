@@ -19,6 +19,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "CPU/QnnCpuCommon.h"
@@ -205,6 +206,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
     return context_map_.find(context_handle) != context_map_.end();
+  }
+
+  // Returns true if the context was freed (poisoned). Used to detect use-after-free.
+  bool IsContextPoisoned(Qnn_ContextHandle_t context_handle) const {
+    return poisoned_contexts_.find(context_handle) != poisoned_contexts_.end();
   }
 
   // Returns the mutex that serializes SSR context recovery across models sharing this backend.
@@ -708,6 +714,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Note: Using shared_ptr<QnnContextHandleRecord> so that we can refer to it with a weak_ptr from a
   // HtpSharedMemoryAllocator allocation cleanup callback.
   std::unordered_map<Qnn_ContextHandle_t, std::shared_ptr<QnnContextHandleRecord>> context_map_;
+
+  // Tracks freed context handles to detect use-after-free (see IsContextPoisoned).
+  std::unordered_set<Qnn_ContextHandle_t> poisoned_contexts_;
 
   // Serializes the check → release → create → register sequence in RecoverFromSSR().
   // In weight-sharing scenarios multiple QnnModel instances may detect an SSR event
