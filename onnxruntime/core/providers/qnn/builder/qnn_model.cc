@@ -773,8 +773,8 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
     if (QNN_GRAPH_NO_ERROR != execute_status) {
       return MAKE_EP_FAIL(("QNN graph execute error. " +
-                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
-                            .c_str());
+                           utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
+                              .c_str());
     }
 
     if (attempt == 1) {

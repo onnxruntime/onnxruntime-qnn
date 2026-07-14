@@ -473,7 +473,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
-
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
