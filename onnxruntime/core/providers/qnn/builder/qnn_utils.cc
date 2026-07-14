@@ -1976,6 +1976,31 @@ std::string PtrToString(const void* const ptr) {
   return (std::ostringstream() << ptr).str();
 }
 
+Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
+                                       gsl::span<const float> scales,
+                                       std::vector<uint8_t>& fp16_bytes) {
+  RETURN_IF_NOT(raw_int32_bytes.size() % sizeof(int32_t) == 0,
+                "raw_int32_bytes size must be a multiple of sizeof(int32_t)");
+  const size_t num_elems = raw_int32_bytes.size() / sizeof(int32_t);
+  RETURN_IF_NOT(scales.empty() || scales.size() == 1 || scales.size() == num_elems,
+                "scales must be empty (all 1.0f), per-tensor (size 1), or per-channel (size num_elems)");
+
+  const bool is_per_channel = (scales.size() == num_elems);
+  fp16_bytes.resize(num_elems * sizeof(uint16_t));
+
+  const auto* i32_ptr = reinterpret_cast<const int32_t*>(raw_int32_bytes.data());
+  auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bytes.data());
+
+  for (size_t i = 0; i < num_elems; ++i) {
+    const float scale = scales.empty() ? 1.0f : (is_per_channel ? scales[i] : scales[0]);
+    const float f = static_cast<float>(i32_ptr[i]) * scale;
+    const Ort::Float16_t fp16_val(f);
+    std::memcpy(&u16_ptr[i], &fp16_val.val, sizeof(uint16_t));
+  }
+
+  return Ort::Status();
+}
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

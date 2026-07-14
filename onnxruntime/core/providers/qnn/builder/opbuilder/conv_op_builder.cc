@@ -17,6 +17,47 @@ namespace {
 inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
   return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
 }
+
+// Extracts the per-tensor activation scale from a QNN quant params wrapper.
+// Returns 1.0f for unrecognized encodings (treated as unquantized).
+inline float GetActivationScale(const QnnQuantParamsWrapper& quant_params) {
+  const auto& qp = quant_params.Get();
+  if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+    return qp.scaleOffsetEncoding.scale;
+  }
+  if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+    return qp.bwScaleOffsetEncoding.scale;
+  }
+  return 1.0f;
+}
+
+// Builds a QnnQuantParamsWrapper for a bias tensor from computed scales and offsets.
+// Uses per-tensor encoding when there is exactly one scale, per-channel otherwise.
+inline QnnQuantParamsWrapper BuildBiasQuantParams(const std::vector<float>& new_scales,
+                                                  const std::vector<int32_t>& new_offsets,
+                                                  int32_t bias_quant_axis) {
+  if (new_scales.size() == 1) {
+    return QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0]);
+  }
+  return QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
+}
+
+// Creates a static bias tensor wrapper and registers it with the model.
+inline Ort::Status AddStaticBiasTensor(QnnModelWrapper& qnn_model_wrapper,
+                                       const std::string& bias_name,
+                                       const std::vector<uint32_t>& bias_shape,
+                                       Qnn_DataType_t data_type,
+                                       QnnQuantParamsWrapper quant_params,
+                                       std::vector<uint8_t> bias_data,
+                                       std::vector<std::string>& input_names) {
+  QnnTensorWrapper bias_wrapper(bias_name, QNN_TENSOR_TYPE_STATIC, data_type,
+                                std::move(quant_params), std::vector<uint32_t>(bias_shape),
+                                std::move(bias_data));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_wrapper)),
+                "Failed to add bias tensor.");
+  input_names.push_back(bias_name);
+  return Ort::Status();
+}
 }  // namespace
 
 // ONNX convolution types supported by this builder.
@@ -72,6 +113,17 @@ class ConvOpBuilder : public BaseOpBuilder {
   Ort::Status GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
                                     const OrtNodeUnit& node_unit,
                                     uint32_t& input_channel_number) const;
+
+  // Handles all bias strategies for Conv.
+  //   1. BQ FP16 path (is_bq_weight && !use_lpbq_path): dequantize INT32 bias to FP16.
+  //   2. Requantize-if-mismatch path: fix bias scales to match activation_scale * weight_scale.
+  //   3. Normal path: pass bias through ProcessInput unchanged.
+  Ort::Status ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
+                              const Ort::Logger& logger,
+                              const std::vector<OrtNodeUnitIODef>& inputs,
+                              bool is_bq_weight,
+                              bool use_lpbq_path,
+                              std::vector<std::string>& input_names) const ORT_MUST_USE_RESULT;
 };
 
 // Conv/ConvTranspose ops are sensitive with data layout, no special validation so far
@@ -238,6 +290,137 @@ Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   return MAKE_EP_FAIL("QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
 }
 
+// Dequantize INT32 bias to FP16 for BW_FLOAT_BLOCK Conv.
+static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnitIODef& bias_def,
+                                      std::vector<std::string>& input_names) {
+  TensorInfo bias_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
+  RETURN_IF(!bias_info.is_initializer, "QNN EP: BQ Conv bias must be a constant initializer");
+
+  std::vector<uint8_t> raw_bias_bytes;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, raw_bias_bytes));
+
+  std::vector<float> bias_scale_vals;
+  if (bias_def.quant_param.has_value() && bias_def.quant_param->scale != nullptr) {
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(bias_def.quant_param->scale, bias_scale_vals));
+  }
+
+  const size_t num_elems = bias_info.shape[0];
+  RETURN_IF_NOT(raw_bias_bytes.size() == num_elems * sizeof(int32_t), "BQ bias size mismatch");
+  RETURN_IF_NOT(bias_scale_vals.size() <= 1 || bias_scale_vals.size() == num_elems,
+                "QNN EP: BQ Conv bias scale count must be 1 (per-tensor) or OC (per-channel)");
+
+  std::vector<uint8_t> fp16_bias_bytes;
+  RETURN_IF_ERROR(utils::DequantizeInt32BiasToFp16(raw_bias_bytes, bias_scale_vals, fp16_bias_bytes));
+
+  const std::string fp16_bias_name = utils::UniqueNameGenerator().New(bias_def.name, "_fp16");
+  return AddStaticBiasTensor(qnn_model_wrapper, fp16_bias_name, bias_info.shape,
+                             QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                             std::move(fp16_bias_bytes), input_names);
+}
+
+// Requantize a quantized bias whose scales don't match activation_scale * weight_scale.
+// Sets was_requantized=true and adds the tensor if requantization was needed; false if scales match.
+static Ort::Status ProcessRequantizeBias(QnnModelWrapper& qnn_model_wrapper,
+                                          const Ort::Logger& logger,
+                                          const OrtNodeUnitIODef& bias_def,
+                                          const TensorInfo& bias_info,
+                                          gsl::span<const float> weights_scales,
+                                          float activation_scale,
+                                          std::vector<std::string>& input_names,
+                                          bool& was_requantized) {
+  was_requantized = false;
+  int32_t bias_quant_axis = 0;
+  std::vector<float> current_scales;
+  std::vector<int32_t> current_offsets;
+  RETURN_IF_ERROR(utils::GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales,
+                                                      current_offsets, bias_quant_axis));
+
+  const size_t num_channels = current_scales.size();
+  bool needs_requantization = false;
+  for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
+    const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
+    if (current_offsets[i] != 0 ||
+        !utils::CheckBiasScaleMatch(current_scales[i], w, activation_scale, 1e-5f)) {
+      needs_requantization = true;
+    }
+  }
+
+  if (!needs_requantization) {
+    return Ort::Status();  // Scales already match; process bias normally.
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Requantizing bias " + bias_def.name).c_str());
+
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+
+  std::vector<uint8_t> new_bias_data;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  const auto axis_opt = (num_channels > 1) ? std::optional<int64_t>(bias_quant_axis) : std::nullopt;
+  RETURN_IF_ERROR(utils::RequantizeBiasTensor(
+      original_bias_data, bias_info.shape, current_scales, current_offsets,
+      weights_scales, activation_scale, bias_info.qnn_data_type,
+      new_bias_data, new_scales, new_offsets, axis_opt));
+
+  RETURN_IF_ERROR(AddStaticBiasTensor(qnn_model_wrapper, bias_def.name, bias_info.shape,
+                                      bias_info.qnn_data_type,
+                                      BuildBiasQuantParams(new_scales, new_offsets, bias_quant_axis),
+                                      std::move(new_bias_data), input_names));
+  was_requantized = true;
+  return Ort::Status();
+}
+
+Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
+                                           const Ort::Logger& logger,
+                                           const std::vector<OrtNodeUnitIODef>& inputs,
+                                           bool is_bq_weight,
+                                           bool use_lpbq_path,
+                                           std::vector<std::string>& input_names) const {
+  // BQ FP16 path.
+  if (is_bq_weight && !use_lpbq_path) {
+    return ProcessBqFp16Bias(qnn_model_wrapper, inputs[2], input_names);
+  }
+
+  const auto& bias_def = inputs[2];
+  TensorInfo bias_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
+
+  if (bias_info.is_initializer) {
+    TensorInfo input0_info = {}, input1_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
+
+    if (input0_info.quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
+      const float activation_scale = GetActivationScale(input0_info.quant_param);
+      std::vector<float> weights_scales;
+      RETURN_IF_ERROR(utils::GetWeightQuantScales(input1_info.quant_param, weights_scales));
+      RETURN_IF(weights_scales.empty(), "No weight scales found for bias quantization");
+
+      if (bias_info.quant_param.IsQuantized()) {
+        // Requantize if bias scales don't match activation_scale * weight_scale.
+        bool was_requantized = false;
+        RETURN_IF_ERROR(ProcessRequantizeBias(qnn_model_wrapper, logger, bias_def, bias_info,
+                                              weights_scales, activation_scale, input_names,
+                                              was_requantized));
+        if (was_requantized) {
+          return Ort::Status();
+        }
+        // Else scales already match, process bias normally.
+      } else {
+        // Bias is float, quantize using activation_scale * weight_scale
+        ORT_RETURN_IF_ERROR(ProcessFloatBias(qnn_model_wrapper, logger, bias_def, bias_info,
+                                             weights_scales, activation_scale, input_names));
+      }
+    }
+  }
+
+  // Process bias normally: non-initializer, or activation/weight not quantized, or scales already match.
+  return ProcessInput(qnn_model_wrapper, bias_def, logger, input_names);
+}
+
 Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
                                                  const OrtNodeUnit& node_unit,
                                                  const Ort::Logger& logger,
@@ -281,12 +464,39 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
-  const bool is_lpbq_weight = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
-                              IsQuant16bit(act_dtype) &&
-                              input_info.is_initializer &&
-                              input_info.quant_param.IsLPBQ();
+  // use_lpbq_path: take the BLOCKWISE_EXPANSION (LPBQ) kernel path instead of BW_FLOAT_BLOCK.
+  // All four conditions must hold:
+  //   1. NPU backend - LPBQ is an HTP-only encoding.
+  //   2. 16-bit quantized activation (uint16/int16) - LPBQ requires INT16 activation input.
+  //   3. Weight is a constant initializer - dynamic weights cannot be LPBQ-encoded at graph-prepare time.
+  //   4. Weight quant params are LPBQ - enable_block_quant_weight_optimization=1 and INT4 weight with symmetric ZPs.
+  const bool use_lpbq_path = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                             IsQuant16bit(act_dtype) &&
+                             input_info.is_initializer &&
+                             input_info.quant_param.IsLPBQ();
 
-  if (is_bq_weight && !is_lpbq_weight) {
+  // For logging and debugging purposes.
+  if (is_bq_weight) {
+    if (use_lpbq_path) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Conv weight encoding: LPBQ (BLOCKWISE_EXPANSION) for " + input1_name).c_str());
+    } else {
+      const char* reason = !IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())
+                               ? "non-NPU backend"
+                           : !IsQuant16bit(act_dtype)
+                               ? "activation not 16-bit quantized"
+                           : !input_info.is_initializer
+                               ? "weight is not a constant initializer"
+                           : !input_info.quant_param.IsLPBQ()
+                               ? "weight quant params not LPBQ (enable_block_quant_weight_optimization=0, non-INT4, or asymmetric ZP)"
+                               : "unknown";
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Conv weight encoding: BW_FLOAT_BLOCK for " + input1_name +
+                   " [LPBQ skipped: " + reason + "]").c_str());
+    }
+  }
+
+  if (is_bq_weight && !use_lpbq_path) {
     RETURN_IF(!input_info.is_initializer, "QNN EP: BQ Conv weight must be a constant initializer");
 
     // Activation handling: BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via Dequantize.
@@ -385,7 +595,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     }
 
     bool is_3d = (input_info.shape.size() == 5);
-    RETURN_IF(is_3d && is_lpbq_weight, "LPBQ is only supported for Conv2d (rank-4 weights)");
+    RETURN_IF(is_3d && use_lpbq_path, "LPBQ is only supported for Conv2d (rank-4 weights)");
 
     std::vector<uint8_t> unpacked_tensor;
     if (input_info.is_initializer) {
@@ -399,7 +609,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       }
 
       // Transpose quantization parameter's axis if this is using per-channel or LPBQ quantization.
-      if (input_info.quant_param.IsPerChannel() || is_lpbq_weight) {
+      if (input_info.quant_param.IsPerChannel() || use_lpbq_path) {
         std::vector<size_t> perm;
         if (is_3d) {
           perm = conv_type == OnnxConvType::kConv ? nchw2hwcn_perm_3d : cnhw2hwcn_perm_3d;
@@ -412,7 +622,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       }
     } else {
       // Add transpose node above weight input.
-      RETURN_IF(input_info.quant_param.IsPerChannel() || is_lpbq_weight,
+      RETURN_IF(input_info.quant_param.IsPerChannel() || use_lpbq_path,
                 "Non-constant Conv inputs only support per-tensor quantization");
       bool is_graph_input = qnn_model_wrapper.IsGraphInput(input1_name);
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Add HWCN Transpose node after input: " + input1_name).c_str());
@@ -506,176 +716,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   //
   const bool has_bias_input = num_inputs == 3;
   if (has_bias_input) {
-    // For BQ Conv: QNN BW_FLOAT_BLOCK Conv2d requires FP16 bias matching the computation precision.
-    // The bias in the QDQ NodeUnit is an INT32 quantized initializer — dequantize it to FP16.
-    if (is_bq_weight && !is_lpbq_weight) {
-      TensorInfo bias_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
-      RETURN_IF(!bias_info.is_initializer, "QNN EP: BQ Conv bias must be a constant initializer");
-
-      // Read the INT32 quantized bias and its scale(s), then dequantize to FP16.
-      // QNN BW_FLOAT_BLOCK Conv2d requires FP16 bias matching the computation precision.
-      // Bias scale may be per-tensor (1 value) or per-channel (one value per output channel).
-      std::vector<uint8_t> raw_bias_bytes;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor,
-                                                              raw_bias_bytes));
-      std::vector<float> bias_scale_vals;
-      if (inputs[2].quant_param.has_value() && inputs[2].quant_param->scale != nullptr) {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[2].quant_param->scale, bias_scale_vals));
-      }
-
-      // Dequantize INT32 → FP16 (stored as uint16 in memory): bias[i] = q[i] * scale[i or 0].
-      const size_t num_elems = bias_info.shape[0];
-      RETURN_IF_NOT(raw_bias_bytes.size() == num_elems * sizeof(int32_t), "BQ bias size mismatch");
-      // Scale is per-tensor (1), per-channel (num_elems == OC), or absent (defaults to 1.0f).
-      const bool is_per_channel_bias = bias_scale_vals.size() == num_elems;
-      RETURN_IF_NOT(bias_scale_vals.size() <= 1 || is_per_channel_bias,
-                    "QNN EP: BQ Conv bias scale count must be 1 (per-tensor) or OC (per-channel)");
-      std::vector<uint8_t> fp16_bias_bytes(num_elems * sizeof(uint16_t));
-      const auto* i32_ptr = reinterpret_cast<const int32_t*>(raw_bias_bytes.data());
-      auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bias_bytes.data());
-      for (size_t i = 0; i < num_elems; ++i) {
-        const float scale = bias_scale_vals.empty() ? 1.0f
-                                                    : (is_per_channel_bias ? bias_scale_vals[i]
-                                                                           : bias_scale_vals[0]);
-        const float f = static_cast<float>(i32_ptr[i]) * scale;
-        const Ort::Float16_t fp16_val(f);
-        memcpy(&u16_ptr[i], &fp16_val.val, sizeof(uint16_t));
-      }
-
-      const std::string fp16_bias_name = utils::UniqueNameGenerator().New(inputs[2].name, "_fp16");
-      QnnTensorWrapper fp16_bias_wrapper(fp16_bias_name, QNN_TENSOR_TYPE_STATIC,
-                                         QNN_DATATYPE_FLOAT_16,
-                                         QnnQuantParamsWrapper(),
-                                         std::vector<uint32_t>(bias_info.shape),
-                                         std::move(fp16_bias_bytes));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_bias_wrapper)),
-                    "Failed to add FP16 bias for BQ Conv.");
-      input_names.push_back(fp16_bias_name);
-    } else {
-      const auto& bias_input = inputs[2];
-      TensorInfo bias_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_input, bias_info));
-
-      bool bias_handled = false;
-
-      // For a static bias when activation and weight are both quantized, ensure
-      // bias_scale = activation_scale * weight_scale.
-      // This applies whether the bias is already quantized (requantize if needed) or float (quantize it).
-      if (bias_info.is_initializer) {
-        TensorInfo input0_info = {};
-        TensorInfo input1_info = {};
-        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
-        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
-
-        if (input0_info.quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
-          // Get activation scale (must be per-tensor for Conv)
-          RETURN_IF_NOT(input0_info.quant_param.IsPerTensor(/*include_bw*/ true),
-                        "Activation must be per-tensor quantized for Conv 2D");
-          float activation_scale = 1.0f;
-          const auto& act_quant_params = input0_info.quant_param.Get();
-          if (act_quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
-            activation_scale = act_quant_params.scaleOffsetEncoding.scale;
-          } else if (act_quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
-            activation_scale = act_quant_params.bwScaleOffsetEncoding.scale;
-          }
-
-          int32_t bias_quant_axis = 0;
-          std::vector<float> weights_scales;
-          RETURN_IF_ERROR(utils::GetWeightQuantScales(input1_info.quant_param, weights_scales));
-          RETURN_IF_NOT(!weights_scales.empty(), "No weight scales found for bias quantization");
-
-          if (bias_info.quant_param.IsQuantized()) {
-            // Bias is already quantized: check if scales match, requantize if needed.
-            std::vector<float> current_scales;
-            std::vector<int32_t> current_offsets;
-            RETURN_IF_ERROR(utils::GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales, current_offsets, bias_quant_axis));
-
-            const size_t num_channels = current_scales.size();
-            bool needs_requantization = false;
-            for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
-              const float weight_scale = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
-              if (current_offsets[i] != 0 ||
-                  !utils::CheckBiasScaleMatch(current_scales[i], weight_scale, activation_scale, 1e-5f)) {
-                needs_requantization = true;
-              }
-            }
-
-            if (needs_requantization) {
-              ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Requantizing bias " + bias_input.name).c_str());
-
-              std::vector<uint8_t> original_bias_data;
-              RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
-
-              std::vector<uint8_t> requantized_bias_data;
-              std::vector<float> new_scales;
-              std::vector<int32_t> new_offsets;
-              const std::optional<int64_t> axis_opt = (num_channels > 1) ? std::optional<int64_t>(bias_quant_axis) : std::nullopt;
-              RETURN_IF_ERROR(utils::RequantizeBiasTensor(
-                  original_bias_data, bias_info.shape, current_scales, current_offsets,
-                  weights_scales, activation_scale, bias_info.qnn_data_type,
-                  requantized_bias_data, new_scales, new_offsets, axis_opt));
-
-              QnnQuantParamsWrapper new_quant_params;
-              if (new_scales.size() == 1) {
-                new_quant_params = QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0]);
-              } else {
-                new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
-              }
-
-              std::string bias_name = bias_input.name;
-              QnnTensorWrapper bias_tensorwrapper(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
-                                                  std::move(new_quant_params), std::vector<uint32_t>(bias_info.shape),
-                                                  std::move(requantized_bias_data));
-              RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensorwrapper)),
-                            "Failed to add requantized bias tensor.");
-              input_names.push_back(bias_name);
-              bias_handled = true;
-            }
-          } else {
-            // Bias is float: quantize using bias_scale = activation_scale * weight_scale.
-            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                        ("Quantizing float bias " + bias_input.name + " using activation_scale * weight_scale[c]").c_str());
-
-            std::vector<uint8_t> original_bias_data;
-                RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
-
-            const size_t num_channels = bias_info.shape[0];
-            RETURN_IF_NOT(original_bias_data.size() == num_channels * sizeof(float),
-                          "Unexpected bias data size for float bias quantization");
-            auto bias_float_data = gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels);
-
-            std::vector<uint8_t> quantized_bias_data;
-            std::vector<float> new_scales;
-            std::vector<int32_t> new_offsets;
-            RETURN_IF_ERROR(utils::QuantizeFloatBiasTensor(
-                bias_float_data, weights_scales, activation_scale,
-                quantized_bias_data, new_scales, new_offsets));
-
-            QnnQuantParamsWrapper new_quant_params;
-            if (weights_scales.size() == 1) {
-              new_quant_params = QnnQuantParamsWrapper::PerTensor(new_scales[0], 0);
-            } else {
-              new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
-            }
-
-            std::string bias_name = bias_input.name;
-            QnnTensorWrapper bias_tensorwrapper(bias_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,
-                                                std::move(new_quant_params), std::vector<uint32_t>(bias_info.shape),
-                                                std::move(quantized_bias_data));
-            RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensorwrapper)),
-                          "Failed to add quantized float bias tensor.");
-            input_names.push_back(bias_name);
-            bias_handled = true;
-          }
-        }
-      }
-
-      if (!bias_handled) {
-        // Process bias normally: non-initializer, or activation/weight not quantized, or scales already match.
-        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, bias_input, logger, input_names));
-      }
-    }
+    RETURN_IF_ERROR(ProcessConvBias(qnn_model_wrapper, logger,
+                                    inputs, is_bq_weight, use_lpbq_path, input_names));
   }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 16 && QNN_API_VERSION_MINOR <= 18)

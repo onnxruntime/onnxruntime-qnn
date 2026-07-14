@@ -668,19 +668,6 @@ Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant
                                          std::vector<int32_t>& offsets,
                                          int32_t& axis);
 
-// Quantizes a float bias tensor to int32 using bias_scale = activation_scale * weight_scale.
-// Used when the bias is provided as float (no quantization info) but activation and weight are quantized.
-// If weights_scales has a single element, per-tensor bias quantization is used (all channels share one scale).
-// Otherwise, per-channel bias quantization is used (one scale per output channel).
-// The output quantized_bias_bytes contains packed int32 values (4 bytes per channel).
-// bias_offsets is always all-zeros (symmetric quantization).
-Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
-                                    gsl::span<const float> weights_scales,
-                                    float activation_scale,
-                                    /*out*/ std::vector<uint8_t>& quantized_bias_bytes,
-                                    /*out*/ std::vector<float>& bias_scales,
-                                    /*out*/ std::vector<int32_t>& bias_offsets);
-
 // Requantizes a static bias tensor with new quantization parameters
 // This function:
 // 1. Dequantizes the bias tensor to float using current parameters
@@ -871,6 +858,18 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
    Intended for ORT logging
 */
 std::string PtrToString(const void* const ptr);
+
+/**
+ * Dequantizes a packed INT32 bias tensor to FP16 bytes.
+ * Each element is computed as: fp16(int32[i] * scale[i or 0]).
+ * @param raw_int32_bytes  Packed INT32 data (num_elems * sizeof(int32_t) bytes).
+ * @param scales           Per-tensor (size 1) or per-channel (size num_elems) float scales.
+ *                         Empty means all scales are 1.0f.
+ * @param fp16_bytes       Output: FP16 bytes (num_elems * sizeof(uint16_t) bytes).
+ */
+Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
+                                       gsl::span<const float> scales,
+                                       std::vector<uint8_t>& fp16_bytes);
 
 }  // namespace utils
 }  // namespace qnn
