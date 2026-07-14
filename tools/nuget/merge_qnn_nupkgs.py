@@ -33,9 +33,7 @@ X64_RUNTIME_PREFIX = "runtimes/win-x64/"
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(
-        description=f"Merge per-architecture {PACKAGE_ID} nupkgs into a single package."
-    )
+    parser = argparse.ArgumentParser(description=f"Merge per-architecture {PACKAGE_ID} nupkgs into a single package.")
     parser.add_argument(
         "--input_dir",
         required=True,
@@ -93,15 +91,13 @@ def discover_packages(input_dir):
         if has_arm64:
             if arm64_pkg is not None:
                 raise SystemExit(
-                    f"error: found more than one package with win-arm64 runtimes "
-                    f"('{arm64_pkg.name}' and '{pkg.name}')."
+                    f"error: found more than one package with win-arm64 runtimes ('{arm64_pkg.name}' and '{pkg.name}')."
                 )
             arm64_pkg = pkg
         elif has_x64:
             if x64_pkg is not None:
                 raise SystemExit(
-                    f"error: found more than one package with win-x64 runtimes "
-                    f"('{x64_pkg.name}' and '{pkg.name}')."
+                    f"error: found more than one package with win-x64 runtimes ('{x64_pkg.name}' and '{pkg.name}')."
                 )
             x64_pkg = pkg
 
@@ -132,6 +128,15 @@ def _nuspec_ignoring_version(data):
 def _shared_file_contents_match(norm, base_data, other_data):
     if norm.endswith(".nuspec"):
         return _nuspec_ignoring_version(base_data) == _nuspec_ignoring_version(other_data)
+    if norm == "[Content_Types].xml":
+        # Expected to differ: this OPC manifest enumerates every distinct file extension
+        # present in *that* package. The ARM64X package legitimately carries extra
+        # extensions (.so, .cat for HTP skel/cat files) that the x64 package doesn't ship.
+        # The merged output always uses the base (ARM64X) copy of this file; it already
+        # declares "dll" (from its own DLLs), which is the only extension the x64
+        # package's runtime files add, so the base copy is sufficient regardless of how
+        # the two differ.
+        return True
     return base_data == other_data
 
 
@@ -182,9 +187,7 @@ def merge(arm64_pkg, x64_pkg, output_dir):
 
 def _derive_version(base_zip, base_pkg_path):
     """Read the package version from the base package's .nuspec, falling back to the filename."""
-    nuspec_name = next(
-        (n for n in base_zip.namelist() if _normalize(n).endswith(".nuspec")), None
-    )
+    nuspec_name = next((n for n in base_zip.namelist() if _normalize(n).endswith(".nuspec")), None)
     if nuspec_name is not None:
         import re
 
