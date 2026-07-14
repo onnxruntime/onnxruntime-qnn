@@ -495,17 +495,9 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
       // Free the old (shared) context and create a new one from the binary.
       qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
 
-      std::ifstream cache_file(context_bin_filepath_.c_str(), std::ifstream::binary);
-      RETURN_IF(!cache_file || !cache_file.good(),
-                ("SSR recovery: failed to open context file: " + context_bin_filepath_).c_str());
-      cache_file.seekg(0, cache_file.end);
-      const size_t buffer_size = static_cast<size_t>(cache_file.tellg());
-      RETURN_IF(buffer_size == 0, ("SSR recovery: context binary file is empty: " + context_bin_filepath_).c_str());
-      cache_file.seekg(0, cache_file.beg);
-      auto buffer = std::make_unique<char[]>(buffer_size);
-      cache_file.read(buffer.get(), static_cast<std::streamsize>(buffer_size));
-      RETURN_IF(!cache_file, ("SSR recovery: failed to read context binary: " + context_bin_filepath_).c_str());
-      cache_file.close();
+      // Use the unified file I/O helper instead of duplicating the read logic.
+      std::vector<char> buffer;
+      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer));
 
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
@@ -542,8 +534,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
           qnn_backend_manager_->GetQnnBackendHandle(),
           qnn_backend_manager_->GetQnnDeviceHandle(),
           context_configs,
-          static_cast<void*>(buffer.get()),
-          static_cast<Qnn_ContextBinarySize_t>(buffer_size),
+          static_cast<void*>(buffer.data()),
+          static_cast<Qnn_ContextBinarySize_t>(buffer.size()),
           &new_context,
           qnn_backend_manager_->GetQnnProfileHandle());
       RETURN_IF(QNN_SUCCESS != rt,

@@ -196,6 +196,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Adds a new QNN context handle and takes ownership (responsible for freeing via contextFree).
   Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
 
+  // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
+  // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
+  // file I/O logic.
+  Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
+                                    std::vector<char>& buffer);
+
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
     return context_map_.find(context_handle) != context_map_.end();
@@ -467,8 +473,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
-  Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map);
