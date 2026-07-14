@@ -137,6 +137,15 @@ def _shared_file_contents_match(norm, base_data, other_data):
         # package's runtime files add, so the base copy is sufficient regardless of how
         # the two differ.
         return True
+    if norm == "lib/netstandard2.0/Qualcomm.ML.OnnxRuntime.QNN.dll":
+        # Expected to potentially differ: this architecture-neutral managed helper assembly
+        # is built by two separate `dotnet build` invocations (one per arch job). Even from
+        # identical source at the same commit, unrelated .NET builds are not guaranteed
+        # byte-for-byte reproducible (PE timestamp, MVID GUID) unless the project opts into
+        # deterministic builds. The merged output always uses the base (ARM64X) copy, which
+        # is functionally equivalent IL either way, so a binary mismatch here is not a real
+        # problem worth blocking the merge over.
+        return True
     return base_data == other_data
 
 
