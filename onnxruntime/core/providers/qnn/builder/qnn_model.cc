@@ -706,13 +706,23 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     // and creating a new one — our graph/context handles are now dangling.  Detect this
     // by checking whether our context handle is still tracked by the backend manager, and
     // proactively recover before calling graphExecute with invalid handles.
-    if (!context_bin_filepath_.empty() &&
-        !qnn_backend_manager_->HasContextHandle(graph_info_->GraphContext())) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  "SSR recovery: context was already freed by another QnnModel in the same context, "
-                  "recovering proactively.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
-      continue;  // retry with fresh context and re-bound tensors
+    //
+    // The check is under context_recovery_mutex_ to avoid racing with a sibling model
+    // that is concurrently modifying context_map_ inside its own RecoverFromSSR.
+    // The lock is released before calling RecoverFromSSR (which re-acquires it internally).
+    if (!context_bin_filepath_.empty()) {
+      bool context_is_stale = false;
+      {
+        std::lock_guard<std::mutex> recovery_lock(qnn_backend_manager_->GetContextRecoveryMutex());
+        context_is_stale = !qnn_backend_manager_->HasContextHandle(graph_info_->GraphContext());
+      }
+      if (context_is_stale) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    "SSR recovery: context was already freed by another QnnModel in the same context, "
+                    "recovering proactively.");
+        RETURN_IF_ERROR(RecoverFromSSR(logger));
+        continue;  // retry with fresh context and re-bound tensors
+      }
     }
 
     {
