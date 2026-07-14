@@ -292,8 +292,8 @@ Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
 // Dequantize INT32 bias to FP16 for BW_FLOAT_BLOCK Conv.
 static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
-                                      const OrtNodeUnitIODef& bias_def,
-                                      std::vector<std::string>& input_names) {
+                                     const OrtNodeUnitIODef& bias_def,
+                                     std::vector<std::string>& input_names) {
   TensorInfo bias_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
   RETURN_IF(!bias_info.is_initializer, "QNN EP: BQ Conv bias must be a constant initializer");
@@ -323,13 +323,13 @@ static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
 // Requantize a quantized bias whose scales don't match activation_scale * weight_scale.
 // Sets was_requantized=true and adds the tensor if requantization was needed; false if scales match.
 static Ort::Status ProcessRequantizeBias(QnnModelWrapper& qnn_model_wrapper,
-                                          const Ort::Logger& logger,
-                                          const OrtNodeUnitIODef& bias_def,
-                                          const TensorInfo& bias_info,
-                                          gsl::span<const float> weights_scales,
-                                          float activation_scale,
-                                          std::vector<std::string>& input_names,
-                                          bool& was_requantized) {
+                                         const Ort::Logger& logger,
+                                         const OrtNodeUnitIODef& bias_def,
+                                         const TensorInfo& bias_info,
+                                         gsl::span<const float> weights_scales,
+                                         float activation_scale,
+                                         std::vector<std::string>& input_names,
+                                         bool& was_requantized) {
   was_requantized = false;
   int32_t bias_quant_axis = 0;
   std::vector<float> current_scales;
@@ -492,7 +492,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                : "unknown";
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
                   ("Conv weight encoding: BW_FLOAT_BLOCK for " + input1_name +
-                   " [LPBQ skipped: " + reason + "]").c_str());
+                   " [LPBQ skipped: " + reason + "]")
+                      .c_str());
     }
   }
 

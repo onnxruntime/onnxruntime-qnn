@@ -1977,8 +1977,8 @@ std::string PtrToString(const void* const ptr) {
 }
 
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
-                                       gsl::span<const float> scales,
-                                       std::vector<uint8_t>& fp16_bytes) {
+                                      gsl::span<const float> scales,
+                                      std::vector<uint8_t>& fp16_bytes) {
   RETURN_IF_NOT(raw_int32_bytes.size() % sizeof(int32_t) == 0,
                 "raw_int32_bytes size must be a multiple of sizeof(int32_t)");
   const size_t num_elems = raw_int32_bytes.size() / sizeof(int32_t);

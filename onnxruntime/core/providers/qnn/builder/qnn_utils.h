@@ -868,8 +868,8 @@ std::string PtrToString(const void* const ptr);
  * @param fp16_bytes       Output: FP16 bytes (num_elems * sizeof(uint16_t) bytes).
  */
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
-                                       gsl::span<const float> scales,
-                                       std::vector<uint8_t>& fp16_bytes);
+                                      gsl::span<const float> scales,
+                                      std::vector<uint8_t>& fp16_bytes);
 
 }  // namespace utils
 }  // namespace qnn
