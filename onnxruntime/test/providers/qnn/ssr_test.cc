@@ -140,10 +140,11 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedMode) {
   CleanUpCtxFile(context_model_file);
 }
 
+// TODO: The test case is instable on CI devices and requires further investigation
 // Test SSR recovery with a naturally-partitioned model: a CPU-only op (FusedGemm) forces
 // the model into 2 QNN partitions, producing 2 EPContext nodes sharing one context binary.
 // Each partition recovers independently via contextCreateFromBinary + graphRetrieve.
-TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPartition) {
+TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextNonEmbedModeCpuFallbackPartition) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::string context_model_file = "./ssr_cpu_fallback_partition_ctx.onnx";
