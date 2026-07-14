@@ -214,6 +214,56 @@ class QnnQuantParamsWrapper {
     return Ort::Status();
   }
 
+  // Handle "squeeze" of a per-channel or LPBQ quantized tensor. The quantization parameter's
+  // axis may need to be shifted if dimensions before the quantization axis were removed.
+  template <typename IntType>
+  Ort::Status HandleSqueeze(gsl::span<const IntType> orig_shape,
+                            gsl::span<const IntType> new_shape) {
+    if (!IsPerChannel() && !IsLPBQ()) {
+      return Ort::Status();
+    }
+
+    RETURN_IF_NOT(orig_shape.size() > new_shape.size(), "Expected squeezed shape to have a smaller rank.");
+
+    int32_t* quant_axis = nullptr;
+    if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
+      quant_axis = &params_.axisScaleOffsetEncoding.axis;
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
+      quant_axis = &params_.bwAxisScaleOffsetEncoding.axis;
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION &&
+               params_.blockwiseExpansion != nullptr) {
+      quant_axis = &params_.blockwiseExpansion->axis;
+    } else {
+      return MAKE_EP_FAIL(("Unhandled quantization encoding: " + std::to_string(params_.quantizationEncoding)).c_str());
+    }
+
+    RETURN_IF_NOT(*quant_axis >= 0 && static_cast<size_t>(*quant_axis) < orig_shape.size(),
+                  "Axis value is out of range of the original shape.");
+
+    bool found_axis = false;
+    size_t new_axis = 0;
+    size_t j = 0;
+    for (size_t i = 0; i < orig_shape.size(); ++i) {
+      if (j < new_shape.size() && orig_shape[i] == new_shape[j]) {
+        if (i == static_cast<size_t>(*quant_axis)) {
+          found_axis = true;
+          new_axis = j;
+        }
+        ++j;
+      } else {
+        RETURN_IF_NOT(orig_shape[i] == 1, "Only dimensions of size 1 can be squeezed.");
+        RETURN_IF_NOT(i != static_cast<size_t>(*quant_axis),
+                      "Cannot squeeze a dimension that contains the quantization axis.");
+      }
+    }
+
+    RETURN_IF_NOT(j == new_shape.size(), "Squeezed shape does not match the original shape.");
+    RETURN_IF_NOT(found_axis, "Cannot squeeze a dimension that contains the quantization axis.");
+    *quant_axis = static_cast<int32_t>(new_axis);
+
+    return Ort::Status();
+  }
+
  private:
   Qnn_QuantizeParams_t params_;
 

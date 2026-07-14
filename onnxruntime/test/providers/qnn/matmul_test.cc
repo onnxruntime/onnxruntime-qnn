@@ -4,9 +4,11 @@
 #include "qnn_test_utils.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -362,6 +364,40 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
   // RunMatMulOpTest({2, 3, 3, 3}, {3, 2}, true, false);
 }
 
+TEST_F(QnnCPUBackendTests, MatMulOp_QDQ_StaticLeadingUnitDimsPerTensorWeight) {
+  const std::filesystem::path json_qnn_graph_dir = "MatMulOp_QDQ_StaticLeadingUnitDimsPerTensorWeight";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const std::vector<int64_t> shape_input = {2, 3};
+  const std::vector<int64_t> shape_weight = {1, 1, 3, 4};
+  TestInputDef<float> input_def(
+      shape_input, false,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_input.begin(), shape_input.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+  TestInputDef<float> weight_def(
+      shape_weight, true,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_weight.begin(), shape_weight.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+
+  TestQDQModelAccuracy(
+      BuildMatMulOpTestCase(input_def, weight_def),
+      BuildMatMulOpQDQTestCase<uint8_t, uint8_t, uint8_t>(input_def, weight_def, false),
+      provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "MatMul", /*count=*/0);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 //
@@ -657,9 +693,46 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ) {
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_StaticLeadingUnitDimsPerChannelInt16Weight) {
-  RunQDQPerChannelMatMulOpTest<uint16_t, int16_t, uint16_t>(
-      {1, 6, 3, 3}, {1, 1, 3, 420}, 3, QDQTolerance(),
-      ExpectedEPNodeAssignment::All, 21, false, true);
+  const std::filesystem::path json_qnn_graph_dir = "MatMulOp_QDQ_StaticLeadingUnitDimsPerChannelInt16Weight";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const std::vector<int64_t> shape_input = {1, 6, 3, 3};
+  const std::vector<int64_t> shape_weight = {1, 1, 3, 420};
+  TestInputDef<float> input_def(
+      shape_input, false,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_input.begin(), shape_input.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+  TestInputDef<float> weight_def(
+      shape_weight, true,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_weight.begin(), shape_weight.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+
+  TestQDQModelAccuracy(BuildMatMulOpTestCase(input_def, weight_def),
+                       BuildQDQPerChannelMatMulTestCase<uint16_t, int16_t, uint16_t>(
+                           input_def, weight_def, /*weight_quant_axis=*/3, /*use_contrib_qdq=*/false),
+                       provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) return;
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "MatMul", /*count=*/0);
 }
 
 // Tests MatMul with two uint16 (quantized) inputs that are both dynamic.
