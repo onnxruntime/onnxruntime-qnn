@@ -30,6 +30,7 @@ static const std::string MAX_SIZE = "max_size";
 // Serialized internal->external tensor-name overrides produced by offload_graph_io_quantization.
 // Persisted into the EPContext node so the cached-context load path can resolve graph I/O by name.
 static const std::string IO_NAME_OVERRIDES = "io_name_overrides";
+static const std::string IS_MULTI_SOC_EP_CONTEXT = "is_multi_soc_ep_context";
 
 // EP_CONTEXT_TYPES
 static const std::string EP_CONTEXT_TYPE_BIN = "bin";
@@ -95,7 +96,8 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  bool share_ep_contexts,
                                  bool stop_share_ep_contexts,
                                  const std::string& ep_name,
-                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides);
+                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides,
+                                 bool enable_multi_soc_ep_context);
 
 }  // namespace qnn
 }  // namespace onnxruntime
