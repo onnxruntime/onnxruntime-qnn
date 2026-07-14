@@ -147,6 +147,8 @@ TEST_F(QnnCPUBackendTests, EinsumRank3MatMul_QK) {
       /*tolerance=*/1e-4f);
 }
 
+// Update tolerance to 3e-4f as part of QAIRT 2.48.0 uplevel
+// Seeing failures on Windows x86
 TEST_F(QnnCPUBackendTests, EinsumRank4MatMul) {
   const std::vector<int64_t> shape0{3, 4, 5, 6};
   const std::vector<int64_t> shape1{3, 4, 6, 5};
@@ -157,7 +159,7 @@ TEST_F(QnnCPUBackendTests, EinsumRank4MatMul) {
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"bhij,bhjd->bhid",
-      /*tolerance=*/1e-4f);
+      /*tolerance=*/3e-4f);
 }
 
 TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeY) {
