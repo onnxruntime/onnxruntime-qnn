@@ -1910,7 +1910,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
               ("GetCapability pass #" + std::to_string(ep->get_capability_call_count_) +
                " (post-LT=" +
                (ep->get_capability_call_count_ > 1 ? "true" : "false") +
-               ")").c_str());
+               ")")
+                  .c_str());
 
   size_t num_nodes_in_graph = 0;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetNumNodes(graph, &num_nodes_in_graph));
