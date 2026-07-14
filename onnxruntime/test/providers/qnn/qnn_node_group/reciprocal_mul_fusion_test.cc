@@ -386,10 +386,11 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_BothMulInputsSame_NoFusion) {
   RunQnnModelTest(BuildReciprocalBothMulInputsSameTestCase(denominator_def),
                   provider_options,
                   /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(3e-3f)});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Should NOT fuse: fusion expects pattern a * (1/b) = a/b, but Mul(1/b, 1/b) = 1/b²
   // is a different semantic pattern (squaring the reciprocal).
+  // Higher tolerance (1e-2f) accounts for compounded FP errors in 1/b² and ASAN variance.
   // Expect: 1 ElementWiseBinary for Reciprocal (1/b), 1 ElementWiseBinary for Mul (multiply)
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", /*count=*/2);
 }
