@@ -117,6 +117,8 @@ static_assert(offsetof(FakeOrtValue, dummy_name) == offsetof(FakeValueInfo, name
               "FakeOrtValue/FakeValueInfo layout drift: name offset mismatch");
 static_assert(offsetof(FakeOrtValue, elem_type) == offsetof(FakeValueInfo, elem_type),
               "FakeOrtValue/FakeValueInfo layout drift: elem_type offset mismatch");
+static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
+              "FakeOrtValue/FakeValueInfo layout drift: shape offset mismatch");
 
 // ---------------------------------------------------------------------------
 // FakeNode

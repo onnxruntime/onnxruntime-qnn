@@ -715,7 +715,7 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsZeroDqNodes) {
 }
 
 // =============================================================================
-// CheckQDQNodes — produces_graph_output=true path (L573-574)
+// CheckQDQNodes — produces_graph_output=true path
 // =============================================================================
 
 TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenOutputIsGraphOutput) {
@@ -732,6 +732,31 @@ TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenOutputIsGraphOutput) {
 
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
   FakeNode main_node{"relu", "Relu", "", 13, {&dummy}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  OrtUnaryNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq.AsNode()}, {q.AsNode()}));
+}
+
+// CheckQDQNodes — total_consumers != q_nodes.size() path
+// =============================================================================
+
+TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenConsumerCountExceedsQNodes) {
+  EpUtilsTestContext ctx;
+  // Override: each output has 2 consumers, but only 1 Q node → mismatch
+  ctx.api.ValueInfo_GetValueNumConsumers = [](const OrtValueInfo*, size_t* count) noexcept -> OrtStatus* {
+    *count = 2;
+    return nullptr;
+  };
+
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"relu", "Relu", "", 13, {&dq_in}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
@@ -1396,7 +1421,7 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_BothDouble_SameValue_CheckReturn
 // nullopt (index 0 >= num_inputs == 0), triggering the return-false path.
 // =============================================================================
 
-// DropQDQ: dt_input or dt_output not has_value → returns false (L609).
+// DropQDQ: dt_input or dt_output not has_value → returns false.
 TEST(QnnUnit_EpUtilsTest, DropQDQ_DQHasNoInputs_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
@@ -1410,7 +1435,7 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DQHasNoInputs_CheckReturnsFalse) {
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
-// DropDQ: DQ node has no inputs → !dt_input.has_value() → returns false (L650).
+// DropDQ: DQ node has no inputs → !dt_input.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, DropDQ_DQHasNoInputs_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {}, {}};
@@ -1418,7 +1443,7 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_DQHasNoInputs_CheckReturnsFalse) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq.AsNode()}, {}));
 }
 
-// Unary: DQ node has no inputs → !dt_input.has_value() → returns false (L675).
+// Unary: DQ node has no inputs → !dt_input.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Unary_DQHasNoInputs_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
@@ -1432,7 +1457,7 @@ TEST(QnnUnit_EpUtilsTest, Unary_DQHasNoInputs_CheckReturnsFalse) {
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
-// Variadic: zero DQ nodes → CheckQDQNodes fails → returns false (L699).
+// Variadic: zero DQ nodes → CheckQDQNodes fails → returns false.
 TEST(QnnUnit_EpUtilsTest, Variadic_ZeroDqNodes_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   // Add node needs 2 inputs so num_dq_inputs=2; dq_nodes.size()=0 → mismatch → false.
@@ -1448,7 +1473,7 @@ TEST(QnnUnit_EpUtilsTest, Variadic_ZeroDqNodes_CheckReturnsFalse) {
                          {}, {q.AsNode()}));
 }
 
-// Variadic: DQ node has no inputs → !dt_input.has_value() → returns false (L781).
+// Variadic: DQ node has no inputs → !dt_input.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Variadic_DQHasNoInputs_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
@@ -1465,7 +1490,7 @@ TEST(QnnUnit_EpUtilsTest, Variadic_DQHasNoInputs_CheckReturnsFalse) {
                          {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-// Split: DQ node has no inputs → !dt_input.has_value() → returns false (L825).
+// Split: DQ node has no inputs → !dt_input.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Split_DQHasNoInputs_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
@@ -1480,7 +1505,7 @@ TEST(QnnUnit_EpUtilsTest, Split_DQHasNoInputs_CheckReturnsFalse) {
 }
 
 // Split: req_equal_quant_params=true + Q and DQ have different scale values →
-// IsQDQPairSupported returns false → returns false (L842).
+// IsQDQPairSupported returns false → returns false.
 TEST(QnnUnit_EpUtilsTest, Split_ReqEqualQuant_DiffScaleValues_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   DropQdqScaleFixture f;
@@ -1496,7 +1521,7 @@ TEST(QnnUnit_EpUtilsTest, Split_ReqEqualQuant_DiffScaleValues_CheckReturnsFalse)
                          {f.dq_node.AsNode()}, {f.q_node.AsNode()}));
 }
 
-// Conv: first DQ node has no inputs → !dt_input.has_value() → returns false (L863).
+// Conv: first DQ node has no inputs → !dt_input.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1514,7 +1539,7 @@ TEST(QnnUnit_EpUtilsTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse) {
 }
 
 // =============================================================================
-// OrtSelectorManager::GetOrtQDQSelections — version-check path (L1808-1809)
+// OrtSelectorManager::GetOrtQDQSelections — version-check path
 //
 // Uses OrtGlobalApiOverride to make Ort::ConstNode(node).GetOperatorType() call
 // the test stub (FakeNode::op_type). MaxPool has a non-empty version list {12},
@@ -1524,7 +1549,7 @@ TEST(QnnUnit_EpUtilsTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse) {
 TEST(QnnUnit_EpUtilsTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionPath) {
   EpUtilsTestContext ctx;
   // MaxPool is registered with versions={12}. A MaxPool node with since_version=12
-  // is within range → the version-check block (L1808-1809) is entered.
+  // is within range → the version-check block is entered.
   FakeNode maxpool_node{"mp", "MaxPool", "", 12, {}, {}};
   FakeGraph graph{{maxpool_node}};
 
@@ -1545,7 +1570,7 @@ TEST(QnnUnit_EpUtilsTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionP
 // =============================================================================
 
 // OrtClipNodeGroupSelector: CheckQDQNodes fails when q_nodes is empty and
-// is_empty_q_nodes_allowed=false (the Clip default) → returns false (L699).
+// is_empty_q_nodes_allowed=false (the Clip default) → returns false.
 TEST(QnnUnit_EpUtilsTest, Clip_CheckQDQNodesFails_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1580,7 +1605,7 @@ TEST(QnnUnit_EpUtilsTest, Clip_NullProducer_ReturnsFalse) {
                           {dq.AsNode()}, {q.AsNode()}));
 }
 
-// OrtBinaryNodeGroupSelector: first DQ has no inputs → !dt_input.has_value() (L758).
+// OrtBinaryNodeGroupSelector: first DQ has no inputs → !dt_input.has_value().
 TEST(QnnUnit_EpUtilsTest, Binary_FirstDQHasNoInputs_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq2_in{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1597,7 +1622,7 @@ TEST(QnnUnit_EpUtilsTest, Binary_FirstDQHasNoInputs_ReturnsFalse) {
 }
 
 // OrtVariadicNodeGroupSelector: Q node has no outputs →
-// !dt_output.has_value() → returns false (L793).
+// !dt_output.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Variadic_QHasNoOutputs_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1613,7 +1638,7 @@ TEST(QnnUnit_EpUtilsTest, Variadic_QHasNoOutputs_ReturnsFalse) {
                          {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-// OrtEinsumNodeGroupSelector: 4-bit input disallowed → returns false (L923).
+// OrtEinsumNodeGroupSelector: 4-bit input disallowed → returns false.
 TEST(QnnUnit_EpUtilsTest, Einsum_Rejects4BitWhenDisallowed) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1626,7 +1651,7 @@ TEST(QnnUnit_EpUtilsTest, Einsum_Rejects4BitWhenDisallowed) {
                          {dq.AsNode()}, {}));
 }
 
-// OrtReciprocalNodeGroupSelector: 16-bit input disallowed → returns false (L962).
+// OrtReciprocalNodeGroupSelector: 16-bit input disallowed → returns false.
 // main_node has 1 input so CheckQDQNodes passes (num_dq_inputs=1).
 TEST(QnnUnit_EpUtilsTest, Reciprocal_Rejects16BitWhenDisallowed) {
   EpUtilsTestContext ctx;
@@ -1639,7 +1664,7 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_Rejects16BitWhenDisallowed) {
                          {dq.AsNode()}, {}));
 }
 
-// OrtReciprocalNodeGroupSelector: 4-bit input disallowed → returns false (L965).
+// OrtReciprocalNodeGroupSelector: 4-bit input disallowed → returns false.
 TEST(QnnUnit_EpUtilsTest, Reciprocal_Rejects4BitWhenDisallowed) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1653,7 +1678,7 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_Rejects4BitWhenDisallowed) {
 }
 
 // OrtReciprocalNodeGroupSelector: Q node has no outputs →
-// !dt_output.has_value() → returns false (L972).
+// !dt_output.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Reciprocal_QHasNoOutputs_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1668,7 +1693,7 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_QHasNoOutputs_ReturnsFalse) {
 }
 
 // OrtReciprocalNodeGroupSelector: DQ UINT8 but Q output INT8 →
-// type mismatch → returns false (L975).
+// type mismatch → returns false.
 TEST(QnnUnit_EpUtilsTest, Reciprocal_QOutputTypeMismatch_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1684,7 +1709,7 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_QOutputTypeMismatch_ReturnsFalse) {
 }
 
 // OrtMatMulNodeGroupSelector: first DQ has no inputs →
-// !dt_input.has_value() → returns false (L994).
+// !dt_input.has_value() → returns false.
 TEST(QnnUnit_EpUtilsTest, MatMul_FirstDQHasNoInputs_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq2_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1701,7 +1726,7 @@ TEST(QnnUnit_EpUtilsTest, MatMul_FirstDQHasNoInputs_ReturnsFalse) {
 }
 
 // OrtVariadicNodeGroupSelector: second Q node has mismatched output type →
-// dt_o.value() != dt_output.value() → returns false (L796-798).
+// dt_o.value() != dt_output.value() → returns false.
 TEST(QnnUnit_EpUtilsTest, Variadic_SecondQTypeMismatch_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1722,7 +1747,7 @@ TEST(QnnUnit_EpUtilsTest, Variadic_SecondQTypeMismatch_ReturnsFalse) {
 }
 
 // OrtMatMulNodeGroupSelector: QLinearMatMul path, CheckQDQNodes fails because
-// main_node has 0 inputs → num_dq_inputs=0 ≠ 2 → returns false (L1015).
+// main_node has 0 inputs → num_dq_inputs=0 ≠ 2 → returns false.
 TEST(QnnUnit_EpUtilsTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq1_in{"a", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1744,7 +1769,7 @@ TEST(QnnUnit_EpUtilsTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
 // qnn_ep_utils.cc L736/1037/1065/1093/1192/1206/1267
 // =============================================================================
 
-// OrtGemmNodeGroupSelector: dq_nodes.size() < 2 → returns false (L1037).
+// OrtGemmNodeGroupSelector: dq_nodes.size() < 2 → returns false.
 // CheckQDQNodes passes because is_empty_q_nodes_allowed=true and node has 1 input.
 TEST(QnnUnit_EpUtilsTest, Gemm_RejectsFewerThan2Dq) {
   EpUtilsTestContext ctx;
@@ -1760,7 +1785,7 @@ TEST(QnnUnit_EpUtilsTest, Gemm_RejectsFewerThan2Dq) {
 }
 
 // OrtGemmNodeGroupSelector: IsDisallowedType(dt_A|dt_B, allow_16bit_, allow_4bit_)
-// gate → returns false (L1065). Both inputs UINT16 with allow_16bit=false.
+// gate → returns false. Both inputs UINT16 with allow_16bit=false.
 TEST(QnnUnit_EpUtilsTest, Gemm_Rejects16BitWhenDisallowed) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1776,7 +1801,7 @@ TEST(QnnUnit_EpUtilsTest, Gemm_Rejects16BitWhenDisallowed) {
 }
 
 // OrtWhereNodeGroupSelector: CheckQDQNodes with num_dq_inputs=2 fails because
-// dq_nodes.size()=3 → returns false (L1093).
+// dq_nodes.size()=3 → returns false.
 TEST(QnnUnit_EpUtilsTest, Where_RejectsWrongDqCount) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1795,7 +1820,7 @@ TEST(QnnUnit_EpUtilsTest, Where_RejectsWrongDqCount) {
 }
 
 // OrtBatchNormalizationNodeGroupSelector: CheckQDQNodes fails because
-// num_outputs (2) != q_nodes.size() (1) → returns false (L1192).
+// num_outputs (2) != q_nodes.size() (1) → returns false.
 TEST(QnnUnit_EpUtilsTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1814,7 +1839,7 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
 }
 
 // OrtBatchNormalizationNodeGroupSelector: !has_float_output path,
-// dt_output.value() != dt_input.value() → returns false (L1206).
+// dt_output.value() != dt_input.value() → returns false.
 TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1833,7 +1858,7 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
 }
 
 // OrtTopKNodeGroupSelector: dt_input.value() != dt_output.value() → returns
-// false (L1267). Requires CanCreateNodeGroup to pass first.
+// false. Requires CanCreateNodeGroup to pass first.
 TEST(QnnUnit_EpUtilsTest, TopK_RejectsInputOutputTypeMismatch) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1868,7 +1893,7 @@ struct ClipProducerGuard {
 }  // namespace
 
 // OrtClipNodeGroupSelector: CheckQuantTypes fails when input/output types
-// are UINT16 and allow_16bit_=false → returns false (L736).
+// are UINT16 and allow_16bit_=false → returns false.
 // Reaches L736 by installing a producer stub that returns the DQ node so
 // the L718 producer==nullptr guard passes.
 TEST(QnnUnit_EpUtilsTest, Clip_Rejects16BitWhenDisallowed) {
