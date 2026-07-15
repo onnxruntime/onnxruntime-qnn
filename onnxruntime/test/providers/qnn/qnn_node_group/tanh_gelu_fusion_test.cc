@@ -217,10 +217,21 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float16) {
                         6e-3f);
 }
 
+// Peak substitution error: input range [-3, 3] covers |x|≈2 where the divergence between the
+// tanh approximation and the exact-erf GELU is largest (~4.7e-4). Verifies the fused QNN GELU
+// output still matches CPU tanh-GELU within the documented tolerance.
+TEST_F(QnnHTPBackendTests, TanhGeluFusion_Float32_PeakSubstitutionError) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunTanhGeluFusionTest("TanhGeluFusion_Float32_PeakSubstitutionError",
+                        BuildTanhGeluTestCase(TestInputDef<float>({1, 2, 3, 4}, false, -3.0f, 3.0f)),
+                        6e-3f);
+}
+
 // ---- Negative tests --------------------------------------------------------
+// Fusion is rejected but Mul/Add/Tanh are individually supported on HTP, so
+// individual ops still run on QNN EP → ExpectedEPNodeAssignment::Some.
 
 // Wrong cubic coefficient (0.1 instead of 0.044715) — matcher must reject.
-// When fusion does not fire, all nodes fall back to CPU, so we expect None on the QNN EP.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
@@ -253,12 +264,11 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_WrongCoeff_ShouldNotFuse) {
   RunQnnModelTest(bad_model,
                   GetProviderOptions(),
                   /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(6e-3f)});
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(6e-3f)});
 }
 
-// Shared intermediate: x² is also consumed by an extra Relu outside the pattern.
-// Fusing would leave Relu with a dangling input, so the matcher must reject.
-// When fusion does not fire, all nodes fall back to CPU, so we expect None on the QNN EP.
+// Shared backward intermediate: x² is also consumed by an extra Relu outside the pattern.
+// HasSingleOutputConsumer rejects it, so the matcher must reject the full pattern.
 TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedIntermediate_ShouldNotFuse) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
@@ -297,7 +307,49 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedIntermediate_ShouldNotFuse) {
   RunQnnModelTest(shared_model,
                   GetProviderOptions(),
                   /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(6e-3f)});
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(6e-3f)});
+}
+
+// Shared forward intermediate: add_one_out has a second consumer (an extra Relu) outside the pattern.
+// GetOnlyChildOfOutput rejects multi-consumer outputs, so the forward walk fails.
+TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedForwardIntermediate_ShouldNotFuse) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+
+  GetTestModelFn forward_shared_model = [&input_def](ModelTestBuilder& builder) -> void {
+    constexpr float k0044715 = 0.044715f;
+    constexpr float kSqrt2OverPi = 0.7978845608f;
+    constexpr float kOne = 1.0f;
+    constexpr float kHalf = 0.5f;
+
+    builder.graph_->set_name("tanh_gelu_forward_shared_graph");
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.AddNode("Mul_x2", "Mul", {"input", "input"}, {"x2_out"}, kOnnxDomain);
+    builder.AddNode("Mul_x3", "Mul", {"x2_out", "input"}, {"x3_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("c0044715", k0044715);
+    builder.AddNode("Mul_0044715", "Mul", {"x3_out", "c0044715"}, {"mul_0044715_out"}, kOnnxDomain);
+    builder.AddNode("Add_inner", "Add", {"input", "mul_0044715_out"}, {"add_inner_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("sqrt2pi", kSqrt2OverPi);
+    builder.AddNode("Mul_coeff", "Mul", {"add_inner_out", "sqrt2pi"}, {"mul_coeff_out"}, kOnnxDomain);
+    builder.AddNode("Tanh", "Tanh", {"mul_coeff_out"}, {"tanh_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("one", kOne);
+    builder.AddNode("Add_one", "Add", {"tanh_out", "one"}, {"add_one_out"}, kOnnxDomain);
+
+    // Extra consumer of add_one_out — prevents fusion of the forward tail.
+    builder.AddNode("Relu_extra", "Relu", {"add_one_out"}, {"extra_out"}, kOnnxDomain);
+    builder.MakeOutput("extra_out");
+
+    builder.AddNode("Mul_x", "Mul", {"input", "add_one_out"}, {"mul_x_out"}, kOnnxDomain);
+    builder.MakeScalarInitializer<float>("half", kHalf);
+    builder.AddNode("Mul_half", "Mul", {"mul_x_out", "half"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+
+  RunQnnModelTest(forward_shared_model,
+                  GetProviderOptions(),
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(6e-3f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

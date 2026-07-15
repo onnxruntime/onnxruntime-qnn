@@ -29,7 +29,9 @@ class QnnModelWrapper;
 ///
 /// Equation: x * 0.5 * (1 + Tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 ///
-/// All contained NodeUnits must be SingleNode (non-QDQ).
+/// All contained NodeUnits must be SingleNode (non-QDQ). QDQ support is out of scope for this
+/// PR: fusing across QDQ boundaries requires DQ/Q unwrap logic (see GeluFusion) that adds
+/// significant complexity. Quantized tanh-GELU will silently fall back to individual ops.
 /// </summary>
 class TanhGeluFusion : public IQnnNodeGroup {
  public:

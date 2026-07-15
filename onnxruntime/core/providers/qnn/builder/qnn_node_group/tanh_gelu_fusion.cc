@@ -39,6 +39,10 @@ bool HasSingleOutputConsumer(const OrtNodeUnit& node_unit) {
 }
 
 // Returns true if `node_unit` is a standalone (non-QDQ) SingleNode with the given op type.
+// QDQ support is intentionally out of scope for this fusion: in a quantized tanh-GELU model
+// every Mul/Add/Tanh is a QDQGroup, and the DQ/Q unwrap logic needed to fuse across QDQ
+// boundaries (see GeluFusion::TryFusion) adds significant complexity. That work is left as a
+// follow-up; for now only float32/float16 non-QDQ graphs are fused.
 bool IsSingleNode(const OrtNodeUnit* node_unit, std::string_view op_type) {
   return node_unit != nullptr &&
          node_unit->UnitType() == OrtNodeUnit::Type::SingleNode &&
