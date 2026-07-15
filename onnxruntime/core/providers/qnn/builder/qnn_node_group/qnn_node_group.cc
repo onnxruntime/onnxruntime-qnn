@@ -100,6 +100,8 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Erf", {GeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
+    // Both match rank-6 Reshape->Transpose->Reshape but are disjoint by construction:
+    // Rank6ToRank5 requires the last dim unchanged, whereas SpaceToDepth changes it.
     {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 

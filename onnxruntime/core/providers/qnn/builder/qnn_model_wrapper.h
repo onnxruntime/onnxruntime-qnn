@@ -389,8 +389,9 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
-  /// Returns true if this GetCapability call is after ORT's Layout Transformer has run.
-  /// Fusion passes can use this to distinguish 1st call (pre-LT) from 2nd call (post-LT).
+  /// True if this GetCapability call is post-Layout-Transform. Derived from a pass
+  /// counter (count > 1), so it's a conservative proxy: never falsely post-LT, but
+  /// under-reports when ORT skips the 2nd pass (layout-neutral graph, empty 1st pass).
   bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }

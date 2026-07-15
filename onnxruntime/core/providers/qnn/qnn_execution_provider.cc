@@ -1901,9 +1901,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
-  // Count top-level GetCapability passes (subgraphs excluded, empty passes still count).
-  // Node-group fusions read this via QnnModelWrapper::IsPostLayoutTransform() to
-  // distinguish pre-LT (count == 1) from post-LT (count > 1).
+  // See get_capability_call_count_ field doc. Empty passes still count.
   ++ep->get_capability_call_count_;
   // A missing 2nd pass silently disables post-LT-gated fusions; log for visibility.
   ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
