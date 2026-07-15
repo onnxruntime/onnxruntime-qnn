@@ -625,6 +625,24 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_ChannelPlaceholder) {
                             /*use_channel_placeholder=*/true);
 }
 
+// DCR counterpart of the channel-placeholder regression test above. The -1 sits at
+// shape_6d[1] regardless of perm, so this exercises the same fixed gate line via the DCR
+// permutation. Only a QDQ variant is provided: HTP has no accurate float DCR SpaceToDepth
+// kernel (the suite carries no Float DCR case for the same reason).
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR_ChannelPlaceholder) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_DCR_ChannelPlaceholder",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 3, 5, 1, 2, 4},
+                            /*use_qdq=*/true,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/3.9e-2f,
+                            /*use_channel_placeholder=*/true);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

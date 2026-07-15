@@ -169,6 +169,13 @@ bool HasSpaceToDepthCoreSignature(
       !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) || output_shape.size() != kRank4) {
     return false;
   }
+  // GetOnnxShape blocks negative dims but lets 0 through. A zero-size dim is degenerate and
+  // was rejected by the positivity loop this fusion previously ran; keep that decline local
+  // rather than deferring a zero to downstream QNN validation.
+  if (std::any_of(input_shape.begin(), input_shape.end(), [](uint32_t d) { return d == 0; }) ||
+      std::any_of(output_shape.begin(), output_shape.end(), [](uint32_t d) { return d == 0; })) {
+    return false;
+  }
 
   // Read the *resolved* 6D shape from Reshape1's output ValueInfo (== Transpose's input).
   // Shape inference has already replaced any -1 in the Reshape shape initializer with the
