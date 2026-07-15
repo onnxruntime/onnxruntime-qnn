@@ -153,9 +153,9 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
     } else if (is_rank1) {
       reshape_target = {1, input_0_info.shape[0]};
     } else {
-      uint32_t batch = 0;
-      RETURN_IF_ERROR(FlattenLeadingDims(input_0_info.shape, batch));
-      reshape_target = {batch, input_0_info.shape.back()};
+      reshape_target = {std::accumulate(input_0_info.shape.begin(), input_0_info.shape.end() - 1,
+                                        static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
+                        input_0_info.shape.back()};
     }
     QnnQuantParamsWrapper quant_param_reshaped = input_0_info.quant_param.Copy();
     if (is_rank1 || shape_mismatch) {
@@ -797,9 +797,9 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
         op_output_shape.insert(op_output_shape.begin(), 1);
       RETURN_IF_ERROR(op_output_quant_param.HandleUnsqueeze<uint32_t>(output_info.shape, op_output_shape));
     } else if (use_fully_connected && input_info_0.shape.size() > 2) {
-      uint32_t batch = 0;
-      RETURN_IF_ERROR(FlattenLeadingDims(input_info_0.shape, batch));
-      op_output_shape = {batch, reshape_input_1 ? 1 : input_info_1.shape.back()};
+      op_output_shape = {std::accumulate(input_info_0.shape.begin(), input_info_0.shape.end() - 1,
+                                         static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
+                         reshape_input_1 ? 1 : input_info_1.shape.back()};
       RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN FC output does not support per-channel quant.");
     } else {
       // If both inputs are 1D tensors, the output shape is [1] instead of scalar. So if both inputs are 1D tensors,
