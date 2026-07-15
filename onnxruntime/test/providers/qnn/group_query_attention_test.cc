@@ -347,10 +347,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP32) {
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -360,10 +360,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP32) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -435,10 +435,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP16) {
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
 
@@ -448,10 +448,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP16) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
 
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
@@ -523,10 +523,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_2D_SeqlensK) {
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -536,10 +536,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_2D_SeqlensK) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -611,10 +611,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_FP32) {
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -624,10 +624,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_FP32) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -699,10 +699,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_FP16) {
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
 
@@ -712,10 +712,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_FP16) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
 
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
@@ -787,10 +787,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP32) {
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -800,10 +800,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP32) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -875,10 +875,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP16) {
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
 
@@ -888,10 +888,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP16) {
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
 
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
@@ -965,10 +965,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_SharedMemoryAllocator_FP32)
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -978,10 +978,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_SharedMemoryAllocator_FP32)
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -1053,10 +1053,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_SharedMemoryAllocator_FP16)
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
 
@@ -1066,10 +1066,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_SharedMemoryAllocator_FP16)
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
 
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
@@ -1141,10 +1141,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_SharedMemoryAllocato
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -1154,10 +1154,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_SharedMemoryAllocato
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -1229,10 +1229,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_SharedMemoryAllocato
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
 
@@ -1242,10 +1242,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_SharedMemoryAllocato
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
 
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
@@ -1317,10 +1317,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
   const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
-  static auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                           false, -1.0f, 1.0f);
+  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
+  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                    false, -1.0f, 1.0f);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
 
@@ -1330,10 +1330,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
-  static auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                            true, -1.0f, 1.0f);
+  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
+  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
+                                     true, -1.0f, 1.0f);
 
   std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
@@ -1405,10 +1405,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
   const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
 
-  static auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                                    false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
+                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
 
@@ -1418,10 +1418,10 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
   auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
                                                          std::vector<int32_t>{total_seq_len});
 
-  static auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  static auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                                     true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
+  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
+                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
 
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
   std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
