@@ -29,6 +29,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `qnn_utils_test.cc` | `QnnUnit_UtilsTest` | `builder/qnn_utils.cc` |
 | `qnn_ep_utils_test.cc` | `QnnUnit_EpUtilsTest` | `qnn_ep_utils.cc` |
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
+| `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
 
 ## Benefits
 
