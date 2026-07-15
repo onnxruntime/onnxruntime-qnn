@@ -196,6 +196,14 @@ class ArtifactUpleveler(ABC):
             return ssl.get_default_verify_paths().cafile
         return ARTIFACTORY_CERTS_FILE
 
+    def _is_excluded_artifact(self, filename: str) -> bool:
+        """Whether an artifact file should be skipped entirely (never downloaded/uploaded).
+
+        Base implementation excludes nothing; subclasses override to drop artifacts
+        that should never be touched by upleveling (e.g. test packages).
+        """
+        return False
+
     def download_artifacts(self, url: str, download_dir: str) -> list[str]:
         """Download artifacts from the specified URL."""
         logging.info(f"Downloading {self.artifact_format}s from: {url}")
@@ -219,6 +227,11 @@ class ArtifactUpleveler(ABC):
             )
             if m
         ]
+
+        excluded = [f for f in artifact_list if self._is_excluded_artifact(f)]
+        for f in excluded:
+            logging.info(f"Skipping excluded artifact: {f}")
+        artifact_list = [f for f in artifact_list if f not in excluded]
 
         if not artifact_list:
             raise RuntimeError(
@@ -951,14 +964,19 @@ class ZipUpleveler(ArtifactUpleveler):
     def _sign_flag(self) -> bool:
         return self.args.sign_artifact
 
+    def _is_excluded_artifact(self, filename: str) -> bool:
+        """Test packages are never upleveled, signed or not."""
+        return filename.endswith("-test_package.zip")
+
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
-        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir.
-        For each one: extract, swap in the signed onnxruntime_providers_qnn.dll from
+        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir. For each
+        one: extract, swap in the signed onnxruntime_providers_qnn.dll from
         signed_libs_dir, re-zip into output_dir/<original_name>.zip.
 
-        All other files are copied as-is
-        into output_dir, flattened (only basename preserved).
+        All other files are copied as-is into output_dir, flattened (only basename
+        preserved). *-test_package.zip is never present here — download_artifacts
+        excludes it via _is_excluded_artifact before this method runs.
 
         Missing signed DLLs are logged and counted as failures, but the zip is still
         re-zipped.

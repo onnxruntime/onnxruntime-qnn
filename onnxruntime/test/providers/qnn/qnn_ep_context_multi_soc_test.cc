@@ -64,7 +64,7 @@ void CompileModelWithPerSocOptions(const ProviderOptions& per_soc_options,
 
 }  // namespace
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_DefaultHtpConfigs) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_DefaultHtpConfigs) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -76,7 +76,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_DefaultHtpConfigs) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_DefaultHtpConfigs_NonEmbed) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_DefaultHtpConfigs_NonEmbed) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -88,14 +88,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_DefaultHtpConfigs_NonEmbed
   CompileModelWithPerSocOptions(per_soc_options, /*is_embed_mode*/ false);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_HtpArchOnly) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArchOnly) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_HtpArchOnly_SocModelUnknown) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArchOnly_SocModelUnknown) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
   per_soc_options["soc_model"] = "0,0,0";
@@ -103,7 +103,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_HtpArchOnly_SocModelUnknow
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_SocModelOnly) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_SocModelOnly) {
   ProviderOptions per_soc_options;
 #ifdef _WIN32
   per_soc_options["soc_model"] = "37,60,88";
@@ -114,7 +114,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_SocModelOnly) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_SingleHtpConfigs) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_SingleHtpConfigs) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -127,7 +127,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_SingleHtpConfigs) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_MultipleHtpConfigs) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_MultipleHtpConfigs) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -160,7 +160,7 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_MismatchHtpArchSocModel) {
   }
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_Legacy) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_Legacy) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "73";
 #ifdef _WIN32
@@ -172,7 +172,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_Legacy) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupported) {
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupported) {
+  QNN_SKIP_TEST_ON_LINUX_X86_64("Skip as unable to deliberately fallback on Linux x86.");
+
   ModelTestBuilder helper;
 
   // Build a graph that the first Add node will fail for op validation on V68 only, impacting the overall partition.
