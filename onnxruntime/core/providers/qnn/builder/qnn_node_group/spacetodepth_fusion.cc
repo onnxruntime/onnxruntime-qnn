@@ -162,28 +162,21 @@ bool HasSpaceToDepthCoreSignature(
     const OrtNodeUnit& reshape1,
     const OrtNodeUnit& transpose,
     const OrtNodeUnit& reshape2) {
-  // Input/outputs need to be rank-4 tensors with concrete positive dims.
+  // Read resolved shapes from ValueInfo, not the Reshape initializers: shape inference has
+  // already replaced any -1 with the concrete dim, so exporter patterns like
+  // reshape(1, -1, H, b, W, b) are accepted without special-casing -1 per position.
   std::vector<uint32_t> input_shape;
   std::vector<uint32_t> output_shape;
+  std::vector<uint32_t> shape_6d;
   if (!qnn_model_wrapper.GetOnnxShape(reshape1.Inputs()[0].shape, input_shape) || input_shape.size() != kRank4 ||
-      !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) || output_shape.size() != kRank4) {
+      !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) || output_shape.size() != kRank4 ||
+      !qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
     return false;
   }
-  // GetOnnxShape blocks negative dims but lets 0 through. A zero-size dim is degenerate and
-  // was rejected by the positivity loop this fusion previously ran; keep that decline local
-  // rather than deferring a zero to downstream QNN validation.
+  // GetOnnxShape permits 0-size dims; reject them here (a prior positivity check did) rather
+  // than deferring a degenerate zero to downstream QNN validation.
   if (std::any_of(input_shape.begin(), input_shape.end(), [](uint32_t d) { return d == 0; }) ||
       std::any_of(output_shape.begin(), output_shape.end(), [](uint32_t d) { return d == 0; })) {
-    return false;
-  }
-
-  // Read the *resolved* 6D shape from Reshape1's output ValueInfo (== Transpose's input).
-  // Shape inference has already replaced any -1 in the Reshape shape initializer with the
-  // concrete value the exporter meant, which lets us accept exporter-convenience patterns
-  // like reshape(1, -1, H, b, W, b) without special-casing -1 at each position. Same
-  // reasoning for the 4D shape via output_shape above.
-  std::vector<uint32_t> shape_6d;
-  if (!qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
     return false;
   }
 
@@ -193,7 +186,7 @@ bool HasSpaceToDepthCoreSignature(
   const int64_t h = static_cast<int64_t>(input_shape[2]);
   const int64_t w = static_cast<int64_t>(input_shape[3]);
 
-  // [N, C, H / b0, b0, W / b1, b1] — fully concrete via shape inference.
+  // [N, C, H / b0, b0, W / b1, b1]
   const int64_t r_n = static_cast<int64_t>(shape_6d[0]);
   const int64_t r_c = static_cast<int64_t>(shape_6d[1]);
   const int64_t h_div = static_cast<int64_t>(shape_6d[2]);
@@ -216,9 +209,9 @@ bool HasSpaceToDepthCoreSignature(
 
   // [N, C * b0 * b1, H / b0, W / b1]
   const int64_t expected_c = c * b0 * b1;
-  const std::array<int64_t, 4> expected_shape_4d = {n, expected_c, h / b0, w / b1};
+  const std::array<int64_t, 4> expected_output_shape = {n, expected_c, h / b0, w / b1};
   for (size_t i = 0; i < 4; ++i) {
-    if (static_cast<int64_t>(output_shape[i]) != expected_shape_4d[i]) {
+    if (static_cast<int64_t>(output_shape[i]) != expected_output_shape[i]) {
       return false;
     }
   }
@@ -354,10 +347,8 @@ bool ValidateAndComputeParams(
   // Core structural validation is already done in HasSpaceToDepthCoreSignature from MatchPattern.
   // Here we only extract params needed for QNN op creation and backend-specific guards.
 
-  // 1. Read the resolved 6D shape from Reshape1's output ValueInfo to obtain block sizes —
-  // the same source HasSpaceToDepthCoreSignature gates on. GetOnnxShape yields concrete,
-  // non-negative uint32 dims (shape inference has resolved any -1), so no separate overflow
-  // or negativity guard is needed here.
+  // 1. Read shape_6d to obtain block sizes. GetOnnxShape yields concrete non-negative dims,
+  //    so no separate overflow/negativity guard is needed.
   std::vector<uint32_t> shape_6d;
   if (!qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: reshape1 output shape unresolved/invalid.");
