@@ -11,7 +11,7 @@
 //   - QnnSerializerConfig (CreateIr / CreateSaver / GetBackendPath / SetGraphName / Configure)
 //   - SetupBackend error paths (library load failure — invalid / empty path)
 //   - ResetQnnLogLevel before backend is set up (early-return OK path)
-//   - GetContextBinaryBuffer before backend is set up (returns nullptr)
+//   - GetContextBinaryBuffer before backend is set up (returns error)
 //   - ParseLoraConfig file I/O error paths
 
 #include "gtest/gtest.h"
@@ -143,14 +143,18 @@ TEST(QnnUnit_BackendManagerTest, ResetQnnLogLevel_BeforeSetup_ReturnsOk) {
 // Group 4: GetContextBinaryBuffer — before SetupBackend
 // ---------------------------------------------------------------------------
 
-// QNN interface is uninitialised → returns nullptr without calling QNN API.
-TEST(QnnUnit_BackendManagerTest, GetContextBinaryBuffer_BeforeSetup_ReturnsNull) {
+// QNN interface is uninitialised → returns an error without calling QNN API and
+// leaves the out buffer untouched.
+TEST(QnnUnit_BackendManagerTest, GetContextBinaryBuffer_BeforeSetup_ReturnsError) {
   StubApiEnv env;
   auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 
+  unsigned char* context_buffer = nullptr;
   uint64_t written_size = 0;
-  EXPECT_EQ(manager->GetContextBinaryBuffer(written_size), nullptr);
+  auto status = manager->GetContextBinaryBuffer(/*is_multi_soc_buffer=*/false, &context_buffer, written_size);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(context_buffer, nullptr);
 }
 
 // ---------------------------------------------------------------------------

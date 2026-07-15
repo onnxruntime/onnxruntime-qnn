@@ -354,8 +354,11 @@ TEST(QnnInteg_BackendManagerTest, GetContextBinaryBuffer_HTP_AfterSetup_ReturnsV
     ASSERT_TRUE(s.IsOK()) << "SetupBackend failed: " << s.GetErrorMessage();
   }
 
+  unsigned char* raw_buffer = nullptr;
   uint64_t written_size = 0;
-  auto buffer = manager->GetContextBinaryBuffer(written_size);
+  auto status = manager->GetContextBinaryBuffer(/*is_multi_soc_buffer=*/false, &raw_buffer, written_size);
+  ASSERT_TRUE(status.IsOK()) << "GetContextBinaryBuffer failed: " << status.GetErrorMessage();
+  std::unique_ptr<unsigned char[]> buffer(raw_buffer);  // caller owns the buffer
   EXPECT_NE(buffer, nullptr);
   EXPECT_GT(written_size, 0u);
 }
