@@ -653,6 +653,19 @@ uint64_t GetTimeStampInUs();
 bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
                          float tolerance = 1e-5f);
 
+// Quantizes a float bias tensor to int32 using bias_scale = activation_scale * weight_scale.
+// Used when the bias is provided as float (no quantization info) but activation and weight are quantized.
+// If weights_scales has a single element, per-tensor bias quantization is used (all channels share one scale).
+// Otherwise, per-channel bias quantization is used (one scale per output channel).
+// The output quantized_bias_bytes contains packed int32 values (4 bytes per channel).
+// bias_offsets is always all-zeros (symmetric quantization).
+Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
+                                    gsl::span<const float> weights_scales,
+                                    float activation_scale,
+                                    /*out*/ std::vector<uint8_t>& quantized_bias_bytes,
+                                    /*out*/ std::vector<float>& bias_scales,
+                                    /*out*/ std::vector<int32_t>& bias_offsets);
+
 // Requantizes a static bias tensor with new quantization parameters
 // This function:
 // 1. Dequantizes the bias tensor to float using current parameters
