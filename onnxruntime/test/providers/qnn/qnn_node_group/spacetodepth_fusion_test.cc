@@ -568,11 +568,11 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16_CRD) {
                                       /*backend_type=*/"htp");
 }
 
-// Regression: HasSpaceToDepthCoreSignature was rejecting -1 (ONNX dynamic-batch marker) in
+// Regression: HasSpaceToDepthCoreSignature was rejecting -1 (ONNX placeholder marker) in
 // the Reshape shape initializer. Shape inference resolves it from the concrete input.
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_DynamicBatch) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_Reshape1BatchPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_DynamicBatch",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_Reshape1BatchPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
@@ -584,9 +584,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_DynamicBatch) {
                             /*reshape1_shape=*/{-1, 2, 2, 2, 2, 2});
 }
 
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_DynamicBatch) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_Reshape1BatchPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_DynamicBatch",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_Reshape1BatchPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
@@ -600,9 +600,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_DynamicBatch) {
 
 // Regression: -1 outside the batch dim. PyTorch exports SpaceToDepth as
 // reshape(N, -1, H/b, b, W/b, b) — channel is the placeholder, resolved by shape inference.
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_ChannelPlaceholder) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_Reshape1ChannelPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_ChannelPlaceholder",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_Reshape1ChannelPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
@@ -614,9 +614,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_ChannelPlaceholder) {
                             /*reshape1_shape=*/{1, -1, 2, 2, 2, 2});
 }
 
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_ChannelPlaceholder) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_Reshape1ChannelPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_ChannelPlaceholder",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_Reshape1ChannelPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
@@ -630,9 +630,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_ChannelPlaceholder) {
 
 // DCR counterpart of the channel-placeholder test. QDQ only: HTP has no accurate float DCR
 // SpaceToDepth kernel (the suite carries no Float DCR case for the same reason).
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR_ChannelPlaceholder) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR_Reshape1ChannelPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_DCR_ChannelPlaceholder",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_DCR_Reshape1ChannelPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
@@ -645,9 +645,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR_ChannelPlaceholder) {
 }
 
 // -1 at the H/block_h dim: confirms the gate accepts a single -1 at any position, not just 0/1.
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_HeightPlaceholder) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_Reshape1HeightPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_HeightPlaceholder",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_Reshape1HeightPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
@@ -661,9 +661,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_HeightPlaceholder) {
 
 // -1 in the second (rank-4) Reshape initializer: the gate reads resolved ValueInfo for both
 // reshapes, so reshape2's -1 is covered too. Guards that path explicitly.
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_Reshape2Placeholder) {
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD_Reshape2ChannelPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_Reshape2Placeholder",
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD_Reshape2ChannelPlaceholder",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
