@@ -581,7 +581,7 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (is_npu_backend && input_rank == 4 && interp_mode == "nearest") {
     // Translate Resize with
-        // {input_rank: 4, mode: "nearest", coordinate_transformation_mode: XXX} to
+    // {input_rank: 4, mode: "nearest", coordinate_transformation_mode: XXX} to
     // QNN's ResizeNearestNeighbor operator on the HTP backend. QNN ResizeNearestNeighbor
     // seems to be faster than QNN Resize.
     qnn_op_type = "ResizeNearestNeighbor";
@@ -619,7 +619,7 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                            transformation_mode == "pytorch_half_pixel",
                                        QNN_OP_RESIZE_BILINEAR_PARAM_HALF_PIXEL_CENTERS, param_tensor_names));
   } else {
-        // Fallback to QNN's Resize operator, which seems to align better with ONNX's Resize attributes and supports
+    // Fallback to QNN's Resize operator, which seems to align better with ONNX's Resize attributes and supports
     // input ranks other than 4, but may not perform as optimally (at the moment).
 
     // Parameter 'transformation_mode'
