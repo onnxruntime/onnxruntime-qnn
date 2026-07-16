@@ -1939,11 +1939,10 @@ TEST_F(QnnHTPBackendTests, ConvReluFusion_EncodingMinBelowZero) {
   TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-3.0f, 10.0f, SizeOfShape(bias_shape)));
 
-  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+  auto build_f32_model = [input_def, weight_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
     MakeTestInput<float>(builder, "weights", weight_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+    builder.AddNode("Conv", "Conv", {"input", "weights"}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
@@ -1973,11 +1972,10 @@ TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMinBelowClipMin) {
   TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-5.0f, 5.0f, SizeOfShape(bias_shape)));
 
-  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+  auto build_f32_model = [input_def, weight_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
     MakeTestInput<float>(builder, "weights", weight_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+    builder.AddNode("Conv", "Conv", {"input", "weights"}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
@@ -2010,11 +2008,10 @@ TEST_F(QnnHTPBackendTests, ConvClipFusion_EncodingMaxAboveClipMax) {
   TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(0.0f, 8.0f, SizeOfShape(bias_shape)));
 
-  auto build_f32_model = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+  auto build_f32_model = [input_def, weight_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
     MakeTestInput<float>(builder, "weights", weight_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"conv_out"}, kOnnxDomain,
+    builder.AddNode("Conv", "Conv", {"input", "weights"}, {"conv_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", {1, 1}),
                      builder.MakeIntsAttribute("strides", {1, 1}),
                      builder.MakeIntsAttribute("pads", {0, 0, 0, 0})});
