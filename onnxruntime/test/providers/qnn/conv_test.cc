@@ -369,7 +369,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
     // bias ->
     if (!bias_def.GetShape().empty()) {
       if (use_float_bias) {
-        QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
+        ASSERT_TRUE(bias_def.IsInitializer() && bias_def.IsRawData()) << "Float bias must be an initializer with raw data";
         builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
         conv_input_names.push_back("bias");
       } else {

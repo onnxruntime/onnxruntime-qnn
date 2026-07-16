@@ -200,7 +200,7 @@ static Ort::Status ProcessFloatBias(QnnModelWrapper& qnn_model_wrapper,
       weights_scales, activation_scale, new_bias_data, new_scales, new_offsets));
   int32_t bias_quant_axis = 0;
   QnnQuantParamsWrapper quant_params = (weights_scales.size() == 1)
-                                           ? QnnQuantParamsWrapper::PerTensor(new_scales[0], 0)
+                                           ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
                                            : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
   QnnTensorWrapper bias_wrapper(bias_def.name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,
                                 std::move(quant_params), std::vector<uint32_t>(bias_info.shape),
@@ -591,6 +591,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
 
         if (input0_info.quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
           // Get activation scale (must be per-tensor for Conv)
+          RETURN_IF_NOT(input0_info.quant_param.IsPerTensor(/*include_bw*/ true),
+                        "Activation must be per-tensor quantized for Conv 2D");
           float activation_scale = 1.0f;
           const auto& act_quant_params = input0_info.quant_param.Get();
           if (act_quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
@@ -632,7 +634,6 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
             }
           }
 
-          // Safety check to prevent crashes
           RETURN_IF_NOT(!weights_scales.empty(), "No weight scales found for quantized weights");
 
           // Check bias quantization type
@@ -784,6 +785,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
 
         if (input0_info.quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
           // Get activation scale (must be per-tensor for Conv)
+          RETURN_IF_NOT(input0_info.quant_param.IsPerTensor(/*include_bw*/ true),
+                        "Activation must be per-tensor quantized for Conv 2D");
           float activation_scale = 1.0f;
           const auto& act_quant_params = input0_info.quant_param.Get();
           if (act_quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
@@ -825,11 +828,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
             }
           }
 
-          // Safety check to prevent crashes
           RETURN_IF_NOT(!weights_scales.empty(), "No weight scales found for quantized weights");
 
           // Quantize a float bias using bias_scale = activation_scale * weight_scale
-          ProcessFloatBias(qnn_model_wrapper, logger, bias_input, bias_info, weights_scales, activation_scale, input_names);
+          RETURN_IF_ERROR(ProcessFloatBias(qnn_model_wrapper, logger, bias_input, bias_info, weights_scales, activation_scale, input_names));
         }
       }
 
