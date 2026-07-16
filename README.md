@@ -29,7 +29,7 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 | Package | Windows ARM64 | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
 |---|---|---|---|---|---|---|
 | Python Wheel | Inference | — | AOT compilation | Inference | AOT compilation | — |
-| NuGet | - | Inference | — | — | — | — |
+| NuGet | Inference | Inference | AOT compilation | — | — | — |
 | ZIP | Inference | Inference | AOT compilation | — | AOT compilation | — |
 | tgz | — | — | — | Inference | — | — |
 | Maven | — | — | — | — | — | Inference |
@@ -99,7 +99,7 @@ pip install onnxruntime-qnn==2.4.0
 - Python 3.11 – 3.14
 - Numpy 1.25.2 or >= 1.26.4
 
-For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 (ARM64X))
+For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) — a single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers)
 
 ### Linux Wheels and .tgz Files
 

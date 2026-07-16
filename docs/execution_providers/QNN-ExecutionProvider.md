@@ -50,7 +50,7 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 For build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages
-- [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
+- For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) — a single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers)
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
