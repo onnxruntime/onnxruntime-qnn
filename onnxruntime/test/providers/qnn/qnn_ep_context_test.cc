@@ -3281,6 +3281,167 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   CleanUpCtxFile(ctx_path);
 }
 
+// ============================================================
+// GPE (Graph Program Executor / Graph Splitting) tests
+// ============================================================
+
+// Helper: build session options with GPE enabled.
+static void SetGpeOptions(Ort::SessionOptions& so,
+                          const std::string& ctx_path,
+                          const std::string& num_threads = "") {
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry("ep.qnnexecutionprovider.htp_enable_gpe", "1");
+  if (!num_threads.empty()) {
+    so.AddConfigEntry("ep.qnnexecutionprovider.htp_gpe_num_prepare_threads", num_threads.c_str());
+  }
+}
+
+// Test 1: GPE enabled with default thread count — context binary is written.
+// On SDK 2.48 the GPE config block is compiled out; the test still passes because
+// QnnContext_create succeeds without option 22.
+TEST_F(QnnHTPBackendTests, GpeEnabled_DefaultThreads_CompileSucceeds) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_gpe_default_threads_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetGpeOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  CleanUpCtxFile(ctx_path);
+}
+
+// Test 2: GPE enabled with a custom thread count (4 threads) — context binary is written.
+TEST_F(QnnHTPBackendTests, GpeEnabled_CustomThreads_CompileSucceeds) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_gpe_custom_threads_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetGpeOptions(so, ctx_path, "4");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  CleanUpCtxFile(ctx_path);
+}
+
+// Test 3: GPE disabled (key unset) — existing path is unchanged, no regression.
+TEST_F(QnnHTPBackendTests, GpeDisabled_NoRegression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_gpe_disabled_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  // GPE key is intentionally NOT set — validate no regression.
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  CleanUpCtxFile(ctx_path);
+}
+
+// Test: GPE enabled with explicit kway partition count.
+TEST_F(QnnHTPBackendTests, GpeEnabled_KwayPartitions_CompileSucceeds) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+  provider_options["gpe_kway_partitions"] = "4";
+
+  const std::string ctx_path = "./qnn_gpe_kway_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  SetGpeOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  CleanUpCtxFile(ctx_path);
+}
+
 // ==============================================================================
 // GPU weight-sharing tests
 // ==============================================================================

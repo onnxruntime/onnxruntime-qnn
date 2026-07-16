@@ -268,6 +268,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool enable_htp_extended_udma_mode_ = false;
 
+  // GPE (Graph Program Executor / Graph Splitting). Requires SDK 2.49+ at runtime.
+  bool enable_gpe_ = false;
+  uint32_t gpe_num_prepare_threads_ = 1;
+  uint32_t gpe_kway_partitions_ = 0;  // 0 = use SDK default (do not set GPE_KWAY_PARTITIONS env var)
+
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;
   // Per-SoC HTP backend configurations. The size of below arrays are enforced to be the same.

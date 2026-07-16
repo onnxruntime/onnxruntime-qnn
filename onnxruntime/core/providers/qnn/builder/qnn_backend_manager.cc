@@ -1267,7 +1267,10 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 }
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
-    std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+    std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+    bool enable_gpe,
+    uint32_t gpe_num_prepare_threads,
+    uint32_t gpe_kway_partitions) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
@@ -1299,13 +1302,38 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
+#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+  QnnContext_Config_t context_config_gpe_vtcm = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t gpe_custom_config_vtcm;
+  if (enable_gpe) {
+    gpe_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
+    gpe_custom_config_vtcm.graphSplittingConfigs = {true, gpe_num_prepare_threads};
+    context_config_gpe_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    context_config_gpe_vtcm.customConfig = &gpe_custom_config_vtcm;
+  }
+#endif
+
   const QnnContext_Config_t* configs[] = {&context_priority_config,
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
                                           &context_config_resource_sharing,
                                           &resource_sharing_opt_type_config,
                                           &context_config_weight_sharing,
 #endif
+#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+                                          enable_gpe ? &context_config_gpe_vtcm : nullptr,
+#endif
                                           nullptr};
+
+#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+  if (enable_gpe && gpe_kway_partitions > 0) {
+    const std::string kway_str = std::to_string(gpe_kway_partitions);
+#ifdef _WIN32
+    _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+#else
+    setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+#endif
+  }
+#endif
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   if (file_mapped_weights_enabled_ && file_mapper_) {
@@ -1473,7 +1501,10 @@ Ort::Status QnnBackendManager::ResetContextPriority() {
 Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
                                              bool enable_htp_extended_udma_mode,
                                              bool enable_htp_prepare_only,
-                                             bool enable_htp_ref_weight_sharing) {
+                                             bool enable_htp_ref_weight_sharing,
+                                             bool enable_gpe,
+                                             uint32_t gpe_num_prepare_threads,
+                                             uint32_t gpe_kway_partitions) {
   if (true == context_created_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
@@ -1521,12 +1552,26 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     enable_htp_ref_weight_sharing = false;
   }
 
+#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+  QnnContext_Config_t context_config_gpe = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t gpe_custom_config;
+  if (enable_gpe) {
+    gpe_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
+    gpe_custom_config.graphSplittingConfigs = {true, gpe_num_prepare_threads};
+    context_config_gpe.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    context_config_gpe.customConfig = &gpe_custom_config;
+  }
+#endif
+
   const QnnContext_Config_t* npu_context_configs[] = {
       &context_priority_config,
       &context_config_weight_sharing,
       &context_config_extended_udma,
       &context_config_prepare_only,
       enable_htp_ref_weight_sharing ? &context_config_ref_weight_sharing : nullptr,
+#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+      enable_gpe ? &context_config_gpe : nullptr,
+#endif
       nullptr};
 
   const QnnContext_Config_t* empty_context_configs[] = {nullptr};
@@ -1550,6 +1595,17 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   if (qnn_serializer_config_ && !qnn_serializer_config_->SupportsArbitraryGraphConfigs()) {
     configs = nullptr;
   }
+
+#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+  if (enable_gpe && gpe_kway_partitions > 0) {
+    const std::string kway_str = std::to_string(gpe_kway_partitions);
+#ifdef _WIN32
+    _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+#else
+    setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+#endif
+  }
+#endif
 
   Qnn_ContextHandle_t context = nullptr;
   Qnn_ErrorHandle_t result = 0;
@@ -1910,7 +1966,10 @@ Ort::Status QnnBackendManager::SetupBackend(
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
     bool enable_htp_extended_udma_mode,
-    bool enable_htp_prepare_only) {
+    bool enable_htp_prepare_only,
+    bool enable_gpe,
+    uint32_t gpe_num_prepare_threads,
+    uint32_t gpe_kway_partitions) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
@@ -1921,7 +1980,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
-        return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map);
+        return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map, enable_gpe, gpe_num_prepare_threads, gpe_kway_partitions);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2068,11 +2127,17 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
-    status = htp_share_resource_optimization_ == 1 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map)
+    status = htp_share_resource_optimization_ == 1 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
+                                                                                                   enable_gpe,
+                                                                                                   gpe_num_prepare_threads,
+                                                                                                   gpe_kway_partitions)
                                                    : CreateContext(enable_htp_weight_sharing,
                                                                    enable_htp_extended_udma_mode,
                                                                    enable_htp_prepare_only,
-                                                                   false /*enable_htp_ref_weight_sharing*/);
+                                                                   false /*enable_htp_ref_weight_sharing*/,
+                                                                   enable_gpe,
+                                                                   gpe_num_prepare_threads,
+                                                                   gpe_kway_partitions);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
@@ -2163,7 +2228,10 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                                                      uint32_t soc_model,
                                                      bool enable_htp_extended_udma_mode,
                                                      bool enable_htp_prepare_only,
-                                                     bool enable_htp_ref_weight_sharing) {
+                                                     bool enable_htp_ref_weight_sharing,
+                                                     bool enable_gpe,
+                                                     uint32_t gpe_num_prepare_threads,
+                                                     uint32_t gpe_kway_partitions) {
   RETURN_IF_NOT(backend_partial_setup_completed_, "QNN backend manager must be partially setup first.");
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager completely setup already.");
@@ -2183,7 +2251,10 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
     status = CreateContext(false /*enable_htp_weight_sharing*/,
                            enable_htp_extended_udma_mode,
                            enable_htp_prepare_only,
-                           enable_htp_ref_weight_sharing);
+                           enable_htp_ref_weight_sharing,
+                           enable_gpe,
+                           gpe_num_prepare_threads,
+                           gpe_kway_partitions);
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN context created.");

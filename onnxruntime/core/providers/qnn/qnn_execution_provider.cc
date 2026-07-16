@@ -1245,6 +1245,35 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
+  // GPE (Graph Program Executor / Graph Splitting). Requires SDK 2.49+ at runtime.
+  {
+    std::string gpe_str;
+    GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                   FormatEPConfigKey("htp_enable_gpe"), "0", gpe_str);
+    enable_gpe_ = gpe_str == "1";
+  }
+  {
+    std::string gpe_threads_str;
+    GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                   FormatEPConfigKey("htp_gpe_num_prepare_threads"), "1", gpe_threads_str);
+    try {
+      unsigned long val = std::stoul(gpe_threads_str);
+      gpe_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 1u;
+    } catch (...) {
+      gpe_num_prepare_threads_ = 1;
+    }
+  }
+  {
+    std::string kway_str;
+    GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                   FormatEPConfigKey("gpe_kway_partitions"), "0", kway_str);
+    try {
+      gpe_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
+    } catch (...) {
+      gpe_kway_partitions_ = 0;
+    }
+  }
+
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(ort_api,
@@ -1970,7 +1999,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 ep->rpcmem_library_,
                                                 context_bin_map,
                                                 ep->enable_htp_extended_udma_mode_,
-                                                ep->prepare_only_);
+                                                ep->prepare_only_,
+                                                ep->enable_gpe_,
+                                                ep->gpe_num_prepare_threads_,
+                                                ep->gpe_kway_partitions_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3283,7 +3315,10 @@ Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
                                                                   ep_.soc_model_per_soc_[per_soc_idx],
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
-                                                                  ep_.enable_htp_ref_weight_sharing_));
+                                                                  ep_.enable_htp_ref_weight_sharing_,
+                                                                  ep_.enable_gpe_,
+                                                                  ep_.gpe_num_prepare_threads_,
+                                                                  ep_.gpe_kway_partitions_));
 
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
     ep_.CreateHtpPowerConfigId();

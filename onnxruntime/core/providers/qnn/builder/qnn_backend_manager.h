@@ -201,7 +201,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false,
-      bool enable_htp_prepare_only = false);
+      bool enable_htp_prepare_only = false,
+      bool enable_gpe = false,
+      uint32_t gpe_num_prepare_threads = 1,
+      uint32_t gpe_kway_partitions = 0);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -210,7 +213,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     uint32_t soc_model,
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
-                                    bool enable_htp_ref_weight_sharing = false);
+                                    bool enable_htp_ref_weight_sharing = false,
+                                    bool enable_gpe = false,
+                                    uint32_t gpe_num_prepare_threads = 1,
+                                    uint32_t gpe_kway_partitions = 0);
 
   void ReleaseDeviceAndContext();
 
@@ -446,7 +452,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status CreateContext(bool enable_htp_weight_sharing,
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
-                            bool enable_htp_ref_weight_sharing);
+                            bool enable_htp_ref_weight_sharing,
+                            bool enable_gpe = false,
+                            uint32_t gpe_num_prepare_threads = 1,
+                            uint32_t gpe_kway_partitions = 0);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
@@ -454,7 +463,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     std::vector<char>& buffer);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
-                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          bool enable_gpe = false,
+                                                          uint32_t gpe_num_prepare_threads = 1,
+                                                          uint32_t gpe_kway_partitions = 0);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
