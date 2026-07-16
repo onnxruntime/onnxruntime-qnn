@@ -346,6 +346,9 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   // pushes NHWC conversions into the Reshape shape constant and breaks the 5-node
   // Conv->RTR->Conv pattern. Post-LT is safe: CreateOrValidateOnQnn adds pre/post T.
   if (core.node_count == 3 && !qnn_model_wrapper.IsPostLayoutTransform()) {
+    ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                "SpaceToDepthFusion: skipping bare RTR pattern in pre-Layout-Transform pass; "
+                "fusion will be reattempted in the 2nd pass (if ORT issues one).");
     return std::nullopt;
   }
 

@@ -20,62 +20,6 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-namespace {
-
-// Bare R->T->R chain plus an unrelated 1x1 Conv on the graph input. The side Conv
-// is a layout-sensitive op that forces ORT to issue the 2nd GetCapability pass;
-// the RTR itself is still "bare" for fusion purposes (no adjacent Transpose).
-GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& input_shape,
-                                                int64_t block_height,
-                                                int64_t block_width,
-                                                const std::vector<int64_t>& perm) {
-  return [=](ModelTestBuilder& builder) -> void {
-    builder.graph_->set_name("spacetodepth_bare_rtr_graph");
-
-    const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
-    MakeTestInput<float>(builder, "input", input_def);
-
-    const int64_t n = input_shape[0];
-    const int64_t c = input_shape[1];
-    const int64_t h = input_shape[2];
-    const int64_t w = input_shape[3];
-    const int64_t h_div = h / block_height;
-    const int64_t w_div = w / block_width;
-
-    // Reshape1: [N, C, H, W] -> [N, C, H/bh, bh, W/bw, bw]
-    builder.Make1DInitializer<int64_t>("reshape1_shape", {n, c, h_div, block_height, w_div, block_width});
-    builder.AddNode("Reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
-
-    // Transpose: 6D permutation (CRD or DCR)
-    builder.AddNode("Transpose", "Transpose", {"reshape1_out"}, {"transpose_out"}, kOnnxDomain,
-                    {builder.MakeIntsAttribute("perm", perm)});
-
-    // Reshape2: -> [N, C*bh*bw, H/bh, W/bw]
-    builder.Make1DInitializer<int64_t>("reshape2_shape", {n, c * block_height * block_width, h_div, w_div});
-    builder.AddNode("Reshape2", "Reshape", {"transpose_out", "reshape2_shape"}, {"output"}, kOnnxDomain);
-
-    builder.MakeOutput("output");
-
-    // Unrelated side-branch 1x1 Conv on the same input — layout-sensitive op that
-    // forces ORT to issue the 2nd GetCapability pass. Not adjacent to the RTR.
-    const std::vector<int64_t> side_conv_weight_shape = {c, c, 1, 1};
-    builder.MakeInitializer<float>("side_conv_weight", side_conv_weight_shape, -1.0f, 1.0f);
-    builder.AddNode("SideConv", "Conv", {"input", "side_conv_weight"}, {"side_output"}, kOnnxDomain);
-    builder.MakeOutput("side_output");
-  };
-}
-
-// Shared across guarded (HTP/linux) and unguarded (x86_64 QNN CPU) tests, so it
-// must live outside the platform guard below.
-ProviderOptions GetProviderOptions(const std::string& backend_type) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = backend_type;
-  provider_options["offload_graph_io_quantization"] = "0";
-  return provider_options;
-}
-
-}  // namespace
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 namespace {
@@ -302,6 +246,60 @@ GetTestModelFn BuildTailWrappedSpaceToDepthTestCase(bool use_qdq,
                     attrs);
     builder.MakeOutput("Y");
   };
+}
+
+// Bare R->T->R chain, optionally plus an unrelated 1x1 Conv on the graph input.
+// The side Conv is a layout-sensitive op that forces ORT to issue the 2nd
+// GetCapability pass; the RTR itself is still "bare" for fusion purposes.
+// Pass add_side_conv=false to build a truly-bare graph for tripwire coverage.
+GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& input_shape,
+                                                int64_t block_height,
+                                                int64_t block_width,
+                                                const std::vector<int64_t>& perm,
+                                                bool add_side_conv = true) {
+  return [=](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("spacetodepth_bare_rtr_graph");
+
+    const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    const int64_t n = input_shape[0];
+    const int64_t c = input_shape[1];
+    const int64_t h = input_shape[2];
+    const int64_t w = input_shape[3];
+    const int64_t h_div = h / block_height;
+    const int64_t w_div = w / block_width;
+
+    // Reshape1: [N, C, H, W] -> [N, C, H/bh, bh, W/bw, bw]
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {n, c, h_div, block_height, w_div, block_width});
+    builder.AddNode("Reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
+
+    // Transpose: 6D permutation (CRD or DCR)
+    builder.AddNode("Transpose", "Transpose", {"reshape1_out"}, {"transpose_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", perm)});
+
+    // Reshape2: -> [N, C*bh*bw, H/bh, W/bw]
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {n, c * block_height * block_width, h_div, w_div});
+    builder.AddNode("Reshape2", "Reshape", {"transpose_out", "reshape2_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+
+    if (add_side_conv) {
+      // Unrelated side-branch 1x1 Conv on the same input — layout-sensitive op that
+      // forces ORT to issue the 2nd GetCapability pass. Not adjacent to the RTR.
+      const std::vector<int64_t> side_conv_weight_shape = {c, c, 1, 1};
+      builder.MakeInitializer<float>("side_conv_weight", side_conv_weight_shape, -1.0f, 1.0f);
+      builder.AddNode("SideConv", "Conv", {"input", "side_conv_weight"}, {"side_output"}, kOnnxDomain);
+      builder.MakeOutput("side_output");
+    }
+  };
+}
+
+ProviderOptions GetProviderOptions(const std::string& backend_type) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_type;
+  provider_options["offload_graph_io_quantization"] = "0";
+  return provider_options;
 }
 
 template <typename QuantType = uint8_t>
@@ -653,6 +651,23 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_Float_CRD) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", 1);
   // 4 = side-Conv NCHW<->NHWC pair (LT) + fused S2D NCHW<->NHWC pre/post pair.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 4);
+}
+
+// Tripwire: truly-bare RTR (no side layout-sensitive op) is currently unreachable
+// for SpaceToDepthFusion. Pass 1 sees rank-6 R/T/R as unsupported per-node and
+// returns empty capabilities; ORT elides Layout Transformer and never issues
+// pass 2, so the post-LT-gated fusion never fires and QNN takes nothing. When
+// ORT ever changes this (unconditional pass 2, or HTP support for rank-6 R/T/R),
+// Assignment::None will fail — forcing us to update the fusion gate or delete
+// this tripwire.
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_TrulyBareRTR_Float_CRD_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 3, 4, 4}, 2, 2, {0, 1, 3, 5, 2, 4},
+                                                   /*add_side_conv=*/false),
+                  GetProviderOptions("htp"),
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
 
 // Bare-RTR DCR structural coverage; disabled — HTP's SpaceToDepth DCR kernel mismatches

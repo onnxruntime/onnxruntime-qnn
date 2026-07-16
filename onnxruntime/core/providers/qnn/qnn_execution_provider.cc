@@ -1907,7 +1907,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
-              ep->is_post_layout_transform_ ? "GetCapability post-LT" : "GetCapability pre-LT");
+              ep->is_post_layout_transform_
+                  ? "GetCapability pass 2 (post-Layout-Transform; post-LT-gated fusions enabled)"
+                  : "GetCapability pass 1 (pre-Layout-Transform; post-LT-gated fusions dormant)");
   auto post_lt_marker = gsl::finally([ep] { ep->is_post_layout_transform_ = true; });
 
   // Genie Pathway
