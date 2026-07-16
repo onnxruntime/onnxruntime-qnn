@@ -26,13 +26,13 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 
 ## Platform Support
 
-| Package | Windows ARM64 | Windows ARM64EC | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
-|---|---|---|---|---|---|---|---|
-| Python Wheel | Inference | — | — | AOT compilation | Inference | AOT compilation | — |
-| NuGet | - | — | Inference | — | — | — | — |
-| ZIP | Inference | Inference | Inference | AOT compilation | — | AOT compilation | — |
-| tgz | — | — | — | — | Inference | — | — |
-| Maven | — | — | — | — | — | — | Inference |
+| Package | Windows ARM64 | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|---|
+| Python Wheel | Inference | — | AOT compilation | Inference | AOT compilation | — |
+| NuGet | - | Inference | — | — | — | — |
+| ZIP | Inference | Inference | AOT compilation | — | AOT compilation | — |
+| tgz | — | — | — | Inference | — | — |
+| Maven | — | — | — | — | — | Inference |
 
 ---
 
