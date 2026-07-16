@@ -1001,7 +1001,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K256_B4_BS64_ZP) {
 
   TestParams params;
   params.M = 1;
-  params.N = 2;
+  params.N = 8;
   params.K = 256;
   params.block_size = 64;
   params.has_zero_point = true;
