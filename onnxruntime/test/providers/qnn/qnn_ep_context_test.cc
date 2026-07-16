@@ -3301,6 +3301,10 @@ static void SetGpeOptions(Ort::SessionOptions& so,
 // On SDK 2.48 the GPE config block is compiled out; the test still passes because
 // QnnContext_create succeeds without option 22.
 TEST_F(QnnHTPBackendTests, GpeEnabled_DefaultThreads_CompileSucceeds) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+  GTEST_SKIP() << "GPE requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3339,6 +3343,10 @@ TEST_F(QnnHTPBackendTests, GpeEnabled_DefaultThreads_CompileSucceeds) {
 
 // Test 2: GPE enabled with a custom thread count (4 threads) — context binary is written.
 TEST_F(QnnHTPBackendTests, GpeEnabled_CustomThreads_CompileSucceeds) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+  GTEST_SKIP() << "GPE requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3417,6 +3425,10 @@ TEST_F(QnnHTPBackendTests, GpeDisabled_NoRegression) {
 
 // Test: GPE enabled with explicit kway partition count.
 TEST_F(QnnHTPBackendTests, GpeEnabled_KwayPartitions_CompileSucceeds) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+  GTEST_SKIP() << "GPE requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
