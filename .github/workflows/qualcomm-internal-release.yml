@@ -301,7 +301,6 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.11-nuget
-          
       - name: Download Windows ARM64 (ARM64x) NuGet Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
