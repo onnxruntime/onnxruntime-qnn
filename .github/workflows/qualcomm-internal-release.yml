@@ -408,7 +408,6 @@ jobs:
 
           x64Pkg=$(find "$X64_DIR" -name "*.nupkg" | head -1)
           armPkg=$(find "$ARM64_DIR" -name "*.nupkg" | head -1)
-  
           cp "$x64Pkg" "$MERGE_DIR/input/x64/"
           cp "$armPkg" "$MERGE_DIR/input/arm64x/"
 
