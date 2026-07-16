@@ -524,6 +524,25 @@ TEST(QnnUnit_EpUtilsTest, Split_Rejects4BitWhenDisallowed) {
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
+namespace {
+// Conv producer map for the positional DQ check in OrtConvNodeGroupSelector::Check.
+// Maps each Conv input (OrtValueInfo*) to the DQ node that produces it.
+std::unordered_map<const OrtValueInfo*, const OrtNode*> g_conv_producer_map;
+OrtStatus* FakeConvProducerStub(const OrtValueInfo* vi, const OrtNode** producer,
+                                size_t* output_index) noexcept {
+  auto it = g_conv_producer_map.find(vi);
+  if (producer) *producer = (it != g_conv_producer_map.end()) ? it->second : nullptr;
+  if (output_index) *output_index = 0;
+  return nullptr;
+}
+struct ConvProducerGuard {
+  explicit ConvProducerGuard(std::unordered_map<const OrtValueInfo*, const OrtNode*> map) {
+    g_conv_producer_map = std::move(map);
+  }
+  ~ConvProducerGuard() { g_conv_producer_map.clear(); }
+};
+}
+
 // =============================================================================
 // OrtConvNodeGroupSelector::Check
 //
@@ -1974,23 +1993,6 @@ OrtStatus* FakeClipProducerStub(const OrtValueInfo* /*value_info*/,
 struct ClipProducerGuard {
   explicit ClipProducerGuard(const OrtNode* n) { g_clip_producer_dq = n; }
   ~ClipProducerGuard() { g_clip_producer_dq = nullptr; }
-};
-
-// Conv producer map for the positional DQ check in OrtConvNodeGroupSelector::Check.
-// Maps each Conv input (OrtValueInfo*) to the DQ node that produces it.
-std::unordered_map<const OrtValueInfo*, const OrtNode*> g_conv_producer_map;
-OrtStatus* FakeConvProducerStub(const OrtValueInfo* vi, const OrtNode** producer,
-                                size_t* output_index) noexcept {
-  auto it = g_conv_producer_map.find(vi);
-  if (producer) *producer = (it != g_conv_producer_map.end()) ? it->second : nullptr;
-  if (output_index) *output_index = 0;
-  return nullptr;
-}
-struct ConvProducerGuard {
-  explicit ConvProducerGuard(std::unordered_map<const OrtValueInfo*, const OrtNode*> map) {
-    g_conv_producer_map = std::move(map);
-  }
-  ~ConvProducerGuard() { g_conv_producer_map.clear(); }
 };
 }  // namespace
 
