@@ -205,11 +205,6 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
 |'1'|Enable the float32 model to be inferenced with fp16 precision.|
 
-|`"disable_htp_monolithic_lstm"`|Description|
-|---|---|
-|'0'|Default. HTP uses the monolithic LSTM graph configuration.|
-|'1'|Disable the monolithic LSTM graph configuration on HTP.|
-
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
