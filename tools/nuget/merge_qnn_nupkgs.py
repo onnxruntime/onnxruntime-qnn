@@ -165,6 +165,37 @@ def _derive_version(base_zip, base_pkg_path):
     raise SystemExit(f"error: could not derive package version from '{stem}'.")
 
 
+def _version_from_pkg(pkg_path):
+    with zipfile.ZipFile(pkg_path) as zf:
+        return _derive_version(zf, pkg_path)
+
+
+# Dev-build versions embed a per-job build timestamp (see OnnxRuntime.CSharp.proj's
+# CurrentDate/CurrentTime) ahead of the commit hash, e.g. "2.5.0-dev-20260713-0920-f400981".
+# That timestamp legitimately differs between the two per-arch CI jobs even when both are
+# built from the same commit, so it's stripped out before comparing -- what actually matters
+# is that both packages came from the same commit, not that they were packed at the same minute.
+_DEV_VERSION_RE = re.compile(r"^(?P<base>.+-dev)-\d{8}-\d{4}-(?P<commit>[0-9a-fA-F]+)$")
+
+
+def _version_identity(version):
+    """Return a comparable form of `version` with any dev-build timestamp stripped out."""
+    match = _DEV_VERSION_RE.match(version)
+    if match:
+        return f"{match.group('base')}-{match.group('commit')}"
+    return version
+
+
+def _check_versions_match(arm64_pkg, x64_pkg):
+    arm64_version = _version_from_pkg(arm64_pkg)
+    x64_version = _version_from_pkg(x64_pkg)
+    if _version_identity(arm64_version) != _version_identity(x64_version):
+        raise SystemExit(
+            f"error: ARM64X package version '{arm64_version}' does not match "
+            f"x64 package version '{x64_version}'. Refusing to merge mismatched packages."
+        )
+
+
 def main():
     args = parse_arguments()
 
@@ -174,6 +205,8 @@ def main():
     arm64_pkg, x64_pkg = discover_packages(args.input_dir)
     print(f"ARM64x base package: {arm64_pkg.name}")
     print(f"x64 package:         {x64_pkg.name}")
+
+    _check_versions_match(arm64_pkg, x64_pkg)
 
     out_path = merge(arm64_pkg, x64_pkg, args.output_dir)
     print(f"Merged package written to: {out_path}")
