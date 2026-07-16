@@ -513,5 +513,33 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wra
   return nullptr;
 }
 
+std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info) {
+  if (value_info == nullptr) {
+    return std::nullopt;
+  }
+
+  const OrtTypeInfo* type_info = nullptr;
+  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) {
+    return std::nullopt;
+  }
+
+  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
+  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
+    return std::nullopt;
+  }
+
+  size_t dims_count = 0;
+  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr) {
+    return std::nullopt;
+  }
+
+  std::vector<int64_t> dims(dims_count);
+  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
+    return std::nullopt;
+  }
+
+  return dims;
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime
