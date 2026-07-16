@@ -304,6 +304,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
   mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
+
+  // When no explicit backend_type is set, QnnBackendManager creation is deferred to GetCapabilityImpl
+  bool auto_select_backend_ = false;
+  std::optional<qnn::QnnBackendManagerConfig> deferred_backend_config_;
 };
 
 }  // namespace onnxruntime

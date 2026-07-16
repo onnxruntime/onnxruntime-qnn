@@ -35,6 +35,7 @@
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_model_classifier.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
@@ -671,6 +672,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
+  bool explicit_backend_set = false;
   {
     std::optional<std::string> backend_path_from_options{};
 
@@ -690,7 +692,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       throw std::runtime_error("Only one of 'backend_type' and 'backend_path' should be set.");
     }
     if (!backend_type.empty()) {
-      if (std::string parsed_backend_path; ParseBackendTypeName(backend_type, parsed_backend_path, logger_)) {
+      if (backend_type == "auto") {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                    "Backend type set to 'auto': deferring backend selection to model classifier.");
+      } else if (std::string parsed_backend_path; ParseBackendTypeName(backend_type, parsed_backend_path, logger_)) {
         backend_path_from_options = parsed_backend_path;
       } else {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to parse 'backend_type' value.");
@@ -702,7 +707,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     // Use the determined backend path or default
     if (backend_path_from_options.has_value()) {
       backend_path = std::move(*backend_path_from_options);
-    } else {
+      explicit_backend_set = true;
+    } else if (backend_type != "auto") {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Using default backend path: " + backend_path).c_str());
     }
 
@@ -1276,6 +1282,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (stop_share_ep_contexts_) {
       SharedContext::GetInstance().ResetSharedQnnBackendManager();
     }
+  } else if (!explicit_backend_set)  {
+    // Defer backend selection. qnn_backend_manager_ will remain null, then get
+    // created after model classification in GetCapabilityImpl().
+    auto_select_backend_ = true;
+    // Create config with placeholder backend path, which gets overwritten at classification time
+    deferred_backend_config_ = qnn::QnnBackendManagerConfig{kDefaultHtpBackendPath,
+                                                            profiling_level_etw,
+                                                            profiling_level,
+                                                            profiling_file_path,
+                                                            context_priority,
+                                                            std::move(qnn_serializer_config),
+                                                            device_id_,
+                                                            htp_arch,
+                                                            soc_model,
+                                                            op_packages,
+                                                            skip_qnn_version_check};
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
@@ -1297,8 +1319,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  // Initialize compatibility manager with backend manager.
-  qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+  if (!auto_select_backend_) {
+    // Initialize compatibility manager with backend manager.
+    qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+  }
 
   // Choose EP allocator. Must be done after creating the backend manager.
   static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
@@ -1335,8 +1359,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                    "QNN allocator already set to type: %s. Option '%s' will be ignored.",
                    qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data(),
                    QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str());
-    } else {
+    } else if (qnn_backend_manager_) {
       if (qnn_backend_manager_->IsDx12SharedMemoryAllocatorSupported()) {
+      // qnn_backend_manager_ is null here when backend_type=auto (deferred to GetCapabilityImpl).
+      // Store the type and apply it after the backend is created.
         qnn_allocator_type_ = qnn::QnnAllocatorType::DX12_SHARED;
       } else {
         ORT_CXX_LOGF(logger_,
@@ -1346,7 +1372,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+  if (qnn_backend_manager_) {
+    qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+  }
   if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
     ORT_CXX_LOGF(logger_,
                  ORT_LOGGING_LEVEL_VERBOSE,
@@ -1396,7 +1424,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
           if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
             // (void)qnn_backend_manager_->SetProfilingLevelETW(qnn::ProfilingLevel::INVALID);
-            (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
+            if (qnn_backend_manager_) (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
           }
         });
     etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
@@ -1962,6 +1990,40 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   Ort::Status rt;
   if (!ep->enable_multi_soc_ep_context_) {
+    if (ep->auto_select_backend_ &&
+        !is_qnn_ctx_model &&
+        ep->deferred_backend_config_.has_value()) {
+      // Auto-detect backend via model classifier.
+      // Skipped for pre-compiled context models (backend is already baked into those).
+      auto model_class = qnn::ClassifyModel(graph, ep->ort_api, ep->logger_);
+      const bool route_to_gpu = (model_class == qnn::ModelClass::GenAI);
+      const std::string& selected_path = route_to_gpu ? kDefaultGpuBackendPath
+                                                      : kDefaultHtpBackendPath;
+      const char* class_label = route_to_gpu ? "GenAI -> GPU"
+                                             : (model_class == qnn::ModelClass::NonGenAI) ? "NonGenAI -> HTP"
+                                                                                          : "Unknown -> HTP (default)";
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("QNN auto-backend selection: " + std::string(class_label)).c_str());
+
+      ep->deferred_backend_config_->backend_path = selected_path;
+      ep->qnn_backend_manager_ = qnn::QnnBackendManager::Create(
+          *ep->deferred_backend_config_,
+          ApiPtrs{ep->ort_api, ep->ep_api, ep->model_editor_api},
+          ep->logger_);
+
+      ep->qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(ep->qnn_backend_manager_.get());
+      ep->qnn_backend_manager_->SetQnnAllocatorType(ep->qnn_allocator_type_);
+
+      if (ep->htp_share_resource_optimization_ == 1) {
+        if (!SharedContext::GetInstance().SetSharedQnnBackendManager(ep->qnn_backend_manager_)) {
+          return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Failed to set shared QnnBackendManager.");
+        }
+      }
+
+      ep->auto_select_backend_ = false;
+      ep->deferred_backend_config_.reset();
+    }
+
     rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
                                                 ep->context_cache_enabled_,
                                                 ep->share_ep_contexts_,
