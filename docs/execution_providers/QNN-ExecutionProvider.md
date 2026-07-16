@@ -328,11 +328,11 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 |`"htp_gpe_num_prepare_threads"`|Description|
 |---|---|
-|Integer string ≥ 1, default `"1"`|Number of threads used to prepare GPE sub-graphs in parallel. Only effective when `htp_enable_gpe=1`. `"0"` means auto (uses `min(hardware_concurrency, number_of_splits)`). Higher values reduce prepare time at the cost of peak CPU/memory usage during preparation.|
+|Integer string ≥ 1, default `"8"`|Number of threads used to prepare GPE sub-graphs in parallel. Only effective when `htp_enable_gpe=1`. `"0"` means auto (uses `min(hardware_concurrency, number_of_splits)`). Higher values reduce prepare time at the cost of peak CPU/memory usage during preparation.|
 
 |`"gpe_kway_partitions"`|Description|
 |---|---|
-|Integer string, default `"0"` (SDK default)|Number of sub-graphs (k-way partitions) the HTP backend splits the model into during GPE context creation. `"0"` leaves the decision to the SDK. Only effective when `htp_enable_gpe=1`. Equivalent to setting the `GPE_KWAY_PARTITIONS` environment variable; setting this provider option is preferred since it applies per-session without process-wide side effects (note: implementation sets the env var immediately before context creation).|
+|Integer string, default `"4"`|Number of sub-graphs (k-way partitions) the HTP backend splits the model into during GPE context creation. `"0"` leaves the decision to the SDK. Only effective when `htp_enable_gpe=1`. Equivalent to setting the `GPE_KWAY_PARTITIONS` environment variable; setting this provider option is preferred since it applies per-session without process-wide side effects (note: implementation sets the env var immediately before context creation).|
 
 |`"session.disable_cpu_ep_fallback"`|Description|
 |---|---|

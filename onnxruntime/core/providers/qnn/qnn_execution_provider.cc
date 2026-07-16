@@ -1255,22 +1255,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   {
     std::string gpe_threads_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("htp_gpe_num_prepare_threads"), "1", gpe_threads_str);
+                                   FormatEPConfigKey("htp_gpe_num_prepare_threads"), "8", gpe_threads_str);
     try {
       unsigned long val = std::stoul(gpe_threads_str);
-      gpe_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 1u;
+      gpe_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 8u;
     } catch (...) {
-      gpe_num_prepare_threads_ = 1;
+      gpe_num_prepare_threads_ = 8;
     }
   }
   {
     std::string kway_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("gpe_kway_partitions"), "0", kway_str);
+                                   FormatEPConfigKey("gpe_kway_partitions"), "4", kway_str);
     try {
       gpe_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
     } catch (...) {
-      gpe_kway_partitions_ = 0;
+      gpe_kway_partitions_ = 4;
     }
   }
 

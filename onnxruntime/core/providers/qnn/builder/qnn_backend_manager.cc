@@ -1302,12 +1302,13 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
-#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
   QnnContext_Config_t context_config_gpe_vtcm = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t gpe_custom_config_vtcm;
   if (enable_gpe) {
     gpe_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
-    gpe_custom_config_vtcm.graphSplittingConfigs = {true, gpe_num_prepare_threads};
+    gpe_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
+    gpe_custom_config_vtcm.graphSplittingConfigs.numPrepareThreads = gpe_num_prepare_threads;
     context_config_gpe_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_gpe_vtcm.customConfig = &gpe_custom_config_vtcm;
   }
@@ -1319,12 +1320,12 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
                                           &resource_sharing_opt_type_config,
                                           &context_config_weight_sharing,
 #endif
-#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
                                           enable_gpe ? &context_config_gpe_vtcm : nullptr,
 #endif
                                           nullptr};
 
-#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
   if (enable_gpe && gpe_kway_partitions > 0) {
     const std::string kway_str = std::to_string(gpe_kway_partitions);
 #ifdef _WIN32
@@ -1552,12 +1553,13 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     enable_htp_ref_weight_sharing = false;
   }
 
-#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
   QnnContext_Config_t context_config_gpe = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t gpe_custom_config;
   if (enable_gpe) {
     gpe_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
-    gpe_custom_config.graphSplittingConfigs = {true, gpe_num_prepare_threads};
+    gpe_custom_config.graphSplittingConfigs.graphSplittingEnabled = true;
+    gpe_custom_config.graphSplittingConfigs.numPrepareThreads = gpe_num_prepare_threads;
     context_config_gpe.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_gpe.customConfig = &gpe_custom_config;
   }
@@ -1569,7 +1571,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
       &context_config_extended_udma,
       &context_config_prepare_only,
       enable_htp_ref_weight_sharing ? &context_config_ref_weight_sharing : nullptr,
-#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
       enable_gpe ? &context_config_gpe : nullptr,
 #endif
       nullptr};
@@ -1596,7 +1598,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     configs = nullptr;
   }
 
-#ifdef QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
   if (enable_gpe && gpe_kway_partitions > 0) {
     const std::string kway_str = std::to_string(gpe_kway_partitions);
 #ifdef _WIN32
@@ -2128,9 +2130,9 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                                                                   enable_gpe,
-                                                                                                   gpe_num_prepare_threads,
-                                                                                                   gpe_kway_partitions)
+                                                                                                 enable_gpe,
+                                                                                                 gpe_num_prepare_threads,
+                                                                                                 gpe_kway_partitions)
                                                    : CreateContext(enable_htp_weight_sharing,
                                                                    enable_htp_extended_udma_mode,
                                                                    enable_htp_prepare_only,
