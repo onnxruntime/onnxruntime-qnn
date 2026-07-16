@@ -1252,25 +1252,43 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                    FormatEPConfigKey("htp_enable_gpe"), "0", gpe_str);
     enable_gpe_ = gpe_str == "1";
   }
+  bool user_set_gpe_threads = false;
   {
     std::string gpe_threads_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("htp_gpe_num_prepare_threads"), "8", gpe_threads_str);
-    try {
-      unsigned long val = std::stoul(gpe_threads_str);
-      gpe_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 8u;
-    } catch (...) {
-      gpe_num_prepare_threads_ = 8;
+                                   FormatEPConfigKey("htp_gpe_num_prepare_threads"), "", gpe_threads_str);
+    user_set_gpe_threads = !gpe_threads_str.empty();
+    if (user_set_gpe_threads) {
+      try {
+        unsigned long val = std::stoul(gpe_threads_str);
+        gpe_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 8u;
+      } catch (...) {
+        gpe_num_prepare_threads_ = 8;
+      }
     }
   }
+  bool user_set_kway = false;
   {
     std::string kway_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("gpe_kway_partitions"), "4", kway_str);
-    try {
-      gpe_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
-    } catch (...) {
-      gpe_kway_partitions_ = 4;
+                                   FormatEPConfigKey("gpe_kway_partitions"), "", kway_str);
+    user_set_kway = !kway_str.empty();
+    if (user_set_kway) {
+      try {
+        gpe_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
+      } catch (...) {
+        gpe_kway_partitions_ = 4;
+      }
+    }
+  }
+  if (!enable_gpe_) {
+    if (user_set_gpe_threads) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "htp_gpe_num_prepare_threads is set but htp_enable_gpe=0. Value will be ignored.");
+    }
+    if (user_set_kway) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "gpe_kway_partitions is set but htp_enable_gpe=0. Value will be ignored.");
     }
   }
 

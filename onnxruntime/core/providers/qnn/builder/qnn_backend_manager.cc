@@ -1312,6 +1312,15 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     context_config_gpe_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_gpe_vtcm.customConfig = &gpe_custom_config_vtcm;
   }
+#else
+  ORT_UNUSED_PARAMETER(enable_gpe);
+  ORT_UNUSED_PARAMETER(gpe_num_prepare_threads);
+  ORT_UNUSED_PARAMETER(gpe_kway_partitions);
+  if (enable_gpe) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                    "htp_enable_gpe=1 was set but this build was compiled against QAIRT SDK < 2.49. "
+                    "GPE is not available and the option will be ignored.");
+  }
 #endif
 
   const QnnContext_Config_t* configs[] = {&context_priority_config,
@@ -1562,6 +1571,15 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     gpe_custom_config.graphSplittingConfigs.numPrepareThreads = gpe_num_prepare_threads;
     context_config_gpe.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_gpe.customConfig = &gpe_custom_config;
+  }
+#else
+  ORT_UNUSED_PARAMETER(enable_gpe);
+  ORT_UNUSED_PARAMETER(gpe_num_prepare_threads);
+  ORT_UNUSED_PARAMETER(gpe_kway_partitions);
+  if (enable_gpe) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                    "htp_enable_gpe=1 was set but this build was compiled against QAIRT SDK < 2.49. "
+                    "GPE is not available and the option will be ignored.");
   }
 #endif
 
