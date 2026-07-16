@@ -136,7 +136,7 @@ Ort::Status QLinearMatMulOpBuilder::BuildQuantParam(const QnnModelWrapper& qnn_m
                                                     const OrtNodeUnitIODef& zp_input,
                                                     QnnQuantParamsWrapper& out_quant_param) {
   RETURN_IF(!scale_input.Exists(), "QLinearMatMul: scale input does not exist.");
-  RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(scale_input.name),
+  RETURN_IF(!qnn_model_wrapper.IsConstantInput(scale_input.name),
             "QLinearMatMul: scale must be a compile-time constant (initializer).");
 
   const OrtValueInfo* scale_tensor = qnn_model_wrapper.GetConstantTensor(scale_input.name);
@@ -148,7 +148,7 @@ Ort::Status QLinearMatMulOpBuilder::BuildQuantParam(const QnnModelWrapper& qnn_m
   int32_t zero_point = 0;
   const OrtValueInfo* zp_tensor = nullptr;
   if (zp_input.Exists() && !zp_input.name.empty()) {
-    RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(zp_input.name),
+    RETURN_IF(!qnn_model_wrapper.IsConstantInput(zp_input.name),
               "QLinearMatMul: zero_point must be a compile-time constant (initializer).");
     zp_tensor = qnn_model_wrapper.GetConstantTensor(zp_input.name);
   }
@@ -169,7 +169,7 @@ Ort::Status QLinearMatMulOpBuilder::ValidateQuantInputs(const QnnModelWrapper& q
     if (idx >= inputs.size() || !inputs[idx].Exists()) {
       return MAKE_EP_FAIL("QLinearMatMul: required scale input is missing.");
     }
-    RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(inputs[idx].name),
+    RETURN_IF(!qnn_model_wrapper.IsConstantInput(inputs[idx].name),
               "QLinearMatMul: scale inputs must be compile-time constants.");
 
     // Reject per-row/per-column scales: shape must be scalar or {1}.
@@ -187,7 +187,7 @@ Ort::Status QLinearMatMulOpBuilder::ValidateQuantInputs(const QnnModelWrapper& q
   const std::array<size_t, 3> zp_indices = {kIdxAZeroPoint, kIdxBZeroPoint, kIdxYZeroPoint};
   for (size_t idx : zp_indices) {
     if (idx < inputs.size() && inputs[idx].Exists() && !inputs[idx].name.empty()) {
-      RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(inputs[idx].name),
+      RETURN_IF(!qnn_model_wrapper.IsConstantInput(inputs[idx].name),
                 "QLinearMatMul: zero_point inputs must be compile-time constants.");
     }
   }
@@ -215,8 +215,8 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
   return false;
 #else
   const auto& inputs = node_unit.Inputs();
-  const bool b_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxB].name);
-  const bool a_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxA].name);
+  const bool b_is_initializer = qnn_model_wrapper.IsConstantInput(inputs[kIdxB].name);
+  const bool a_is_initializer = qnn_model_wrapper.IsConstantInput(inputs[kIdxA].name);
 
   // Use FullyConnected if B is a rank-2 initializer or a rank-1 tensor.
   bool use_fully_connected = (shape_b.size() == 2 && b_is_initializer) || shape_b.size() == 1;
@@ -270,7 +270,7 @@ Ort::Status QLinearMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wra
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(inputs[kIdxB].shape, shape_b), "QLinearMatMul: cannot get shape of B.");
 
   // Decide MatMul vs FullyConnected (same rule as MatMulOpBuilder).
-  const bool b_is_initializer = qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxB].name);
+  const bool b_is_initializer = qnn_model_wrapper.IsConstantInput(inputs[kIdxB].name);
   const bool use_fully_connected =
       DecideUseFullyConnected(qnn_model_wrapper, node_unit, shape_a, shape_b, qnn_dtype_a, qnn_dtype_b, quant_a);
 
@@ -297,7 +297,7 @@ Ort::Status QLinearMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wra
       RETURN_IF_ERROR(quant_a_2d.HandleUnsqueeze<uint32_t>(shape_a, shape_a_2d));
     }
 
-    if (qnn_model_wrapper.IsEffectivelyConstantInput(org_a_name)) {
+    if (qnn_model_wrapper.IsConstantInput(org_a_name)) {
       std::vector<uint8_t> unpacked;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
           qnn_model_wrapper.GetConstantTensor(org_a_name), unpacked));
@@ -313,7 +313,7 @@ Ort::Status QLinearMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wra
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(actual_a_name)) {
       Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(org_a_name);
       std::vector<uint8_t> unpacked;
-      if (qnn_model_wrapper.IsEffectivelyConstantInput(org_a_name)) {
+      if (qnn_model_wrapper.IsConstantInput(org_a_name)) {
         RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
             qnn_model_wrapper.GetConstantTensor(org_a_name), unpacked));
       }

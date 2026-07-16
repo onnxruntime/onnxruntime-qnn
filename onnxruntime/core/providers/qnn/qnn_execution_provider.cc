@@ -428,9 +428,9 @@ void QnnEp::ParsePerSocHtpConfigs() {
   // Per-SoC vtcm size.
   std::vector<int32_t> vtcm_size_in_mb_per_soc = parse_per_soc_option(
       "vtcm_mb",
-      htp_graph_configs_.vtcm_size_in_mb,
+      vtcm_size_in_mb_,
       [this](std::string_view token) {
-        int32_t vtcm_size_in_mb = htp_graph_configs_.vtcm_size_in_mb;
+        int32_t vtcm_size_in_mb = vtcm_size_in_mb_;
         ParseVtcmSize(std::string(token), vtcm_size_in_mb, logger_);
         return vtcm_size_in_mb;
       });
@@ -439,9 +439,9 @@ void QnnEp::ParsePerSocHtpConfigs() {
   htp_graph_configs_per_soc_.reserve(num_socs);
   for (size_t idx = 0; idx < num_socs; ++idx) {
     qnn::HtpGraphConfigs_t config{vtcm_size_in_mb_per_soc[idx],
-                                  htp_graph_configs_.htp_graph_finalization_opt_mode,
-                                  htp_graph_configs_.enable_htp_fp16_precision,
-                                  htp_graph_configs_.disable_htp_monolithic_lstm};
+                                  htp_graph_finalization_opt_mode_,
+                                  enable_HTP_FP16_precision_,
+                                  /*disable_htp_monolithic_lstm=*/true};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -884,23 +884,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 ("User specified htp_graph_finalization_optimization_mode: " + htp_graph_finalization_opt_mode_str)
                     .c_str());
     ParseHtpGraphFinalizationOptimizationMode(htp_graph_finalization_opt_mode_str,
-                                              htp_graph_configs_.htp_graph_finalization_opt_mode,
+                                              htp_graph_finalization_opt_mode_,
                                               logger_);
   }
 
   // HTP FP16 precision mode
-  htp_graph_configs_.enable_htp_fp16_precision = ParseBoolOption(ort_api,
-                                                                 session_options_,
-                                                                 FormatEPConfigKey("enable_htp_fp16_precision"),
-                                                                 false,
-                                                                 logger_);
-
-  // HTP monolithic lstm
-  htp_graph_configs_.disable_htp_monolithic_lstm = ParseBoolOption(ort_api,
-                                                                   session_options_,
-                                                                   FormatEPConfigKey("disable_htp_monolithic_lstm"),
-                                                                   false,
-                                                                   logger_);
+  enable_HTP_FP16_precision_ = ParseBoolOption(ort_api,
+                                               session_options_,
+                                               FormatEPConfigKey("enable_htp_fp16_precision"),
+                                               false,
+                                               logger_);
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
@@ -945,7 +938,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     std::string vtcm_mb_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("vtcm_mb"), "0", vtcm_mb_str);
     if (!vtcm_mb_str.empty() && vtcm_mb_str != "0") {
-      ParseVtcmSize(vtcm_mb_str, htp_graph_configs_.vtcm_size_in_mb, logger_);
+      ParseVtcmSize(vtcm_mb_str, vtcm_size_in_mb_, logger_);
     }
   }
 
@@ -1081,7 +1074,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // Enforce SoC model to be set on x86_64 Linux (simulator) when enable FP16.
 #if defined(__linux__) && !defined(__aarch64__)
-  if (htp_graph_configs_.enable_htp_fp16_precision && soc_model == QNN_SOC_MODEL_UNKNOWN && soc_model_per_soc_.empty()) {
+  if (enable_HTP_FP16_precision_ && soc_model == QNN_SOC_MODEL_UNKNOWN && soc_model_per_soc_.empty()) {
     const std::string message =
         "FP16 precision mode is enabled but soc_model is not specified. "
         "Both parameters must be set together for FP16 precision support.";
@@ -1645,16 +1638,6 @@ void QnnEp::InitQnnHtpGraphConfigs(
       gsl::not_null<QnnGraph_Config_t*> graph_precision_config = configs_builder.PushConfig();
       graph_precision_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_precision_config->customConfig = htp_graph_precision_config;
-    }
-
-    if (!configs.disable_htp_monolithic_lstm) {
-      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_monolithic_lstm_config = configs_builder.PushCustomConfig();
-      htp_graph_monolithic_lstm_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM;
-      htp_graph_monolithic_lstm_config->monolithicLstm = true;
-
-      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
-      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
-      graph_config->customConfig = htp_graph_monolithic_lstm_config;
     }
   }
 }
@@ -2611,7 +2594,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                    [](const qnn::HtpGraphConfigs_t& config) { return static_cast<uint32_t>(config.vtcm_size_in_mb); });
   } else {
     // Manually set VTCM size here as it is not passed into QnnBackendManager.
-    info_v2.vtcm_mbs.push_back(static_cast<uint32_t>(htp_graph_configs_.vtcm_size_in_mb));
+    info_v2.vtcm_mbs.push_back(static_cast<uint32_t>(vtcm_size_in_mb_));
   }
 
   Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(compatibility_info_);
@@ -2727,7 +2710,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 #endif
 
   if (!ep->enable_multi_soc_ep_context_) {
-    RETURN_IF_NOT_NULL(ep->CompileOnnxModel(graphs, fused_nodes, count, node_compute_infos, ep->htp_graph_configs_));
+    qnn::HtpGraphConfigs_t htp_graph_configs{ep->vtcm_size_in_mb_,
+                                             ep->htp_graph_finalization_opt_mode_,
+                                             ep->enable_HTP_FP16_precision_,
+                                             /*disable_htp_monolithic_lstm=*/true};
+    RETURN_IF_NOT_NULL(ep->CompileOnnxModel(graphs, fused_nodes, count, node_compute_infos, htp_graph_configs));
   } else {
     RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
   }

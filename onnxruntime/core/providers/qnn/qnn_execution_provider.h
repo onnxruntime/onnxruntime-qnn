@@ -241,7 +241,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
-  qnn::HtpGraphConfigs_t htp_graph_configs_;
+  qnn::HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
+  int32_t vtcm_size_in_mb_ = 0;
+  bool enable_HTP_FP16_precision_ = true;
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";

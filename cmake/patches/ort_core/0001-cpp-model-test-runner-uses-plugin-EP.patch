@@ -1,7 +1,7 @@
 From c72f2f3cebee9aed9db117101c85ea4f68aec107 Mon Sep 17 00:00:00 2001
 From: qti-hungjuiw <hungjuiw@qti.qualcomm.com>
 Date: Mon, 9 Mar 2026 12:01:48 +0800
-Subject: [PATCH 1/4] cpp model test runner uses plugin EP
+Subject: [PATCH 1/2] cpp model test runner uses plugin EP
 
 ---
  cmake/CMakeLists.txt                          |   5 +
