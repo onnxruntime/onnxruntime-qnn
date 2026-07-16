@@ -69,11 +69,11 @@ class QnnModelWrapper {
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
-        is_post_layout_transform_(is_post_layout_transform),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides),
-        op_trace_collector_(op_trace_collector) {
+        op_trace_collector_(op_trace_collector),
+        is_post_layout_transform_(is_post_layout_transform) {
     // Invariant: validator interface and handle must both be set or both be null.
     // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
     assert((validator_backend_handle == nullptr) ==
@@ -389,9 +389,6 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
-  /// True if this GetCapability call is post-Layout-Transform. Derived from a pass
-  /// counter (count > 1), so it's a conservative proxy: never falsely post-LT, but
-  /// under-reports when ORT skips the 2nd pass (layout-neutral graph, empty 1st pass).
   bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
@@ -603,7 +600,6 @@ class QnnModelWrapper {
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
-  bool is_post_layout_transform_ = false;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
   const ApiPtrs api_ptrs_;
@@ -623,6 +619,8 @@ class QnnModelWrapper {
   // QnnModel::ComposeGraph (stack-allocated unique_ptr).
   // Null when tracing is disabled.
   OpTraceCollector* op_trace_collector_ = nullptr;
+
+  bool is_post_layout_transform_ = false;
 };  // QnnModelWrapper
 
 template <typename T>

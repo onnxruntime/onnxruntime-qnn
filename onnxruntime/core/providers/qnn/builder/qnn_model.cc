@@ -297,7 +297,6 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
-                                                      // Compile runs strictly after Layout Transformer.
                                                       /*is_post_layout_transform=*/true);
 
   qnn::profile::ProfilingInfo profiling_info;

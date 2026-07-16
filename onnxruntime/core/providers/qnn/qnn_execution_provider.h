@@ -293,11 +293,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // times (e.g. initial pass + EPContext re-pass).
   bool hnrd_warning_emitted_ = false;
 
-  // Counts top-level GetCapability passes. NHWC-preferring EPs get two passes
-  // (pre- then post-LayoutTransformer). Post-LT-only fusions (e.g. RTR-only
-  // SpaceToDepth) read this via QnnModelWrapper::IsPostLayoutTransform() (count > 1).
-  // Incremented in GetCapabilityImpl for top-level graphs only (parent_node == nullptr).
-  size_t get_capability_call_count_ = 0;
+  // Flipped to true on first GetCapability exit via gsl::finally in GetCapabilityImpl.
+  bool is_post_layout_transform_ = false;
 
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).

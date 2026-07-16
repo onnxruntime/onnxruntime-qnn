@@ -1522,8 +1522,7 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                                 model_settings_,
                                                 &tensor_name_overrides_,
                                                 /*op_trace_collector=*/nullptr,
-                                                /*is_post_layout_transform=*/
-                                                get_capability_call_count_ > 1);
+                                                /*is_post_layout_transform=*/is_post_layout_transform_);
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_size);
@@ -1901,21 +1900,15 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
-  // See get_capability_call_count_ field doc. Empty passes still count.
-  ++ep->get_capability_call_count_;
-  // A missing 2nd pass silently disables post-LT-gated fusions; log for visibility.
-  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
-              ("GetCapability pass #" + std::to_string(ep->get_capability_call_count_) +
-               " (post-LT=" +
-               (ep->get_capability_call_count_ > 1 ? "true" : "false") +
-               ")")
-                  .c_str());
-
   size_t num_nodes_in_graph = 0;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetNumNodes(graph, &num_nodes_in_graph));
   if (num_nodes_in_graph == 0) {
     return nullptr;
   }
+
+  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              ep->is_post_layout_transform_ ? "GetCapability post-LT" : "GetCapability pre-LT");
+  auto post_lt_marker = gsl::finally([ep] { ep->is_post_layout_transform_ = true; });
 
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
