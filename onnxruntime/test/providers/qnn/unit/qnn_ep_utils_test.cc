@@ -541,7 +541,7 @@ struct ConvProducerGuard {
   }
   ~ConvProducerGuard() { g_conv_producer_map.clear(); }
 };
-}
+}  // namespace
 
 // =============================================================================
 // OrtConvNodeGroupSelector::Check
