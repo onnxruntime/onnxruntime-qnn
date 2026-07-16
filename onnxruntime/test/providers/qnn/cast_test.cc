@@ -228,22 +228,16 @@ TEST_F(QnnHTPBackendTests, TestCastInt32ToInt64HTP) {
                          ExpectedEPNodeAssignment::All, "htp");
 }
 
-// Cast FP->Bool supported on HTP arch >= v69, but skipped on <= v73 due to MSVC bool
-// representation mismatch on Win ARM64 (expected(true) vs actual(true) EXPECT_EQ failure).
+// Cast float to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
-  QNN_SKIP_TEST_ON_LINUX_X86_64("Cast FP->Bool not supported by the HTP x86_64 simulator.");
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   RunCastOpTest<float>({3, 3},
                        ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                        ExpectedEPNodeAssignment::All,
                        "htp");
 }
 
-// Cast float16 to bool on HTP. Requires HTP arch >= v75; QNN EP rejects FP16->Bool on Win arm v73.
-// Skipped on x86_64 simulator: FP16->Bool Cast not supported regardless of SOC model.
+// Cast float16 to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
-  QNN_SKIP_TEST_ON_LINUX_X86_64("Cast FP16->Bool not supported by the HTP x86_64 simulator.");
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);
