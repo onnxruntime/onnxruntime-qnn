@@ -565,6 +565,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `[Div/Mul(√2)] → Erf → [Mul(0.5) →] Add(1) → Mul → [Mul(0.5)]` | `QNN_OP_GELU` | Matches two common Gelu decomposition variants (ErfAdd and ErfMul). Surrounding DQ nodes are also handled. |
+| `Mul(x,x) → Mul(x²,x) → Mul(0.044715) → Add(x) → Mul(√(2/π)) → Tanh → Add(1) → Mul(x) → Mul(0.5)` | `QNN_OP_GELU` | Tanh-based GELU approximation. SingleNode (non-QDQ) only. The QNN GELU op uses the exact-erf definition; max substitution error is ~4.7e-4 over [-10, 10]. |
 | `HardSigmoid(α=1/6, β=0.5) → Mul` (shared input) | `QNN_OP_ELEMENT_WISE_NEURON` (HardSwish) | Both inputs to Mul must originate from the same source tensor. |
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
