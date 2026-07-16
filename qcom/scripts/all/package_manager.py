@@ -17,7 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -66,8 +67,54 @@ def _peek_bytes(path: Path, count: int = 64) -> bytes:
         return b""
 
 
+def _hash_file(path: Path, sha_fn: Callable[[], "hashlib._Hash"]) -> str:
+    hasher = sha_fn()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(32768), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+@dataclass
+class ValidationSpec:
+    """
+    Describes how to decide whether a downloaded/cached file is trustworthy.
+
+    Built once in ``FileCache.fetch`` and threaded through the download chain so "what counts as a
+    valid file" lives in exactly one place.
+    """
+
+    # (expected_hash, algorithm_name, hashlib_constructor) for each configured checksum.
+    checksums: list[tuple[str | None, str, Callable[[], "hashlib._Hash"]]] = field(default_factory=list)
+    # Whether the file is expected to be an archive (installers and bare binaries are not).
+    expects_archive: bool = False
+
+    @property
+    def has_checksum(self) -> bool:
+        return any(expected is not None for expected, _, _ in self.checksums)
+
+    def validate(self, path: Path) -> str | None:
+        """Return None if `path` is trustworthy, otherwise a human-readable reason it isn't."""
+        for expected_sha, sha_name, sha_fn in self.checksums:
+            if expected_sha is not None:
+                actual = _hash_file(path, sha_fn)
+                logging.debug(f"{sha_name} hash for {path.name}: {actual}")
+                if expected_sha != actual:
+                    return f"{sha_name} mismatch (expected {expected_sha}, got {actual})"
+        # Defense-in-depth: even with a matching checksum, an archive that can't be opened means the
+        # bytes are unusable (e.g. a valid-hash-but-truncated mirror, or a future unhashed source).
+        if self.expects_archive and not _looks_like_archive(path):
+            return f"not a valid archive (size {path.stat().st_size} bytes, starts with {_peek_bytes(path, 16)!r})"
+        return None
+
+
 def is_host_windows():
     return platform.uname().system == "Windows"
+
+
+# Checksum keys a package may declare. Every package must pin at least one so FileCache can detect a
+# corrupt/partial/wrong download before it poisons the persistent cache.
+CHECKSUM_KEYS = ("sha256", "sha1", "md5")
 
 
 class FileCache:
@@ -100,27 +147,28 @@ class FileCache:
         cache_dir = self.__cache_dir / cache_key
         cache_file_path = cache_dir / url_path.name
 
-        checksums = [
-            (expected_sha1, "SHA1", hashlib.sha1),
-            (expected_sha256, "SHA256", hashlib.sha256),
-            (expected_md5, "MD5", hashlib.md5),
-        ]
-        has_checksum = any(expected is not None for expected, _, _ in checksums)
-        # Installers and bare binaries (.exe or no suffix) aren't archives, so don't archive-check them.
-        expects_archive = cache_file_path.suffix not in ("", ".exe")
+        spec = ValidationSpec(
+            checksums=[
+                (expected_sha1, "SHA1", hashlib.sha1),
+                (expected_sha256, "SHA256", hashlib.sha256),
+                (expected_md5, "MD5", hashlib.md5),
+            ],
+            # Installers and bare binaries (.exe or no suffix) aren't archives, so don't archive-check them.
+            expects_archive=cache_file_path.suffix not in ("", ".exe"),
+        )
 
         # The package cache is persistent and shared across CI runs, so a single corrupt/partial
         # download would otherwise poison every future build. Validate before trusting a cache hit
         # and self-heal by discarding and re-downloading anything that doesn't check out.
         if cache_file_path.exists():
-            problem = self.__validate_file(cache_file_path, checksums, has_checksum, expects_archive)
+            problem = spec.validate(cache_file_path)
             if problem is None:
                 logging.debug(f"{url} already exists at {cache_file_path}")
                 return cache_file_path
             logging.warning(f"Discarding cached {cache_file_path} and re-downloading: {problem}")
             cache_file_path.unlink(missing_ok=True)
 
-        self.__download_with_retries(url, cache_dir, cache_file_path, checksums, has_checksum, expects_archive)
+        self.__download_with_retries(url, cache_dir, cache_file_path, spec)
         return cache_file_path
 
     def __download_with_retries(
@@ -128,15 +176,13 @@ class FileCache:
         url: str,
         cache_dir: Path,
         cache_file_path: Path,
-        checksums: list[tuple[str | None, str, Any]],
-        has_checksum: bool,
-        expects_archive: bool,
+        spec: ValidationSpec,
     ) -> None:
         """Download `url` into the cache, retrying on transient failures and bad/partial bodies."""
         last_error: Exception | None = None
         for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
             try:
-                self.__download_once(url, cache_dir, cache_file_path, checksums, has_checksum, expects_archive)
+                self.__download_once(url, cache_dir, cache_file_path, spec)
                 return
             except (OSError, ValueError) as e:
                 # OSError covers urllib.error.URLError/HTTPError and socket timeouts; ValueError is
@@ -156,9 +202,7 @@ class FileCache:
         url: str,
         cache_dir: Path,
         cache_file_path: Path,
-        checksums: list[tuple[str | None, str, Any]],
-        has_checksum: bool,
-        expects_archive: bool,
+        spec: ValidationSpec,
     ) -> None:
         logging.info(f"Downloading {url} to {cache_file_path}")
 
@@ -190,37 +234,10 @@ class FileCache:
         # Validate the freshly written file before leaving it in the cache. If it's a checksum
         # mismatch or not a valid archive, we got a bad/partial/error-page response: purge it and
         # raise so __download_with_retries can try again rather than caching garbage.
-        problem = self.__validate_file(cache_file_path, checksums, has_checksum, expects_archive)
+        problem = spec.validate(cache_file_path)
         if problem is not None:
             cache_file_path.unlink(missing_ok=True)
             raise ValueError(f"Downloaded {cache_file_path.name} failed validation: {problem}")
-
-    @staticmethod
-    def __validate_file(
-        path: Path,
-        checksums: list[tuple[str | None, str, Any]],
-        has_checksum: bool,
-        expects_archive: bool,
-    ) -> str | None:
-        """Return None if the file is trustworthy, otherwise a human-readable reason it isn't."""
-        for expected_sha, sha_name, sha_fn in checksums:
-            if expected_sha is not None:
-                actual = FileCache.__hash_file(path, sha_fn)
-                logging.debug(f"{sha_name} hash for {path.name}: {actual}")
-                if expected_sha != actual:
-                    return f"{sha_name} mismatch (expected {expected_sha}, got {actual})"
-        # With no checksum to rely on (e.g. the qairt SDK), at least confirm we have a real archive.
-        if not has_checksum and expects_archive and not _looks_like_archive(path):
-            return f"not a valid archive (size {path.stat().st_size} bytes, starts with {_peek_bytes(path, 16)!r})"
-        return None
-
-    @staticmethod
-    def __hash_file(path: Path, sha_fn: Any) -> str:
-        hasher = sha_fn()
-        with path.open("rb") as f:
-            for block in iter(lambda: f.read(32768), b""):
-                hasher.update(block)
-        return hasher.hexdigest()
 
     def prune(self) -> None:
         """Prune old entries from the cache until it's below our maximum size."""
@@ -378,6 +395,15 @@ class PackageManager:
 
     def __fetch(self) -> Path:
         """Fetch the package archive."""
+        # Every package must pin a checksum. Without one FileCache cannot tell a good download from a
+        # corrupt/partial/wrong one, which is what let a poisoned entry get stuck in the persistent
+        # CI cache. Enforce it here, where the offending package is about to be downloaded, rather
+        # than at config-parse time (so read-only actions like clean/print-content-dir still work).
+        if not any(k in self.__config for k in CHECKSUM_KEYS):
+            raise ValueError(
+                f"Package {self.__package} is missing a required checksum "
+                f"({', '.join(CHECKSUM_KEYS)}) in {PACKAGE_CONFIG}."
+            )
         cache_key = str(self.get_rel_package_dir())
         url = self.__format(self.__config["url"])
         package_path = self.__cache.fetch(
@@ -440,19 +466,7 @@ class PackageManager:
     @staticmethod
     def __parse_config(config_path: Path) -> dict[str, dict[str, Any]]:
         with config_path.open() as config_file:
-            config = yaml.safe_load(config_file)
-
-        # Every package must pin a checksum. Without one we cannot detect a corrupt/partial/wrong
-        # download, which is what lets a poisoned entry get stuck in the persistent CI cache.
-        without_checksum = [
-            name for name, atts in config.items() if not any(k in atts for k in ("sha256", "sha1", "md5"))
-        ]
-        if without_checksum:
-            raise ValueError(
-                f"The following packages in {config_path} are missing a required checksum "
-                f"(sha256, sha1, or md5): {', '.join(sorted(without_checksum))}."
-            )
-        return config
+            return yaml.safe_load(config_file)
 
     @classmethod
     def __uninstall(cls, subdir: Path) -> None:

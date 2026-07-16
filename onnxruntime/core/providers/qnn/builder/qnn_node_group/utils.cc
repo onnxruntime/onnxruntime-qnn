@@ -4,6 +4,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <gsl/gsl>
 #include <cstdint>
@@ -468,9 +469,10 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wra
                                           const std::string& input_name,
                                           const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                           const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
-  // Iterate through all nodes in the group
+  // Walk every node in the group looking for one that consumes `input_name`, then
+  // return the NodeUnit that produces it — subject to the same fusion-safety checks
+  // used by the other Get*Parent* helpers (not a graph output, not already fused, standalone).
   for (const OrtNode* node : node_unit.GetAllNodesInGroup()) {
-    // Check if this node has the input we're looking for
     for (const Ort::ConstValueInfo& input_info : Ort::ConstNode(node).GetInputs()) {
       if (input_info.GetName() != input_name) {
         continue;
@@ -479,13 +481,13 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wra
       const Ort::ConstNode parent_node = input_info.GetProducerNode().node;
 
       if (static_cast<const OrtNode*>(parent_node) == nullptr) {
-        // Node is not in this graph
+        // input_name is a graph input or initializer — no producer node.
         return nullptr;
       }
 
       for (const Ort::ConstValueInfo& parent_output_info : parent_node.GetOutputs()) {
         if (parent_output_info.IsGraphOutput()) {
-          // Node is producing a graph output
+          // Producer also feeds a graph output; fusing it would drop that output.
           return nullptr;
         }
       }
@@ -496,13 +498,12 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wra
       }
       const OrtNodeUnit* p_parent_node_unit = parent_node_unit_it->second;
 
-      // Check if parent node has already been handled. Should not be the case if the calling
-      // fusion function has been called in topological order, but check to be safe.
+      // Guard against races when fusion dispatch is not perfectly topological.
       if (qnn_node_group_map.count(p_parent_node_unit) != 0) {
         return nullptr;
       }
 
-      // parent must not already be part of a QDQ NodeUnit (i.e., be standalone).
+      // Only fuse standalone (non-QDQ) nodes — QDQ groups are handled separately.
       if (p_parent_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode) {
         return nullptr;
       }
@@ -511,6 +512,38 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wra
     }
   }
   return nullptr;
+}
+
+std::optional<float> GetScalarConstantValue(const QnnModelWrapper& qmw,
+                                            const std::string& input_name) {
+  if (!qmw.IsConstantInput(input_name)) return std::nullopt;
+  const OrtValueInfo* vi = qmw.GetConstantTensor(input_name);
+  if (!vi) return std::nullopt;
+  Ort::ConstValueInfo ort_vi(vi);
+  Ort::ConstValue ort_val;
+  if (!ort_vi.GetInitializer(ort_val).IsOK()) return std::nullopt;
+  auto tensor_info = ort_vi.TypeInfo().GetTensorTypeAndShapeInfo();
+  if (tensor_info.GetElementCount() != 1) return std::nullopt;
+  const auto elem_type = tensor_info.GetElementType();
+  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+    const float* data = ort_val.GetTensorData<float>();
+    if (!data) return std::nullopt;
+    return *data;
+  }
+  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+    const Ort::Float16_t* data = ort_val.GetTensorData<Ort::Float16_t>();
+    if (!data) return std::nullopt;
+    return data->ToFloat();
+  }
+  return std::nullopt;
+}
+
+bool IsScalarConstantApprox(const QnnModelWrapper& qmw,
+                            const std::string& input_name,
+                            float expected,
+                            float tol) {
+  const auto val = GetScalarConstantValue(qmw, input_name);
+  return val.has_value() && std::abs(*val - expected) <= tol;
 }
 
 }  // namespace qnn
