@@ -235,61 +235,6 @@ Ort::Status ConvOpBuilder::GetInputChannelNumber(QnnModelWrapper& qnn_model_wrap
   return Ort::Status();
 }
 
-// Quantize a float bias using bias_scale = activation_scale * weight_scale.
-static Ort::Status ProcessFloatBias(QnnModelWrapper& qnn_model_wrapper,
-                                    const Ort::Logger& logger,
-                                    const OrtNodeUnitIODef& bias_def,
-                                    const TensorInfo& bias_info,
-                                    gsl::span<const float> weights_scales,
-                                    float activation_scale,
-                                    std::vector<std::string>& input_names) {
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-              ("Quantizing float bias " + bias_def.name + " using activation_scale * weight_scale[c]").c_str());
-  std::vector<uint8_t> original_bias_data;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
-  const size_t num_channels = bias_info.shape[0];
-  RETURN_IF_NOT(original_bias_data.size() == num_channels * sizeof(float),
-                "Unexpected bias data size for float bias quantization");
-  std::vector<uint8_t> new_bias_data;
-  std::vector<float> new_scales;
-  std::vector<int32_t> new_offsets;
-  RETURN_IF_ERROR(utils::QuantizeFloatBiasTensor(
-      gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels),
-      weights_scales, activation_scale, new_bias_data, new_scales, new_offsets));
-  int32_t bias_quant_axis = 0;
-  QnnQuantParamsWrapper quant_params = (weights_scales.size() == 1)
-                                           ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
-                                           : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
-  QnnTensorWrapper bias_wrapper(bias_def.name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,
-                                std::move(quant_params), std::vector<uint32_t>(bias_info.shape),
-                                std::move(new_bias_data));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_wrapper)),
-                "Failed to add bias tensor.");
-  input_names.push_back(bias_def.name);
-  return Ort::Status();
-}
-
-Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                         const OrtNodeUnit& node_unit,
-                                         const Ort::Logger& logger,
-                                         std::vector<std::string>& input_names,
-                                         bool do_op_validation) const {
-  const auto& inputs = node_unit.Inputs();
-  assert(inputs.size() >= 2);
-
-  std::vector<uint32_t> input0_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
-                "QNN EP: Cannot get shape for first input");
-
-  if (input0_shape.size() == 3) {
-    return ProcessConv1DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
-  } else if (input0_shape.size() == 4 || input0_shape.size() == 5) {
-    return ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
-  }
-
-  return MAKE_EP_FAIL("QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
-}
-
 // Dequantize INT32 bias to FP16 for BW_FLOAT_BLOCK Conv.
 static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
                                      const OrtNodeUnitIODef& bias_def,
@@ -373,6 +318,40 @@ static Ort::Status ProcessRequantizeBias(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+// Quantize a float bias using bias_scale = activation_scale * weight_scale.
+static Ort::Status ProcessFloatBias(QnnModelWrapper& qnn_model_wrapper,
+                                    const Ort::Logger& logger,
+                                    const OrtNodeUnitIODef& bias_def,
+                                    const TensorInfo& bias_info,
+                                    gsl::span<const float> weights_scales,
+                                    float activation_scale,
+                                    std::vector<std::string>& input_names) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Quantizing float bias " + bias_def.name + " using activation_scale * weight_scale[c]").c_str());
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+  const size_t num_channels = bias_info.shape[0];
+  RETURN_IF_NOT(original_bias_data.size() == num_channels * sizeof(float),
+                "Unexpected bias data size for float bias quantization");
+  std::vector<uint8_t> new_bias_data;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  RETURN_IF_ERROR(utils::QuantizeFloatBiasTensor(
+      gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels),
+      weights_scales, activation_scale, new_bias_data, new_scales, new_offsets));
+  int32_t bias_quant_axis = 0;
+  QnnQuantParamsWrapper quant_params = (weights_scales.size() == 1)
+                                           ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
+                                           : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
+  QnnTensorWrapper bias_wrapper(bias_def.name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,
+                                std::move(quant_params), std::vector<uint32_t>(bias_info.shape),
+                                std::move(new_bias_data));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_wrapper)),
+                "Failed to add bias tensor.");
+  input_names.push_back(bias_def.name);
+  return Ort::Status();
+}
+
 Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
                                            const Ort::Logger& logger,
                                            const std::vector<OrtNodeUnitIODef>& inputs,
@@ -419,6 +398,27 @@ Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
 
   // Process bias normally: non-initializer, or activation/weight not quantized, or scales already match.
   return ProcessInput(qnn_model_wrapper, bias_def, logger, input_names);
+}
+
+Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         const Ort::Logger& logger,
+                                         std::vector<std::string>& input_names,
+                                         bool do_op_validation) const {
+  const auto& inputs = node_unit.Inputs();
+  assert(inputs.size() >= 2);
+
+  std::vector<uint32_t> input0_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
+                "QNN EP: Cannot get shape for first input");
+
+  if (input0_shape.size() == 3) {
+    return ProcessConv1DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
+  } else if (input0_shape.size() == 4 || input0_shape.size() == 5) {
+    return ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
+  }
+
+  return MAKE_EP_FAIL("QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
 }
 
 Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
