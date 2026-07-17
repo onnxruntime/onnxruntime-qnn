@@ -45,7 +45,7 @@ static void RunRangeOpTest(T start, T limit, T delta,
                                               /*attrs=*/{}),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // ---------------------------------------------------------------------------
