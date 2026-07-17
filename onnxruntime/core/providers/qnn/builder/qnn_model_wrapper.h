@@ -620,6 +620,7 @@ class QnnModelWrapper {
   // Null when tracing is disabled.
   OpTraceCollector* op_trace_collector_ = nullptr;
 
+  // A flag for model wrapper users (e.g., op builders, node group fusions) to know whether pre- or post-layout transform.
   bool is_post_layout_transform_ = false;
 };  // QnnModelWrapper
 
