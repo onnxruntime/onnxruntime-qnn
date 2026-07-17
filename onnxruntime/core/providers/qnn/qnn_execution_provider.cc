@@ -1520,7 +1520,9 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                                 model_outputs,
                                                 qnn_backend_manager_->GetQnnBackendType(),
                                                 model_settings_,
-                                                &tensor_name_overrides_);
+                                                &tensor_name_overrides_,
+                                                /*op_trace_collector=*/nullptr,
+                                                /*is_post_layout_transform=*/is_post_layout_transform_);
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_size);
@@ -1903,6 +1905,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   if (num_nodes_in_graph == 0) {
     return nullptr;
   }
+
+  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              ep->is_post_layout_transform_
+                  ? "GetCapability pass 2 (post-Layout-Transform; post-LT-gated fusions enabled)"
+                  : "GetCapability pass 1 (pre-Layout-Transform; post-LT-gated fusions dormant)");
+  auto post_lt_marker = gsl::finally([ep] { ep->is_post_layout_transform_ = true; });
 
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {

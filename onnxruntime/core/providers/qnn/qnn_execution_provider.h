@@ -293,6 +293,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // times (e.g. initial pass + EPContext re-pass).
   bool hnrd_warning_emitted_ = false;
 
+  // A flag to indicate whether current GetCapability call is after layout transform, flipped to true once exiting the first call.
+  bool is_post_layout_transform_ = false;
+
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).
   mutable std::unordered_map<std::string, std::string> tensor_name_overrides_;

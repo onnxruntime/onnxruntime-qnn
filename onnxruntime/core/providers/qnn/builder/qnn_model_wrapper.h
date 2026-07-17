@@ -58,7 +58,8 @@ class QnnModelWrapper {
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
-                  OpTraceCollector* op_trace_collector = nullptr)
+                  OpTraceCollector* op_trace_collector = nullptr,
+                  bool is_post_layout_transform = false)
       : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
@@ -71,7 +72,8 @@ class QnnModelWrapper {
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides),
-        op_trace_collector_(op_trace_collector) {
+        op_trace_collector_(op_trace_collector),
+        is_post_layout_transform_(is_post_layout_transform) {
     // Invariant: validator interface and handle must both be set or both be null.
     // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
     assert((validator_backend_handle == nullptr) ==
@@ -387,6 +389,8 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
+  bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
+
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
   const Ort::Logger& GetLogger() const { return logger_; }
@@ -615,6 +619,9 @@ class QnnModelWrapper {
   // QnnModel::ComposeGraph (stack-allocated unique_ptr).
   // Null when tracing is disabled.
   OpTraceCollector* op_trace_collector_ = nullptr;
+
+  // A flag for model wrapper users (e.g., op builders, node group fusions) to know whether pre- or post-layout transform.
+  bool is_post_layout_transform_ = false;
 };  // QnnModelWrapper
 
 template <typename T>

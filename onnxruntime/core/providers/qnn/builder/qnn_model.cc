@@ -296,7 +296,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
-                                                      trace_collector.get());
+                                                      trace_collector.get(),
+                                                      /*is_post_layout_transform=*/true);
 
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
