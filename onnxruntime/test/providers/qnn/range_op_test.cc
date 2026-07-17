@@ -94,9 +94,15 @@ TEST_F(QnnCPUBackendTests, Range_dynamic_input_rejected) {
                         /*make_dynamic=*/true);
 }
 
-// delta == 0 must be rejected.
+// delta == 0 must be rejected. ORT's native CPU Range kernel itself rejects delta == 0
+// (throws during the CPU-EP baseline run inside RunAndVerifyOutputsWithEP), before QNN
+// EP's own node-assignment check is ever reached. Verify the expected failure so this
+// test actively guards against silent regressions (mirrors gru_test.cc's layout1_forward
+// negative tests).
 TEST_F(QnnCPUBackendTests, Range_delta_zero_rejected) {
-  RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "cpu");
+  EXPECT_THROW(
+      RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "cpu"),
+      std::exception);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,9 +153,11 @@ TEST_F(QnnHTPBackendTests, Range_dynamic_input_rejected) {
                         /*make_dynamic=*/true);
 }
 
-// delta == 0 must be rejected.
+// delta == 0 must be rejected. See the CPU-side test above for why this needs EXPECT_THROW.
 TEST_F(QnnHTPBackendTests, Range_delta_zero_rejected) {
-  RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "htp");
+  EXPECT_THROW(
+      RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "htp"),
+      std::exception);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
