@@ -18,7 +18,7 @@ class QnnModelWrapper;
 
 /// <summary>
 /// Represents a fusion of the Gelu pattern expanded into ONNX operators.
-/// This fusion handles three pattern variants categorized by Erf's child node type:
+/// This fusion handles four pattern variants categorized by Erf's child node type:
 ///
 /// ErfAdd Patterns (Erf -> Add):
 ///   Pattern 1:
@@ -33,7 +33,14 @@ class QnnModelWrapper;
 ///                |                                    |
 ///                |                                    v
 ///             [root] --> Div -----> Erf  --> Add --> Mul -->Mul ==>
-///                       (B=1.4142...)        (1)            (0.5)
+///                       (B=1.4142...)        (1)  (root)   (0.5)
+///
+///   Pattern 4:
+///                +--------------------------------------------+
+///                |                                            |
+///                |                                            v
+///             [root] --> Div -----> Erf  --> Add --> Mul --> Mul ==>
+///                       (B=1.4142...)        (1)    (0.5)  (root)
 ///
 /// ErfMul Pattern (Erf -> Mul):
 ///   Pattern 3:
