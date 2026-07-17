@@ -224,6 +224,18 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, IsOrtGraphHasDlcCtxNode_DlcMatch_ReturnsTru
   EXPECT_TRUE(IsOrtGraphHasDlcCtxNode(graphs, 1, ctx.api));
 }
 
+TEST(QnnUnit_OnnxCtxModelHelperTest, IsOrtGraphHasDlcCtxNode_BinOnly_ReturnsFalse) {
+  // BIN-type EPContext node (no EP_CONTEXT_TYPE attr → defaults to "bin") →
+  // the DLC delegation must return false.
+  CtxHelperTestContext ctx;
+  FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
+  FakeNode ep_ctx{"e", "EPContext", "", 1, {}, {}};
+  ep_ctx.attrs[SOURCE] = &source;
+  FakeGraph g{{ep_ctx}, {}, {}, {}};
+  const OrtGraph* graphs[] = {g.AsGraph()};
+  EXPECT_FALSE(IsOrtGraphHasDlcCtxNode(graphs, 1, ctx.api));
+}
+
 // =============================================================================
 // GetEpContextDlcPath
 //
@@ -503,6 +515,16 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_TwoGraphsSecondIsMain_Re
 //   L178: embed_mode=false, ep_cache_context empty (default "")
 //   L194: embed_mode=false, absolute path (starts with '/')
 //   L198: embed_mode=false, path contains ".."
+//
+// Deliberately NOT unit-tested here (deferred to integration tests):
+//   - embed_mode=true: calls QnnBackendManager::LoadCachedQnnContextFromBuffer,
+//     which requires a real backend instance (nullptr is passed here on purpose,
+//     so only the pre-backend guards above are reachable).
+//   - the success path after a valid relative path: reads the cache file from
+//     disk and hands the buffer to the backend — filesystem + backend territory.
+// These paths depend on a live QnnBackendManager and real file I/O that the
+// OrtApi-stub harness cannot fake meaningfully, so they belong to the
+// end-to-end EP-context integration suite rather than this component test.
 // =============================================================================
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_ReturnsError) {
@@ -515,7 +537,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_Return
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_ReturnsError) {
-  // embed_mode=0, EP_CACHE_CONTEXT absent → defaults to "" → L178 error.
+  // embed_mode=0, EP_CACHE_CONTEXT absent → defaults to "" → empty-path guard.
   CtxHelperTestContext ctx;
   FakeOpAttr embed_mode = FakeOpAttr::MakeInt64(EMBED_MODE, 0);
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
@@ -523,10 +545,15 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
   EXPECT_FALSE(status.IsOK());
+  // Pin the specific guard: without this the terminal is_regular_file() check
+  // catches every path case, so the test would pass even if the empty-path
+  // guard were removed.
+  EXPECT_NE(status.GetErrorMessage().find("should not be empty"), std::string::npos)
+      << status.GetErrorMessage();
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePath_ReturnsError) {
-  // embed_mode=0, path starts with '/' → rejected at L194 (absolute path guard).
+  // embed_mode=0, path starts with '/' → rejected by the absolute-path guard.
   CtxHelperTestContext ctx;
   FakeOpAttr embed_mode = FakeOpAttr::MakeInt64(EMBED_MODE, 0);
   FakeOpAttr cache_ctx = FakeOpAttr::MakeString(EP_CACHE_CONTEXT, "/absolute/path.bin");
@@ -536,10 +563,15 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePa
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
   EXPECT_FALSE(status.IsOK());
+  // Pin the absolute-path (directory-traversal) guard: removing it lets the
+  // path fall through to the "does not exist" check, which this substring
+  // assertion would catch.
+  EXPECT_NE(status.GetErrorMessage().find("absolute path"), std::string::npos)
+      << status.GetErrorMessage();
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath_ReturnsError) {
-  // embed_mode=0, path contains ".." → directory traversal rejected at L198.
+  // embed_mode=0, path contains ".." → rejected by the directory-traversal guard.
   CtxHelperTestContext ctx;
   FakeOpAttr embed_mode = FakeOpAttr::MakeInt64(EMBED_MODE, 0);
   FakeOpAttr cache_ctx = FakeOpAttr::MakeString(EP_CACHE_CONTEXT, "../outside.bin");
@@ -549,6 +581,12 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
   EXPECT_FALSE(status.IsOK());
+  // Pin the ".." guard by both code and message. Removing it lets the path
+  // fall through to the terminal "does not exist" check (also ORT_INVALID_GRAPH),
+  // so the message substring is what actually distinguishes this guard.
+  EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_GRAPH);
+  EXPECT_NE(status.GetErrorMessage().find("'..'"), std::string::npos)
+      << status.GetErrorMessage();
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFound_ReturnsError) {
