@@ -49,14 +49,14 @@ static GetTestModelFn BuildAttentionTestCaseWithMask(
   return [q_k_v_defs, mask_def, attrs](ModelTestBuilder& builder) {
     ASSERT_EQ(q_k_v_defs.size(), 3u);
 
-    const std::string q_name    = "attention_Q";
-    const std::string k_name    = "attention_K";
-    const std::string v_name    = "attention_V";
+    const std::string q_name = "attention_Q";
+    const std::string k_name = "attention_K";
+    const std::string v_name = "attention_V";
     const std::string mask_name = "attention_mask";
 
-    MakeTestInput<float>(builder, q_name,    q_k_v_defs[0]);
-    MakeTestInput<float>(builder, k_name,    q_k_v_defs[1]);
-    MakeTestInput<float>(builder, v_name,    q_k_v_defs[2]);
+    MakeTestInput<float>(builder, q_name, q_k_v_defs[0]);
+    MakeTestInput<float>(builder, k_name, q_k_v_defs[1]);
+    MakeTestInput<float>(builder, v_name, q_k_v_defs[2]);
     MakeTestInput<float>(builder, mask_name, mask_def);
 
     builder.MakeOutput("attention_Y");
@@ -81,15 +81,15 @@ static GetTestModelFn BuildAttentionTestCaseKV(
     const TestInputDef<float>& past_value_def,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [q_def, k_def, v_def, past_key_def, past_value_def, attrs](ModelTestBuilder& builder) {
-    const std::string q_name         = "attention_Q";
-    const std::string k_name         = "attention_K";
-    const std::string v_name         = "attention_V";
-    const std::string past_key_name  = "attention_past_key";
-    const std::string past_val_name  = "attention_past_value";
+    const std::string q_name = "attention_Q";
+    const std::string k_name = "attention_K";
+    const std::string v_name = "attention_V";
+    const std::string past_key_name = "attention_past_key";
+    const std::string past_val_name = "attention_past_value";
 
-    MakeTestInput<float>(builder, q_name,        q_def);
-    MakeTestInput<float>(builder, k_name,        k_def);
-    MakeTestInput<float>(builder, v_name,        v_def);
+    MakeTestInput<float>(builder, q_name, q_def);
+    MakeTestInput<float>(builder, k_name, k_def);
+    MakeTestInput<float>(builder, v_name, v_def);
     MakeTestInput<float>(builder, past_key_name, past_key_def);
     MakeTestInput<float>(builder, past_val_name, past_value_def);
 
@@ -217,7 +217,7 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_4D_CustomScale) {
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f)},
           {test::MakeAttribute("is_causal", static_cast<int64_t>(0)),
-           test::MakeAttribute("scale",     0.1f)}),
+           test::MakeAttribute("scale", 0.1f)}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -238,9 +238,9 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_NonCausal) {
           {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -256,9 +256,9 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_Causal) {
           {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(1))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -274,9 +274,9 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_SingleHead) {
           {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(1)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(1)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(1)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -292,9 +292,9 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_Batch2) {
           {TestInputDef<float>({2, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({2, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({2, 8, 64}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -315,9 +315,9 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_AttnMask) {
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
           TestInputDef<float>(mask_shape, false, -0.5f, 0.0f),  // negative bias
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -336,9 +336,9 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_Causal_AttnMask) {
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
           TestInputDef<float>(mask_shape, false, -0.5f, 0.0f),
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(1))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -354,10 +354,10 @@ TEST_F(QnnHTPBackendTests, Attention_MHA_3D_CustomScale) {
           {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0)),
-           test::MakeAttribute("scale",        0.1f)}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0)),
+           test::MakeAttribute("scale", 0.1f)}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -378,9 +378,9 @@ TEST_F(QnnHTPBackendTests, Attention_GQA_3D_NonCausal) {
           {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),   // Q: n_q=4, hs=8
            TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),   // K: n_kv=2, hs=8
            TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},  // V: n_kv=2, hs=8
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -396,9 +396,9 @@ TEST_F(QnnHTPBackendTests, Attention_GQA_3D_Causal) {
           {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(1))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -411,9 +411,9 @@ TEST_F(QnnHTPBackendTests, Attention_GQA_4D) {
 
   RunQnnModelTest(
       BuildAttentionTestCase(
-          {TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),  // Q: [B,n_q,S,hs]
-           TestInputDef<float>({1, 2, 8, 16}, false, -1.0f, 1.0f),  // K: [B,n_kv,S,hs]
-           TestInputDef<float>({1, 2, 8, 16}, false, -1.0f, 1.0f)}, // V: [B,n_kv,S,hs]
+          {TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),   // Q: [B,n_q,S,hs]
+           TestInputDef<float>({1, 2, 8, 16}, false, -1.0f, 1.0f),   // K: [B,n_kv,S,hs]
+           TestInputDef<float>({1, 2, 8, 16}, false, -1.0f, 1.0f)},  // V: [B,n_kv,S,hs]
           {test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
@@ -429,11 +429,11 @@ TEST_F(QnnHTPBackendTests, Attention_MQA_3D) {
   RunQnnModelTest(
       BuildAttentionTestCase(
           {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),  // Q: n_q=4, hs=8
-           TestInputDef<float>({1, 8, 8},  false, -1.0f, 1.0f),  // K: n_kv=1, hs=8
-           TestInputDef<float>({1, 8, 8},  false, -1.0f, 1.0f)}, // V: n_kv=1, hs=8
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+           TestInputDef<float>({1, 8, 8}, false, -1.0f, 1.0f),   // K: n_kv=1, hs=8
+           TestInputDef<float>({1, 8, 8}, false, -1.0f, 1.0f)},  // V: n_kv=1, hs=8
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(1)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(0))}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -454,7 +454,7 @@ TEST_F(QnnHTPBackendTests, Attention_Softcap_4D) {
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f)},
           {test::MakeAttribute("is_causal", static_cast<int64_t>(0)),
-           test::MakeAttribute("softcap",   10.0f)}),
+           test::MakeAttribute("softcap", 10.0f)}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -471,10 +471,10 @@ TEST_F(QnnHTPBackendTests, Attention_Softcap_3D_Causal) {
           {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads",  static_cast<int64_t>(4)),
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal",    static_cast<int64_t>(1)),
-           test::MakeAttribute("softcap",      50.0f)}),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1)),
+           test::MakeAttribute("softcap", 50.0f)}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -495,11 +495,11 @@ TEST_F(QnnHTPBackendTests, Attention_KVCache_4D) {
 
   RunQnnModelTest(
       BuildAttentionTestCaseKV(
-          TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),   // Q
-          TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),   // K
-          TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),   // V
-          TestInputDef<float>({1, 4, 4, 16}, true,  -1.0f, 1.0f),   // past_key  (initializer)
-          TestInputDef<float>({1, 4, 4, 16}, true,  -1.0f, 1.0f),   // past_value (initializer)
+          TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),  // Q
+          TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),  // K
+          TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),  // V
+          TestInputDef<float>({1, 4, 4, 16}, true, -1.0f, 1.0f),   // past_key  (initializer)
+          TestInputDef<float>({1, 4, 4, 16}, true, -1.0f, 1.0f),   // past_value (initializer)
           {test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       // KV cache (Concat) adds extra operations; fp16 rounding accumulates more error.
@@ -522,8 +522,8 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode0) {
           {TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("is_causal",              static_cast<int64_t>(0)),
-           test::MakeAttribute("qk_matmul_output_mode",  static_cast<int64_t>(0))}),
+          {test::MakeAttribute("is_causal", static_cast<int64_t>(0)),
+           test::MakeAttribute("qk_matmul_output_mode", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
@@ -540,8 +540,8 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode3) {
           {TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f),
            TestInputDef<float>({1, 4, 8, 16}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("is_causal",              static_cast<int64_t>(0)),
-           test::MakeAttribute("qk_matmul_output_mode",  static_cast<int64_t>(3))}),
+          {test::MakeAttribute("is_causal", static_cast<int64_t>(0)),
+           test::MakeAttribute("qk_matmul_output_mode", static_cast<int64_t>(3))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }

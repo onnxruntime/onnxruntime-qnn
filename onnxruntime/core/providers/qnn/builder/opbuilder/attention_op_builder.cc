@@ -54,8 +54,8 @@ class AttentionOpBuilder : public BaseOpBuilder {
 // IsOpSupported
 // ---------------------------------------------------------------------------
 Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                               const OrtNodeUnit& node_unit,
-                                               const Ort::Logger& logger) const {
+                                              const OrtNodeUnit& node_unit,
+                                              const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
@@ -177,10 +177,10 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
 //                 nonpad_kv_seqlen
 // ---------------------------------------------------------------------------
 Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                               const OrtNodeUnit& node_unit,
-                                               const Ort::Logger& logger,
-                                               std::vector<std::string>& input_names,
-                                               bool /*do_op_validation*/) const {
+                                              const OrtNodeUnit& node_unit,
+                                              const Ort::Logger& logger,
+                                              std::vector<std::string>& input_names,
+                                              bool /*do_op_validation*/) const {
   const auto& onnx_inputs = node_unit.Inputs();
 
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[0], logger, input_names));  // Q
@@ -211,16 +211,16 @@ Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
 // Helper: emit an ElementWiseBinary (MUL or ADD or DIV) node.
 // ---------------------------------------------------------------------------
 static Ort::Status AddBinaryOpNode(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& node_unit,
-                                    uint32_t operation,
-                                    const std::string& lhs_name,
-                                    const std::string& rhs_name,
-                                    const std::string& out_name,
-                                    const std::vector<uint32_t>& out_shape,
-                                    Qnn_DataType_t dtype,
-                                    const QnnQuantParamsWrapper& quant_param,
-                                    bool is_graph_output,
-                                    bool do_op_validation) {
+                                   const OrtNodeUnit& node_unit,
+                                   uint32_t operation,
+                                   const std::string& lhs_name,
+                                   const std::string& rhs_name,
+                                   const std::string& out_name,
+                                   const std::vector<uint32_t>& out_shape,
+                                   Qnn_DataType_t dtype,
+                                   const QnnQuantParamsWrapper& quant_param,
+                                   bool is_graph_output,
+                                   bool do_op_validation) {
   const Qnn_TensorType_t tensor_type =
       is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper out_tensor(out_name, tensor_type, dtype, quant_param.Copy(),
@@ -232,11 +232,11 @@ static Ort::Status AddBinaryOpNode(QnnModelWrapper& qnn_model_wrapper,
 
   std::vector<std::string> param_names;
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                                          node_unit.Index(),
-                                          node_name,
-                                          operation,
-                                          QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION,
-                                          param_names));
+                                         node_unit.Index(),
+                                         node_name,
+                                         operation,
+                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION,
+                                         param_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -253,15 +253,15 @@ static Ort::Status AddBinaryOpNode(QnnModelWrapper& qnn_model_wrapper,
 // Helper: emit a MatMul node (with optional transpose_in1).
 // ---------------------------------------------------------------------------
 static Ort::Status AddMatMulNode(QnnModelWrapper& qnn_model_wrapper,
-                                  const OrtNodeUnit& node_unit,
-                                  const std::string& lhs_name,
-                                  const std::string& rhs_name,
-                                  const std::string& out_name,
-                                  const std::vector<uint32_t>& out_shape,
-                                  Qnn_DataType_t dtype,
-                                  const QnnQuantParamsWrapper& quant_param,
-                                  bool transpose_in1,
-                                  bool do_op_validation) {
+                                 const OrtNodeUnit& node_unit,
+                                 const std::string& lhs_name,
+                                 const std::string& rhs_name,
+                                 const std::string& out_name,
+                                 const std::vector<uint32_t>& out_shape,
+                                 Qnn_DataType_t dtype,
+                                 const QnnQuantParamsWrapper& quant_param,
+                                 bool transpose_in1,
+                                 bool do_op_validation) {
   QnnTensorWrapper out_tensor(out_name, QNN_TENSOR_TYPE_NATIVE, dtype, quant_param.Copy(),
                               std::vector<uint32_t>(out_shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(out_tensor)),
@@ -294,14 +294,14 @@ static Ort::Status AddMatMulNode(QnnModelWrapper& qnn_model_wrapper,
 // Helper: emit a Softmax node (axis param).
 // ---------------------------------------------------------------------------
 static Ort::Status AddSoftmaxNode(QnnModelWrapper& qnn_model_wrapper,
-                                   const OrtNodeUnit& node_unit,
-                                   const std::string& in_name,
-                                   const std::string& out_name,
-                                   const std::vector<uint32_t>& shape,
-                                   Qnn_DataType_t dtype,
-                                   const QnnQuantParamsWrapper& quant_param,
-                                   uint32_t axis,
-                                   bool do_op_validation) {
+                                  const OrtNodeUnit& node_unit,
+                                  const std::string& in_name,
+                                  const std::string& out_name,
+                                  const std::vector<uint32_t>& shape,
+                                  Qnn_DataType_t dtype,
+                                  const QnnQuantParamsWrapper& quant_param,
+                                  uint32_t axis,
+                                  bool do_op_validation) {
   QnnTensorWrapper out_tensor(out_name, QNN_TENSOR_TYPE_NATIVE, dtype, quant_param.Copy(),
                               std::vector<uint32_t>(shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(out_tensor)),
@@ -311,11 +311,11 @@ static Ort::Status AddSoftmaxNode(QnnModelWrapper& qnn_model_wrapper,
 
   std::vector<std::string> param_names;
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                                          node_unit.Index(),
-                                          node_name,
-                                          axis,
-                                          QNN_OP_SOFTMAX_PARAM_AXIS,
-                                          param_names));
+                                         node_unit.Index(),
+                                         node_name,
+                                         axis,
+                                         QNN_OP_SOFTMAX_PARAM_AXIS,
+                                         param_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -332,9 +332,9 @@ static Ort::Status AddSoftmaxNode(QnnModelWrapper& qnn_model_wrapper,
 // Helper: create a static scalar tensor (fp32 or fp16) for softcap arithmetic.
 // ---------------------------------------------------------------------------
 static Ort::Status AddScalarTensor(QnnModelWrapper& qnn_model_wrapper,
-                                    const std::string& name,
-                                    float value,
-                                    Qnn_DataType_t dtype) {
+                                   const std::string& name,
+                                   float value,
+                                   Qnn_DataType_t dtype) {
   std::vector<uint8_t> bytes;
   if (dtype == QNN_DATATYPE_FLOAT_16) {
     const Ort::Float16_t fp16(value);
@@ -358,14 +358,14 @@ static Ort::Status AddScalarTensor(QnnModelWrapper& qnn_model_wrapper,
 //   Steps: Div(scores, sc) → Tanh → Mul(result, sc)
 // ---------------------------------------------------------------------------
 static Ort::Status AddSoftcapNode(QnnModelWrapper& qnn_model_wrapper,
-                                   const OrtNodeUnit& node_unit,
-                                   const std::string& in_name,
-                                   const std::string& out_name,
-                                   const std::vector<uint32_t>& shape,
-                                   Qnn_DataType_t dtype,
-                                   const QnnQuantParamsWrapper& quant_param,
-                                   float softcap_val,
-                                   bool do_op_validation) {
+                                  const OrtNodeUnit& node_unit,
+                                  const std::string& in_name,
+                                  const std::string& out_name,
+                                  const std::vector<uint32_t>& shape,
+                                  Qnn_DataType_t dtype,
+                                  const QnnQuantParamsWrapper& quant_param,
+                                  float softcap_val,
+                                  bool do_op_validation) {
   // Static scalar for softcap value.
   const std::string sc_name = utils::UniqueNameGenerator().New(node_unit, "_softcap_scalar");
   RETURN_IF_ERROR(AddScalarTensor(qnn_model_wrapper, sc_name, softcap_val, dtype));
@@ -417,15 +417,15 @@ static Ort::Status AddSoftcapNode(QnnModelWrapper& qnn_model_wrapper,
 //
 // ---------------------------------------------------------------------------
 static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
-                                     const OrtNodeUnit& node_unit,
-                                     const std::string& in_name,
-                                     const std::string& out_name,
-                                     const std::vector<uint32_t>& in_shape,   // [B, n_kv, S, hs]
-                                     const std::vector<uint32_t>& out_shape,  // [B, n_q,  S, hs]
-                                     Qnn_DataType_t dtype,
-                                     const QnnQuantParamsWrapper& quant_param,
-                                     uint32_t head_ratio,
-                                     bool /*do_op_validation*/) {
+                                    const OrtNodeUnit& node_unit,
+                                    const std::string& in_name,
+                                    const std::string& out_name,
+                                    const std::vector<uint32_t>& in_shape,   // [B, n_kv, S, hs]
+                                    const std::vector<uint32_t>& out_shape,  // [B, n_q,  S, hs]
+                                    Qnn_DataType_t dtype,
+                                    const QnnQuantParamsWrapper& quant_param,
+                                    uint32_t head_ratio,
+                                    bool /*do_op_validation*/) {
   // 4D-only GQA expansion that avoids 5D tensors (HTP finalization fails with 5D).
   //
   // Goal: produce K_expanded[b, kv*head_ratio+r, s, h] = K[b, kv, s, h]
@@ -439,11 +439,11 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
   //   → Transpose (0,2,1,3) → [B, n_kv, head_ratio, S*hs]
   //   → Reshape [B, n_q, S, hs]              (C-order: kv*head_ratio+r → floor-div ✓)
 
-  const uint32_t B    = in_shape[0];
+  const uint32_t B = in_shape[0];
   const uint32_t n_kv = in_shape[1];
-  const uint32_t S    = in_shape[2];
-  const uint32_t hs   = in_shape[3];
-  const uint32_t Shs  = S * hs;  // merged dim
+  const uint32_t S = in_shape[2];
+  const uint32_t hs = in_shape[3];
+  const uint32_t Shs = S * hs;  // merged dim
 
   // Step 1: Reshape [B, n_kv, S, hs] → [B, 1, n_kv, S*hs]
   const std::string r1_name = utils::UniqueNameGenerator().New(node_unit, "_gqa_r1");
@@ -484,7 +484,7 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // Step 3: Transpose (0,2,1,3) → [B, n_kv, head_ratio, S*hs]
-  const std::string tr_name   = utils::UniqueNameGenerator().New(node_unit, "_gqa_tr");
+  const std::string tr_name = utils::UniqueNameGenerator().New(node_unit, "_gqa_tr");
   const std::vector<uint32_t> tr_shape = {B, n_kv, head_ratio, Shs};
   RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
                                                      tiled_name, tr_name,
@@ -511,15 +511,15 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
 //   out_shape  = [B, n, S_past+S_cur, hs]
 // ---------------------------------------------------------------------------
 static Ort::Status AddKVConcatNode(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& node_unit,
-                                    const std::string& past_name,
-                                    const std::string& cur_name,
-                                    const std::string& out_name,
-                                    const std::vector<uint32_t>& out_shape,
-                                    Qnn_DataType_t dtype,
-                                    const QnnQuantParamsWrapper& quant_param,
-                                    bool is_graph_output,
-                                    bool do_op_validation) {
+                                   const OrtNodeUnit& node_unit,
+                                   const std::string& past_name,
+                                   const std::string& cur_name,
+                                   const std::string& out_name,
+                                   const std::vector<uint32_t>& out_shape,
+                                   Qnn_DataType_t dtype,
+                                   const QnnQuantParamsWrapper& quant_param,
+                                   bool is_graph_output,
+                                   bool do_op_validation) {
   const Qnn_TensorType_t tensor_type =
       is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper out_tensor(out_name, tensor_type, dtype, quant_param.Copy(),
@@ -531,11 +531,11 @@ static Ort::Status AddKVConcatNode(QnnModelWrapper& qnn_model_wrapper,
   std::vector<std::string> param_names;
   // axis = 2 (the sequence dimension in BNSH layout).
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                                          node_unit.Index(),
-                                          node_name,
-                                          2u,
-                                          QNN_OP_CONCAT_PARAM_AXIS,
-                                          param_names));
+                                         node_unit.Index(),
+                                         node_name,
+                                         2u,
+                                         QNN_OP_CONCAT_PARAM_AXIS,
+                                         param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_CONCAT,
@@ -552,13 +552,13 @@ static Ort::Status AddKVConcatNode(QnnModelWrapper& qnn_model_wrapper,
 //   by routing it through a no-op Reshape.
 // ---------------------------------------------------------------------------
 static Ort::Status RegisterIntermediateAsOutput(QnnModelWrapper& qnn_model_wrapper,
-                                                 const OrtNodeUnit& node_unit,
-                                                 const std::string& src_name,
-                                                 const std::string& out_name,
-                                                 const std::vector<uint32_t>& shape,
-                                                 Qnn_DataType_t dtype,
-                                                 const QnnQuantParamsWrapper& quant_param,
-                                                 bool do_op_validation) {
+                                                const OrtNodeUnit& node_unit,
+                                                const std::string& src_name,
+                                                const std::string& out_name,
+                                                const std::vector<uint32_t>& shape,
+                                                Qnn_DataType_t dtype,
+                                                const QnnQuantParamsWrapper& quant_param,
+                                                bool do_op_validation) {
   QnnTensorWrapper out_tensor(out_name, QNN_TENSOR_TYPE_APP_READ, dtype, quant_param.Copy(),
                               std::vector<uint32_t>(shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(out_tensor)),
@@ -579,10 +579,10 @@ static Ort::Status RegisterIntermediateAsOutput(QnnModelWrapper& qnn_model_wrapp
 // ProcessAttributesAndOutputs — emit the full decomposed attention graph
 // ---------------------------------------------------------------------------
 Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                             const OrtNodeUnit& node_unit,
-                                                             std::vector<std::string>&& input_names,
-                                                             const Ort::Logger& /*logger*/,
-                                                             bool do_op_validation) const {
+                                                            const OrtNodeUnit& node_unit,
+                                                            std::vector<std::string>&& input_names,
+                                                            const Ort::Logger& /*logger*/,
+                                                            bool do_op_validation) const {
   const auto& onnx_inputs = node_unit.Inputs();
   const auto& onnx_outputs = node_unit.Outputs();
 
@@ -791,8 +791,8 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     const std::vector<uint32_t> k_present_shape = {B, n_q, S_k_total, hs};
     // If present_key is a graph output, emit it as APP_READ directly from concat.
     const bool pk_is_graph_out = (onnx_outputs.size() > 1 &&
-                                   onnx_outputs[1].Exists() &&
-                                   qnn_model_wrapper.IsGraphOutput(onnx_outputs[1].name));
+                                  onnx_outputs[1].Exists() &&
+                                  qnn_model_wrapper.IsGraphOutput(onnx_outputs[1].name));
     k_present_name = pk_is_graph_out
                          ? onnx_outputs[1].name
                          : utils::UniqueNameGenerator().New(node_unit, "_k_present");
@@ -867,8 +867,8 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     const uint32_t S_k_total = S_k;  // already updated above.
     const std::vector<uint32_t> v_present_shape = {B, n_q, S_k_total, v_hs};
     const bool pv_is_graph_out = (onnx_outputs.size() > 2 &&
-                                   onnx_outputs[2].Exists() &&
-                                   qnn_model_wrapper.IsGraphOutput(onnx_outputs[2].name));
+                                  onnx_outputs[2].Exists() &&
+                                  qnn_model_wrapper.IsGraphOutput(onnx_outputs[2].name));
     v_present_name = pv_is_graph_out
                          ? onnx_outputs[2].name
                          : utils::UniqueNameGenerator().New(node_unit, "_v_present");
@@ -993,9 +993,9 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   // ---- Step 11: Softmax (axis=3) -> [B, n_q, S_q, S_k] ----
   const std::string softmax_out = utils::UniqueNameGenerator().New(node_unit, "_softmax_out");
   RETURN_IF_ERROR(AddSoftmaxNode(qnn_model_wrapper, node_unit,
-                                  scores_cur, softmax_out,
-                                  qk_shape, dtype, q_quant,
-                                  /*axis=*/3u, do_op_validation));
+                                 scores_cur, softmax_out,
+                                 qk_shape, dtype, q_quant,
+                                 /*axis=*/3u, do_op_validation));
   const std::string& attn_weights = softmax_out;
 
   // ---- qk_matmul_output mode 3: post-softmax (attn_weights) ----
@@ -1112,11 +1112,11 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     TensorInfo qk_out_info{};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_outputs[3], qk_out_info));
     RETURN_IF_ERROR(RegisterIntermediateAsOutput(qnn_model_wrapper, node_unit,
-                                                  qk_captured,
-                                                  onnx_outputs[3].name,
-                                                  qk_shape,
-                                                  dtype, q_quant,
-                                                  do_op_validation));
+                                                 qk_captured,
+                                                 onnx_outputs[3].name,
+                                                 qk_shape,
+                                                 dtype, q_quant,
+                                                 do_op_validation));
   }
 
   return Ort::Status();
