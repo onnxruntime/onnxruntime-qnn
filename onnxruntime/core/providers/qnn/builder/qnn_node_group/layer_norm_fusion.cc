@@ -595,46 +595,12 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                              std::move(axes_shape), std::move(trailing_axes_copy));
 
   if (validate) {
-    if (needs_transpose) {
-      // Validate pre-transpose: root_input -> ln_input (transposed shape).
-      QnnParamWrapper pre_tp_param(node_units[0]->Index(), node_units[0]->Name(),
-                                   QNN_OP_TRANSPOSE_PARAM_PERM,
-                                   std::vector<uint32_t>{static_cast<uint32_t>(pre_perm.size())},
-                                   std::vector<uint32_t>(pre_perm));
-      RETURN_IF_ERROR(qmw.ValidateQnnNode(node_name + "_pre_tp",
-                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                          QNN_OP_TRANSPOSE,
-                                          {input_tensor.GetQnnTensor()},
-                                          {ln_input_tensor.GetQnnTensor()},
-                                          {pre_tp_param.GetQnnParam()}));
-
-      // Validate LayerNorm with trailing axes on the transposed tensor.
-      RETURN_IF_ERROR(qmw.ValidateQnnNode(node_name,
-                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                          QNN_OP_LAYER_NORM,
-                                          {ln_input_tensor.GetQnnTensor(),
-                                           gamma_tensor.GetQnnTensor(),
-                                           beta_tensor.GetQnnTensor()},
-                                          {ln_output_tensor.GetQnnTensor()},
-                                          {epsilon_param.GetQnnParam(), axes_param.GetQnnParam()}));
-
-      // Validate post-transpose: ln_output -> final_output (original shape).
-      QnnTensorWrapper post_tp_output_tensor(final_output.name,
-                                             QNN_TENSOR_TYPE_NATIVE,
-                                             output_info.qnn_data_type,
-                                             output_info.quant_param.Copy(),
-                                             std::vector<uint32_t>(input_shape));
-      QnnParamWrapper post_tp_param(node_units[0]->Index(), node_units[0]->Name(),
-                                    QNN_OP_TRANSPOSE_PARAM_PERM,
-                                    std::vector<uint32_t>{static_cast<uint32_t>(post_perm.size())},
-                                    std::vector<uint32_t>(post_perm));
-      return qmw.ValidateQnnNode(node_name + "_post_tp",
-                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                 QNN_OP_TRANSPOSE,
-                                 {ln_output_tensor.GetQnnTensor()},
-                                 {post_tp_output_tensor.GetQnnTensor()},
-                                 {post_tp_param.GetQnnParam()});
-    }
+    // Validate only the LayerNorm node. ln_input_tensor already has the correct
+    // (post-transpose) shape and trailing_axes are set accordingly.
+    // Transpose nodes are not validated here for the same reason the create path
+    // uses do_op_validation=false for them: the IR backend cannot validate
+    // Transpose nodes independently. LayerNorm validation is sufficient to catch
+    // unsupported dtypes or axis configurations.
     return qmw.ValidateQnnNode(node_name,
                                QNN_OP_PACKAGE_NAME_QTI_AISW,
                                QNN_OP_LAYER_NORM,

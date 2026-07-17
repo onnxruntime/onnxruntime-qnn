@@ -337,7 +337,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
   AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
 }
 
-// Pow exponent is 3.0 instead of 2.0 — fusion must be skipped.
+// Pow exponent is 4.0 instead of 2.0 — fusion must be skipped.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_WrongPowExponent) {
   const std::filesystem::path json_dir = "LayerNormFusion_Skip_WrongPowExponent";
   std::filesystem::remove_all(json_dir);
@@ -352,7 +352,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_WrongPowExponent) {
   RunQnnModelTest(
       BuildLayerNormWrongPowExp(
           TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
-          {-1}, 3.0f),
+          {-1}, 4.0f),
       opts,
       13,
       EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
