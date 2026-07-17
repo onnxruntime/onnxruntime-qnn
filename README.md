@@ -99,7 +99,11 @@ pip install onnxruntime-qnn==2.4.0
 - Python 3.11 – 3.14
 - Numpy 1.25.2 or >= 1.26.4
 
-For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) — a single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers)
+### NuGet
+
+- **2.5.0+**: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) — a single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
+- **2.3.0 and 2.4.0**: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) - Windows ARM64 replaced with Windows ARM64 (ARM64x).
+- **2.0.0 to 2.2.0**: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) - Windows ARM64 only.
 
 ### Linux Wheels and .tgz Files
 
