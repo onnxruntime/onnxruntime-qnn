@@ -148,9 +148,9 @@ Ort::Status RangeOpBuilder::ComputeRangeValues(QnnModelWrapper& qnn_model_wrappe
       // Compute as INT_32; a Cast node inserted downstream restores the INT_64
       // contract (QNN Transpose does not accept INT_64 on NPU).
       RETURN_IF_ERROR(ComputeRangeTyped<int32_t>(static_cast<int32_t>(start),
-                                                  static_cast<int32_t>(limit),
-                                                  static_cast<int32_t>(delta),
-                                                  static_bytes_out, count_out));
+                                                 static_cast<int32_t>(limit),
+                                                 static_cast<int32_t>(delta),
+                                                 static_bytes_out, count_out));
       static_dtype_out = QNN_DATATYPE_INT_32;
       break;
     }
