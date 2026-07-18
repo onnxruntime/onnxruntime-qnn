@@ -122,6 +122,15 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
     ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+
+  // Probe RPCMEM once at load time; enables factory-level shared allocator advertisement.
+  try {
+    rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+    CreateAllocator = CreateAllocatorImpl;
+  } catch (...) {
+    rpcmem_library_ = nullptr;
+  }
 }
 
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
@@ -163,6 +172,18 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device);
     ep_devices[num_ep_devices++] = ep_device;
     factory->ep_devices_.push_back(ep_device);
+
+    // Advertise HOST_ACCESSIBLE memory for NPU devices so ORT Core auto-registers
+    // a shared allocator at library-load time.
+    const auto device_type = factory->ort_api.HardwareDevice_Type(device);
+    if (device_type == OrtHardwareDeviceType_NPU &&
+        factory->rpcmem_library_ != nullptr &&
+        factory->host_accessible_memory_info_ != nullptr) {
+      if (OrtStatus* alloc_status = factory->ep_api.EpDevice_AddAllocatorInfo(
+              ep_device, factory->host_accessible_memory_info_.get())) {
+        return alloc_status;
+      }
+    }
 
     return status;
   };
@@ -370,6 +391,32 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
 
   QnnEp* dummy_ep = static_cast<QnnEp*>(ep);
   delete dummy_ep;
+}
+
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(_In_ OrtEpFactory* this_ptr,
+                                                          _In_ const OrtMemoryInfo* memory_info,
+                                                          _In_opt_ const OrtKeyValuePairs* /*allocator_options*/,
+                                                          _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  *allocator = nullptr;
+
+  if (factory->rpcmem_library_ == nullptr) {
+    return nullptr;
+  }
+
+  OrtDeviceMemoryType mem_type = factory->ort_api.MemoryInfoGetDeviceMemType(memory_info);
+  if (mem_type != OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+    return nullptr;
+  }
+
+  try {
+    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, factory->rpcmem_library_);
+    *allocator = htp_allocator.release();
+  } catch (const std::exception& e) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
+  }
+
+  return nullptr;
 }
 
 void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
