@@ -55,7 +55,7 @@ class QLinearMatMulNodeGroup : public IQnnNodeGroup {
   explicit QLinearMatMulNodeGroup(const OrtNodeUnit& node_unit);
 
   Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw, bool validate,
-                                   const Ort::Logger& logger) const;
+                                    const Ort::Logger& logger) const;
 
   const OrtNodeUnit* node_unit_;
 };
