@@ -1307,20 +1307,17 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
                       false,
                       logger_)) {
-    // Initialize rpcmem_library_.
-    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
-    // generation stage, there is no need to load it as no allocations will be made.
-    if (!context_cache_enabled_) {
-      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
-    } else {
+    // Enable shared allocator regardless of context-generation mode; a session that
+    // generates a context binary may still run inference in the same session.
+    rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+    model_settings_.htp_shared_memory = true;
+    if (context_cache_enabled_) {
       ORT_CXX_LOGF(logger_,
-                   ORT_LOGGING_LEVEL_INFO,
-                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
-                   " as no allocations are expected to be made.",
+                   ORT_LOGGING_LEVEL_VERBOSE,
+                   "HTP shared memory allocator enabled with %s.",
                    kOrtSessionOptionEpContextEnable);
     }
-    model_settings_.htp_shared_memory = true;
   }
 
   static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";

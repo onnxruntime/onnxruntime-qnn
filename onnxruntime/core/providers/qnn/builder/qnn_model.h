@@ -4,6 +4,7 @@
 #pragma once
 
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -180,6 +181,16 @@ class QnnModel {
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
   const ApiPtrs api_ptrs_;
+
+  // One-shot warning state: emits at most one WARNING per tensor per session
+  // when the shared-memory allocator is enabled but a CPU-backed OrtValue is bound.
+  std::mutex zero_copy_fallback_warned_mutex_;
+  std::unordered_set<std::string> zero_copy_fallback_warned_names_;
+
+ public:
+  // Emits a one-shot WARNING when shared-memory zero-copy was requested but
+  // the bound OrtValue is CPU-backed (fallback to per-frame copy).
+  void WarnZeroCopyFallbackOnce(const Ort::Logger& logger, const std::string& tensor_name);
 };
 
 }  // namespace qnn
