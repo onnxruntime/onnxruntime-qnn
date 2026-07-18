@@ -30,6 +30,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/qlinear_matmul_node_group.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -103,7 +104,8 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
-    {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
+    {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}},
+    {"QLinearMatMul", {QLinearMatMulNodeGroup::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
   std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper & qnn_model_wrapper,
