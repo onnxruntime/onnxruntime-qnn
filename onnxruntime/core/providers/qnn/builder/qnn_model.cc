@@ -499,7 +499,9 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
                                                        const OrtMemoryInfo* ort_value_memory_info,
                                                        void* ort_value_data, uint32_t ort_value_data_size,
                                                        Qnn_ContextHandle_t qnn_context,
-                                                       Qnn_Tensor_t& qnn_tensor) {
+                                                       Qnn_Tensor_t& qnn_tensor,
+                                                       bool& fell_back_to_raw) {
+  fell_back_to_raw = false;
   // either set qnn_tensor memHandle or clientBuf
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
   ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
@@ -522,9 +524,24 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
     SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
+    fell_back_to_raw = true;
   }
 
   return Ort::Status();
+}
+
+void QnnModel::WarnZeroCopyFallbackOnce(const Ort::Logger& logger, const std::string& tensor_name) {
+  {
+    std::lock_guard<std::mutex> g{zero_copy_fallback_warned_mutex_};
+    if (!zero_copy_fallback_warned_names_.insert(tensor_name).second) {
+      return;
+    }
+  }
+  const std::string msg =
+      "zero-copy shared memory was requested but tensor '" + tensor_name +
+      "' is CPU-backed; falling back to per-frame copy. "
+      "Allocate from the QnnHtpShared allocator to enable zero-copy.";
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, msg.c_str());
 }
 
 Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
@@ -631,6 +648,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     const void* raw_data;
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorData(ort_input_tensor, &raw_data));
 
+    bool fell_back_to_raw = false;
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         api_ptrs_.ort_api,
         logger,
@@ -638,7 +656,12 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
         static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
         const_cast<void*>(raw_data), qnn_input_info.tensor_byte_size,
         graph_info_->GraphContext(),
-        qnn_inputs.back()));
+        qnn_inputs.back(),
+        fell_back_to_raw));
+
+    if (fell_back_to_raw && qnn_backend_manager_->GetQnnAllocatorType() != QnnAllocatorType::NONE) {
+      WarnZeroCopyFallbackOnce(logger, qnn_input_info.tensor_wrapper->GetName());
+    }
   }
 
   std::vector<Qnn_Tensor_t> qnn_outputs;
@@ -677,6 +700,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     void* mutable_data;
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorMutableData(ort_output_tensor, &mutable_data));
 
+    bool fell_back_to_raw = false;
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         api_ptrs_.ort_api,
         logger,
@@ -684,7 +708,12 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
         static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
         mutable_data, qnn_output_info.tensor_byte_size,
         graph_info_->GraphContext(),
-        qnn_outputs.back()));
+        qnn_outputs.back(),
+        fell_back_to_raw));
+
+    if (fell_back_to_raw && qnn_backend_manager_->GetQnnAllocatorType() != QnnAllocatorType::NONE) {
+      WarnZeroCopyFallbackOnce(logger, qnn_output_info.tensor_wrapper->GetName());
+    }
   }
 
   const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
