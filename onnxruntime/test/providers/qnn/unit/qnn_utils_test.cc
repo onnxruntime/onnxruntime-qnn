@@ -140,9 +140,10 @@ TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_RegularTypes) {
 }
 
 TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_SpanEmptyThrows) {
-  EXPECT_THROW(
+  // Empty shape represents a 0D scalar: size should equal one element.
+  EXPECT_EQ(
       qnn::utils::GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t>{}, QNN_DATATYPE_FLOAT_32),
-      Ort::Exception);
+      4u);
 }
 
 TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_SpanMultiDim) {
