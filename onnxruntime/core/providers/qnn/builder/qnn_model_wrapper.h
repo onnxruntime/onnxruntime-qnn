@@ -39,6 +39,7 @@ struct ModelSettings {
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
+  bool enable_htp_monolithic_lstm = false;
 };
 
 class QnnModelWrapper {
