@@ -367,12 +367,19 @@ block()
   # Dependency on ORT Core public header files
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES})
 
-  add_custom_command(
-    TARGET onnxruntime_provider_test POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${ort_core_SOURCE_DIR}/onnxruntime/test/testdata
-    $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
-  )
+  # Copy upstream ORT test data next to the test binary. The data lives in the fetched ort_core
+  # source, which is not available in prebuilt mode (onnxruntime_ORT_HOME set), so skip the copy
+  # there. Tests needing upstream models must have that data provided separately in prebuilt builds.
+  if(NOT onnxruntime_ORT_HOME)
+    add_custom_command(
+      TARGET onnxruntime_provider_test POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${ort_core_SOURCE_DIR}/onnxruntime/test/testdata
+      $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
+    )
+  else()
+    message(STATUS "onnxruntime_ORT_HOME is set; skipping upstream testdata copy for onnxruntime_provider_test.")
+  endif()
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime
   # TODO: Evaluate whether we can enable test_dynamic_plugin_ep with public API

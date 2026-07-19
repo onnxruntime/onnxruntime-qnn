@@ -470,26 +470,46 @@ else()
   include(external/eigen.cmake)
 endif()
 
-# Extract version from ort_core URL
-# Expected URL format: https://github.com/microsoft/onnxruntime/archive/refs/tags/v1.24.1.zip
-if(DEP_URL_ort_core MATCHES ".*refs/tags/v([0-9]+\\.[0-9]+\\.[0-9]+)\\.zip$")
-  set(ORT_CORE_VER ${CMAKE_MATCH_1})
-  message(STATUS "Extracted ORT_CORE_VER: ${ORT_CORE_VER}")
+# Determine the ORT Core version and (for source builds) fetch the ORT Core source.
+#
+# When a prebuilt ORT is supplied (onnxruntime_ORT_HOME set), the build must use ONLY that
+# prebuilt: its version comes from the prebuilt's VERSION_NUMBER file, and the upstream ORT
+# source is NOT fetched or patched. Otherwise (source build) the version is parsed from the
+# pinned deps.txt URL and the ort_core source is fetched and patched as before.
+if(onnxruntime_ORT_HOME)
+  # Pin 1: read ORT_CORE_VER from the prebuilt instead of from the deps.txt URL.
+  set(_ort_version_file "${onnxruntime_ORT_HOME}/VERSION_NUMBER")
+  if(NOT EXISTS "${_ort_version_file}")
+    message(FATAL_ERROR "Prebuilt ORT version file not found: ${_ort_version_file}. "
+                        "Expected a VERSION_NUMBER file at the root of onnxruntime_ORT_HOME.")
+  endif()
+  file(READ "${_ort_version_file}" ORT_CORE_VER)
+  string(STRIP "${ORT_CORE_VER}" ORT_CORE_VER)
+  message(STATUS "Using prebuilt ORT_CORE_VER from ${_ort_version_file}: ${ORT_CORE_VER}")
+  # Pin 2: do NOT fetch or patch the ort_core source in prebuilt mode.
+  message(STATUS "onnxruntime_ORT_HOME is set; skipping ort_core source fetch.")
 else()
-  message(FATAL_ERROR "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
-endif()
+  # Extract version from ort_core URL
+  # Expected URL format: https://github.com/microsoft/onnxruntime/archive/refs/tags/v1.24.1.zip
+  if(DEP_URL_ort_core MATCHES ".*refs/tags/v([0-9]+\\.[0-9]+\\.[0-9]+)\\.zip$")
+    set(ORT_CORE_VER ${CMAKE_MATCH_1})
+    message(STATUS "Extracted ORT_CORE_VER: ${ORT_CORE_VER}")
+  else()
+    message(FATAL_ERROR "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
+  endif()
 
-onnxruntime_fetchcontent_declare(
-  ort_core
-  URL ${DEP_URL_ort_core}
-  URL_HASH SHA1=${DEP_SHA1_ort_core}
-  PATCH_COMMAND
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0001-cpp-model-test-runner-uses-plugin-EP.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Add-Roialign-Op-to-HTP.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0004-Update-argument-for-monolithic-lstm.patch
-  EXCLUDE_FROM_ALL)
-FetchContent_Populate(ort_core)
+  onnxruntime_fetchcontent_declare(
+    ort_core
+    URL ${DEP_URL_ort_core}
+    URL_HASH SHA1=${DEP_SHA1_ort_core}
+    PATCH_COMMAND
+      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0001-cpp-model-test-runner-uses-plugin-EP.patch &&
+      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Add-Roialign-Op-to-HTP.patch &&
+      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
+      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0004-Update-argument-for-monolithic-lstm.patch
+    EXCLUDE_FROM_ALL)
+  FetchContent_Populate(ort_core)
+endif()
 
 if(WIN32)
   if(onnxruntime_USE_VCPKG)
