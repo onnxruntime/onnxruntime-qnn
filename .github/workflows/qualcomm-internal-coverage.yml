@@ -6,7 +6,9 @@ name: Qualcomm Internal Coverage
 permissions:
   contents: read
   checks: write
-  pull-requests: write
+  # pull-requests: write is only needed by the "Post Diff Coverage to PR" step, which is
+  # currently disabled (if: false). Requesting it here breaks callers that don't grant it
+  # (e.g. the nightly release workflow). Re-add it when that step is re-enabled.
 
 on:
   workflow_call:
@@ -110,6 +112,13 @@ jobs:
       - name: Set up JFrog CLI
         if: inputs.nightly_coverage && steps.gate.outputs.run == 'true' && !cancelled()
         uses: jfrog/setup-jfrog-cli@v5
+        with:
+          # We only use `jf rt upload` for the coverage Excel; we never collect build-info.
+          # The token lacks build-info publish rights, so the action's default post-job
+          # build-publish (and its build-info-based job summary) fail with harmless warnings.
+          # Disable both since we don't produce build-info in the first place.
+          disable-auto-build-publish: true
+          disable-job-summary: true
         env:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}

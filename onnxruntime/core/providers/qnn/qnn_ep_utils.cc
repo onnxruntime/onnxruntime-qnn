@@ -1118,7 +1118,9 @@ bool OrtPadNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
   // Pad can have 1 or 2 dq input, the optional input constant_value can be quantized or non-quantized.
   // QNN supports data input quantized with constant_value input non-quantized.
   int num_dq_inputs = static_cast<int>(dq_nodes.size());
-  if (num_dq_inputs > 2) {
+  // Data input (dq_nodes[0] below) must be quantized; reject 0 here since CheckQDQNodes
+  // only checks dq_nodes.size() against num_dq_inputs, which is derived from it.
+  if (num_dq_inputs < 1 || num_dq_inputs > 2) {
     return false;
   }
 
