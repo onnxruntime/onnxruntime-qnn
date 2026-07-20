@@ -54,7 +54,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDInternalOutputNegativeIndex) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Exercises the column-indexed axis_dim lookup.
@@ -84,7 +84,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDMultipleNegativeIndicesAcrossColumns) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
@@ -111,7 +111,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // ScatterND(-1) between producer/consumer ops must compile through QNN finalization.
@@ -147,7 +147,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Verifies the rename avoids collisions when a shared initializer is rewritten.
@@ -184,7 +184,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 }  // namespace test

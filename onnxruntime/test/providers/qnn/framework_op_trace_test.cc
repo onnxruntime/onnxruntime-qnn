@@ -101,7 +101,7 @@ static nlohmann::json RunModelWithTracing(const GetTestModelFn& build_fn,
 #endif
 
   RunQnnModelTest(build_fn, provider_options, opset,
-                  ExpectedEPNodeAssignment::All, fp32_abs_err);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 
   // GTEST_SKIP() in RunQnnModelTest (e.g. arch guard) sets the skip flag and
   // returns from that function but does not propagate to our caller.  Bail out
@@ -442,7 +442,7 @@ TEST_F(QnnCPUBackendTests, FrameworkOpTrace_DisabledByDefault) {
       BuildOpTestCase<float>("add_node", "Add",
                              {TestInputDef<float>({1, 2, 3}, false, data), TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   EXPECT_TRUE(FindTraceFile(tmp.path()).empty()) << "No trace file when tracing disabled";
 }
@@ -493,7 +493,7 @@ TEST_F(QnnCPUBackendTests, FrameworkOpTrace_UnsupportedNodeReport) {
   opts["enable_framework_op_trace"] = "1";
   opts["framework_op_trace_dir"] = tmp.path().string();
 
-  RunQnnModelTest(build_model, opts, 13, ExpectedEPNodeAssignment::Some);
+  RunQnnModelTest(build_model, opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::Some});
 
   auto trace_file = FindTraceFile(tmp.path());
   if (trace_file.empty()) return;
@@ -529,7 +529,7 @@ TEST_F(QnnCPUBackendTests, FrameworkOpTrace_AllUnsupportedModel_StillWritesTrace
   opts["enable_framework_op_trace"] = "1";
   opts["framework_op_trace_dir"] = tmp.path().string();
 
-  RunQnnModelTest(build_model, opts, 13, ExpectedEPNodeAssignment::None);
+  RunQnnModelTest(build_model, opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::None});
 
   auto trace_file = FindTraceFile(tmp.path());
   ASSERT_FALSE(trace_file.empty())
@@ -603,7 +603,7 @@ TEST_F(QnnCPUBackendTests, FrameworkOpTrace_MultipleSubgraphs) {
   opts["enable_framework_op_trace"] = "1";
   opts["framework_op_trace_dir"] = tmp.path().string();
 
-  RunQnnModelTest(build_model, opts, 13, ExpectedEPNodeAssignment::Some);
+  RunQnnModelTest(build_model, opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::Some});
 
   auto trace_file = FindTraceFile(tmp.path());
   if (trace_file.empty()) return;
@@ -657,7 +657,7 @@ TEST_F(QnnCPUBackendTests, FrameworkOpTrace_OffloadGraphIoQuantization_FanoutQDQ
 
   // Q nodes stay on CPU when offloading is enabled; DQ + Add land on QNN.
   RunQnnModelTest(BuildOffloadFanoutQDQModelForTrace(), opts, /*opset*/ 18,
-                  ExpectedEPNodeAssignment::Some);
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     return;
@@ -784,7 +784,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_QDQFusion_ManyToOne) {
   opts["enable_framework_op_trace"] = "1";
   opts["framework_op_trace_dir"] = tmp.path().string();
 
-  RunQnnModelTest(build_qdq_conv, opts, 13, ExpectedEPNodeAssignment::All);
+  RunQnnModelTest(build_qdq_conv, opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   auto trace_file = FindTraceFile(tmp.path());
   if (trace_file.empty()) return;
@@ -845,7 +845,10 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_GeluFusion) {
   // HTP executes float ops via float16 hardware precision, so fp32 comparison
   // requires a relaxed tolerance. 5e-3f covers observed rounding on both
   // simulation (x86) and real ARM64 hardware.
-  RunQnnModelTest(build_gelu, opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+  RunQnnModelTest(build_gelu,
+                  opts,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
 
   auto trace_file = FindTraceFile(tmp.path());
   if (trace_file.empty()) return;
@@ -1564,7 +1567,10 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_GeluFusion) {
     // HTP executes float ops via float16 hardware precision, so fp32 comparison
     // requires a relaxed tolerance. 5e-3f covers observed rounding on both
     // simulation (x86) and real ARM64 hardware.
-    RunQnnModelTest(build_gelu, opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+    RunQnnModelTest(build_gelu,
+                    opts,
+                    13,
+                    EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
     auto trace_file = FindTraceFile(tmp.path());
     if (trace_file.empty()) return {};
     return ReadTraceJson(trace_file);
@@ -1633,7 +1639,10 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_ReshapeEinsumReshape) {
   opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
-  RunQnnModelTest(build_fn, opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+  RunQnnModelTest(build_fn,
+                  opts,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   auto trace_file = FindTraceFile(tmp.path());
   ASSERT_FALSE(trace_file.empty()) << "No trace file generated for ReshapeEinsumReshape model";
@@ -1754,7 +1763,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_With_Trace) {
                              {TestInputDef<float>({1, 2, 3}, false, data),
                               TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
 
   ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
   std::string header = ReadCsvHeader(csv_path);
@@ -1789,7 +1798,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Basic_With_Trace) {
                              {TestInputDef<float>({1, 2, 3}, false, data),
                               TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
 
   ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
   std::string header = ReadCsvHeader(csv_path);
@@ -1823,7 +1832,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_Without_Trace) {
                              {TestInputDef<float>({1, 2, 3}, false, data),
                               TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
 
   ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
   std::string header = ReadCsvHeader(csv_path);
@@ -1859,7 +1868,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_Detailed_With_Trace_NodeRo
                              {TestInputDef<float>({1, 2, 3}, false, data),
                               TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
 
   ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
 
@@ -1903,7 +1912,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_Profiling_OpTrace_With_Trace) {
                              {TestInputDef<float>({1, 2, 3}, false, data),
                               TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All, 5e-3f);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-3f)});
 
   ASSERT_TRUE(fs::exists(csv_path)) << "Profiling CSV not created";
 

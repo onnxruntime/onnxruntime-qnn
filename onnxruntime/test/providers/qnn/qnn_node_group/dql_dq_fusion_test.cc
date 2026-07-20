@@ -207,8 +207,7 @@ void RunFusionTest(const FusionTestParams& p) {
   RunQnnModelTest(p.build_model,
                   provider_options,
                   p.opset_version,
-                  p.expected_ep_assignment,
-                  p.fp32_abs_err,
+                  EPVerificationParams{p.expected_ep_assignment, ElementwiseAbsoluteVerifier(p.fp32_abs_err)},
                   p.log_severity,
                   p.verify_outputs);
 }
@@ -235,7 +234,7 @@ TEST_F(QnnHTPBackendTests, DqlDqFusion_4D_WithRelu) {
   // The fused graph should contain exactly one Transpose (the identity
   // placeholder for DQL+DQ) and one Relu; DQL and DQ must be absent.
   AssertOpInQnnGraph(json_dir, "Transpose", /*count=*/1);
-  AssertOpInQnnGraph(json_dir, "Relu", /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseNeuron", /*count=*/1);
   AssertOpInQnnGraph(json_dir, "DynamicQuantizeLinear", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "Dequantize", /*count=*/0);
 }
@@ -253,7 +252,7 @@ TEST_F(QnnHTPBackendTests, DqlDqFusion_2D_WithRelu) {
   if (!HasQnnJsonGraph(json_dir)) return;
 
   AssertOpInQnnGraph(json_dir, "Transpose", /*count=*/1);
-  AssertOpInQnnGraph(json_dir, "Relu", /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseNeuron", /*count=*/1);
   AssertOpInQnnGraph(json_dir, "DynamicQuantizeLinear", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "Dequantize", /*count=*/0);
 }
@@ -301,7 +300,7 @@ TEST_F(QnnHTPBackendTests, DqlDqFusion_LargeActivation_Correctness) {
   if (!HasQnnJsonGraph(json_dir)) return;
 
   AssertOpInQnnGraph(json_dir, "Transpose", /*count=*/1);
-  AssertOpInQnnGraph(json_dir, "Relu", /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseNeuron", /*count=*/1);
   AssertOpInQnnGraph(json_dir, "DynamicQuantizeLinear", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "Dequantize", /*count=*/0);
 }

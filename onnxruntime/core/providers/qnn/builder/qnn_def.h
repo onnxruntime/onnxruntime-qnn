@@ -26,6 +26,10 @@ namespace qnn {
 #define QNN_SYSTEM_PROFILE_API_ENABLED
 #endif
 
+#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
+#define QNN_SYSTEM_DLC_API_ENABLED
+#endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
+
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
 #if QNN_API_VERSION_MAJOR > 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR >= 32))
 #define QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -95,9 +99,13 @@ typedef struct PerThreadHtpPowerConfigs {
 
 enum class ContextPriority : uint8_t {
   LOW = 0,
+  NORMAL_LOW,
   NORMAL,
   NORMAL_HIGH,
   HIGH,
+  HIGH_PLUS,
+  CRITICAL,
+  CRITICAL_PLUS,
   UNDEFINED
 };
 
@@ -109,6 +117,14 @@ enum class HtpGraphFinalizationOptimizationMode : uint8_t {
   kMode3 = 3,  // Longest preparation time, most likely even more optimal graph.
 };
 
+// Define graph configs used by HTP backend.
+typedef struct HtpGraphConfigs {
+  int32_t vtcm_size_in_mb = 0;
+  HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
+  bool enable_htp_fp16_precision = false;
+  bool enable_htp_monolithic_lstm = false;
+} HtpGraphConfigs_t;
+
 enum class QnnBackendType : uint8_t {
   CPU = 0,
   GPU,
@@ -116,6 +132,12 @@ enum class QnnBackendType : uint8_t {
   HTP,
   HTP_FP16,
   SERIALIZER,
+};
+
+enum class QnnAllocatorType : uint8_t {
+  NONE = 0,
+  HTP_SHARED,
+  DX12_SHARED,
 };
 
 bool IsIrBackend(QnnBackendType backend_type);
@@ -127,6 +149,12 @@ bool IsNpuBackend(QnnBackendType backend_type);
 bool IsGpuBackend(QnnBackendType backend_type);
 
 bool IsQpuBackend(QnnBackendType backend_type);
+
+bool IsHtpSharedMemoryAllocator(QnnAllocatorType allocator_type);
+
+bool IsDx12SharedMemoryAllocator(QnnAllocatorType allocator_type);
+
+std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type);
 
 std::string QnnBackendTypeToString(QnnBackendType backend_type);
 
@@ -216,6 +244,12 @@ Ort::Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn
 // TODO: split out separate files for Wrappers
 class QnnTensorWrapper {
  public:
+  // FLOAT_32 workaround for QnnIr rejecting UNDEFINED on null tensors
+  static QnnTensorWrapper MakeNull(const std::string& name) {
+    return QnnTensorWrapper(name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
+                            QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+  }
+
   QnnTensorWrapper(const std::string& name,
                    Qnn_TensorType_t tensor_type,
                    Qnn_DataType_t data_type,

@@ -27,7 +27,7 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", {input_def, scale_def}, {}, attrs),
                   provider_options,
                   17,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Disabled all QNN CPU LayerNorm tests due to bug in 2.42 SDK
@@ -312,8 +312,7 @@ static void RunLayerNormTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(model_fn,
                   provider_options,
                   17,  // opset
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 TEST_F(QnnHTPBackendTests, LayerNorm_fp_standard_test) {

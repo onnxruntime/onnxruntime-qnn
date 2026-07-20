@@ -35,14 +35,27 @@ enum class ExpectedEPNodeAssignment { None,
                                       All,
 };
 
-// The struct to hold some verification params for RunAndVerifyOutputsWithEP
-struct EPVerificationParams {
-  ExpectedEPNodeAssignment ep_node_assignment = ExpectedEPNodeAssignment::Some;
+struct ElementwiseAbsoluteVerifier {
+  explicit ElementwiseAbsoluteVerifier(float fp32_abs_err = 1e-5f) : fp32_abs_err(fp32_abs_err) {}
 
   // Some EP may use different rounding than ORT CPU EP, which may cause a bigger abs error than
   // the default of 1e-5f, especially for scenarios such as [Q -> Quantized op -> DQ]
   // Set this only if this is necessary
-  float fp32_abs_err = 1e-5f;
+  float fp32_abs_err;
+};
+
+struct CosineSimilarityVerifier {
+  explicit CosineSimilarityVerifier(float fp32_cs_threshold) : fp32_cs_threshold(fp32_cs_threshold) {}
+
+  float fp32_cs_threshold;
+};
+
+using TensorVerifier = std::variant<ElementwiseAbsoluteVerifier, CosineSimilarityVerifier>;
+
+// The struct to hold some verification params for RunAndVerifyOutputsWithEP
+struct EPVerificationParams {
+  ExpectedEPNodeAssignment ep_node_assignment = ExpectedEPNodeAssignment::Some;
+  TensorVerifier tensor_verifier = ElementwiseAbsoluteVerifier{};
 
   // optional graph verification function (uses public ORT Session API)
   const std::function<void(const Ort::Session&)>* graph_verifier{nullptr};
@@ -52,7 +65,7 @@ struct EPVerificationParams {
 void VerifyOutput(const std::string& output_name,
                   const Ort::Value& expected_value,
                   const Ort::Value& actual_value,
-                  float fp32_abs_err);
+                  const TensorVerifier& tensor_verifier);
 
 size_t CountNodes(const Ort::Session& current_session);
 
