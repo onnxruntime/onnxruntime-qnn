@@ -440,7 +440,11 @@ TEST_F(QnnHTPBackendTests, Attention_MQA_3D) {
 
 // ===========================================================================
 // Softcap: scores = softcap * tanh(scores / softcap)
+// Gated to real ARM64 hardware: the softcap chain (Div + ElementWiseNeuron
+// TANH + Mul) triggers QNN_COMMON_ERROR_MEM_ALLOC during HTP graph
+// finalization on the x86_64 HTP simulator.
 // ===========================================================================
+#if defined(__aarch64__) || defined(_M_ARM64)
 
 // 4D MHA with softcap=10.0, non-causal.
 TEST_F(QnnHTPBackendTests, Attention_Softcap_4D) {
@@ -478,6 +482,8 @@ TEST_F(QnnHTPBackendTests, Attention_Softcap_3D_Causal) {
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 
 // ===========================================================================
 // KV cache: past_key/value as static initializers,
