@@ -591,7 +591,7 @@ static Ort::Status RegisterIntermediateAsOutput(QnnModelWrapper& qnn_model_wrapp
 Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                             const OrtNodeUnit& node_unit,
                                                             std::vector<std::string>&& input_names,
-                                                            const Ort::Logger& logger,
+                                                            const Ort::Logger& /*logger*/,
                                                             bool do_op_validation) const {
   const auto& onnx_inputs = node_unit.Inputs();
   const auto& onnx_outputs = node_unit.Outputs();
