@@ -503,7 +503,7 @@ TEST_F(QnnHTPBackendTests, Attention_KVCache_4D) {
           {test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       // KV cache (Concat) adds extra operations; fp16 rounding accumulates more error.
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
 // ===========================================================================
