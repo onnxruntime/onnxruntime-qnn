@@ -287,12 +287,16 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
 
   std::string shape_str;
   for (size_t i = 0; i < input_shape.size(); ++i) {
-    if (i > 0) shape_str += "x";
+    if (i > 0) {
+      shape_str += "x";
+    }
     shape_str += std::to_string(input_shape[i]);
   }
   std::string axes_str;
   for (size_t i = 0; i < axes1.size(); ++i) {
-    if (i > 0) axes_str += ",";
+    if (i > 0) {
+      axes_str += ",";
+    }
     axes_str += std::to_string(axes1[i]);
   }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
@@ -443,11 +447,17 @@ static Ort::Status ValidateAndSqueezeScaleShape(
 // Returns true if the axes form a contiguous trailing suffix of [0, rank).
 // e.g. axes={2,3} on rank-4 is trailing; axes={1} on rank-4 is non-trailing.
 static bool AreAxesTrailing(gsl::span<const uint32_t> axes, size_t rank) {
-  if (axes.empty() || rank == 0) return false;
+  if (axes.empty() || rank == 0) {
+    return false;
+  }
   const size_t M = axes.size();
-  if (M > rank) return false;
+  if (M > rank) {
+    return false;
+  }
   for (size_t i = 0; i < M; ++i) {
-    if (axes[i] != static_cast<uint32_t>(rank - M + i)) return false;
+    if (axes[i] != static_cast<uint32_t>(rank - M + i)) {
+      return false;
+    }
   }
   return true;
 }
@@ -461,16 +471,22 @@ static std::vector<uint32_t> BuildPreTransposePerm(size_t rank,
   perm.reserve(rank);
   std::unordered_set<uint32_t> axes_set(axes.begin(), axes.end());
   for (uint32_t i = 0; i < static_cast<uint32_t>(rank); ++i) {
-    if (!axes_set.count(i)) perm.push_back(i);
+    if (!axes_set.count(i)) {
+      perm.push_back(i);
+    }
   }
-  for (uint32_t a : axes) perm.push_back(a);
+  for (uint32_t a : axes) {
+    perm.push_back(a);
+  }
   return perm;
 }
 
 // Returns the inverse of a permutation.
 static std::vector<uint32_t> InversePerm(const std::vector<uint32_t>& perm) {
   std::vector<uint32_t> inv(perm.size());
-  for (size_t i = 0; i < perm.size(); ++i) inv[perm[i]] = static_cast<uint32_t>(i);
+  for (size_t i = 0; i < perm.size(); ++i) {
+    inv[perm[i]] = static_cast<uint32_t>(i);
+  }
   return inv;
 }
 
@@ -479,7 +495,9 @@ static std::vector<uint32_t> ApplyPerm(const std::vector<uint32_t>& shape,
                                        const std::vector<uint32_t>& perm) {
   std::vector<uint32_t> out;
   out.reserve(perm.size());
-  for (uint32_t p : perm) out.push_back(shape[p]);
+  for (uint32_t p : perm) {
+    out.push_back(shape[p]);
+  }
   return out;
 }
 
@@ -507,7 +525,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   RETURN_IF_NOT(qmw.GetOnnxShape(root_input.shape, input_shape), "Cannot get input shape.");
   const size_t rank = input_shape.size();
 
-  // QNN LayerNorm only supports trailing axes. When the ONNX axes are non-trailing,
+  // QNN LayerNorm on HTP only supports trailing axes. When the ONNX axes are non-trailing,
   // wrap the op with a pre-Transpose (moves axes to the end) and a post-Transpose (restores layout).
   const bool needs_transpose = !AreAxesTrailing(axes, rank);
   std::vector<uint32_t> pre_perm;   // ONNX layout -> transposed layout

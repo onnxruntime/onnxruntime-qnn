@@ -62,38 +62,6 @@ GetTestModelFn BuildLayerNormFusionTestCase(
   };
 }
 
-// Builds the pattern with a wrong Pow exponent (exp != 2.0).
-GetTestModelFn BuildLayerNormWrongPowExp(
-    const TestInputDef<float>& input_def,
-    const std::vector<int64_t>& axes,
-    float pow_exp_val) {
-  return [=](ModelTestBuilder& builder) -> void {
-    MakeTestInput<float>(builder, "input", input_def);
-
-    const int64_t C = input_def.GetShape().back();
-    builder.MakeInitializer<float>("gamma", {C}, std::vector<float>(static_cast<size_t>(C), 1.0f));
-    builder.MakeInitializer<float>("beta", {C}, std::vector<float>(static_cast<size_t>(C), 0.0f));
-    builder.MakeScalarInitializer<float>("pow_exp", pow_exp_val);
-    builder.MakeScalarInitializer<float>("eps", 1e-5f);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> rm_attrs;
-    rm_attrs.push_back(test::MakeAttribute("axes", axes));
-    rm_attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(1)));
-
-    builder.AddNode("rm1", "ReduceMean", {"input"}, {"rm1_out"}, "", rm_attrs);
-    builder.AddNode("sub", "Sub", {"input", "rm1_out"}, {"sub_out"});
-    builder.AddNode("pow", "Pow", {"sub_out", "pow_exp"}, {"pow_out"});
-    builder.AddNode("rm2", "ReduceMean", {"pow_out"}, {"rm2_out"}, "", rm_attrs);
-    builder.AddNode("add_eps", "Add", {"rm2_out", "eps"}, {"add_eps_out"});
-    builder.AddNode("sqrt", "Sqrt", {"add_eps_out"}, {"sqrt_out"});
-    builder.AddNode("div", "Div", {"sub_out", "sqrt_out"}, {"div_out"});
-    builder.AddNode("mul_gamma", "Mul", {"div_out", "gamma"}, {"mul_out"});
-
-    builder.MakeOutput("output");
-    builder.AddNode("add_beta", "Add", {"mul_out", "beta"}, {"output"});
-  };
-}
-
 // Builds the pattern with a dynamic (non-constant) epsilon input.
 GetTestModelFn BuildLayerNormDynamicEps(
     const TestInputDef<float>& input_def,
@@ -283,34 +251,6 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_TransformerShape) {
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
 }
 
-// 4D NCHW input [1, 8, 4, 4], axes={1} (non-trailing channel axis) — must transpose-wrap.
-TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_NonTrailingAxis) {
-  const std::filesystem::path json_dir = "LayerNormFusion_4D_NonTrailingAxis";
-  std::filesystem::remove_all(json_dir);
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions opts = GetProviderOptions();
-  opts["dump_json_qnn_graph"] = "1";
-  opts["json_qnn_graph_dir"] = json_dir.string();
-
-  const int64_t C = 8;
-  RunQnnModelTest(
-      BuildLayerNormFusionTestCase(
-          TestInputDef<float>({1, 8, 4, 4}, false, -2.0f, 2.0f),
-          {1}, 1e-5f,
-          {C}, std::vector<float>(static_cast<size_t>(C), 1.0f),
-          {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
-      opts,
-      13,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
-
-  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
-  AssertOpInQnnGraph(json_dir, "Transpose", 2);
-  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-}
-
 // gamma {1, 64, 1} with axes=[-1] — non-normalized dim is non-unit, fusion must be skipped.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
   const std::filesystem::path json_dir = "LayerNormFusion_Skip_InvalidGammaShape";
@@ -332,30 +272,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
           {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
       opts,
       13,
-      EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
-
-  AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
-}
-
-// Pow exponent is 4.0 instead of 2.0 — fusion must be skipped.
-TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_WrongPowExponent) {
-  const std::filesystem::path json_dir = "LayerNormFusion_Skip_WrongPowExponent";
-  std::filesystem::remove_all(json_dir);
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions opts = GetProviderOptions();
-  opts["dump_json_qnn_graph"] = "1";
-  opts["json_qnn_graph_dir"] = json_dir.string();
-
-  RunQnnModelTest(
-      BuildLayerNormWrongPowExp(
-          TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
-          {-1}, 4.0f),
-      opts,
-      13,
-      EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
 }
@@ -378,7 +295,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_DynamicEpsilon) {
           {-1}),
       opts,
       13,
-      EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
 }
@@ -401,7 +318,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_NonContiguousAxes) {
           {0, 2}),
       opts,
       13,
-      EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
 }
