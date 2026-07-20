@@ -22,19 +22,20 @@ static GetTestModelFn BuildSizeTestCase(const std::vector<int64_t>& shape,
   return [shape, data](ModelTestBuilder& builder) {
     builder.MakeInitializer<DataType>("X", shape, data);
     builder.AddNode("size_node", "Size", {"X"}, {"Y"}, kOnnxDomain);
-    builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{});  // 0-D scalar output
+    builder.MakeOutput("Y");
   };
 }
 
 // Builds a Size graph with a live (non-constant) input.
-//   Input: live tensor "X" with the given shape
+//   Input: live tensor "X" with the given shape, values in [min_val, max_val]
 //   Output: scalar int64 tensor "Y"
 template <typename DataType>
-static GetTestModelFn BuildSizeLiveInputTestCase(const std::vector<int64_t>& shape) {
-  return [shape](ModelTestBuilder& builder) {
-    builder.MakeInput<DataType>("X", shape);
+static GetTestModelFn BuildSizeLiveInputTestCase(const std::vector<int64_t>& shape,
+                                                 DataType min_val, DataType max_val) {
+  return [shape, min_val, max_val](ModelTestBuilder& builder) {
+    builder.MakeInput<DataType>("X", shape, min_val, max_val);
     builder.AddNode("size_node", "Size", {"X"}, {"Y"}, kOnnxDomain);
-    builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{});  // 0-D scalar output
+    builder.MakeOutput("Y");
   };
 }
 
@@ -50,21 +51,22 @@ static void RunSizeTest(const std::vector<int64_t>& shape,
   RunQnnModelTest(BuildSizeTestCase<DataType>(shape, data),
                   provider_options,
                   /*opset_version=*/13,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Runs a Size model test on the QNN HTP backend (live input).
 template <typename DataType>
 static void RunSizeLiveInputTest(const std::vector<int64_t>& shape,
+                                 DataType min_val, DataType max_val,
                                  ExpectedEPNodeAssignment expected_ep_assignment) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildSizeLiveInputTestCase<DataType>(shape),
+  RunQnnModelTest(BuildSizeLiveInputTestCase<DataType>(shape, min_val, max_val),
                   provider_options,
                   /*opset_version=*/13,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //
@@ -102,17 +104,17 @@ TEST_F(QnnHTPBackendTests, Size_ZeroDim_Float) {
 
 // 2-D live input: 3x4 = 12
 TEST_F(QnnHTPBackendTests, Size_2D_Float_LiveInput) {
-  RunSizeLiveInputTest<float>({3, 4}, ExpectedEPNodeAssignment::All);
+  RunSizeLiveInputTest<float>({3, 4}, 0.0f, 1.0f, ExpectedEPNodeAssignment::All);
 }
 
 // 4-D live input: 2x3x4x5 = 120
 TEST_F(QnnHTPBackendTests, Size_4D_Float_LiveInput) {
-  RunSizeLiveInputTest<float>({2, 3, 4, 5}, ExpectedEPNodeAssignment::All);
+  RunSizeLiveInputTest<float>({2, 3, 4, 5}, 0.0f, 1.0f, ExpectedEPNodeAssignment::All);
 }
 
 // 1-D int32 live input: size = 7
 TEST_F(QnnHTPBackendTests, Size_1D_Int32_LiveInput) {
-  RunSizeLiveInputTest<int32_t>({7}, ExpectedEPNodeAssignment::All);
+  RunSizeLiveInputTest<int32_t>({7}, 0, 10, ExpectedEPNodeAssignment::All);
 }
 
 }  // namespace test
