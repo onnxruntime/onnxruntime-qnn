@@ -24,6 +24,7 @@
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
 
+#include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -343,6 +344,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
   backend_id_ = backend_interface_provider->backendId;
+  core_api_version_ = backend_interface_provider->apiVersion.coreApiVersion;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
@@ -385,6 +387,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
 
   // Set the "intended" backend type so that QNN builders still make the expected QNN API calls.
   backend_id_ = backend_interface_provider->backendId;
+  core_api_version_ = backend_interface_provider->apiVersion.coreApiVersion;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
@@ -1467,8 +1470,10 @@ Ort::Status QnnBackendManager::ResetContextPriority() {
   return SetContextPriority(context_priority_);
 }
 
-Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing, bool enable_htp_extended_udma_mode,
-                                             bool enable_htp_prepare_only) {
+Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
+                                             bool enable_htp_extended_udma_mode,
+                                             bool enable_htp_prepare_only,
+                                             bool enable_htp_ref_weight_sharing) {
   if (true == context_created_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
@@ -1498,11 +1503,31 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing, boo
   context_config_prepare_only.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_prepare_only.customConfig = &prepare_only_custom_config;
 
-  const QnnContext_Config_t* npu_context_configs[] = {&context_priority_config,
-                                                      &context_config_weight_sharing,
-                                                      &context_config_extended_udma,
-                                                      &context_config_prepare_only,
-                                                      nullptr};
+  QnnContext_Config_t context_config_ref_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t ref_weight_sharing_custom_config;
+#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 33
+  if (core_api_version_.major == 2 && core_api_version_.minor >= 33) {
+    ref_weight_sharing_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REFERENCE_WEIGHT_SHARING_ENABLED;
+    ref_weight_sharing_custom_config.referenceWeightSharingEnabled = enable_htp_ref_weight_sharing;
+    context_config_ref_weight_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    context_config_ref_weight_sharing.customConfig = &ref_weight_sharing_custom_config;
+  } else if (enable_htp_ref_weight_sharing) {
+#else
+  if (enable_htp_ref_weight_sharing) {
+#endif
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    "HTP reference weight sharing is only supported in QAIRT 2.44+ SDK.");
+    enable_htp_ref_weight_sharing = false;
+  }
+
+  const QnnContext_Config_t* npu_context_configs[] = {
+      &context_priority_config,
+      &context_config_weight_sharing,
+      &context_config_extended_udma,
+      &context_config_prepare_only,
+      enable_htp_ref_weight_sharing ? &context_config_ref_weight_sharing : nullptr,
+      nullptr};
 
   const QnnContext_Config_t* empty_context_configs[] = {nullptr};
 
@@ -1557,81 +1582,73 @@ Ort::Status QnnBackendManager::ReleaseContext() {
   return Ort::Status();
 }
 
-std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint64_t& written_buffer_size) {
-  if (nullptr == qnn_interface_.contextGetBinarySize ||
-      nullptr == qnn_interface_.contextGetBinary) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to get valid function pointer.");
-    return nullptr;
+Ort::Status QnnBackendManager::GetContextBinaryBuffer(bool is_multi_soc_buffer,
+                                                      unsigned char** context_buffer,
+                                                      uint64_t& buffer_size) {
+  RETURN_IF(context_buffer == nullptr, "Null context_buffer pointer provided.");
+
+  if (is_multi_soc_buffer) {
+    RETURN_IF(system_dlc_plugin_ == nullptr, "Unable to get multi-SoC binary without system DLC.");
+    return system_dlc_plugin_->GetDlcBinaryBuffer(context_buffer, buffer_size);
   }
-  if (contexts_.size() <= 0) {
-    ORT_CXX_API_THROW("No valid QNN context!", ORT_EP_FAIL);
-  }
-  uint64_t required_buffer_size(0);
+
+  RETURN_IF(qnn_interface_.contextGetBinarySize == nullptr || qnn_interface_.contextGetBinary == nullptr,
+            "Failed to get valid function pointers.");
+  RETURN_IF(contexts_.size() <= 0, "No QNN context to get context binary from.");
+
+  uint64_t required_buffer_size = 0;
   // Generate all graphs in one single context
   Qnn_ErrorHandle_t rt = qnn_interface_.contextGetBinarySize(contexts_[0], &required_buffer_size);
-  if (QNN_CONTEXT_NO_ERROR != rt) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_ERROR,
-                    ("Failed to get QNN context binary size. Error: " + QnnErrorHandleToString(rt)).c_str());
-    return nullptr;
-  }
+  RETURN_IF(rt != QNN_CONTEXT_NO_ERROR,
+            ("Failed to get QNN context binary size. Error: " + QnnErrorHandleToString(rt)).c_str());
 
-  std::unique_ptr<unsigned char[]> context_buffer = std::make_unique<unsigned char[]>(required_buffer_size);
-  if (nullptr == context_buffer) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to allocate buffer for context cache.");
-    return nullptr;
-  }
+  auto buffer = std::make_unique<unsigned char[]>(required_buffer_size);
+  RETURN_IF(buffer == nullptr, "Failed to allocate buffer for context binary.");
 
+  uint64_t written_buffer_size = 0;
   rt = qnn_interface_.contextGetBinary(contexts_[0],
-                                       reinterpret_cast<void*>(context_buffer.get()),
+                                       reinterpret_cast<void*>(buffer.get()),
                                        required_buffer_size,
                                        &written_buffer_size);
-  if (QNN_CONTEXT_NO_ERROR != rt) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_ERROR,
-                    ("Failed to get context binary. Error: " + QnnErrorHandleToString(rt)).c_str());
-    return nullptr;
-  }
-
-  if (required_buffer_size < written_buffer_size) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_ERROR,
-                    ("Context written buffer size: " + std::to_string(written_buffer_size) +
-                     " exceeds allocated buffer size: " + std::to_string(required_buffer_size))
-                        .c_str());
-    return nullptr;
-  }
+  RETURN_IF(rt != QNN_CONTEXT_NO_ERROR,
+            ("Failed to get QNN context binary. Error: " + QnnErrorHandleToString(rt)).c_str());
+  RETURN_IF(required_buffer_size < written_buffer_size,
+            ("Context written buffer size: " + std::to_string(written_buffer_size) +
+             " exceeds allocated buffer size: " + std::to_string(required_buffer_size))
+                .c_str());
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Get context binary buffer succeed.");
-  return context_buffer;
+  *context_buffer = buffer.release();
+  buffer_size = written_buffer_size;
+
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
                                                          uint64_t buffer_length,
+                                                         bool is_multi_soc_buffer,
                                                          uint64_t& max_spill_fill_buffer_size) {
+  if (is_multi_soc_buffer) {
+    RETURN_IF(system_dlc_plugin_ == nullptr,
+              "Unable to get max spill-fill buffer size for multi-SoC binary without system DLC.");
+    return system_dlc_plugin_->GetDlcMaxSpillFillBufferSize(max_spill_fill_buffer_size);
+  }
+
   max_spill_fill_buffer_size = 0;
   // spill fill starts from 2.28
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
   auto sys_ctx_handle = GetSystemContextHandle();
   RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
+  Qnn_Version_t blob_version = {0, 0, 0};
   uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Qnn_Version_t blob_version = {0, 0, 0};
   RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
                                             static_cast<void*>(buffer),
                                             static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                             blob_version,
                                             graph_count,
                                             &graphs_info));
-#else
-  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
-                                            static_cast<void*>(buffer),
-                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                            graph_count,
-                                            &graphs_info));
-#endif
 
   for (uint32_t i = 0; i < graph_count; ++i) {
     if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
@@ -1666,7 +1683,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     const std::string& context_bin_filepath,
     std::string node_name,
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-    int64_t max_spill_fill_size) {
+    int64_t max_spill_fill_size,
+    bool is_multi_soc_buffer) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
                 nullptr == qnn_sys_interface_.systemContextFree;
@@ -1701,23 +1719,27 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   auto sys_ctx_handle = GetSystemContextHandle();
   RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
+  Qnn_Version_t blob_version = {0, 0, 0};
   uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Qnn_Version_t blob_version = {0, 0, 0};
-  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
-                                            bin_buffer,
-                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                            blob_version,
-                                            graph_count,
-                                            &graphs_info));
-#else
-  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
-                                            bin_buffer,
-                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                            graph_count,
-                                            &graphs_info));
-#endif
+  if (!is_multi_soc_buffer) {
+    RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
+                                              bin_buffer,
+                                              static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                              blob_version,
+                                              graph_count,
+                                              &graphs_info));
+  } else {
+    // `CreateSystemDlcPlugin` is not suitable here as it creates an empty DLC.
+    // Instead, `QnnBackendSystemDlcPlugin.GetDlcBinaryInfo` creates DLC from binary.
+    auto system_dlc_plugin = std::make_unique<QnnBackendSystemDlcPlugin>(this);
+    RETURN_IF_ERROR(system_dlc_plugin->GetDlcBinaryInfo(sys_ctx_handle.get(),
+                                                        static_cast<const uint8_t*>(bin_buffer),
+                                                        buffer_length,
+                                                        blob_version,
+                                                        graph_count,
+                                                        &graphs_info));
+  }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
@@ -2047,7 +2069,10 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map)
-                                                   : CreateContext(enable_htp_weight_sharing, enable_htp_extended_udma_mode, enable_htp_prepare_only);
+                                                   : CreateContext(enable_htp_weight_sharing,
+                                                                   enable_htp_extended_udma_mode,
+                                                                   enable_htp_prepare_only,
+                                                                   false /*enable_htp_ref_weight_sharing*/);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
@@ -2060,6 +2085,116 @@ Ort::Status QnnBackendManager::SetupBackend(
   } else {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to setup so cleaning up");
     ReleaseResources();
+  }
+
+  return status;
+}
+
+Ort::Status QnnBackendManager::SetupBackendExceptDeviceAndContext() {
+  if (backend_partial_setup_completed_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager partially setup already.");
+    return Ort::Status();
+  }
+
+  Ort::Status status = LoadBackend();
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend library loaded.");
+  }
+
+  if (status.IsOK()) {
+    status = LoadQnnSystemLib();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "System library loaded.");
+  }
+
+  if (status.IsOK()) {
+    sdk_build_version_ = GetBackendBuildId();
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Backend build version: " + sdk_build_version_).c_str());
+  }
+
+  if (status.IsOK()) {
+    status = InitializeQnnLog();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN log created.");
+  }
+
+  if (status.IsOK()) {
+    status = InitializeBackend();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend created.");
+  }
+
+  if (status.IsOK()) {
+    status = CreateSystemDlcPlugin();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN system DLC plugin created.");
+  }
+
+  if (status.IsOK()) {
+    status = InitializeProfiling();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN profile created.");
+  }
+
+  if (status.IsOK()) {
+    status = LoadOpPackage();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Op package registered to backend.");
+  }
+
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager is partially setup.");
+    backend_partial_setup_completed_ = true;
+  } else {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to partially setup so cleaning up.");
+    ReleaseResources();
+  }
+
+  return status;
+}
+
+Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arch,
+                                                     uint32_t soc_model,
+                                                     bool enable_htp_extended_udma_mode,
+                                                     bool enable_htp_prepare_only,
+                                                     bool enable_htp_ref_weight_sharing) {
+  RETURN_IF_NOT(backend_partial_setup_completed_, "QNN backend manager must be partially setup first.");
+  if (backend_setup_completed_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager completely setup already.");
+    return Ort::Status();
+  }
+
+  // Override cached values.
+  htp_arch_ = htp_arch;
+  soc_model_ = soc_model;
+
+  Ort::Status status = CreateDevice();
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN device created.");
+  }
+
+  if (status.IsOK()) {
+    status = CreateContext(false /*enable_htp_weight_sharing*/,
+                           enable_htp_extended_udma_mode,
+                           enable_htp_prepare_only,
+                           enable_htp_ref_weight_sharing);
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN context created.");
+  }
+
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager is completely setup.");
+    backend_setup_completed_ = true;
+  } else {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to completely setup so cleaning up.");
+    ReleaseDeviceAndContext();
   }
 
   return status;
@@ -2241,6 +2376,13 @@ void QnnBackendManager::ReleaseResources() {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseValidatorDevice: " + result.GetErrorMessage()).c_str());
   }
 
+  result = ReleaseSystemDlcPlugin();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to ReleaseSystemDlcPlugin: " + result.GetErrorMessage()).c_str());
+  }
+
   result = ShutdownBackend();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
@@ -2275,6 +2417,29 @@ void QnnBackendManager::ReleaseResources() {
     }
     validator_backend_lib_handle_ = nullptr;
   }
+
+  backend_partial_setup_completed_ = false;
+  backend_setup_completed_ = false;
+}
+
+void QnnBackendManager::ReleaseDeviceAndContext() {
+  Ort::Status result = ReleaseContext();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to free QNN context: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ReleaseDevice();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to free QNN device: " + result.GetErrorMessage()).c_str());
+  }
+
+  // Reset to default values as opposed to cached values set in `SetupDeviceAndContext`.
+  htp_arch_ = QNN_HTP_DEVICE_ARCH_NONE;
+  soc_model_ = QNN_SOC_MODEL_UNKNOWN;
 
   backend_setup_completed_ = false;
 }
@@ -2813,13 +2978,12 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
     return MAKE_EP_FAIL("Only support getting platform info for HTP backend.");
   }
 
-  if (htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE && htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
-    htp_arch_internal_ = htp_arch_;
-  }
+  // Directly return if already acquired before.
   if (htp_arch_internal_ != QNN_HTP_DEVICE_ARCH_NONE) {
     return Ort::Status();
   }
 
+#if defined(__aarch64__) || defined(_M_ARM64)
   RETURN_IF(qnn_interface_.deviceGetPlatformInfo == nullptr || qnn_interface_.deviceFreePlatformInfo == nullptr,
             "Failed to get valid QnnDevice function pointers.");
 
@@ -2848,6 +3012,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
       const auto* htp_ext = reinterpret_cast<const QnnHtpDevice_DeviceInfoExtension_t*>(hw_info.v1.deviceInfoExtension);
       if (htp_ext && htp_ext->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP) {
         htp_arch_internal_ = htp_ext->onChipDevice.arch;
+        vtcm_size_internal_ = static_cast<uint32_t>(htp_ext->onChipDevice.vtcmSize);
         break;
       }
     }
@@ -2856,6 +3021,14 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
   }
 
   RETURN_IF(htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE, "Failed to get HTP arch.");
+  RETURN_IF(vtcm_size_internal_ == 0, "Failed to get VTCM size.");
+#else
+  // QnnDevice_getPlatformInfo will always return HTP arch 68 and VTCM size 4 on x86 platform even if GetPlatformInfo
+  // is called after device is created. Thus, adopting user-specified value is the only option.
+  if (htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
+    htp_arch_internal_ = htp_arch_;
+  }
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 
   return Ort::Status();
 }
@@ -2881,9 +3054,7 @@ std::unique_ptr<void, std::function<void(void*)>> QnnBackendManager::GetSystemCo
 Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle_t sys_ctx_handle,
                                                          void* buffer,
                                                          Qnn_ContextBinarySize_t buffer_length,
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
                                                          Qnn_Version_t& blob_version,
-#endif
                                                          uint32_t& graph_count,
                                                          QnnSystemContext_GraphInfo_t** graphs_info) {
   RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
@@ -2905,26 +3076,20 @@ Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle
   if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
     graph_count = binary_info->contextBinaryInfoV1.numGraphs;
     *graphs_info = binary_info->contextBinaryInfoV1.graphs;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
-#endif
   }
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
     graph_count = binary_info->contextBinaryInfoV2.numGraphs;
     *graphs_info = binary_info->contextBinaryInfoV2.graphs;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
-#endif
   }
 #endif
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
     graph_count = binary_info->contextBinaryInfoV3.numGraphs;
     *graphs_info = binary_info->contextBinaryInfoV3.graphs;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     blob_version = binary_info->contextBinaryInfoV3.contextBlobVersion;
-#endif
   }
 #endif
   else {
@@ -3055,6 +3220,36 @@ bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
   dx12_shared_memory_allocator_supported_ = supported;
   return supported;
 #endif
+}
+
+Ort::Status QnnBackendManager::CreateSystemDlcPlugin() {
+  if (system_dlc_created_) {
+    return Ort::Status();
+  }
+
+  system_dlc_plugin_ = std::make_shared<QnnBackendSystemDlcPlugin>(this);
+  RETURN_IF_ERROR(system_dlc_plugin_->CreateDlc());
+
+  system_dlc_created_ = true;
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::ReleaseSystemDlcPlugin() {
+  if (!system_dlc_created_) {
+    return Ort::Status();
+  }
+
+  RETURN_IF_ERROR(system_dlc_plugin_->ReleaseDlc());
+  system_dlc_plugin_.reset();
+
+  system_dlc_created_ = false;
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::AddContextToDlc() {
+  RETURN_IF(system_dlc_plugin_ == nullptr, "Unexpected call of this function without DLC initialized.");
+  RETURN_IF_NOT(GetQnnContextSize() == 1, "Expecting only one context to be added into DLC.");
+  return system_dlc_plugin_->AddContextToDlc(GetQnnContext());
 }
 
 }  // namespace qnn

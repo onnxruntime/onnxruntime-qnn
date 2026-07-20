@@ -138,8 +138,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       input_names.emplace_back(null_tensor_name);
-      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
-                                           QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+      QnnTensorWrapper null_tensor_wrapper = QnnTensorWrapper::MakeNull(null_tensor_name);
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
                     ("Failed to add null tensor: " + null_tensor_name).c_str());
     }
@@ -231,8 +230,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       output_names.emplace_back(null_tensor_name);
-      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
-                                           QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+      QnnTensorWrapper null_tensor_wrapper = QnnTensorWrapper::MakeNull(null_tensor_name);
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
                     ("Failed to add null tensor: " + null_tensor_name).c_str());
     }
