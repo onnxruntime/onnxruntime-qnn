@@ -148,7 +148,7 @@ size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_t
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_type) {
   // TODO can we just treat empty shape as a scalar?
   if (shape.empty()) {
-    ORT_CXX_API_THROW("Empty shape not allowed.", ORT_EP_FAIL);
+    return GetQnnTensorDataSizeInBytes(1, element_type);
   }
   SafeInt<size_t> num_elements = std::accumulate(shape.begin(), shape.end(), SafeInt<size_t>{1}, std::multiplies<>{});
   return GetQnnTensorDataSizeInBytes(num_elements, element_type);
