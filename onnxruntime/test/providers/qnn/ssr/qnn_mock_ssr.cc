@@ -23,6 +23,11 @@
 const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
 
+// SSR mock state: fire SSR on the first graphExecute call per session.
+// g_ssr_fired is reset in QnnInterface_getProviders (called once per new session/test).
+// Declared at file scope so QnnInterface_getProviders can reset it on all platforms.
+static bool g_ssr_fired = false;
+
 namespace {
 #if defined(_WIN32)
 // Load QnnHtp.dll at DLL startup and resolve the real QnnInterface_getProviders.
@@ -48,10 +53,6 @@ struct StaticInit {
 }  // namespace
 
 #if defined(_WIN32)
-
-// SSR mock state: fire SSR on the first graphExecute call per session.
-// g_ssr_fired is reset in QnnInterface_getProviders (called once per new session/test).
-static bool g_ssr_fired = false;
 
 // Intercepts graphExecute: returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION on the first call
 // per session, then forwards to real HTP on subsequent calls.

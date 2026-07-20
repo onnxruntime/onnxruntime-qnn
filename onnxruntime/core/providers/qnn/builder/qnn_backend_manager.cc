@@ -1896,7 +1896,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
   if (!context_bin_filepath.empty()) {
     for (auto& [name, model] : qnn_models) {
-      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size);
+      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_);
     }
   }
 

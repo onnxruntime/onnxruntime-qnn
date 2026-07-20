@@ -505,12 +505,12 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
       QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
       priority_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
       priority_config.priority = QNN_PRIORITY_NORMAL;
-      auto ctx_priority = qnn_backend_manager_->GetContextPriority();
-      if (ctx_priority == ContextPriority::LOW)
+
+      if (context_priority_ == ContextPriority::LOW)
         priority_config.priority = QNN_PRIORITY_LOW;
-      else if (ctx_priority == ContextPriority::NORMAL_HIGH)
+      else if (context_priority_ == ContextPriority::NORMAL_HIGH)
         priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
-      else if (ctx_priority == ContextPriority::HIGH)
+      else if (context_priority_ == ContextPriority::HIGH)
         priority_config.priority = QNN_PRIORITY_HIGH;
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
@@ -747,19 +747,6 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     }
   }
 
-  // Memory poisoning diagnostic: log if the context handle was previously freed.
-  {
-    auto ctx = graph_info_->GraphContext();
-    if (qnn_backend_manager_->IsContextPoisoned(ctx)) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
-                  ("SSR POISON DETECTED: context handle " +
-                   std::to_string(reinterpret_cast<uintptr_t>(ctx)) +
-                   " for graph " + graph_info_->Name() +
-                   " was freed by sibling recovery. Proactive recovery will follow.")
-                      .c_str());
-    }
-  }
-
   // First attempt: bind tensors and execute.
   Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
   RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
@@ -780,14 +767,16 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
       }
     } else {
+      // No context binary filepath — either JIT mode or embed_mode=1.
+      // SSR recovery requires a context binary on disk to reload from, so skip recovery.
       std::ostringstream oss;
-      oss << "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: " << execute_status;
+      oss << "NPU crashed. SSR detected. Recovery not supported"
+             " (no context binary on disk — JIT or embed_mode=1). Error code: "
+          << execute_status;
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       return Ort::Status(oss.str().c_str(), ORT_ENGINE_ERROR);
     }
-  }
-
-  if (QNN_GRAPH_NO_ERROR != execute_status) {
+  } else if (QNN_GRAPH_NO_ERROR != execute_status) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +
                          utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
                             .c_str());
