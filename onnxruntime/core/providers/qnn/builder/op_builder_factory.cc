@@ -32,6 +32,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGroupQueryAttentionOpBuilder("GroupQueryAttention", *this);
   CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
+  CreateIfOpBuilder("If", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
   CreateIsInfOpBuilder("IsInf", *this);
@@ -44,6 +45,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
+  CreateNonMaxSuppressionOpBuilder("NonMaxSuppression", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
   CreateOneHotOpBuilder("OneHot", *this);
   CreatePadOpBuilder("Pad", *this);

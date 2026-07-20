@@ -38,6 +38,10 @@
 namespace onnxruntime {
 namespace test {
 
+// FakeOrtValue is declared here so FakeValueInfo can hold a pointer to it.
+// Full definition follows after FakeValueInfo.
+struct FakeOrtValue;
+
 // ---------------------------------------------------------------------------
 // FakeValueInfo
 //
@@ -51,6 +55,9 @@ struct FakeValueInfo {
   std::string name;
   ONNXTensorElementDataType elem_type;
   std::vector<int64_t> shape;
+  // Non-owning pointer to a FakeOrtValue for constant initializers.
+  // Null for non-initializer value infos. Used by ValueInfo_GetInitializerValue.
+  FakeOrtValue* initializer_value = nullptr;
 
   const OrtValueInfo* AsValueInfo() const {
     return reinterpret_cast<const OrtValueInfo*>(this);
@@ -62,6 +69,56 @@ struct FakeValueInfo {
     return reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(this);
   }
 };
+
+// ---------------------------------------------------------------------------
+// FakeOrtValue
+//
+// Acts as both OrtValue* and OrtTensorTypeAndShapeInfo* simultaneously.
+//
+// The first three fields (dummy_name, elem_type, shape) are layout-compatible
+// with FakeValueInfo so the existing GetTensorElementType / GetDimensionsCount
+// / GetDimensions stubs, which reinterpret_cast to FakeValueInfo, correctly
+// decode a FakeOrtValue* that has been cast to OrtTensorTypeAndShapeInfo*.
+// This avoids duplicating or overriding those stubs for the OrtValue code path.
+//
+// Keep FakeOrtValue objects on the stack (or as struct members with lifetimes
+// that enclose EP code calls); ReleaseTensorTypeAndShapeInfo is a no-op stub,
+// so no heap allocation or deallocation is performed.
+//
+// Usage:
+//   FakeOrtValue scale = FakeOrtValue::MakeFloat(0.5f);
+//   scale_vi.initializer_value = &scale;  // tie to a FakeValueInfo initializer
+// ---------------------------------------------------------------------------
+struct FakeOrtValue {
+  // Layout-compatible fields (same type and order as FakeValueInfo[0..2])
+  std::string dummy_name;                                                     // FakeValueInfo::name
+  ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;  // FakeValueInfo::elem_type
+  std::vector<int64_t> shape;                                                 // FakeValueInfo::shape (empty = scalar)
+  // Scalar payload (read by GetTensorMutableData)
+  float float_data = 0.0f;
+  double double_data = 0.0;
+
+  const OrtValue* AsOrtValue() const { return reinterpret_cast<const OrtValue*>(this); }
+
+  static FakeOrtValue MakeFloat(float v) {
+    FakeOrtValue r;
+    r.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+    r.float_data = v;
+    return r;
+  }
+  static FakeOrtValue MakeDouble(double v) {
+    FakeOrtValue r;
+    r.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE;
+    r.double_data = v;
+    return r;
+  }
+};
+static_assert(offsetof(FakeOrtValue, dummy_name) == offsetof(FakeValueInfo, name),
+              "FakeOrtValue/FakeValueInfo layout drift: name offset mismatch");
+static_assert(offsetof(FakeOrtValue, elem_type) == offsetof(FakeValueInfo, elem_type),
+              "FakeOrtValue/FakeValueInfo layout drift: elem_type offset mismatch");
+static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
+              "FakeOrtValue/FakeValueInfo layout drift: shape offset mismatch");
 
 // ---------------------------------------------------------------------------
 // FakeNode
@@ -314,6 +371,52 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   };
   api.Node_GetGraph = [](const OrtNode*, const OrtGraph** g) noexcept -> OrtStatus* {
     *g = nullptr;
+    return nullptr;
+  };
+
+  // ---- OrtValue (scalar constant initializer) ----
+  //
+  // ValueInfo_GetInitializerValue: return the FakeOrtValue stored in
+  // FakeValueInfo::initializer_value (null if not a constant initializer).
+  api.ValueInfo_GetInitializerValue = [](const OrtValueInfo* vi, const OrtValue** out) noexcept -> OrtStatus* {
+    auto* fov = reinterpret_cast<const FakeValueInfo*>(vi)->initializer_value;
+    *out = fov ? fov->AsOrtValue() : nullptr;
+    return nullptr;
+  };
+  // GetTensorTypeAndShape: the OrtValue* is a FakeOrtValue*; return it cast to
+  // OrtTensorTypeAndShapeInfo*. The layout-compatible FakeOrtValue fields
+  // (elem_type, shape) are read correctly by the existing GetTensorElementType
+  // and GetDimensionsCount stubs without any modification.
+  // ReleaseTensorTypeAndShapeInfo remains a no-op (no heap allocation here).
+  api.GetTensorTypeAndShape = [](const OrtValue* v, OrtTensorTypeAndShapeInfo** out) noexcept -> OrtStatus* {
+    *out = const_cast<OrtTensorTypeAndShapeInfo*>(
+        reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(v));
+    return nullptr;
+  };
+  // GetTensorMutableData: production code (qnn_ep_utils.cc) calls the mutable variant via api_ptrs_.
+  api.GetTensorMutableData = [](OrtValue* v, void** out) noexcept -> OrtStatus* {
+    auto* fov = reinterpret_cast<FakeOrtValue*>(v);
+    *out = (fov->elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+               ? static_cast<void*>(&fov->float_data)
+               : static_cast<void*>(&fov->double_data);
+    return nullptr;
+  };
+
+  // ---- ValueInfo producer/consumer queries ----
+  // Return nullptr/empty by default. Tests that need a real producer can
+  // override this stub after calling InstallFakeGraphApiStubs.
+  api.ValueInfo_GetValueProducer = [](const OrtValueInfo*, const OrtNode** producer,
+                                      size_t* output_index) noexcept -> OrtStatus* {
+    if (producer) *producer = nullptr;
+    if (output_index) *output_index = 0;
+    return nullptr;
+  };
+  api.ValueInfo_GetValueConsumers = [](const OrtValueInfo*, const OrtNode** consumers,
+                                       int64_t* indices, size_t count) noexcept -> OrtStatus* {
+    for (size_t i = 0; i < count; ++i) {
+      consumers[i] = nullptr;
+      if (indices) indices[i] = 0;
+    }
     return nullptr;
   };
 }

@@ -3200,6 +3200,7 @@ ProviderOptions GetBQConvProviderOptions() {
   ProviderOptions opts;
   opts["backend_type"] = "htp";
   opts["offload_graph_io_quantization"] = "0";
+  opts["enable_block_quant_weight_optimization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
   // On the x86_64 Linux HTP simulator, specify SM8850 to enable BW_FLOAT_BLOCK support.
   // On real ARM64 hardware, the SoC model is auto-detected by QNN EP.

@@ -4,12 +4,12 @@
 #include <functional>
 #include <limits>
 #include <numeric>
-#include <unordered_map>
 
 #include <gsl/gsl>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -20,28 +20,6 @@ namespace qnn {
 namespace {
 inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
   return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
-// HTP BQ MatMul: supported weight bitwidths and their block_size divisor constraints.
-// block_size must be a multiple of the corresponding value (same as Conv BQ / MatMulNBits HTP constraints).
-const std::unordered_map<uint32_t, int64_t> kHtpMatMulBQBitsAndBlockSizeMultipliers{
-    {2, 16}, {4, 8}, {8, 4}};
-
-// Returns BQ weight bitwidth (2/4/8) from an ONNX element data type, or 0 if unsupported.
-uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
-  switch (onnx_type) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
-      return 2;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
-      return 4;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      return 8;
-    default:
-      return 0;
-  }
 }
 
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
@@ -82,14 +60,7 @@ bool IsBQWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef
   }
   // Blocked axis is rank-2 (K dimension). scale_shape[rank-2] < weight_shape[rank-2].
   const size_t k_axis = rank - 2;
-  if (scale_shape[k_axis] >= static_cast<int64_t>(weight_shape[k_axis])) {
-    return false;
-  }
-  const int64_t num_blocks = scale_shape[k_axis];
-  if (num_blocks <= 0 || static_cast<int64_t>(weight_shape[k_axis]) % num_blocks != 0) {
-    return false;
-  }
-  return true;
+  return bq::IsBQScale(scale_shape, weight_shape, k_axis);
 }
 
 // Flattens the leading dims of `shape` (all but the last `n_trailing` dims) into a single
@@ -106,11 +77,25 @@ Ort::Status FlattenLeadingDims(const std::vector<uint32_t>& shape, uint32_t& bat
   return Ort::Status();
 }
 
+// Determines which QNN op to lower the ONNX MatMul to.
+// Sets use_fully_connected=true  -> lower to QNN FullyConnected
+// Sets use_conv2d=true           -> lower to QNN Conv2D (LPBQ path)
+// Both false                     -> lower to QNN MatMul
 Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& input_def_0,
                         const OrtNodeUnitIODef& input_def_1, TensorInfo& input_info_0, TensorInfo& input_info_1,
-                        bool& use_fully_connected) {
+                        bool& use_fully_connected, bool& use_conv2d) {
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def_0, input_info_0));
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def_1, input_info_1));
+
+  // LPBQ weights require Conv2D lowering (1x1 filters) on NPU backends.
+  // QNN Conv2D supports LPBQ (blockwise expansion) on the filter channel axis (axis 3 in HWCN format).
+  // This check must come before the FullyConnected logic so that LPBQ weights are never routed to FC.
+  // input_0 must be rank >= 2 so that we can identify the M (width) and K (channel) dimensions.
+  use_conv2d = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+               input_info_1.quant_param.IsLPBQ() &&
+               input_info_1.shape.size() == 2 &&
+               input_info_1.is_initializer &&
+               input_info_0.shape.size() >= 2;
 
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
   // Validation crashes if use QNN FullyConnected in QNN SDK versions 2.26 - 2.27
@@ -130,35 +115,51 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                                                  !input_info_0.is_initializer &&
                                                  IsQuant16bit(input_info_1.qnn_data_type) &&
                                                  !input_info_1.is_initializer);
+  // Don't use FullyConnected for LPBQ weights
+  use_fully_connected = use_fully_connected && !use_conv2d;
 #endif
   return Ort::Status();
 }
 
-// Process input[0] for ONNX MatMul that can be translated to either a QNN MatMul or a QNN FullyConnected.
+// Process input[0] for ONNX MatMul lowered to QNN MatMul, FullyConnected, or Conv2D.
+// A Reshape node (or reshaped initializer) is inserted when any of the following is true:
+//   1. is_rank1:          input is rank-1 (reshaped to [1, K] for MatMul/FC compatibility).
+//   2. shape_mismatch:    target_shape is provided and differs from the current shape
+//                         (used by the Conv2D path to produce 4D NHWC layout).
+//   3. use_fully_connected && rank > 2: leading dims are flattened to a single batch dim
+//                         so QNN FullyConnected receives a 2D input.
+// Note: target_shape and use_fully_connected are mutually exclusive - the Conv2D path
+// always passes target_shape and never sets use_fully_connected.
 Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
                           const TensorInfo& input_0_info,
                           const std::string& original_input_0_name,
                           std::vector<std::string>& input_names,
                           const Ort::Logger& logger,
                           bool do_op_validation,
-                          bool use_fully_connected) {
+                          bool use_fully_connected,
+                          const std::vector<uint32_t>* target_shape = nullptr) {
+  // use_fully_connected and target_shape (conv2d path) are mutually exclusive
+  assert(!(use_fully_connected && target_shape != nullptr));
   const bool is_rank1 = input_0_info.shape.size() == 1;
-  const bool reshape_input_0 = is_rank1 || (use_fully_connected && input_0_info.shape.size() > 2);
+  const bool shape_mismatch = (target_shape != nullptr && input_0_info.shape != *target_shape);
+  const bool reshape_input_0 = is_rank1 || shape_mismatch || (use_fully_connected && input_0_info.shape.size() > 2);
   std::string actual_input_0_name = original_input_0_name;
 
   if (reshape_input_0) {
     actual_input_0_name = utils::UniqueNameGenerator().New(original_input_0_name, "_reshape");
-    std::vector<uint32_t> shape_2d;
-    if (is_rank1) {
-      shape_2d = {1, input_0_info.shape[0]};
+    std::vector<uint32_t> reshape_target;
+    if (shape_mismatch) {
+      reshape_target = *target_shape;
+    } else if (is_rank1) {
+      reshape_target = {1, input_0_info.shape[0]};
     } else {
       uint32_t batch = 0;
       RETURN_IF_ERROR(FlattenLeadingDims(input_0_info.shape, batch));
-      shape_2d = {batch, input_0_info.shape.back()};
+      reshape_target = {batch, input_0_info.shape.back()};
     }
-    QnnQuantParamsWrapper quant_param_2d = input_0_info.quant_param.Copy();
-    if (is_rank1) {
-      RETURN_IF_ERROR(quant_param_2d.HandleUnsqueeze<uint32_t>(input_0_info.shape, shape_2d));
+    QnnQuantParamsWrapper quant_param_reshaped = input_0_info.quant_param.Copy();
+    if (is_rank1 || shape_mismatch) {
+      RETURN_IF_ERROR(quant_param_reshaped.HandleUnsqueeze<uint32_t>(input_0_info.shape, reshape_target));
     }
 
     // If input_0 is initializer, unpack it and add the tensor with new quantization parameter and shape.
@@ -167,13 +168,13 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
       std::vector<uint8_t> unpacked_tensor;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_0_info.initializer_tensor, unpacked_tensor));
       QnnTensorWrapper input_tensorwrapper(actual_input_0_name, QNN_TENSOR_TYPE_STATIC, input_0_info.qnn_data_type,
-                                           std::move(quant_param_2d), std::move(shape_2d), std::move(unpacked_tensor));
+                                           std::move(quant_param_reshaped), std::move(reshape_target), std::move(unpacked_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
     } else {
       RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(original_input_0_name, actual_input_0_name,
-                                                       input_0_info.shape, shape_2d,
+                                                       input_0_info.shape, reshape_target,
                                                        input_0_info.qnn_data_type, input_0_info.quant_param,
-                                                       quant_param_2d, do_op_validation,
+                                                       quant_param_reshaped, do_op_validation,
                                                        qnn_model_wrapper.IsGraphInput(original_input_0_name), false));
     }
   } else {
@@ -192,12 +193,13 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
 }  // namespace
 
 /**
- * An ONNX MatMul can be translated to either a QNN MatMul or a QNN FullyConnected.
+ * An ONNX MatMul can be translated to either a QNN MatMul, a QNN FullyConnected, or a QNN Conv2D.
  * ONNX's MatMul supports inputs of rank 1, but neither QNN's MatMul nor FullyConnected support two rank 1 inputs.
  * So, we need to add Reshape Ops if necessary.
  * In two cases, FullyConnected (input_1's shape is [n, k]) is used instead of MatMul without extra Transpose Op:
  * 1. input_1 is a rank 2 initializer.
  * 2. input_1 is a rank 1 tensor.
+ * For LPBQ-quantized weights on NPU backends, Conv2D with 1x1 filters is used instead of MatMul.
  */
 class MatMulOpBuilder : public BaseOpBuilder {
  public:
@@ -230,6 +232,13 @@ class MatMulOpBuilder : public BaseOpBuilder {
                                                 const Ort::Logger& logger,
                                                 std::vector<std::string>& input_names,
                                                 bool do_op_validation) const ORT_MUST_USE_RESULT;
+  Ort::Status ProcessInputsForQnnConv2D(QnnModelWrapper& qnn_model_wrapper,
+                                        const OrtNodeUnit& node_unit,
+                                        const TensorInfo& input_info_0,
+                                        const TensorInfo& input_info_1,
+                                        const Ort::Logger& logger,
+                                        std::vector<std::string>& input_names,
+                                        bool do_op_validation) const ORT_MUST_USE_RESULT;
   // Block-quantized (BW_FLOAT_BLOCK) weight path. Translates to a QNN MatMul whose weight carries a
   // per-block float scale; activation is dequantized to FP16 and the FP16 output is re-quantized to INT16.
   Ort::Status ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model_wrapper,
@@ -240,24 +249,34 @@ class MatMulOpBuilder : public BaseOpBuilder {
 };
 
 // Process operator inputs. Dispatches to other processing functions depending on whether we're
-// translating an ONNX MatMul to a QNN MatMul or a QNN FullyConnected.
+// translating an ONNX MatMul to a QNN MatMul, a QNN FullyConnected, or a QNN Conv2D.
 Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                            const Ort::Logger& logger, std::vector<std::string>& input_names,
                                            bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
 
-  // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight.
-  if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
-    return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
-  }
-
   TensorInfo input_info_0{};
   TensorInfo input_info_1{};
   bool use_fully_connected = false;
+  bool use_conv2d = false;
   RETURN_IF_ERROR(
-      CheckInputs(qnn_model_wrapper, inputs[0], inputs[1], input_info_0, input_info_1, use_fully_connected));
+      CheckInputs(qnn_model_wrapper, inputs[0], inputs[1], input_info_0, input_info_1,
+                  use_fully_connected, use_conv2d));
 
-  if (use_fully_connected) {
+  // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight.
+  if (IsBQWeight(qnn_model_wrapper, inputs[1]) && !input_info_1.quant_param.IsLPBQ()) {
+    return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
+  }
+
+  if (use_conv2d) {
+    return ProcessInputsForQnnConv2D(qnn_model_wrapper,
+                                     node_unit,
+                                     input_info_0,
+                                     input_info_1,
+                                     logger,
+                                     input_names,
+                                     do_op_validation);
+  } else if (use_fully_connected) {
     return ProcessInputsForQnnFullyConnected(qnn_model_wrapper,
                                              node_unit,
                                              input_info_0,
@@ -265,14 +284,15 @@ Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
                                              logger,
                                              input_names,
                                              do_op_validation);
+  } else {
+    return ProcessInputsForQnnMatMul(qnn_model_wrapper,
+                                     node_unit,
+                                     input_info_0,
+                                     input_info_1,
+                                     logger,
+                                     input_names,
+                                     do_op_validation);
   }
-  return ProcessInputsForQnnMatMul(qnn_model_wrapper,
-                                   node_unit,
-                                   input_info_0,
-                                   input_info_1,
-                                   logger,
-                                   input_names,
-                                   do_op_validation);
 }
 
 Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wrapper,
@@ -500,6 +520,91 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
   return Ort::Status();
 }
 
+// Lowers an ONNX MatMul with LPBQ-quantized weight to a QNN Conv2D with 1x1 filters.
+//
+// Activation reshape:
+//   2D: [M, K]       -> [1, 1, M, K]  (NHWC)
+//   3D: [B, M, K]    -> [B, 1, M, K]  (NHWC)
+//   4D: [B, C, M, K] -> no change
+// Weight unsqueeze:
+//   [K, N] -> [1, 1, K, N]  (HWCN; LPBQ axis 1->3)
+// Conv2D params: stride=[1,1], pad_amount=[[0,0],[0,0]].
+Ort::Status MatMulOpBuilder::ProcessInputsForQnnConv2D(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const TensorInfo& input_info_0,
+                                                       const TensorInfo& input_info_1,
+                                                       const Ort::Logger& logger,
+                                                       std::vector<std::string>& input_names,
+                                                       bool do_op_validation) const {
+  const auto& inputs = node_unit.Inputs();
+  const std::string& org_input_0_name = inputs[0].name;
+  const std::string& org_input_1_name = inputs[1].name;
+
+  // Reshape input[0] to 4D NHWC based on input rank.
+  //   2D: [M, K]       -> [1, 1, M, K]
+  //   3D: [B, M, K]    -> [B, 1, M, K]
+  //   4D: [B, C, M, K] -> no change
+  {
+    const auto& shape = input_info_0.shape;
+    std::vector<uint32_t> conv_input_shape;
+    if (shape.size() == 2) {
+      conv_input_shape = {1, 1, shape[0], shape[1]};
+    } else if (shape.size() == 3) {
+      conv_input_shape = {shape[0], 1, shape[1], shape[2]};
+    } else if (shape.size() == 4) {
+      conv_input_shape = shape;
+    } else {
+      return MAKE_EP_FAIL("LPBQ Conv2D lowering only supports activation rank 2, 3, or 4.");
+    }
+    RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
+                                  logger, do_op_validation, /*use_fully_connected=*/false, &conv_input_shape));
+  }
+
+  // Unsqueeze input[1] [K, N] -> [1, 1, K, N] (HWCN)
+  // The LPBQ encoding axis is on the N (output-channel) dimension:
+  // Axis 1 in [K, N]  ->  axis 3 in [1, 1, K, N]
+  {
+    // CheckInputs already checks the rank for input[1] for Conv2D. This check is just for any future refactoring guard.
+    RETURN_IF_NOT(input_info_1.shape.size() == 2, "LPBQ Conv2D lowering requires weight to be rank-2 [K, N]");
+    const uint32_t K = input_info_1.shape[0];
+    const uint32_t N = input_info_1.shape[1];
+
+    std::vector<uint32_t> conv_weight_shape = {1, 1, K, N};
+    QnnQuantParamsWrapper conv_weight_quant = input_info_1.quant_param.Copy();
+    RETURN_IF_ERROR(conv_weight_quant.HandleUnsqueeze<uint32_t>(input_info_1.shape, conv_weight_shape));
+
+    const std::string conv_weight_name = utils::UniqueNameGenerator().New(org_input_1_name, "_reshape");
+
+    RETURN_IF_NOT(input_info_1.is_initializer, "LPBQ Conv2D lowering requires weight to be static initializer");
+    std::vector<uint8_t> unpacked_tensor;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
+
+    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(org_input_1_name);
+    QnnTensorWrapper weight_tensorwrapper(conv_weight_name, tensor_type, input_info_1.qnn_data_type,
+                                          std::move(conv_weight_quant), std::move(conv_weight_shape),
+                                          std::move(unpacked_tensor));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensorwrapper)),
+                  "Failed to add Conv2D weight tensor.");
+    input_names.emplace_back(conv_weight_name);
+  }
+
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 16 && QNN_API_VERSION_MINOR <= 18)
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    // Bias is implicit. QNN SDK 2.23/2.24/2.25 (QNN API version 2.16/2.17/2.18) has a validation bug for
+    // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32).
+
+    if (input_info_0.quant_param.IsPerTensor(/*include_bw*/ true) && input_info_1.quant_param.IsQuantized()) {
+      const std::string bias_name = qnn::utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
+      std::vector<uint32_t> bias_shape = {input_info_1.shape[0]};
+      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input_info_0.quant_param, input_info_1.quant_param,
+                                       std::move(bias_shape), bias_name, logger, input_names));
+    }
+  }
+#endif
+
+  return Ort::Status();
+}
+
 Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model_wrapper,
                                                       const OrtNodeUnit& node_unit,
                                                       const Ort::Logger& logger,
@@ -534,29 +639,14 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   {
     const std::string act_name = input_names[0];
     const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
-    const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
     std::vector<uint32_t> act_shape = act_wrapper.GetTensorDims();
 
-    std::string fp16_name = act_name;
-    // BW_FLOAT_BLOCK MatMul requires FP16 activation. The only activation dtype reaching this
-    // path through the QDQ selector is INT16 (SFIXED or UFIXED), so anything else is unexpected.
-    RETURN_IF_NOT(act_dtype == QNN_DATATYPE_SFIXED_POINT_16 || act_dtype == QNN_DATATYPE_UFIXED_POINT_16,
-                  "QNN EP: BQ MatMul activation must be INT16-quantized for the BW_FLOAT_BLOCK kernel");
-    // Reuse the original DequantizeLinear node's output name (the target MatMul's input[0]) for the
-    // FP16 tensor. That tensor is conceptually the dequantized activation — exactly what this
-    // INT16→FP16 Dequantize produces — and QNN EP otherwise skips it, so the name is free and keeps
-    // the QNN graph aligned with the ONNX graph naming.
-    fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-    QnnTensorWrapper fp16_act_wrapper(fp16_name, QNN_TENSOR_TYPE_NATIVE,
-                                      QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                      std::vector<uint32_t>(act_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_act_wrapper)),
-                  "Failed to add FP16 activation tensor for BQ MatMul.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(act_name, "_int16_dequantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
-                      {act_name}, {fp16_name}, {}, do_op_validation),
-                  "Failed to add INT16→FP16 Dequantize node for BQ MatMul activation.");
+    // BW_FLOAT_BLOCK MatMul requires FP16 activation; dequantize the INT16 activation to FP16.
+    // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
+    // stays aligned with the ONNX graph naming.
+    const std::string fp16_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+    RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
+                                                           fp16_name, do_op_validation, "MatMul"));
 
     // Reshape the FP16 activation [..., M, K] to 4-D [batch, 1, M, K] for the QNN HTP BQ MatMul.
     const uint32_t k_dim = act_shape.back();
@@ -583,29 +673,20 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
   RETURN_IF_NOT(scale_shape.size() == w_rank,
                 "QNN EP: BQ MatMul scale rank must match weight rank");
   const int64_t num_blocks = scale_shape[w_rank - 2];
-  RETURN_IF(num_blocks <= 0 || K % num_blocks != 0, "QNN EP: BQ MatMul K must be divisible by num_blocks");
-  const int64_t block_size = K / num_blocks;
-  const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
-  auto bq_it = kHtpMatMulBQBitsAndBlockSizeMultipliers.find(bitwidth);
-  RETURN_IF(bq_it == kHtpMatMulBQBitsAndBlockSizeMultipliers.end(),
-            ("QNN HTP MatMul BQ: unsupported weight bitwidth=" + std::to_string(bitwidth)).c_str());
-  RETURN_IF(block_size % bq_it->second != 0,
-            ("QNN HTP MatMul BQ: block_size=" + std::to_string(block_size) +
-             " must be a multiple of " + std::to_string(bq_it->second) +
-             " for " + std::to_string(bitwidth) + "-bit weight")
-                .c_str());
+  int64_t block_size = 0;
+  RETURN_IF_ERROR(bq::ResolveBlockSize(inputs[1], K, num_blocks, "MatMul", block_size));
+  const uint32_t bitwidth = bq::GetBQBitwidth(inputs[1].type);
+  RETURN_IF_ERROR(bq::ValidateBQBitwidthAndBlockSize(bitwidth, block_size, "MatMul"));
 
   // Unpack the weight to one byte per element (sub-byte INT2/INT4 expanded to INT8).
   std::vector<uint8_t> unpacked_tensor;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
 
-  // For unsigned types (UINT2/UINT4/UINT8), shift weight data to the signed domain. QNN BW_FLOAT_BLOCK
-  // only supports SFIXED_POINT_8 (signed); unsigned data must be converted (see conv_op_builder.cc).
-  const bool is_unsigned_weight = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 ||
-                                   inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
-                                   inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+  // For unsigned types (UINT2/UINT4/UINT8), shift weight data to the signed domain.
+  const bool is_unsigned_weight = bq::IsUnsignedBQType(inputs[1].type);
   if (is_unsigned_weight) {
-    RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_tensor, static_cast<int64_t>(bitwidth)));
+    RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_tensor,
+                                                               static_cast<int64_t>(bitwidth)));
   }
 
   // QNN HTP requires a BQ MatMul to be expressed with 4-D activation, 4-D weight, and a 4-D blockSize.
@@ -615,46 +696,26 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
 
   // ONNX per-block float scales are laid out [..., num_blocks, N] (block-major along K-axis).
   // QNN expects the scale/offset array output-channel-major: [N, num_blocks].
-  // Transpose from [num_blocks, N] → [N, num_blocks] (leading dims are always 1, so we just
-  // look at the last two dims of the flat scale array).
   std::vector<float> onnx_scales;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(inputs[1].quant_param->scale, onnx_scales));
   RETURN_IF_NOT(static_cast<int64_t>(onnx_scales.size()) == num_blocks * N,
                 "QNN EP: BQ MatMul scale size mismatch");
 
-  // Float offsets in ONNX [num_blocks, N] order before transpose. Matches the Conv BQ formula:
-  //   offsets_qnn[idx] = unsigned_bias - zp_values[idx]
-  // where zp_values come from UnpackZeroPoints and unsigned_bias = (1 << (bits-1)) for unsigned weights
-  // (compensating for the unsigned→signed shift above), 0 for signed weights.
-  const float unsigned_bias = is_unsigned_weight ? static_cast<float>(1u << (bitwidth - 1)) : 0.0f;
-  std::vector<float> onnx_offsets(static_cast<size_t>(num_blocks * N), unsigned_bias);
-  if (inputs[1].quant_param->zero_point != nullptr) {
-    std::vector<int32_t> zp_values;
-    ONNXTensorElementDataType zp_onnx_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(inputs[1].quant_param->zero_point, zp_values, zp_onnx_type));
-    RETURN_IF_NOT(static_cast<int64_t>(zp_values.size()) == num_blocks * N,
-                  "QNN EP: BQ MatMul zero_point size must match num_blocks * N");
-    for (size_t idx = 0; idx < zp_values.size(); ++idx) {
-      onnx_offsets[idx] = unsigned_bias - static_cast<float>(zp_values[idx]);
-    }
-  }
+  // Float offsets in ONNX [num_blocks, N] order before transpose.
+  std::vector<float> onnx_offsets;
+  RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
+                                       is_unsigned_weight, bitwidth, num_blocks * N, onnx_offsets));
 
   // Transpose scales/offsets [num_blocks, N] → [N, num_blocks].
-  std::vector<float> scales_qnn(static_cast<size_t>(N * num_blocks));
-  std::vector<float> offsets_qnn(static_cast<size_t>(N * num_blocks));
-  for (int64_t b = 0; b < num_blocks; ++b) {
-    for (int64_t n = 0; n < N; ++n) {
-      const size_t src = static_cast<size_t>(b * N + n);
-      const size_t dst = static_cast<size_t>(n * num_blocks + b);
-      scales_qnn[dst] = onnx_scales[src];
-      offsets_qnn[dst] = onnx_offsets[src];
-    }
-  }
+  const std::vector<uint32_t> transpose_shape = {static_cast<uint32_t>(num_blocks), static_cast<uint32_t>(N)};
+  std::vector<float> scales_qnn, offsets_qnn;
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_scales, transpose_shape, scales_qnn, logger));
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose<float>(onnx_offsets, transpose_shape, offsets_qnn, logger));
 
-  QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
-                                        gsl::span<const float>(offsets_qnn),
-                                        bitwidth,
-                                        gsl::span<const uint32_t>(block_size_arr));
+  QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                                              gsl::span<const float>(offsets_qnn),
+                                                                              bitwidth,
+                                                                              gsl::span<const uint32_t>(block_size_arr));
 
   // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
   // Weight is reshaped to 4-D [1, 1, K, N] to satisfy the QNN HTP BQ MatMul requirement.
@@ -680,8 +741,11 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   TensorInfo input_info_0{};
   TensorInfo input_info_1{};
   bool use_fully_connected = false;
+  bool use_conv2d = false;
+  std::string qnn_op_type;
   RETURN_IF_ERROR(
-      CheckInputs(qnn_model_wrapper, inputs[0], inputs[1], input_info_0, input_info_1, use_fully_connected));
+      CheckInputs(qnn_model_wrapper, inputs[0], inputs[1], input_info_0, input_info_1,
+                  use_fully_connected, use_conv2d));
 
   // A block-quantized weight is always emitted as a QNN MatMul (see ProcessInputsForBQMatMul), even
   // when CheckInputs would otherwise route a rank-2 initializer weight to FullyConnected. Force the
@@ -692,12 +756,31 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   bool reshape_input_0 = input_info_0.shape.size() == 1;
   bool reshape_input_1 = input_info_1.shape.size() == 1;
-  bool reshape_output = reshape_input_0 || reshape_input_1 || (use_fully_connected && input_info_0.shape.size() > 2);
+  bool reshape_output = reshape_input_0 || reshape_input_1 || (use_fully_connected && input_info_0.shape.size() > 2) ||
+                        (use_conv2d && input_info_0.shape.size() < 4);
 
-  // For QNN MatMul: set the input transpose parameters to their default values of 0. These parameters should be
-  // optional, but older versions of QNN SDK failed validation if not explicitly provided.
   std::vector<std::string> param_tensor_names;
-  if (!use_fully_connected) {
+  if (use_conv2d) {
+    qnn_op_type = QNN_OP_CONV_2D;
+    // Conv2D params: stride=[1,1], pad_amount=[[0,0],[0,0]], dilation=[1,1], group=1
+    QnnParamWrapper stride_param(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_STRIDE, {2}, {1, 1});
+    param_tensor_names.push_back(stride_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(stride_param));
+
+    QnnParamWrapper pad_param(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_PAD_AMOUNT, {2, 2}, {0, 0, 0, 0});
+    param_tensor_names.push_back(pad_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(pad_param));
+
+    QnnParamWrapper dilation_param(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_DILATION, {2}, {1, 1});
+    param_tensor_names.push_back(dilation_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(dilation_param));
+
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 1,
+                                           QNN_OP_CONV_2D_PARAM_GROUP, param_tensor_names));
+  } else if (use_fully_connected) {
+    qnn_op_type = QNN_OP_FULLY_CONNECTED;
+  } else {
+    qnn_op_type = QNN_OP_MAT_MUL;
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
                                        QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, param_tensor_names));
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
@@ -712,11 +795,16 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   QnnQuantParamsWrapper op_output_quant_param = output_info.quant_param.Copy();
   if (reshape_output) {
     op_output_name = utils::UniqueNameGenerator().New(org_output_name, "_reshape");
-    if (use_fully_connected && input_info_0.shape.size() > 2) {
+    if (use_conv2d) {
+      op_output_shape.insert(op_output_shape.end() - 2, 1);
+      if (op_output_shape.size() < 4)
+        op_output_shape.insert(op_output_shape.begin(), 1);
+      RETURN_IF_ERROR(op_output_quant_param.HandleUnsqueeze<uint32_t>(output_info.shape, op_output_shape));
+    } else if (use_fully_connected && input_info_0.shape.size() > 2) {
       uint32_t batch = 0;
       RETURN_IF_ERROR(FlattenLeadingDims(input_info_0.shape, batch));
       op_output_shape = {batch, reshape_input_1 ? 1 : input_info_1.shape.back()};
-      RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN MatMul output does not support per-channel quant.");
+      RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN FC output does not support per-channel quant.");
     } else {
       // If both inputs are 1D tensors, the output shape is [1] instead of scalar. So if both inputs are 1D tensors,
       // we only need to add one "1" to the op_output_shape.
@@ -776,23 +864,18 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      QnnQuantParamsWrapper(), do_op_validation,
                                                      /*is_for_input=*/false, /*is_for_output=*/false));
 
-    // INT16 quantized output tensor consumed by downstream nodes (or the graph output).
-    QnnTensorWrapper int16_out_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                       op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(int16_out_wrapper)),
-                  "Failed to add INT16 BQ MatMul output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(op_output_name, "_fp16_quantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                      {matmul_fp16_out}, {op_output_name}, {}, do_op_validation),
-                  "Failed to add FP16→INT16 Quantize node for BQ MatMul output.");
+    RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
+                                                     matmul_fp16_out, op_output_name,
+                                                     op_output_tensor_type, output_info.qnn_data_type,
+                                                     op_output_quant_param.Copy(),
+                                                     op_output_shape, do_op_validation));
   } else {
     QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
                                               op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(op_output_tensor_wrapper)),
                   "Failed to add output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit), QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  use_fully_connected ? QNN_OP_FULLY_CONNECTED : QNN_OP_MAT_MUL,
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
                                                   std::move(input_names), {op_output_name},
                                                   std::move(param_tensor_names), do_op_validation),
                   "Failed to add fused Matmul node.");
