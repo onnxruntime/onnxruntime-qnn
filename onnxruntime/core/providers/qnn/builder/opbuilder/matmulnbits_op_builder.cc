@@ -135,10 +135,6 @@ void UnpackDataToDatatype(const std::vector<uint8_t>& packed_data,
   }
 }
 
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
 // Returns true if all packed zero_points are symmetric (i.e., each element equals 2^(bits-1)).
 // MatMulNBits stores zero_points as packed sub-byte integers in uint8 bytes
 // (e.g., two 4-bit values per byte, four 2-bit values per byte).
@@ -148,7 +144,7 @@ bool AreZeroPointsSymmetric(QnnModelWrapper& qnn_model_wrapper, const std::strin
   std::vector<uint8_t> per_block_uint8_zp;
   const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
   if (zp_tensor_proto == nullptr) {
-    return true;  // No zero_points means symmetric.
+    return false;  // zero_points tensor exists but is not a constant initializer.
   }
   auto status = qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp);
   if (!status.IsOK()) {
@@ -467,6 +463,21 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
                                      AreZeroPointsSymmetric(qnn_model_wrapper, inputs[3].name, bits);
 
         if (bits == 4 && is_act_16bitquant && zp_is_symmetric) {
+          // Build a synthetic OrtNodeUnitIODef to drive QnnQuantParamsWrapper::Init's
+          // block-quant branch, which handles the BQ→LPBQ conversion.
+          //
+          // The weight tensor's quant_param does not carry block-quantization info in
+          // the standard ONNX format, so we construct a synthetic def with:
+          //   - scale  = the real scale initializer (provides the BQ scales)
+          //   - zero_point = nullptr  ← ZP symmetry has already been verified above via
+          //                             AreZeroPointsSymmetric, so re-checking is redundant
+          //   - axis   = std::nullopt ← uses Init's DEFAULT_QDQ_AXIS=1, which matches
+          //                             the MatMulNBits scale tensor layout [N, K/block_size]
+          //   - block_size = block_size
+          //   - type   = INT4           4-bit weights
+          //
+          // Only quant_param is consumed from the result; the rest of synthetic_weight_info
+          // is discarded.
           OrtNodeUnitIODef::QuantParam synthetic_qp;
           synthetic_qp.scale = scale_tensor_proto;
           synthetic_qp.zero_point = nullptr;
