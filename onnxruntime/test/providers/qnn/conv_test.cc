@@ -3502,15 +3502,26 @@ TEST_F(QnnHTPBackendTests, Conv3D_ReuseSparseIndices) {
 
 // DepthwiseConv2d: reuse_sparse_indices should NOT be added (group == input_channels == output_channels).
 TEST_F(QnnHTPBackendTests, DepthwiseConv2D_NoReuseSparseIndices) {
+  std::vector<int64_t> input_shape = {1, 4, 5, 5};
+  std::vector<int64_t> weight_shape = {4, 1, 3, 3};
+  std::vector<int64_t> bias_shape = {4};
+
+  TestInputDef<float> input_def(input_shape, false,
+                                GetFloatDataInRange(-10.0f, 10.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true,
+                                 GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true,
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
+
   RunHTPConvOpPerChannelTest<uint8_t, int8_t>("Conv",
-                                              TestInputDef<float>({1, 4, 5, 5}, false, -10.0f, 10.0f),  // Dynamic input
-                                              TestInputDef<float>({4, 1, 3, 3}, true, -1.0f, 1.0f),     // Depthwise weights
-                                              TestInputDef<float>({4}, true, -1.0f, 1.0f),              // Static bias
-                                              0,                                                        // weight_quant_axis
-                                              {1, 1},                                                   // Strides
-                                              {0, 0, 0, 0},                                             // Pads
-                                              {1, 1},                                                   // Dilations
-                                              4,                                                        // group == input_channels == output_channels -> DepthwiseConv2d
+                                              input_def,
+                                              weight_def,
+                                              bias_def,
+                                              0,             // weight_quant_axis
+                                              {1, 1},        // Strides
+                                              {0, 0, 0, 0},  // Pads
+                                              {1, 1},        // Dilations
+                                              4,             // group == input_channels == output_channels -> DepthwiseConv2d
                                               "NOTSET",
                                               ExpectedEPNodeAssignment::All);
 }
