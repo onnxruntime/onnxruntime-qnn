@@ -50,17 +50,19 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 For build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages
-- For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) — a single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers)
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
     - Windows X64 (for quantizing models. see [Generating a quantized model](./QNN-ExecutionProvider.md#generating-a-quantized-model-x64-only))
     - Linux ARM64 (for inferencing on local Qualcomm-powered Linux devices)
+    - Linux x64 (for generating a quantized model on Linux Host)
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- Linux ARM64 archive (`.tgz`)
-  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
+- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) 
+  - A single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
+- Archives (`.zip` and `.tgz`)
+  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Windows and Linux hosts and targets.
 - Maven package (Android)
   - **Note**: The Maven package supports Android ARM64
   - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`
@@ -68,7 +70,7 @@ For build instructions, please see the [BUILD page](./build.md).
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
     | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.45.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.48.40` |
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
