@@ -378,7 +378,7 @@ static Ort::Status AddSoftcapNode(QnnModelWrapper& qnn_model_wrapper,
                                   shape, dtype, quant_param,
                                   /*is_graph_output=*/false, do_op_validation));
 
-  // Tanh(x) -> t
+  // Tanh(x) -> t  [QNN_OP_ELEMENT_WISE_NEURON with TANH param]
   const std::string tanh_out = utils::UniqueNameGenerator().New(node_unit, "_softcap_tanh");
   {
     QnnTensorWrapper tanh_tensor(tanh_out, QNN_TENSOR_TYPE_NATIVE, dtype, quant_param.Copy(),
@@ -386,12 +386,22 @@ static Ort::Status AddSoftcapNode(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tanh_tensor)),
                   ("Failed to add softcap Tanh output: " + tanh_out).c_str());
     const std::string tanh_node = utils::UniqueNameGenerator().New(node_unit, "_tanh");
+
+    Qnn_Scalar_t tanh_op_scalar = QNN_SCALAR_INIT;
+    tanh_op_scalar.dataType = QNN_DATATYPE_UINT_32;
+    tanh_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_TANH;
+    QnnParamWrapper tanh_op_param(node_unit.Index(), tanh_node,
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION,
+                                  tanh_op_scalar);
+    std::vector<std::string> tanh_param_names = {tanh_op_param.GetParamTensorName()};
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(tanh_op_param)),
+                  "Failed to add softcap Tanh operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(tanh_node,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_TANH,
+                                                  QNN_OP_ELEMENT_WISE_NEURON,
                                                   {div_out},
                                                   {tanh_out},
-                                                  {},
+                                                  std::move(tanh_param_names),
                                                   do_op_validation),
                   "Failed to create softcap Tanh node.");
   }
@@ -581,7 +591,7 @@ static Ort::Status RegisterIntermediateAsOutput(QnnModelWrapper& qnn_model_wrapp
 Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                             const OrtNodeUnit& node_unit,
                                                             std::vector<std::string>&& input_names,
-                                                            const Ort::Logger& /*logger*/,
+                                                            const Ort::Logger& logger,
                                                             bool do_op_validation) const {
   const auto& onnx_inputs = node_unit.Inputs();
   const auto& onnx_outputs = node_unit.Outputs();
@@ -890,29 +900,21 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                 /*transpose_in1=*/true, do_op_validation));
   std::string scores_cur = qk_out;
 
-  // ---- qk_matmul_output mode 0: capture post-QK scores ----
+  // ---- qk_matmul_output mode 0: raw post-QK scores (pre-mask, pre-softcap) ----
+  // Per ONNX spec the pipeline is: QK → masks → softcap → softmax
+  // mode 0 = raw QK, mode 1 = post-mask pre-softcap,
+  // mode 2 = post-softcap,  mode 3 = post-softmax.
   std::string qk_captured;  // The intermediate captured for qk_matmul_output.
   if (has_qk_output && qk_mode == 0) {
     qk_captured = scores_cur;
   }
 
-  // ---- Softcap ----
-  if (softcap != 0.0f) {
-    const std::string sc_out = utils::UniqueNameGenerator().New(node_unit, "_scores_softcap");
-    RETURN_IF_ERROR(AddSoftcapNode(qnn_model_wrapper, node_unit,
-                                   scores_cur, sc_out,
-                                   qk_shape, dtype, q_quant,
-                                   softcap,
-                                   do_op_validation));
-    scores_cur = sc_out;
-  }
+  // ---- Masks applied BEFORE softcap (per ONNX spec) ----
+  // Applying mask after softcap would be wrong: softcap saturates large negatives
+  // to -softcap (not -inf), so the mask must set large negatives first so softcap
+  // can compress the full range uniformly.
 
-  // ---- qk_matmul_output mode 1: post-softcap scores ----
-  if (has_qk_output && qk_mode == 1) {
-    qk_captured = scores_cur;
-  }
-
-  // ---- Step 9 (is_causal=1): ADD static lower-triangular causal mask ----
+  // ---- Causal mask (is_causal=1): ADD static lower-triangular mask ----
   // With KV cache: offset = S_past so that row i attends to positions <= i+S_past.
   if (is_causal != 0) {
     const uint32_t offset = S_past;  // 0 for no KV cache path.
@@ -973,7 +975,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     scores_cur = masked_out;
   }
 
-  // ---- Step 10 (attn_mask present): ADD user attention mask ----
+  // ---- User attention mask: ADD ----
   if (has_attn_mask) {
     const std::string attn_masked_out =
         utils::UniqueNameGenerator().New(node_unit, "_attn_masked");
@@ -985,7 +987,23 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     scores_cur = attn_masked_out;
   }
 
-  // ---- qk_matmul_output mode 2: post-mask scores ----
+  // ---- qk_matmul_output mode 1: post-mask, pre-softcap ----
+  if (has_qk_output && qk_mode == 1) {
+    qk_captured = scores_cur;
+  }
+
+  // ---- Softcap (applied AFTER masks per ONNX spec) ----
+  if (softcap != 0.0f) {
+    const std::string sc_out = utils::UniqueNameGenerator().New(node_unit, "_scores_softcap");
+    RETURN_IF_ERROR(AddSoftcapNode(qnn_model_wrapper, node_unit,
+                                   scores_cur, sc_out,
+                                   qk_shape, dtype, q_quant,
+                                   softcap,
+                                   do_op_validation));
+    scores_cur = sc_out;
+  }
+
+  // ---- qk_matmul_output mode 2: post-softcap ----
   if (has_qk_output && qk_mode == 2) {
     qk_captured = scores_cur;
   }
