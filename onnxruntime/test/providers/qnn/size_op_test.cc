@@ -28,14 +28,20 @@ static GetTestModelFn BuildSizeTestCase(const std::vector<int64_t>& shape,
 
 // Builds a Size graph with a live (non-constant) input.
 //   Input: live tensor "X" with the given shape, values in [min_val, max_val]
-//   Output: scalar int64 tensor "Y"
+//   Output: scalar int64 "Y" (Size result) and float "X_pass" (Identity passthrough)
+//
+// The Identity node is required: QNN requires every APP_WRITE (live graph input) to
+// have at least one consumer node. In production models X is always consumed by other
+// ops alongside Size; Identity replicates that pattern in the isolated test graph.
 template <typename DataType>
 static GetTestModelFn BuildSizeLiveInputTestCase(const std::vector<int64_t>& shape,
                                                  DataType min_val, DataType max_val) {
   return [shape, min_val, max_val](ModelTestBuilder& builder) {
     builder.MakeInput<DataType>("X", shape, min_val, max_val);
     builder.AddNode("size_node", "Size", {"X"}, {"Y"}, kOnnxDomain);
+    builder.AddNode("identity_node", "Identity", {"X"}, {"X_pass"}, kOnnxDomain);
     builder.MakeOutput("Y");
+    builder.MakeOutput("X_pass");
   };
 }
 

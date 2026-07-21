@@ -64,16 +64,13 @@ Ort::Status SizeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          const Ort::Logger& logger,
                                          std::vector<std::string>& input_names,
                                          bool /*do_op_validation*/) const {
-  const std::string& input_name = node_unit.Inputs()[0].name;
-  if (qnn_model_wrapper.IsEffectivelyConstantInput(input_name)) {
-    // Constant initializer: register as QNN_TENSOR_TYPE_STATIC.
-    // QNN allows STATIC tensors with no consumer nodes.
-    const auto& input_0 = node_unit.Inputs()[0];
-    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
-  }
-  // Live input: skip registration entirely. Size only reads the input's shape at
-  // session-create time; the data is never consumed by any QNN node. Registering
-  // a live input as APP_WRITE with no consumer causes QNN error 6004.
+  // Always register the input tensor so SetupQnnInputOutput can find it.
+  // For constant initializers this becomes QNN_TENSOR_TYPE_STATIC (no consumer required).
+  // For live inputs this becomes QNN_TENSOR_TYPE_APP_WRITE; QNN requires at least one
+  // consumer node for APP_WRITE tensors. In practice, a live input to Size is always
+  // consumed by other ops in the same QNN subgraph, satisfying this requirement.
+  const auto& input_0 = node_unit.Inputs()[0];
+  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
   return Ort::Status();
 }
 
