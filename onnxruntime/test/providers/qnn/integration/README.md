@@ -39,8 +39,12 @@ expected.
 | Tests op-level correctness or inference accuracy (compares QNN EP output vs CPU EP) | `qnn/` (root) until that migration is complete |
 | Pure function logic or op validation only (no session/inference) | `unit/` |
 
-When in doubt: if your test needs a real backend but is not primarily an accuracy
-check, it belongs in `integration/`.
+When in doubt: the dividing line is the **ORT session**, not whether a real
+backend is loaded. If your test creates a full ORT session (compile + execute a
+model through the EP), it belongs in `integration/`. A test that constructs EP
+components directly and calls their methods — even if that loads a real
+`libQnnHtp.so` — is a component test and belongs in `unit/` (see the `*HtpTest`
+fixtures there).
 
 ## Platform availability
 
