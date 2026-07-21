@@ -63,6 +63,12 @@ class QnnModel {
 
   Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
 
+  // Acquires and immediately releases graph_exec_mutex_ to guarantee no graphExecute()
+  // is in progress. Used by the hot-migration drain sequence before GPU teardown.
+  void WaitForInflightExecution() {
+    std::lock_guard<std::mutex> lock(graph_exec_mutex_);
+  }
+
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = graph_outputs_.tensors.find(name);
     if (it == graph_outputs_.tensors.end()) {
