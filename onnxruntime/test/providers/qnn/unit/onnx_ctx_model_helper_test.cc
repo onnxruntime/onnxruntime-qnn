@@ -31,12 +31,13 @@ namespace {
 // OrtNodeAttrHelper path (via Ort::ConstNode wrappers) reaches our stubs.
 struct CtxHelperTestContext {
   OrtApi api{};
-  // global_guard restores the original global API on destruction.
-  OrtGlobalApiOverride global_guard;
+  // global_guard records &api and restores the original global API on
+  // destruction. It only stores the pointer (the API is dereferenced at call
+  // time), so filling in the stubs in the ctor body afterwards is safe and
+  // avoids depending on member-declaration order for the install call.
+  OrtGlobalApiOverride global_guard{&api};
 
-  CtxHelperTestContext()
-      : api(),
-        global_guard((InstallFakeGraphApiStubs(api), &api)) {}
+  CtxHelperTestContext() { InstallFakeGraphApiStubs(api); }
 };
 
 }  // namespace
@@ -278,11 +279,15 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeNoPathAttr_Retur
   EXPECT_FALSE(status.IsOK());
 }
 
-TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_ReturnsPath) {
+TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_ReturnsLowercasedPath) {
   CtxHelperTestContext ctx;
   FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
   FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
-  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString("ep_dlc_context", "/path/to/model.dlc");
+  // Mixed-case input pins the GetLowercaseString call in the source: the
+  // returned path must come back lowercased. NOTE: lowercasing a filesystem
+  // path is a source-side concern on case-sensitive systems (Linux) — this
+  // assertion documents the current behaviour, it does not endorse it.
+  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString("ep_dlc_context", "Path/To/Model.DLC");
   FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
   node.attrs[SOURCE] = &source;
   node.attrs[EP_CONTEXT_TYPE] = &ctx_type;
@@ -292,7 +297,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_Returns
   std::string dlc_path;
   auto status = GetEpContextDlcPath(graphs, 1, ctx.api, dlc_path);
   EXPECT_TRUE(status.IsOK());
-  EXPECT_EQ(dlc_path, "/path/to/model.dlc");
+  EXPECT_EQ(dlc_path, "path/to/model.dlc");
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_SecondGraphHasDlcNode_ReturnsPath) {
@@ -375,6 +380,40 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_SecondContextLarger_
   EXPECT_EQ(pos_list[1], 0);
 }
 
+TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_NonConsecutivePosList_IndexesThroughPosList) {
+  // Regression guard for the `graphs[main_context_pos_list[idx]]` indirection
+  // (source L261). pos_list is non-identity ({2, 0}) and graph 1 — which the
+  // pos_list never references — carries the largest MAX_SIZE as a trap.
+  // Correct code reads graphs 2 then 0 (max=500, already at front → no swap).
+  // A mutation to `graphs[idx]` would instead read graphs 0 then 1, pick up the
+  // 999 trap, and swap the pos_list — so both the returned size and the final
+  // pos_list order diverge, catching the regression.
+  CtxHelperTestContext ctx;
+  FakeOpAttr size0 = FakeOpAttr::MakeInt64(MAX_SIZE, 100);
+  FakeNode ep0{"e0", "EPContext", "", 1, {}, {}};
+  ep0.attrs[MAX_SIZE] = &size0;
+  FakeGraph g0{{ep0}, {}, {}, {}};
+
+  FakeOpAttr size1 = FakeOpAttr::MakeInt64(MAX_SIZE, 999);  // trap: only reachable via graphs[idx]
+  FakeNode ep1{"e1", "EPContext", "", 1, {}, {}};
+  ep1.attrs[MAX_SIZE] = &size1;
+  FakeGraph g1{{ep1}, {}, {}, {}};
+
+  FakeOpAttr size2 = FakeOpAttr::MakeInt64(MAX_SIZE, 500);
+  FakeNode ep2{"e2", "EPContext", "", 1, {}, {}};
+  ep2.attrs[MAX_SIZE] = &size2;
+  FakeGraph g2{{ep2}, {}, {}, {}};
+
+  const OrtGraph* graphs[] = {g0.AsGraph(), g1.AsGraph(), g2.AsGraph()};
+  std::vector<int> pos_list = {2, 0};
+  int64_t max_size = 0;
+  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 2, max_size, pos_list);
+  EXPECT_TRUE(status.IsOK());
+  EXPECT_EQ(max_size, 500);   // graphs[2], NOT the graphs[1] trap (999)
+  EXPECT_EQ(pos_list[0], 2);  // largest already at front → no swap
+  EXPECT_EQ(pos_list[1], 0);
+}
+
 // =============================================================================
 // ParseIoNameOverrides
 //
@@ -423,6 +462,43 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_MalformedPairNoEquals_
   auto overrides = ParseIoNameOverrides(node.AsNode());
   ASSERT_EQ(overrides.size(), 1u);
   EXPECT_EQ(overrides.at("a"), "b");
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_MultiplePairs_AllParsed) {
+  CtxHelperTestContext ctx;
+  // "a=b;c=d" — two valid pairs; the decode loop must yield both.
+  FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "a=b;c=d");
+  FakeNode node{"ep", "EPContext", "", 1, {}, {}};
+  node.attrs[IO_NAME_OVERRIDES] = &attr;
+  auto overrides = ParseIoNameOverrides(node.AsNode());
+  ASSERT_EQ(overrides.size(), 2u);
+  EXPECT_EQ(overrides.at("a"), "b");
+  EXPECT_EQ(overrides.at("c"), "d");
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EqualsInsideValue_SplitsOnFirst) {
+  CtxHelperTestContext ctx;
+  // "a=b=c" — pair.find('=') splits on the FIRST '=', so internal="a",
+  // external="b=c" (the remaining '=' stays in the value, L142-143).
+  FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "a=b=c");
+  FakeNode node{"ep", "EPContext", "", 1, {}, {}};
+  node.attrs[IO_NAME_OVERRIDES] = &attr;
+  auto overrides = ParseIoNameOverrides(node.AsNode());
+  ASSERT_EQ(overrides.size(), 1u);
+  EXPECT_EQ(overrides.at("a"), "b=c");
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EmptyInternalOrExternal_Skipped) {
+  CtxHelperTestContext ctx;
+  // "=b" has an empty internal, "a=" has an empty external; both fail the
+  // L144 !internal.empty() && !external.empty() guard and are skipped. Only the
+  // fully-populated "c=d" survives.
+  FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "=b;a=;c=d");
+  FakeNode node{"ep", "EPContext", "", 1, {}, {}};
+  node.attrs[IO_NAME_OVERRIDES] = &attr;
+  auto overrides = ParseIoNameOverrides(node.AsNode());
+  ASSERT_EQ(overrides.size(), 1u);
+  EXPECT_EQ(overrides.at("c"), "d");
 }
 
 // =============================================================================
