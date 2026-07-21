@@ -20,6 +20,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/identity_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/l2_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
@@ -104,7 +105,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
-    {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
+    {"Reshape", {IdentityReshapeTransposeFusion::TryFusion, SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
