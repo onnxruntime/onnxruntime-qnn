@@ -168,10 +168,10 @@ static bool IsOnnxAttrModeSupported(const std::unordered_map<std::string, uint32
 // output quant param override / dtype downgrade / int64 cast handling as every other
 // Resize dispatch branch.
 Ort::Status ResizeOpBuilder::ProcessTfHalfPixelForNN(QnnModelWrapper& qnn_model_wrapper,
-                                                      const OrtNodeUnit& node_unit,
-                                                      const std::vector<std::string>& input_names,
-                                                      const Ort::Logger& logger,
-                                                      bool do_op_validation) const {
+                                                     const OrtNodeUnit& node_unit,
+                                                     const std::vector<std::string>& input_names,
+                                                     const Ort::Logger& logger,
+                                                     bool do_op_validation) const {
   // Caller (IsOpSupported) guarantees rank == 4, interp_mode == "nearest", and
   // nearest_mode == "floor".
   TensorInfo input_info = {};
