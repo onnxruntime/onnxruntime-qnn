@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -101,6 +102,15 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                std::vector<const OrtNode*>& supported_nodes,
                                std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
+  // Overload that queries a specific backend manager. Used in the hot-migration path where
+  // GPU and NPU support sets must be computed independently and intersected.
+  OrtStatus* GetSupportedNodes(const OrtGraph* graph,
+                               const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                               const size_t node_unit_size,
+                               std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes,
+                               qnn::QnnBackendManager* backend_manager) const;
+
   OrtStatus* GetMultiSocSupportedNodes(const OrtGraph* graph,
                                        const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                        const size_t node_unit_size,
@@ -158,6 +168,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
     return GetProviderOptionPrefix(name_) + key;
   }
 
+  // Indirection target for compute_state in the hot-migration path.
+  // After migration, `active` is atomically swapped from the GPU model to the NPU model.
+  // Non-owning: the pointed-to model is owned by qnn_models_ / npu_models_.
+  struct QnnModelSlot {
+    std::atomic<qnn::QnnModel*> active{nullptr};
+  };
+
   struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
@@ -195,6 +212,14 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Will return true if any power config options need to be updated
   bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
+
+  // Hot migration helpers.
+  // TryMigrateIfReady: called at the top of every ComputeImpl when migration is active.
+  // Cheap no-op until htp_compile_complete_ or htp_compile_failed_ is set; performs the
+  // atomic slot swap exactly once (or releases HTP resources on failure).
+  void TryMigrateIfReady();
+  // DrainAndReleaseGpu: waits for any in-flight GPU graphExecute to finish, then frees GPU models.
+  void DrainAndReleaseGpu();
 
   void CreateHtpPowerConfigId() const;
   // Will return false if htp_power_config_id_ has no value
@@ -308,6 +333,23 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // When no explicit backend_type is set, QnnBackendManager creation is deferred to GetCapabilityImpl
   bool auto_select_backend_ = false;
   std::optional<qnn::QnnBackendManagerConfig> deferred_backend_config_;
+
+  // === Hot migration state (populated only when hot_migration_enabled_ is true) ===
+  // qnn_backend_manager_ / qnn_models_ hold the GPU (active) side. After migration completes,
+  // htp_backend_manager_ is promoted into qnn_backend_manager_ and both htp_backend_manager_
+  // and qnn_models_ are cleared.
+  bool hot_migration_enabled_ = false;
+  std::optional<qnn::QnnBackendManagerConfig> htp_backend_config_;
+  std::shared_ptr<qnn::QnnBackendManager> htp_backend_manager_;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> htp_models_;
+  // compute_state points to entries here (instead of a raw QnnModel*) in the migration path.
+  // unique_ptr keeps the slot at a stable address; std::atomic is not movable/copyable.
+  std::unordered_map<std::string, std::unique_ptr<QnnModelSlot>> model_slots_;
+  std::atomic<bool> htp_compile_complete_{false};
+  std::atomic<bool> htp_compile_failed_{false};
+  std::atomic<bool> migration_done_{false};
+  std::thread htp_prepare_thread_;
+  std::mutex migration_mutex_;
 };
 
 }  // namespace onnxruntime
