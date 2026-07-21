@@ -455,7 +455,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Relu||
 |ai.onnx:RMSNormalization||
 |ai.onnx:Reshape||
-|ai.onnx:Resize||
+|ai.onnx:Resize|tf_half_pixel_for_nn coordinate_transformation_mode: only mode "nearest" with nearest_mode "floor" on rank-4 input is supported on HTP; other combinations fall back to CPU|
 |ai.onnx:RoiAlign||
 |ai.onnx:Round||
 |ai.onnx:RotaryEmbedding|HTP backend only|
