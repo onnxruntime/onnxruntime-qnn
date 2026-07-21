@@ -7,6 +7,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -447,17 +448,24 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
 namespace {
 
 // Helper to check if a BatchNorm param is constant - either direct initializer or through a DQ node.
+//
+// node_unit.GetDQNodes() is only populated for a QDQGroup-type NodeUnit. When the surrounding QDQ
+// selector rejects the group (e.g. BatchNormalizationNodeGroupSelector requires the quantized input
+// and output element types to match; mixed-bitwidth BN like u8-in/u16-out does not), BatchNorm becomes
+// a SingleNode-type NodeUnit with an empty GetDQNodes(). In that case the param's standalone DQ node
+// is visited (and constant-folded via TryFoldConstantQDQ) as its own NodeUnit before BN, in topological
+// order, so IsEffectivelyConstantInput (which also checks IsFoldedConstant) still recognizes it.
 bool IsParamConstant(const QnnModelWrapper& qnn_model_wrapper,
                      const OrtNodeUnit& node_unit,
                      const std::string& name) {
-  if (qnn_model_wrapper.IsConstantInput(name)) {
+  if (qnn_model_wrapper.IsEffectivelyConstantInput(name)) {
     return true;
   }
-  // Check if param comes through a DQ node with constant input
+  // Check if param comes through a DQ node with constant input (QDQGroup NodeUnit case).
   for (const OrtNode* dq_node : node_unit.GetDQNodes()) {
     const Ort::ConstNode const_dq_node(dq_node);
     if (const_dq_node.GetOutputs()[0].GetName() == name) {
-      return qnn_model_wrapper.IsConstantInput(const_dq_node.GetInputs()[0].GetName());
+      return qnn_model_wrapper.IsEffectivelyConstantInput(const_dq_node.GetInputs()[0].GetName());
     }
   }
   return false;
@@ -628,14 +636,17 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                (bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
                                 bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_16);
 
+    // A param may be a real ONNX initializer (initializer_tensor set) or a standalone DQ-of-constant
+    // already folded to a STATIC tensor by TryFoldConstantQDQ (initializer_tensor is null in that
+    // case; see IsParamConstant above) -- read bytes from whichever the param actually is.
     std::vector<uint8_t> scale_unpacked_tensor;
     std::vector<uint8_t> bias_unpacked_tensor;
     std::vector<uint8_t> mean_unpacked_tensor;
     std::vector<uint8_t> var_unpacked_tensor;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_info.initializer_tensor, scale_unpacked_tensor));
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, bias_unpacked_tensor));
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(mean_info.initializer_tensor, mean_unpacked_tensor));
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(var_info.initializer_tensor, var_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[1].name, scale_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[2].name, bias_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[3].name, mean_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[4].name, var_unpacked_tensor));
 
     std::vector<double> scale_double_tensor;
     std::vector<double> bias_double_tensor;

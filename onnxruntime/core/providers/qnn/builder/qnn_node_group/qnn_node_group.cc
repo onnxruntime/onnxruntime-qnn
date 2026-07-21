@@ -30,6 +30,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -100,6 +101,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
     {"Reciprocal", {ReciprocalMulFusion::TryFusion}},
+    {"Tanh", {TanhGeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
@@ -144,6 +146,8 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
       starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
+      starting_node_unit.OpType() != "Erf" &&
+      starting_node_unit.OpType() != "Tanh" &&
       starting_node_unit.OpType() != "Reshape") {
     return nullptr;
   }

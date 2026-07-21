@@ -250,6 +250,12 @@ Ort::Status LSTMOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
+
+  // Both unrolled/monolithic paths need X's shape to read seq_length/batch_size/input_size at compile time
+  // Reject a dynamic/symbolic X shape here rather than hard-failing later in ComposeGraph.
+  TensorInfo x_tensor_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], x_tensor_info));
+
   if (node_unit.Inputs().size() > 4 && node_unit.Inputs()[4].Exists()) {
     TensorInfo tensor_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[4], tensor_info));
@@ -337,6 +343,20 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
   const uint32_t seq_length = layout == 0 ? input_tensor_infos[0].shape[0] : input_tensor_infos[0].shape[1];
   const int32_t direction_idx = input_tensor_infos[1].shape[0] < 2 || direction == "forward" ? 0 : 1;
 
+  // When false (default), lower LSTM as ORT-QNN-EP side per-timestep unrolled QNN_OP_LSTM cells + Pack.
+  // When true, lower as a single monolithic QNN_OP_LSTM node and rely on HTP's native
+  // monolithic LSTM kernel (enabled via enable_htp_monolithic_lstm provider option, which also
+  // toggles the QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM graph config).
+  //
+  // The monolithic path is only meaningful for the HTP/NPU backend.
+  // The IR backend is also allowed to honor the flag
+  // so that a serialized DLC can faithfully mirror the HTP monolithic graph — otherwise an
+  // IR-produced DLC (always unrolled) could not be compared against the HTP monolithic one.
+  // All other backends (CPU/GPU) have no monolithic kernel and always use the unrolled lowering.
+  const bool enable_htp_monolithic_lstm = (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) ||
+                                           IsIrBackend(qnn_model_wrapper.GetQnnBackendType())) &&
+                                          qnn_model_wrapper.GetModelSettings().enable_htp_monolithic_lstm;
+
   // params
   std::vector<std::string> param_names;
 
@@ -354,8 +374,9 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
                                       QNN_OP_LSTM_PARAM_OUTPUT_CLIP_THRESHOLD, param_names));
 
   // time_major
-  // set to true since current builder only support time major lstm(layout=0)
-  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), true,
+  // monolithic QNN_OP_LSTM consumes the whole 3D sequence at once (time_major=true);
+  // the unrolled path feeds one 2D timestep per cell node (time_major=false).
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), enable_htp_monolithic_lstm,
                                      QNN_OP_LSTM_PARAM_TIME_MAJOR, param_names));
 
   // input_gate_qscale
@@ -388,8 +409,10 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
 
   qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper));
 
-  std::vector<std::string> qnn_lstm_input_names(25, null_tensor_name);
-  qnn_lstm_input_names[0] = input_names[0];
+  std::vector<std::string> qnn_lstm_input_names(enable_htp_monolithic_lstm ? 25 : 24, null_tensor_name);
+  if (enable_htp_monolithic_lstm) {
+    qnn_lstm_input_names[0] = input_names[0];
+  }
   // input W
   {
     // QNN in[1] = ONNX in[1][direction, 2*hidden_size:3*hidden_size, :]
@@ -663,28 +686,127 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       {batch_size, hidden_size},
       {batch_size, hidden_size}};
 
-  std::vector<std::string> qnn_lstm_output_names = {
-      utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_all_hidden_state_" + direction),
-      utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_cell_state_" + direction),
-      utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_hidden_state_" + direction)};
+  // reshape_input_names ends up holding, in ONNX output order [Y, Y_h, Y_c], the QNN tensor
+  // name that feeds the final reshape-to-ONNX-shape step below.
+  std::vector<std::string> reshape_input_names(3);
 
   // QNN output order: all_hidden, last_cell, last_hidden
   // ONNX output order: all_hidden, last_hidden, last_cell
-  int output_position_map[] = {0, 2, 1};
-  for (size_t j = 0; j < qnn_lstm_output_names.size(); j++) {
-    QnnTensorWrapper output_tensorwrapper(qnn_lstm_output_names[j],
-                                          QNN_TENSOR_TYPE_NATIVE,
-                                          output_tensor_infos[output_position_map[j]].qnn_data_type,
-                                          output_tensor_infos[output_position_map[j]].quant_param.Copy(),
-                                          std::vector<uint32_t>(qnn_lstm_output_shapes[j]));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
-                  ("QNN EP: Failed to add " + std::to_string(j) + "th output tensor for QNN LSTM.").c_str());
+  // so output_tensor_infos (ONNX order) must be mapped to QNN output position.
+  static constexpr int kOutputPositionMap[] = {0, 2, 1};
+  auto emit_lstm_outputs = [&](const std::vector<std::string>& out_names,
+                               const std::vector<std::vector<uint32_t>>& out_shapes) -> Ort::Status {
+    for (size_t j = 0; j < 3; j++) {
+      QnnTensorWrapper output_tensorwrapper(out_names[j],
+                                            QNN_TENSOR_TYPE_NATIVE,
+                                            output_tensor_infos[kOutputPositionMap[j]].qnn_data_type,
+                                            output_tensor_infos[kOutputPositionMap[j]].quant_param.Copy(),
+                                            std::vector<uint32_t>(out_shapes[j]));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                    ("QNN EP: Failed to add " + std::to_string(j) + "th output tensor for QNN LSTM.").c_str());
+    }
+    return Ort::Status();
+  };
+
+  if (!enable_htp_monolithic_lstm) {
+    // Unrolled path: HTP does not have a fast native path for a single 3D QNN_OP_LSTM node,
+    // so emit one QNN_OP_LSTM cell per timestep (2D in/out) and chain hidden/cell state
+    // between cells, then Pack all per-timestep hidden states back into a 3D tensor.
+    std::vector<std::string> qnn_all_hidden_state_names(seq_length);
+    for (uint32_t i = 0; i < seq_length; i++) {
+      uint32_t sequence_idx = direction == "forward" ? i : seq_length - i - 1;
+      std::vector<std::string> qnn_lstm_input_names_i = qnn_lstm_input_names;
+
+      // input X: QNN in[0] = ONNX in[0][sequence_idx, :, :]
+      {
+        uint32_t begin_mask = 0b000U;
+        uint32_t end_mask = 0b000U;
+        uint32_t shrink_axes = 0b001U;
+        uint32_t new_axes_mask = 0b000U;
+        std::vector<std::vector<int32_t>> ranges = {{SafeInt<int32_t>(sequence_idx), SafeInt<int32_t>(sequence_idx + 1), 1},
+                                                    {0, SafeInt<int32_t>(batch_size), 1},
+                                                    {0, SafeInt<int32_t>(input_size), 1}};
+        std::string qnn_lstm_input_name = utils::UniqueNameGenerator().New(input_names[0], "_cell_" + std::to_string(sequence_idx) + "_input");
+        std::vector<uint32_t> output_shape = {batch_size, input_size};
+        RETURN_IF_ERROR(AddStridedSliceOrReshape(/*qnn_model_wrapper=*/qnn_model_wrapper,
+                                                 /*node_unit=*/node_unit,
+                                                 /*input_name=*/input_names[0],
+                                                 /*output_name=*/qnn_lstm_input_name,
+                                                 /*input_shape=*/input_tensor_infos[0].shape,
+                                                 /*output_shape=*/output_shape,
+                                                 /*ranges=*/ranges,
+                                                 /*begin_mask=*/begin_mask,
+                                                 /*end_mask=*/end_mask,
+                                                 /*shrink_axes=*/shrink_axes,
+                                                 /*new_axes_mask=*/new_axes_mask,
+                                                 /*tensor_data_type=*/input_tensor_infos[0].qnn_data_type,
+                                                 /*QnnQuantParamsWrapper=*/input_tensor_infos[0].quant_param,
+                                                 /*do_op_validation=*/do_op_validation,
+                                                 /*is_for_input=*/false,
+                                                 /*is_for_output=*/false));
+        qnn_lstm_input_names_i[0] = qnn_lstm_input_name;
+      }
+
+      std::vector<uint32_t> qnn_lstm_output_shape = {batch_size, hidden_size};
+      std::vector<std::string> qnn_lstm_output_names = {
+          utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_all_hidden_state_" + std::to_string(sequence_idx) + "_" + direction),
+          utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_cell_state_" + std::to_string(sequence_idx) + "_" + direction),
+          utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_hidden_state_" + std::to_string(sequence_idx) + "_" + direction)};
+      qnn_lstm_input_names[10] = qnn_lstm_output_names[2];  // update initial_h for next cell
+      qnn_lstm_input_names[11] = qnn_lstm_output_names[1];  // update initial_c for next cell
+      // Single-timestep cell, so out[0] (all_hidden) == out[2] (final hidden state); reuse out[2].
+      qnn_all_hidden_state_names[sequence_idx] = qnn_lstm_output_names[2];
+
+      RETURN_IF_ERROR(emit_lstm_outputs(qnn_lstm_output_names,
+                                        {qnn_lstm_output_shape, qnn_lstm_output_shape, qnn_lstm_output_shape}));
+      const std::string lstm_node_name = utils::UniqueNameGenerator().New(node_unit, "_cell" + std::to_string(sequence_idx) + "_" + direction);
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(lstm_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_LSTM,
+                                                    std::move(qnn_lstm_input_names_i), std::move(qnn_lstm_output_names),
+                                                    std::vector<std::string>(param_names), do_op_validation),
+                    "QNN EP: Failed to create Qnn LSTM node.");
+    }
+
+    // Pack all per-timestep hidden states together for ONNX output[0] (Y).
+    const std::string qnn_pack_output_name = utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_hidden_state_all_" + direction);
+    std::vector<std::string> pack_param_names;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), qnn_pack_output_name, 0,
+                                           QNN_OP_PACK_PARAM_AXIS, pack_param_names));
+
+    QnnTensorWrapper pack_output_tensorwrapper(qnn_pack_output_name,
+                                               QNN_TENSOR_TYPE_NATIVE,
+                                               output_tensor_infos[0].qnn_data_type,
+                                               output_tensor_infos[0].quant_param.Copy(),
+                                               {seq_length, batch_size, hidden_size});
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pack_output_tensorwrapper)),
+                  "QNN EP: Failed to add output tensor for QNN Pack.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(qnn_pack_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PACK,
+                                                  std::move(qnn_all_hidden_state_names), {qnn_pack_output_name},
+                                                  std::move(pack_param_names), do_op_validation),
+                  "QNN EP: Failed to create Qnn Pack node.");
+
+    // qnn_lstm_input_names[10]/[11] now hold the final timestep's hidden/cell state (Y_h, Y_c).
+    reshape_input_names = {qnn_pack_output_name, qnn_lstm_input_names[10], qnn_lstm_input_names[11]};
+  } else {
+    // Monolithic path: a single QNN_OP_LSTM node consumes/produces the whole 3D sequence
+    // at once, relying on HTP's native monolithic LSTM kernel (QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM).
+    std::vector<std::string> qnn_lstm_output_names = {
+        utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_all_hidden_state_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_cell_state_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_hidden_state_" + direction)};
+
+    // QNN output order: all_hidden, last_cell, last_hidden
+    // ONNX output order: all_hidden, last_hidden, last_cell
+    RETURN_IF_ERROR(emit_lstm_outputs(qnn_lstm_output_names, qnn_lstm_output_shapes));
+    const std::string lstm_node_name = utils::UniqueNameGenerator().New(node_unit, "_" + direction);
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(lstm_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_LSTM,
+                                                  std::move(qnn_lstm_input_names), std::vector<std::string>(qnn_lstm_output_names),
+                                                  std::vector<std::string>(param_names), do_op_validation),
+                  "QNN EP: Failed to create Qnn LSTM node.");
+    for (size_t i = 0; i < 3; i++) {
+      reshape_input_names[i] = qnn_lstm_output_names[kOutputPositionMap[i]];
+    }
   }
-  const std::string lstm_node_name = utils::UniqueNameGenerator().New(node_unit, "_" + direction);
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(lstm_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_LSTM,
-                                                std::move(qnn_lstm_input_names), std::vector<std::string>(qnn_lstm_output_names),
-                                                std::vector<std::string>(param_names), do_op_validation),
-                "QNN EP: Failed to create Qnn LSTM node.");
+
   // in the output shapes below, the value of 1 indicates unidirectional
   std::vector<std::vector<uint32_t>> onnx_lstm_output_shapes = {
       {seq_length, 1, batch_size, hidden_size},
@@ -693,8 +815,8 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
   for (size_t i = 0; i < 3; i++) {
     // if bidirection, return output names for concat
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
-      const std::string reshape_output_name = is_bidirection ? utils::UniqueNameGenerator().New(qnn_lstm_output_names[output_position_map[i]], "_unsqueeze_" + direction) : onnx_outputs[i].name;
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/qnn_lstm_output_names[output_position_map[i]],
+      const std::string reshape_output_name = is_bidirection ? utils::UniqueNameGenerator().New(reshape_input_names[i], "_unsqueeze_" + direction) : onnx_outputs[i].name;
+      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/reshape_input_names[i],
                                                        /*output_name=*/reshape_output_name,
                                                        /*input_shape=*/qnn_lstm_output_shapes[i],
                                                        /*output_shape=*/onnx_lstm_output_shapes[i],
