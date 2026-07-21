@@ -24,9 +24,10 @@ class SizeOpBuilder : public BaseOpBuilder {
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
 
-  // Override ProcessInputs: only register the input tensor for constant initializers.
-  // For live inputs the tensor must NOT be registered as APP_WRITE — Size emits no QNN node,
-  // so a live APP_WRITE tensor would have no consumer and trigger QNN error 6004.
+  // Always register the input tensor in the QNN tensor map.
+  // For constant initializers this registers as QNN_TENSOR_TYPE_STATIC (no consumer required).
+  // For folded constants (NATIVE tensors from a prior constant-fold) the tensor is
+  // already registered; ProcessInput detects the duplicate and skips re-registration.
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
@@ -45,11 +46,14 @@ class SizeOpBuilder : public BaseOpBuilder {
 Ort::Status SizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
-  // Size is implemented as compile-time constant folding: no QNN node is emitted.
-  // Both constant initializer inputs and live inputs with fully static shapes are supported.
-  // For live inputs, ProcessInputs skips tensor registration to avoid an unconsumed APP_WRITE
-  // tensor (which would trigger QNN error 6004).
   const auto& input_def = node_unit.Inputs()[0];
+
+  // Only accept constant initializers and previously constant-folded tensors.
+  // Live graph inputs (APP_WRITE) are rejected here; without a downstream QNN consumer
+  // node the graph would fail with QNN error 6004 at inference time.
+  const std::string& input_name = input_def.name;
+  RETURN_IF_NOT(qnn_model_wrapper.IsEffectivelyConstantInput(input_name),
+                "QNN EP Size op: input must be a constant initializer or folded constant.");
 
   // Require a fully static input shape. GetOnnxShape returns false if any dim is dynamic.
   std::vector<uint32_t> input_shape;
@@ -66,9 +70,6 @@ Ort::Status SizeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          bool /*do_op_validation*/) const {
   // Always register the input tensor so SetupQnnInputOutput can find it.
   // For constant initializers this becomes QNN_TENSOR_TYPE_STATIC (no consumer required).
-  // For live inputs this becomes QNN_TENSOR_TYPE_APP_WRITE; QNN requires at least one
-  // consumer node for APP_WRITE tensors. In practice, a live input to Size is always
-  // consumed by other ops in the same QNN subgraph, satisfying this requirement.
   const auto& input_0 = node_unit.Inputs()[0];
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
   return Ort::Status();
