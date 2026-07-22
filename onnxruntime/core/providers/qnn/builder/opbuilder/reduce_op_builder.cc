@@ -321,21 +321,22 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "CreateQnnNode failed");
 
     // Step 3: y = Sqrt(y_pow2_sum)
-    Qnn_TensorType_t output_tensor_type =
-        qnn_model_wrapper.IsGraphOutput(output.name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
-                                        QnnQuantParamsWrapper(), std::move(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
-                                                  {reduce_output_name},
-                                                  {output.name},
-                                                  {},
-                                                  do_op_validation),
-                  "CreateQnnNode failed");
-
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output.name);
     if (is_quantized_input) {
+      // Sqrt writes into an intermediate float32 tensor; Quantize converts it into the final output tensor.
+      const std::string sqrt_output_name = utils::UniqueNameGenerator().New(input_name, "_sqrt");
+      RETURN_IF_NOT(add_tensor(sqrt_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape)),
+                    "AddTensorWrapper failed");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                                                    {reduce_output_name},
+                                                    {sqrt_output_name},
+                                                    {},
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
+
       // Insert Quantize (float32 -> quantized) after the float32 decomposition, using the
       // QDQ node unit's output quant params.
       Qnn_DataType_t final_qnn_data_type = QNN_DATATYPE_FLOAT_32;
@@ -352,6 +353,19 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                     {sqrt_output_name}, {output.name}, {},
                                                     do_op_validation),
                     "Failed to add quantize node");
+    } else {
+      Qnn_TensorType_t output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
+                                          QnnQuantParamsWrapper(), std::move(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                                                    {reduce_output_name},
+                                                    {output.name},
+                                                    {},
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
     }
   } else if (node_unit.OpType() == "ReduceLogSumExp") {
     // Decompose ReduceLogSumExp(x, axes, keepdims) numerically-stably as:
