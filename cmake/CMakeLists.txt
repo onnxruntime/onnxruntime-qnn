@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.28)
 # Don't let cmake set a default value for CMAKE_CUDA_ARCHITECTURES
 cmake_policy(SET CMP0104 OLD)
 # Project
-project(onnxruntime_qnn C CXX ASM)
+project(onnxruntime_providers_qnn C CXX ASM)
 
 # Disable fast-math for Intel oneAPI compiler
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "IntelLLVM")
