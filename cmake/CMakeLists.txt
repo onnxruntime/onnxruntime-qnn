@@ -871,9 +871,9 @@ else()
   option(BUILD_PKGCONFIG_FILES "Build and install pkg-config files" OFF)
 endif()
 if (BUILD_PKGCONFIG_FILES)
-   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libonnxruntime.pc.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/libonnxruntime.pc @ONLY)
-  install( FILES  ${CMAKE_CURRENT_BINARY_DIR}/libonnxruntime.pc DESTINATION
+   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libonnxruntime_providers_qnn.pc.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/libonnxruntime_providers_qnn.pc @ONLY)
+  install( FILES  ${CMAKE_CURRENT_BINARY_DIR}/libonnxruntime_providers_qnn.pc DESTINATION
     ${CMAKE_INSTALL_LIBDIR}/pkgconfig )
 endif()
 
