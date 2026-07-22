@@ -503,15 +503,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
       // Build context configs: priority + spill fill buffer.
       QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
-      priority_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
-      priority_config.priority = QNN_PRIORITY_NORMAL;
-
-      if (context_priority_ == ContextPriority::LOW)
-        priority_config.priority = QNN_PRIORITY_LOW;
-      else if (context_priority_ == ContextPriority::NORMAL_HIGH)
-        priority_config.priority = QNN_PRIORITY_NORMAL_HIGH;
-      else if (context_priority_ == ContextPriority::HIGH)
-        priority_config.priority = QNN_PRIORITY_HIGH;
+      RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, priority_config));
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
       QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;

@@ -47,6 +47,10 @@
 namespace onnxruntime {
 namespace qnn {
 
+// Sets the QNN context priority config from a ContextPriority enum value.
+// Handles all 8 supported priority levels.
+Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Config_t& qnn_context_config);
+
 // Forward declaration.
 class QnnModel;
 class QnnBackendSystemDlcPlugin;
