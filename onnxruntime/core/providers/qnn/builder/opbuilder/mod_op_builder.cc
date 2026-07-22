@@ -169,16 +169,12 @@ Ort::Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                                   std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(floor_output)),
                   "Failed to add Mod - ElementWiseFloor output tensor.");
-    std::vector<std::string> floor_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), floor_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_FLOOR),
-                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, floor_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(floor_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_UNARY,
+                                                  QNN_OP_ELEMENT_WISE_FLOOR,
                                                   {div_output_name},
                                                   {floor_output_name},
-                                                  std::move(floor_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Failed to add Mod - ElementWiseFloor node.");
 

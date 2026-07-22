@@ -326,26 +326,17 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "CreateQnnNode failed");
 
     // Step 3: y = Sqrt(y_pow2_sum)
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output.name);
-    const std::string sqrt_output_name =
-        is_quantized_input ? utils::UniqueNameGenerator().New(output.name, "_f32") : output.name;
-    Qnn_TensorType_t sqrt_tensor_type =
-        (!is_quantized_input && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    // The quantized branch below still needs output_shape for the final Quantize output tensor.
-    RETURN_IF_NOT(add_tensor(sqrt_output_name, sqrt_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
-                             is_quantized_input ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
-                  "AddTensorWrapper failed");
-    std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_UNARY);
-    std::vector<std::string> sqrt_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), sqrt_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT),
-                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sqrt_param_names));
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sqrt_node_name,
+    Qnn_TensorType_t output_tensor_type =
+        qnn_model_wrapper.IsGraphOutput(output.name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
+                                        QnnQuantParamsWrapper(), std::move(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_UNARY,
+                                                  QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
                                                   {reduce_output_name},
-                                                  {sqrt_output_name},
-                                                  std::move(sqrt_param_names),
+                                                  {output.name},
+                                                  {},
                                                   do_op_validation),
                   "CreateQnnNode failed");
 

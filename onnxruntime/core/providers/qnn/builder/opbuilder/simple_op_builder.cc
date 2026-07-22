@@ -389,7 +389,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       {"Or", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_OR},
       {"Xor", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_XOR},
       {"Equal", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_EQUAL},
-      {"NotEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL},
       {"Greater", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER},
       {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER_EQUAL},
       {"Less", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_LESS},
@@ -401,29 +400,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                            static_cast<uint32_t>(binary_it->second),
                                            QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, param_tensor_names));
-  }
-
-  static const std::unordered_map<std::string, uint32_t> unary_op_to_operation = {
-      {"Abs", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ABS},
-      {"Asin", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ASIN},
-      {"Atan", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ATAN},
-      {"Ceil", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_CEIL},
-      {"Cos", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_COS},
-      {"Exp", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_EXP},
-      {"Floor", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_FLOOR},
-      {"Log", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_LOG},
-      {"Neg", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_NEG},
-      {"Not", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_NOT},
-      {"Round", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ROUND},
-      {"Sign", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIGN},
-      {"Sin", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIN},
-      {"Sqrt", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT},
-  };
-  auto unary_it = unary_op_to_operation.find(op_type);
-  if (unary_it != unary_op_to_operation.end()) {
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                           static_cast<uint32_t>(unary_it->second),
-                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, param_tensor_names));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
