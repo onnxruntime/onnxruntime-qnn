@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include <cstring>
 #include <limits>
@@ -26,8 +26,8 @@ class SizeOpBuilder : public BaseOpBuilder {
 
   // Always register the input tensor in the QNN tensor map.
   // For constant initializers this registers as QNN_TENSOR_TYPE_STATIC (no consumer required).
-  // For folded constants (NATIVE tensors from a prior constant-fold) the tensor is
-  // already registered; ProcessInput detects the duplicate and skips re-registration.
+  // For NATIVE tensors (output of a prior QNN op) the tensor is already registered;
+  // ProcessInput detects the duplicate and skips re-registration.
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
@@ -47,13 +47,14 @@ Ort::Status SizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
   const auto& input_def = node_unit.Inputs()[0];
-
-  // Only accept constant initializers and previously constant-folded tensors.
-  // Live graph inputs (APP_WRITE) are rejected here; without a downstream QNN consumer
-  // node the graph would fail with QNN error 6004 at inference time.
   const std::string& input_name = input_def.name;
-  RETURN_IF_NOT(qnn_model_wrapper.IsEffectivelyConstantInput(input_name),
-                "QNN EP Size op: input must be a constant initializer or folded constant.");
+
+  // Accept constant initializers, previously constant-folded tensors, and NATIVE tensors
+  // produced by other QNN ops. Reject live graph inputs (APP_WRITE): Size emits no QNN
+  // consumer node, so a live APP_WRITE input would be unconsumed and trigger QNN error 6004.
+  RETURN_IF_NOT(qnn_model_wrapper.IsEffectivelyConstantInput(input_name) ||
+                    !qnn_model_wrapper.IsGraphInput(input_name),
+                "QNN EP Size op: live graph inputs are not supported (would cause QNN error 6004).");
 
   // Require a fully static input shape. GetOnnxShape returns false if any dim is dynamic.
   std::vector<uint32_t> input_shape;
@@ -97,6 +98,9 @@ Ort::Status SizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   }
 
   // Step 3: Serialize as int32 (QNN represents int64 values as int32 internally).
+  // The int32 intermediate is used in both the graph-output (Cast) and intermediate-tensor
+  // paths; values exceeding INT32_MAX are rejected here to prevent silent truncation.
+  // In practice this limit (~2.1 billion elements) is not reachable.
   RETURN_IF(size_value > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
             "QNN EP: Size value exceeds int32 range.");
   int32_t v32 = static_cast<int32_t>(size_value);
