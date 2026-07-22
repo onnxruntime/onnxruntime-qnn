@@ -161,17 +161,7 @@ Ort::Status ExpandOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   RETURN_IF_ERROR(utils::GetQnnDataType(false, input_type, qnn_data_type));
   // Boolean expand is implemented as an element-wise and operation, element-wise multiply otherwise.
   const std::string target_op = qnn_data_type == QNN_DATATYPE_BOOL_8 ? "And" : node_unit.OpType();
-
-  std::vector<std::string> param_tensor_names;
-  if (target_op == "And" || target_op == "Expand") {
-    uint32_t op_value = (target_op == "And") ? QNN_OP_ELEMENT_WISE_BINARY_OPERATION_AND
-                                             : QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                           op_value, QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION,
-                                           param_tensor_names));
-  }
-
-  RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), std::move(param_tensor_names),
+  RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
                                  logger, do_op_validation, GetQnnOpType(target_op)));
   return Ort::Status();
 }
