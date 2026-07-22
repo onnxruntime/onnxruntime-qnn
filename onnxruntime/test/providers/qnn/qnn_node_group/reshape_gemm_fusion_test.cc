@@ -393,13 +393,157 @@ GetTestModelFn BuildReshapeSharedByTwoGemmsTestCase() {
 // would lose its input and the model would fail. All nodes must still run on QNN EP.
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_SharedReshape) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmFusion_Negative_SharedReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   RunQnnModelTest(BuildReshapeSharedByTwoGemmsTestCase(),
                   provider_options,
                   /*opset_version=*/13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Verify fusion did NOT fire: the shared Reshape must remain standalone (not consumed
+  // by any fusion), and both Gemms must run as independent FullyConnected nodes.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 2);
+}
+
+// Build a 3-node shared-Reshape test case for TryFusion3 (Reshape -> Gemm -> Reshape).
+// Two Reshape->Gemm->Reshape chains share the same input Reshape; fusion must not fire.
+// Graph: Input -> Reshape -> Gemm1 -> Reshape1 (output1)
+//                        \-> Gemm2 -> Reshape2 (output2)
+GetTestModelFn BuildReshapeGemmReshapeSharedByTwoTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_gemm_reshape_shared_graph");
+
+    auto input_def = TestInputDef<float>({1, 4, 8}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Shared Reshape: [1, 4, 8] -> [4, 8]
+    builder.Make1DInitializer<int64_t>("reshape_shape", {4, 8});
+    builder.AddNode("reshape", "Reshape", {"input", "reshape_shape"}, {"reshape_out"}, kOnnxDomain);
+
+    // Gemm1: [4, 8] x [8, 16] -> [4, 16]
+    builder.MakeInitializer<float>("weight1", {8, 16}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias1", {16}, -0.1f, 0.1f);
+    builder.AddNode("gemm1", "Gemm", {"reshape_out", "weight1", "bias1"}, {"gemm1_out"}, kOnnxDomain);
+
+    // Reshape1: [4, 16] -> [1, 4, 16]
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {1, 4, 16});
+    builder.AddNode("reshape1", "Reshape", {"gemm1_out", "reshape1_shape"}, {"output1"}, kOnnxDomain);
+
+    // Gemm2: [4, 8] x [8, 32] -> [4, 32]  — shares reshape_out
+    builder.MakeInitializer<float>("weight2", {8, 32}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias2", {32}, -0.1f, 0.1f);
+    builder.AddNode("gemm2", "Gemm", {"reshape_out", "weight2", "bias2"}, {"gemm2_out"}, kOnnxDomain);
+
+    // Reshape2: [4, 32] -> [1, 4, 32]
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {1, 4, 32});
+    builder.AddNode("reshape2", "Reshape", {"gemm2_out", "reshape2_shape"}, {"output2"}, kOnnxDomain);
+
+    builder.MakeOutput("output1");
+    builder.MakeOutput("output2");
+  };
+}
+
+// Test: TryFusion3 (Reshape->Gemm->Reshape) must not fire when the input Reshape is shared.
+TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Negative_SharedReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_Negative_SharedReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildReshapeGemmReshapeSharedByTwoTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Verify fusion did NOT fire: the shared input Reshape is standalone, both Gemms run
+  // as independent FullyConnected nodes, and each output Reshape is also standalone.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 3);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 2);
+}
+
+// Build a 4-node shared-Reshape test case for TryFusion4 (Reshape -> Gemm -> Reshape -> Reshape).
+// Two chains share the same input Reshape; fusion must not fire.
+// Graph: Input -> Reshape -> Gemm1 -> Reshape1a -> Reshape1b (output1)
+//                        \-> Gemm2 -> Reshape2a -> Reshape2b (output2)
+GetTestModelFn BuildReshapeGemmReshapeReshapeSharedByTwoTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_gemm_reshape_reshape_shared_graph");
+
+    auto input_def = TestInputDef<float>({1, 4, 8}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Shared Reshape: [1, 4, 8] -> [4, 8]
+    builder.Make1DInitializer<int64_t>("reshape_shape", {4, 8});
+    builder.AddNode("reshape", "Reshape", {"input", "reshape_shape"}, {"reshape_out"}, kOnnxDomain);
+
+    // Gemm1: [4, 8] x [8, 16] -> [4, 16]
+    builder.MakeInitializer<float>("weight1", {8, 16}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias1", {16}, -0.1f, 0.1f);
+    builder.AddNode("gemm1", "Gemm", {"reshape_out", "weight1", "bias1"}, {"gemm1_out"}, kOnnxDomain);
+
+    // Reshape1a: [4, 16] -> [2, 2, 16]  (intermediate, not a graph output)
+    builder.Make1DInitializer<int64_t>("reshape1a_shape", {2, 2, 16});
+    builder.AddNode("reshape1a", "Reshape", {"gemm1_out", "reshape1a_shape"}, {"reshape1a_out"}, kOnnxDomain);
+
+    // Reshape1b: [2, 2, 16] -> [1, 4, 16]  (final output)
+    builder.Make1DInitializer<int64_t>("reshape1b_shape", {1, 4, 16});
+    builder.AddNode("reshape1b", "Reshape", {"reshape1a_out", "reshape1b_shape"}, {"output1"}, kOnnxDomain);
+
+    // Gemm2: [4, 8] x [8, 32] -> [4, 32]  — shares reshape_out
+    builder.MakeInitializer<float>("weight2", {8, 32}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias2", {32}, -0.1f, 0.1f);
+    builder.AddNode("gemm2", "Gemm", {"reshape_out", "weight2", "bias2"}, {"gemm2_out"}, kOnnxDomain);
+
+    // Reshape2a: [4, 32] -> [2, 2, 32]  (intermediate, not a graph output)
+    builder.Make1DInitializer<int64_t>("reshape2a_shape", {2, 2, 32});
+    builder.AddNode("reshape2a", "Reshape", {"gemm2_out", "reshape2a_shape"}, {"reshape2a_out"}, kOnnxDomain);
+
+    // Reshape2b: [2, 2, 32] -> [1, 4, 32]  (final output)
+    builder.Make1DInitializer<int64_t>("reshape2b_shape", {1, 4, 32});
+    builder.AddNode("reshape2b", "Reshape", {"reshape2a_out", "reshape2b_shape"}, {"output2"}, kOnnxDomain);
+
+    builder.MakeOutput("output1");
+    builder.MakeOutput("output2");
+  };
+}
+
+// Test: TryFusion4 (Reshape->Gemm->Reshape->Reshape) must not fire when the input Reshape is shared.
+TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_Negative_SharedReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeReshapeFusion_Negative_SharedReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildReshapeGemmReshapeReshapeSharedByTwoTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Verify fusion did NOT fire: the shared input Reshape is standalone, both Gemms run
+  // as independent FullyConnected nodes, and each chain's output Reshapes are also standalone.
+  // Note: ORT's ReshapeFusion::FuseContiguousReshapes graph transformer merges each chain's
+  // two consecutive output Reshapes (Reshape1a+1b) into one before the QNN EP sees the graph,
+  // so expected count is 3: 1 (shared input) + 1 (merged chain1) + 1 (merged chain2).
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 3);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 2);
 }
 
 // Build a test case where Gemm has transA=1 (fusion should not happen)

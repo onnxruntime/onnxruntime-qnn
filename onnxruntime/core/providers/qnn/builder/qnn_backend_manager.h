@@ -24,12 +24,11 @@
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
 #include "GPU/QnnGpuBackend.h"
+#include "QnnCommon.h"
 #include "QnnLog.h"
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 
-#include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
@@ -39,6 +38,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/rpcmem_library.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
@@ -47,7 +47,9 @@
 namespace onnxruntime {
 namespace qnn {
 
+// Forward declaration.
 class QnnModel;
+class QnnBackendSystemDlcPlugin;
 
 class QnnSerializerConfig {
  public:
@@ -133,6 +135,8 @@ struct QnnBackendManagerConfig {
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
+  friend class QnnBackendSystemDlcPlugin;
+
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally
   struct PrivateConstructorTag {};
@@ -172,7 +176,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   ~QnnBackendManager();
 
-  std::unique_ptr<unsigned char[]> GetContextBinaryBuffer(uint64_t& written_buffer_size);
+  // Caller owns *context_buffer and must delete[] it; recommend wrapping with std::unique_ptr.
+  Ort::Status GetContextBinaryBuffer(bool is_multi_soc_buffer,
+                                     /*out*/ unsigned char** context_buffer,
+                                     /*out*/ uint64_t& buffer_size);
 
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
@@ -180,7 +187,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const std::string& context_bin_filepath,
       std::string node_name,
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-      int64_t max_spill_fill_size);
+      int64_t max_spill_fill_size,
+      bool is_multi_soc_buffer = false);
 
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
@@ -194,6 +202,20 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false);
+
+  // Below functions are especially for multi-SoC EP context scenarios.
+  Ort::Status SetupBackendExceptDeviceAndContext();
+
+  Ort::Status SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arch,
+                                    uint32_t soc_model,
+                                    bool enable_htp_extended_udma_mode = false,
+                                    bool enable_htp_prepare_only = false,
+                                    bool enable_htp_ref_weight_sharing = false);
+
+  void ReleaseDeviceAndContext();
+
+  Ort::Status AddContextToDlc();
+  // End of multi-SoC EP context specific usage.
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
@@ -281,9 +303,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }
 
-  QnnHtpDevice_Arch_t GetHtpArch() { return htp_arch_internal_; }
+  QnnHtpDevice_Arch_t GetHtpArch() const { return htp_arch_internal_; }
 
   uint32_t GetSocModel() const { return soc_model_; }
+
+  uint32_t GetVtcmSize() const { return vtcm_size_internal_; }
 
   // Get backend library directory by adopting identical logic as in LoadLib.
   std::string GetBackendLibDir() {
@@ -301,6 +325,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,
+                                        bool is_multi_soc_buffer,
                                         uint64_t& max_spill_fill_buffer_size);
 
   // Gets an existing QNN mem handle or registers a new one.
@@ -387,6 +412,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                  bool& device_created_flag,
                                  bool allow_hw_device_enumeration);
 
+  Ort::Status CreateSystemDlcPlugin();
+
+  Ort::Status ReleaseSystemDlcPlugin();
+
   Ort::Status CreateDevice();
 
   Ort::Status CreateValidatorDevice();
@@ -414,8 +443,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status ReleaseProfilehandle();
 
-  Ort::Status CreateContext(bool enable_htp_weight_sharing, bool enable_htp_extended_udma_mode,
-                            bool enable_htp_prepare_only);
+  Ort::Status CreateContext(bool enable_htp_weight_sharing,
+                            bool enable_htp_extended_udma_mode,
+                            bool enable_htp_prepare_only,
+                            bool enable_htp_ref_weight_sharing);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
@@ -617,9 +648,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status GetGraphInfoAndBinVersion(QnnSystemContext_Handle_t sys_ctx_handle,
                                         void* buffer,
                                         Qnn_ContextBinarySize_t buffer_length,
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
                                         Qnn_Version_t& blob_version,
-#endif
                                         uint32_t& graph_count,
                                         QnnSystemContext_GraphInfo_t** graphs_info);
 
@@ -700,9 +729,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool validator_device_created_ = false;
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
+  bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
   int htp_share_resource_optimization_ = -1;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
+  Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;
   Qnn_Version_t backend_api_version_ = QNN_VERSION_INIT;
   bool file_mapped_weights_enabled_ = false;
 
@@ -739,13 +770,21 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::mutex per_thread_power_configs_mutex_;
   std::unordered_map<std::thread::id, PerThreadHtpPowerConfigs_t> per_thread_power_configs_;
 
-  // Internal holder to differentiate with user provided.
+  // Internal holders to differentiate with user-provided ones.
+  // They should be acquired in GetPlatformInfo from SetupBackend during runtime (i.e., ARM64 platforms).
+  // On x86 platforms, they are set to user-provided ones (e.g., htp_arch_).
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
+  uint32_t vtcm_size_internal_ = 0;
+
+  // File mapping.
+  std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+
+  // Backend plugin for system DLC APIs.
+  bool system_dlc_created_ = false;
+  std::shared_ptr<QnnBackendSystemDlcPlugin> system_dlc_plugin_ = nullptr;
 
   const ApiPtrs api_ptrs_;
-
   const Ort::Logger* logger_ptr_;
-  std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 };
 
 }  // namespace qnn
