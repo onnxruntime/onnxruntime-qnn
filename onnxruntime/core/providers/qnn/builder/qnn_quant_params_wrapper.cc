@@ -654,11 +654,20 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     // Only the first two dimensions (indexed by onnx_axis and 1 - onnx_axis) are used for LPBQ conversion.
     const std::vector<int64_t> scale_shape =
         utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
-    RETURN_IF_NOT(scale_shape.size() >= 2 && scale_shape.size() <= 4,
+    // MatMulNBits can sometimes produce rank-1 scales; other ops (MatMul, Conv, Gemm) always use rank-2+.
+    // We derive N from the weight tensor's first dimension (io_shape[0]).
+    std::vector<int64_t> effective_scale_shape = scale_shape;
+    if (scale_shape.size() == 1 && !io_shape.empty() && io_shape[0] > 0) {
+      const int64_t n = static_cast<int64_t>(io_shape[0]);
+      if (scale_shape[0] % n == 0) {
+        effective_scale_shape = {n, scale_shape[0] / n};
+      }
+    }
+    RETURN_IF_NOT(effective_scale_shape.size() >= 2 && effective_scale_shape.size() <= 4,
                   "Block quantization scale tensors must have rank between 2 and 4 for LPBQ conversion");
-    RETURN_IF_NOT(scale_shape[0] > 0 && scale_shape[1] > 0,
+    RETURN_IF_NOT(effective_scale_shape[0] > 0 && effective_scale_shape[1] > 0,
                   "Block quantization scale tensor dimensions must be positive");
-    RETURN_IF_NOT(scale_shape[0] * scale_shape[1] == static_cast<int64_t>(scales.size()),
+    RETURN_IF_NOT(effective_scale_shape[0] * effective_scale_shape[1] == static_cast<int64_t>(scales.size()),
                   "Block quantization scale tensor shape product must equal number of scales");
 
     // Determine block axis (= ONNX axis attribute).
@@ -670,8 +679,8 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
 
     // Scale shape: [num_blocks_per_channel, num_channels] when axis=0
     //              [num_channels, num_blocks_per_channel] when axis=1
-    const uint32_t num_blocks_per_channel = static_cast<uint32_t>(scale_shape[axis]);
-    const uint32_t num_channels = static_cast<uint32_t>(scale_shape[1 - axis]);
+    const uint32_t num_blocks_per_channel = static_cast<uint32_t>(effective_scale_shape[axis]);
+    const uint32_t num_channels = static_cast<uint32_t>(effective_scale_shape[1 - axis]);
 
     // The conversion algorithm expects scales in block-major order [num_blocks, num_channels].
     // If axis=1 the raw tensor is channel-major [num_channels, num_blocks]; transpose it.

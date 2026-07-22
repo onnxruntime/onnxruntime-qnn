@@ -490,7 +490,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
           TensorInfo synthetic_weight_info = {};
           Ort::Status lpbq_status = qnn_model_wrapper.GetTensorInfo(synthetic_weight_def, synthetic_weight_info);
-          if (lpbq_status.IsOK() && synthetic_weight_info.quant_param.IsLPBQ()) {
+          if (!lpbq_status.IsOK()) {
+            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("LPBQ conversion failed: " + lpbq_status.GetErrorMessage()).c_str());
+          } else if (synthetic_weight_info.quant_param.IsLPBQ()) {
             //   Update quant params for the shape transformations:
             //   [N,K] -> transpose -> [K,N]: axis 0 (N) -> axis 1 (N)
             //   [K,N] -> unsqueeze -> [1,1,K,N]: axis 1 (N) -> axis 3 (N)
@@ -499,11 +501,17 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
             const std::vector<uint32_t> kn_shape = {gsl::narrow_cast<uint32_t>(K), gsl::narrow_cast<uint32_t>(N)};
             RETURN_IF_ERROR(quantize_param.HandleUnsqueeze<uint32_t>(kn_shape, weight_shape));
             used_lpbq = true;
+            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: LPBQ (BLOCKWISE_EXPANSION) for " + weight_tensor_name).c_str());
           }
         }
 
         if (!used_lpbq) {
           // BwFloatBlock (float block-quantized) path.
+          const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
+                               : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
+                               : !zp_is_symmetric ? "zero-points not symmetric"
+                                                  : "LPBQ conversion failed (enable_block_quant_weight_optimization=0)";
+          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: BW_FLOAT_BLOCK for " + weight_tensor_name + " [LPBQ skipped: " + reason + "]").c_str());
           // 2.5 Block-quantized offsets.
           std::vector<float> per_block_float_zp;
           if (inputs.size() > 3 && inputs[3].Exists()) {

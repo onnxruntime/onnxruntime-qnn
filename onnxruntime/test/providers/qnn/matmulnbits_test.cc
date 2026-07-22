@@ -996,7 +996,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K128_B4_BS64) {
   RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
 }
 
-TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K256_B4_BS64_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K256_B4_BS64_ZP) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   TestParams params;
