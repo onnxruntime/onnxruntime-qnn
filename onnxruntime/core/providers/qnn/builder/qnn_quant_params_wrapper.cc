@@ -649,16 +649,23 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");
     const int32_t io_rank = static_cast<int32_t>(io_shape.size());
 
+    // Determine block axis (= ONNX axis attribute).
+    constexpr int64_t DEFAULT_QDQ_AXIS = 1;
+    int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
+    if (axis < 0) axis += io_rank;
+    RETURN_IF_NOT(axis == 0 || axis == 1,
+                  "Only axis 0 or 1 is supported for block quantization LPBQ conversion");
+
     // Get scale tensor shape to determine block/channel dimensions.
     // Scale tensor may be rank 2 (e.g., MatMul/Gemm) or higher rank (e.g., Conv with rank-4 weights).
-    // Only the first two dimensions (indexed by onnx_axis and 1 - onnx_axis) are used for LPBQ conversion.
+    // Only the first two dimensions (indexed by axis and 1 - axis) are used for LPBQ conversion.
     const std::vector<int64_t> scale_shape =
         utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
     // MatMulNBits can sometimes produce rank-1 scales; other ops (MatMul, Conv, Gemm) always use rank-2+.
-    // We derive N from the weight tensor's first dimension (io_shape[0]).
+    // We derive N from the weight tensor's dimension depending on axis dimension.
     std::vector<int64_t> effective_scale_shape = scale_shape;
-    if (scale_shape.size() == 1 && !io_shape.empty() && io_shape[0] > 0) {
-      const int64_t n = static_cast<int64_t>(io_shape[0]);
+    if (scale_shape.size() == 1 && !io_shape.empty() && io_rank > 1 && io_shape[1 - axis] > 0) {
+      const int64_t n = static_cast<int64_t>(io_shape[1 - axis]);
       if (scale_shape[0] % n == 0) {
         effective_scale_shape = {n, scale_shape[0] / n};
       }
@@ -669,13 +676,6 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
                   "Block quantization scale tensor dimensions must be positive");
     RETURN_IF_NOT(effective_scale_shape[0] * effective_scale_shape[1] == static_cast<int64_t>(scales.size()),
                   "Block quantization scale tensor shape product must equal number of scales");
-
-    // Determine block axis (= ONNX axis attribute).
-    constexpr int64_t DEFAULT_QDQ_AXIS = 1;
-    int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
-    if (axis < 0) axis += io_rank;
-    RETURN_IF_NOT(axis == 0 || axis == 1,
-                  "Only axis 0 or 1 is supported for block quantization LPBQ conversion");
 
     // Scale shape: [num_blocks_per_channel, num_channels] when axis=0
     //              [num_channels, num_blocks_per_channel] when axis=1
