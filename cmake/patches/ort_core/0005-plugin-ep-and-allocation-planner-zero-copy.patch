@@ -3,34 +3,15 @@ From: QNN EP team <noreply@qualcomm.com>
 Date: Sun, 20 Jul 2026 00:00:00 +0000
 Subject: [PATCH] Plugin EP + allocation planner: enable zero-copy at CPU EP <-> QNN EP boundary
 
-Two related fixes that together enable zero-copy across the CPU EP <-> QNN EP
-partition boundary when QNN HTP advertises HOST_ACCESSIBLE (RPCMEM) memory.
+1. ep_plugin_provider_interfaces: fall back to host_accessible_memory_info
+   when device_memory_info is null, and override GetOrtDeviceByMemType so
+   CPUInput/CPUOutput/Default resolve to HOST_ACCESSIBLE when the default
+   device is HOST_ACCESSIBLE.
 
-1. ep_plugin_provider_interfaces:
-   a. GetOrtDeviceForPluginEp: fall back to host_accessible_memory_info when
-      device_memory_info is null so default_device_ = HOST_ACCESSIBLE (RPCMEM).
-   b. PluginExecutionProvider::GetOrtDeviceByMemType: override to return
-      HOST_ACCESSIBLE for OrtMemTypeCPUInput/CPUOutput/Default when
-      default_device_ is HOST_ACCESSIBLE.
-
-2. allocation_planner::determine_device:
-   `determine_device` breaks a producer/consumer tie for a cross-EP edge with
-   the intent (per its comment) of preferring host-accessible memory. It picked
-   via `output_device.Type() != OrtDevice::CPU`, but HOST_ACCESSIBLE memory
-   still has `Type() == CPU` (see ortdevice.h: UsesCpuMemory returns true for
-   both plain CPU and HOST_ACCESSIBLE). So the "prefer host accessible" branch
-   never fires when the HOST_ACCESSIBLE side is the CPU-typed one.
-
-   Concrete failure this fixes: with (1) landed, QNN EP advertises
-   HOST_ACCESSIBLE, so `GetOrtDeviceByMemType` for a QNN output returns
-   CPU/HOST_ACCESSIBLE. But its consumer on the stock CPU EP returns
-   CPU/DEFAULT for CPUInput. The tiebreak then discards HOST_ACCESSIBLE and
-   plans plain CPU, forcing QnnModel::BindQnnTensorMemoryToOrtValueMemory
-   into the clientBuf/memcpy path and firing WarnZeroCopyFallbackOnce for
-   every partition-boundary tensor.
-
-   Fix: discriminate on MemType() == HOST_ACCESSIBLE instead of Type() != CPU.
-   Matches the code comment's stated intent.
+2. allocation_planner::determine_device: tiebreak on
+   MemType() == HOST_ACCESSIBLE, not Type() != CPU. HOST_ACCESSIBLE has
+   Type() == CPU, so the old check never fired at the CPU-EP <-> QNN-EP
+   edge and forced the clientBuf/memcpy path.
 ---
 diff --git a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
 index b94497853f..546cef0451 100644
@@ -45,7 +26,7 @@ index b94497853f..546cef0451 100644
    // If there are multiple OrtEpDevice instances, the device_memory_info must be consistent for all.
 
    ORT_ENFORCE(!ep_devices.empty());  // Should not be possible to create an EP without OrtEpDevices.
-@@ -150,7 +150,36 @@ static OrtDevice GetOrtDeviceForPluginEp(gsl::span<const OrtEpDevice* const> ep_
+@@ -150,7 +150,26 @@ static OrtDevice GetOrtDeviceForPluginEp(gsl::span<const OrtEpDevice* const> ep_
                "': expected all OrtEpDevice instances to use the same device_memory_info.");
    }
 
@@ -54,25 +35,15 @@ index b94497853f..546cef0451 100644
 +    return device_memory_info->device;
 +  }
 +
-+  // Fallback: if only host_accessible_memory_info is available (e.g. QNN HTP with RPCMEM,
-+  // where the device's native memory IS host-accessible and there is no separate device buffer),
-+  // use it as the EP's default device. This ensures ORT's memory planner routes graph inputs
-+  // to HOST_ACCESSIBLE memory and skips the CPU copy that would otherwise be inserted before
-+  // every kernel invocation.
++  // Fall back to host_accessible_memory_info (e.g. QNN HTP with RPCMEM,
++  // where the EP's native memory IS host-accessible).
 +  const OrtMemoryInfo* host_accessible_memory_info = ep_devices[0]->host_accessible_memory_info;
 +  return host_accessible_memory_info != nullptr ? host_accessible_memory_info->device : OrtDevice();
 +}
 +
 +OrtDevice PluginExecutionProvider::GetOrtDeviceByMemType(OrtMemType mem_type) const {
-+  // When this plugin EP has a HOST_ACCESSIBLE default device (e.g. QNN HTP with RPCMEM),
-+  // returning it for OrtMemTypeCPUInput causes the allocation planner to place CPU EP
-+  // outputs (that feed into this EP's inputs) in HOST_ACCESSIBLE memory directly.
-+  // This enables zero-copy at the CPU EP ↔ QNN EP partition boundary by allowing
-+  // both EPs to share RPCMEM buffers without an extra copy.
-+  //
-+  // For OrtMemTypeCPUOutput (outputs that must be readable by the CPU EP consumer),
-+  // we also return the HOST_ACCESSIBLE device — RPCMEM is always CPU-accessible by
-+  // definition, so this is safe.
++  // Route CPUInput/CPUOutput/Default to HOST_ACCESSIBLE when that's our
++  // default device, so CPU EP <-> QNN EP boundary tensors share RPCMEM.
 +  if (default_device_.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE) {
 +    if (mem_type == OrtMemTypeCPUInput || mem_type == OrtMemTypeCPUOutput ||
 +        mem_type == OrtMemTypeDefault) {
@@ -87,16 +58,10 @@ diff --git a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h 
 index 8218571a8b..0b14fd27b9 100644
 --- a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
 +++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
-@@ -142,6 +142,14 @@ class PluginExecutionProvider : public IExecutionProvider {
+@@ -142,6 +142,8 @@ class PluginExecutionProvider : public IExecutionProvider {
 
    std::unique_ptr<profiling::EpProfiler> GetProfiler() override;
 
-+  // Override to route CPU EP outputs that feed QNN EP inputs through
-+  // HOST_ACCESSIBLE (RPCMEM) memory when available. Without this, the base
-+  // class always returns plain CPU for OrtMemTypeCPUInput, forcing inter-
-+  // partition tensors (CPU EP → QNN EP) through the clientBuf/copy path.
-+  // With this override the allocation planner places CPU EP outputs in RPCMEM
-+  // directly, enabling zero-copy across partition boundaries.
 +  OrtDevice GetOrtDeviceByMemType(OrtMemType mem_type) const override;
 +
    ProviderOptions GetProviderOptions() const override;
