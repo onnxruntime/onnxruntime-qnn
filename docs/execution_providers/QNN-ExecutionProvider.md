@@ -207,10 +207,12 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
 |'1'|Enable the float32 model to be inferenced with fp16 precision.|
 
-|`"disable_htp_monolithic_lstm"`|Description|
+|`"enable_htp_monolithic_lstm"`|Description|
 |---|---|
-|'0'|Default. HTP uses the monolithic LSTM graph configuration.|
-|'1'|Disable the monolithic LSTM graph configuration on HTP.|
+|'0'|Default. LSTM is expanded into per-timestep cells at the ORT layer.|
+|'1'|Run the monolithic LSTM kernel on HTP (single graph node).|
+
+Warning: Enabling HTP Monolithic LSTM may improve session creation time, but this improvement may come with a regression in inference performance.
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|

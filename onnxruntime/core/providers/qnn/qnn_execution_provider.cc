@@ -441,7 +441,7 @@ void QnnEp::ParsePerSocHtpConfigs() {
     qnn::HtpGraphConfigs_t config{vtcm_size_in_mb_per_soc[idx],
                                   htp_graph_configs_.htp_graph_finalization_opt_mode,
                                   htp_graph_configs_.enable_htp_fp16_precision,
-                                  htp_graph_configs_.disable_htp_monolithic_lstm};
+                                  htp_graph_configs_.enable_htp_monolithic_lstm};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -895,12 +895,15 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                  false,
                                                                  logger_);
 
-  // HTP monolithic lstm
-  htp_graph_configs_.disable_htp_monolithic_lstm = ParseBoolOption(ort_api,
-                                                                   session_options_,
-                                                                   FormatEPConfigKey("disable_htp_monolithic_lstm"),
-                                                                   false,
-                                                                   logger_);
+  // HTP monolithic lstm. Default false: lower LSTM as ORT-side per-timestep unrolled cells
+  // (expand at ORT). Set to true to run the monolithic LSTM kernel on HTP.
+  static constexpr const char* kEnableHtpMonolithicLstm = "enable_htp_monolithic_lstm";
+  htp_graph_configs_.enable_htp_monolithic_lstm = ParseBoolOption(ort_api,
+                                                                  session_options_,
+                                                                  FormatEPConfigKey(kEnableHtpMonolithicLstm),
+                                                                  false,
+                                                                  logger_);
+  model_settings_.enable_htp_monolithic_lstm = htp_graph_configs_.enable_htp_monolithic_lstm;
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
@@ -1649,7 +1652,7 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_precision_config->customConfig = htp_graph_precision_config;
     }
 
-    if (!configs.disable_htp_monolithic_lstm) {
+    if (configs.enable_htp_monolithic_lstm) {
       gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_monolithic_lstm_config = configs_builder.PushCustomConfig();
       htp_graph_monolithic_lstm_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM;
       htp_graph_monolithic_lstm_config->monolithicLstm = true;

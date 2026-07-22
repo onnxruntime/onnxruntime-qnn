@@ -122,7 +122,7 @@ typedef struct HtpGraphConfigs {
   int32_t vtcm_size_in_mb = 0;
   HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
   bool enable_htp_fp16_precision = false;
-  bool disable_htp_monolithic_lstm = false;
+  bool enable_htp_monolithic_lstm = false;
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {
