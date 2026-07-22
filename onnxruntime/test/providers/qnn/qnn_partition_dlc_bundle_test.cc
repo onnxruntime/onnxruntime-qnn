@@ -63,7 +63,7 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_DisabledByDefault) {
                              {TestInputDef<float>({1, 2, 3}, false, data),
                               TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
-      opts, 13, ExpectedEPNodeAssignment::All);
+      opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   EXPECT_FALSE(fs::exists(tmp.path() / "manifest.json"))
       << "Bundle must not be produced unless dump_partition_dlc_bundle=1";
@@ -82,7 +82,7 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_MissingDirRejected) {
                                  {TestInputDef<float>({1, 2, 3}, false, data),
                                   TestInputDef<float>({1, 2, 3}, false, data)},
                                  {}, {}, kOnnxDomain),
-          opts, 13, ExpectedEPNodeAssignment::All));
+          opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All}));
 }
 
 // IR-backend serialization is forced when bundle is enabled; Run() therefore
@@ -102,7 +102,7 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_SinglePartition) {
                                {TestInputDef<float>({1, 2, 3}, false, data),
                                 TestInputDef<float>({1, 2, 3}, false, data)},
                                {}, {}, kOnnxDomain),
-        opts, 13, ExpectedEPNodeAssignment::All);
+        opts, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
   } catch (const std::exception&) {
     // Expected: IR backend cannot execute. We only care about compile-time emission.
   }
@@ -153,7 +153,7 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_MultiPartition) {
   };
 
   try {
-    RunQnnModelTest(build_model, opts, 14, ExpectedEPNodeAssignment::Some);
+    RunQnnModelTest(build_model, opts, 14, EPVerificationParams{ExpectedEPNodeAssignment::Some});
   } catch (const std::exception&) {
   }
 
@@ -191,7 +191,7 @@ TEST_F(QnnCPUBackendTests, PartitionDlcBundle_DirectQnnToQnnEdge) {
   };
 
   try {
-    RunQnnModelTest(build_model, opts, 14, ExpectedEPNodeAssignment::Some);
+    RunQnnModelTest(build_model, opts, 14, EPVerificationParams{ExpectedEPNodeAssignment::Some});
   } catch (const std::exception&) {
   }
 
