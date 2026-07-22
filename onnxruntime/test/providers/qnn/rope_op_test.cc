@@ -96,6 +96,47 @@ TEST_F(QnnHTPBackendTests, RotaryEmbedding_Basic) {
       kDefaultRopeOpToleranceFp16);
 }
 
+// Rank-3 input [B, S, NH*HS] instead of rank-4 [B, NH, S, HS].
+// Exercises the reshape/transpose layout adapter added around the native QNN_OP_ROTARY_EMBEDDING call.
+TEST_F(QnnHTPBackendTests, RotaryEmbedding_Rank3Input) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+
+  constexpr int64_t batch_size = 1;
+  constexpr int64_t num_heads = 2;
+  constexpr int64_t seq_len = 4;
+  constexpr int64_t head_size = 8;
+  constexpr int64_t hidden_size = num_heads * head_size;
+  constexpr int64_t rotary_dim = head_size;
+
+  auto input_f32 = GetFloatDataInRange(-1.0f, 1.0f, batch_size * seq_len * hidden_size);
+  auto cos_f32 = GetFloatDataInRange(-1.0f, 1.0f, seq_len * (rotary_dim / 2));
+  auto sin_f32 = GetFloatDataInRange(-1.0f, 1.0f, seq_len * (rotary_dim / 2));
+
+  TestInputDef<float> input_def_f32({batch_size, seq_len, hidden_size}, false, input_f32);
+  TestInputDef<float> cos_def_f32({seq_len, rotary_dim / 2}, false, cos_f32);
+  TestInputDef<float> sin_def_f32({seq_len, rotary_dim / 2}, false, sin_f32);
+
+  TestInputDef<Ort::Float16_t> input_def_fp16 = ConvertToFP16InputDef(input_def_f32);
+  TestInputDef<Ort::Float16_t> cos_def_fp16 = ConvertToFP16InputDef(cos_def_f32);
+  TestInputDef<Ort::Float16_t> sin_def_fp16 = ConvertToFP16InputDef(sin_def_f32);
+
+  std::vector<int64_t> position_ids = {0, 1, 2, 3};
+
+  RunRopeOpTest<Ort::Float16_t>(
+      input_def_fp16,
+      TestInputDef<int64_t>({batch_size, seq_len}, false, position_ids),
+      cos_def_fp16,
+      sin_def_fp16,
+      {test::MakeAttribute("interleaved", int64_t{0}),
+       test::MakeAttribute("num_heads", num_heads),
+       test::MakeAttribute("rotary_embedding_dim", rotary_dim)},
+      /*opset_version*/ 7,
+      ExpectedEPNodeAssignment::All,
+      kDefaultRopeOpToleranceFp16);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
