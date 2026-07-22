@@ -1,14 +1,36 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: QNN EP team <noreply@qualcomm.com>
-Date: Fri, 18 Jul 2026 00:00:00 +0000
-Subject: [PATCH] PluginExecutionProvider: fix default_device_ and add GetOrtDeviceByMemType
+Date: Sun, 20 Jul 2026 00:00:00 +0000
+Subject: [PATCH] Plugin EP + allocation planner: enable zero-copy at CPU EP <-> QNN EP boundary
 
-Two related fixes in ep_plugin_provider_interfaces:
-1. GetOrtDeviceForPluginEp: fall back to host_accessible_memory_info when
-   device_memory_info is null so default_device_ = HOST_ACCESSIBLE (RPCMEM).
-2. PluginExecutionProvider::GetOrtDeviceByMemType: override to return
-   HOST_ACCESSIBLE for OrtMemTypeCPUInput/CPUOutput/Default when default_device_
-   is HOST_ACCESSIBLE, enabling zero-copy at CPU EP/QNN EP partition boundaries.
+Two related fixes that together enable zero-copy across the CPU EP <-> QNN EP
+partition boundary when QNN HTP advertises HOST_ACCESSIBLE (RPCMEM) memory.
+
+1. ep_plugin_provider_interfaces:
+   a. GetOrtDeviceForPluginEp: fall back to host_accessible_memory_info when
+      device_memory_info is null so default_device_ = HOST_ACCESSIBLE (RPCMEM).
+   b. PluginExecutionProvider::GetOrtDeviceByMemType: override to return
+      HOST_ACCESSIBLE for OrtMemTypeCPUInput/CPUOutput/Default when
+      default_device_ is HOST_ACCESSIBLE.
+
+2. allocation_planner::determine_device:
+   `determine_device` breaks a producer/consumer tie for a cross-EP edge with
+   the intent (per its comment) of preferring host-accessible memory. It picked
+   via `output_device.Type() != OrtDevice::CPU`, but HOST_ACCESSIBLE memory
+   still has `Type() == CPU` (see ortdevice.h: UsesCpuMemory returns true for
+   both plain CPU and HOST_ACCESSIBLE). So the "prefer host accessible" branch
+   never fires when the HOST_ACCESSIBLE side is the CPU-typed one.
+
+   Concrete failure this fixes: with (1) landed, QNN EP advertises
+   HOST_ACCESSIBLE, so `GetOrtDeviceByMemType` for a QNN output returns
+   CPU/HOST_ACCESSIBLE. But its consumer on the stock CPU EP returns
+   CPU/DEFAULT for CPUInput. The tiebreak then discards HOST_ACCESSIBLE and
+   plans plain CPU, forcing QnnModel::BindQnnTensorMemoryToOrtValueMemory
+   into the clientBuf/memcpy path and firing WarnZeroCopyFallbackOnce for
+   every partition-boundary tensor.
+
+   Fix: discriminate on MemType() == HOST_ACCESSIBLE instead of Type() != CPU.
+   Matches the code comment's stated intent.
 ---
 diff --git a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
 index b94497853f..546cef0451 100644
@@ -16,17 +38,17 @@ index b94497853f..546cef0451 100644
 +++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
 @@ -122,7 +122,7 @@ struct PluginEpMetaDefNameFunctor {
  //
- 
+
  static OrtDevice GetOrtDeviceForPluginEp(gsl::span<const OrtEpDevice* const> ep_devices) {
 -  // Get the OrtDevice from OrtEpDevice.device_memory_info if it is set. Otherwise, we set it to CPU.
 +  // Get the OrtDevice from OrtEpDevice.device_memory_info if it is set.
    // If there are multiple OrtEpDevice instances, the device_memory_info must be consistent for all.
- 
+
    ORT_ENFORCE(!ep_devices.empty());  // Should not be possible to create an EP without OrtEpDevices.
 @@ -150,7 +150,36 @@ static OrtDevice GetOrtDeviceForPluginEp(gsl::span<const OrtEpDevice* const> ep_
                "': expected all OrtEpDevice instances to use the same device_memory_info.");
    }
- 
+
 -  return device_memory_info != nullptr ? device_memory_info->device : OrtDevice();
 +  if (device_memory_info != nullptr) {
 +    return device_memory_info->device;
@@ -59,16 +81,16 @@ index b94497853f..546cef0451 100644
 +  }
 +  return Base::GetOrtDeviceByMemType(mem_type);
  }
- 
+
  static const Node* FindFirstNodeAssignedToOtherEP(const std::string& ep_type,
 diff --git a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
 index 8218571a8b..0b14fd27b9 100644
 --- a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
 +++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
 @@ -142,6 +142,14 @@ class PluginExecutionProvider : public IExecutionProvider {
- 
+
    std::unique_ptr<profiling::EpProfiler> GetProfiler() override;
- 
+
 +  // Override to route CPU EP outputs that feed QNN EP inputs through
 +  // HOST_ACCESSIBLE (RPCMEM) memory when available. Without this, the base
 +  // class always returns plain CPU for OrtMemTypeCPUInput, forcing inter-
@@ -78,7 +100,19 @@ index 8218571a8b..0b14fd27b9 100644
 +  OrtDevice GetOrtDeviceByMemType(OrtMemType mem_type) const override;
 +
    ProviderOptions GetProviderOptions() const override;
- 
+
    bool IsGraphCaptureEnabled() const override;
--- 
+diff --git a/onnxruntime/core/framework/allocation_planner.cc b/onnxruntime/core/framework/allocation_planner.cc
+--- a/onnxruntime/core/framework/allocation_planner.cc
++++ b/onnxruntime/core/framework/allocation_planner.cc
+@@ -744,7 +744,7 @@
+           return (output_device.GetAlignment() >= suggested_device.GetAlignment()) ? output_device : suggested_device;
+         } else {
+           // prefer host accessible memory device allocator as it most likely has the higher alignment requirement
+-          return (output_device.Type() != OrtDevice::CPU) ? output_device : suggested_device;
++          return (output_device.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE) ? output_device : suggested_device;
+         }
+       } else {
+         return (output_is_cpu) ? output_device : suggested_device;
+--
 2.50.0

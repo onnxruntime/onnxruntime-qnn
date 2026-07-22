@@ -488,7 +488,7 @@ onnxruntime_fetchcontent_declare(
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Add-Roialign-Op-to-HTP.patch &&
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0004-Update-argument-for-monolithic-lstm.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0005-GetOrtDeviceForPluginEp-fallback-to-host-accessible-memory.patch
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0005-plugin-ep-and-allocation-planner-zero-copy.patch
   EXCLUDE_FROM_ALL)
 FetchContent_Populate(ort_core)
 
