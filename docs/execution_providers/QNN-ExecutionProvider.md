@@ -59,7 +59,7 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) 
+- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - A single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
 - Archives (`.zip` and `.tgz`)
   - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Windows and Linux hosts and targets.
@@ -1148,6 +1148,46 @@ g_ort->AddSessionConfigEntry(session_options, kOrtSessionOptionEpContextEmbedMod
 # Python
 options.add_session_config_entry("ep.context_embed_mode", "1")
 ```
+
+### At-rest encryption of the context binary (ORT API v28+)
+
+By default the QNN context binary is written to / read from disk in plaintext (as an external
+file when `ep.context_embed_mode` is `"0"`, or embedded in the EPContext model when `"1"`). ORT
+API v28 adds a write/read callback pair so an application can encrypt the binary before it is
+persisted and decrypt it before QNN consumes it, without either version of ONNX Runtime having
+any built-in cipher.
+
+The callback-based encryption/decryption path described here applies only when
+`ep.context_embed_mode` is `"0"`. When `ep.context_embed_mode` is `"1"` (embedded), the context
+binary is stored within the EPContext model and applications should use ONNX Runtime model
+protection mechanisms (for example, `SetOutputModelWriteFunc`) to protect the generated ONNX
+model. If no callback is registered while `ep.context_embed_mode` is `"0"`, the EP uses the
+legacy plaintext behavior.
+
+- **Write callback** (`SetEpContextDataWriteFunc`) is set on `Ort::ModelCompilationOptions`
+  during a compile session. The EP hands the plaintext context bytes to the callback instead of
+  writing them to disk; the callback is responsible for encrypting and persisting them itself.
+- **Read callback** (`SetEpContextDataReadFunc`) is set on `Ort::SessionOptions` for a later
+  inference session. The EP asks the callback for the plaintext bytes (by name) instead of
+  reading the on-disk file directly; the callback decrypts and returns them.
+- Registering **no callback** is fully backward compatible — the EP falls back to the original
+  plaintext disk read/write, unchanged.
+- File-mapped weights and this feature are mutually exclusive for a given session: registering a
+  read callback disables file mapping for that session, since file mapping requires reading the
+  on-disk bytes directly.
+
+**Scope — what is (and isn't) covered:**
+
+- Only the standard EPContext artifact is encrypted: the external `_qnn.bin` (or the
+  `EP_CACHE_CONTEXT`-referenced buffer) and the context-binary-list buffers used by multi-SoC /
+  Flexible Context Binary compilation.
+- The QNN IR-serializer `.dlc` artifact (written when the QNN IR serializer backend is used) and
+  the DLC consumed by the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend)
+  node's `DlcConfig_create` are written to and read from disk directly and are **not** covered by
+  these callbacks. An application combining Genie or the IR serializer backend with an encrypting
+  write callback will still get a plaintext `.dlc` on disk.
+- The cipher itself is entirely the application's responsibility — ORT and the QNN EP only provide
+  the callback plumbing.
 
 ## Parallel Graph Preparation
 For general context, please read the [QNN context binary cache feature](#qnn-context-binary-cache-feature) section above.

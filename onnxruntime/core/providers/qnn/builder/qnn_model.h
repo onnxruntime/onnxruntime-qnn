@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
@@ -61,7 +62,9 @@ class QnnModel {
 
   Ort::Status SetupQnnInputOutput(const Ort::Logger& logger);
 
-  Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
+  Ort::Status ExecuteGraph(OrtKernelContext* context,
+                           const Ort::Logger& logger,
+                           const qnn::EpContextIoDispatch& io_dispatch);
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = graph_outputs_.tensors.find(name);
@@ -157,7 +160,7 @@ class QnnModel {
 
   // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
   // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
-  Ort::Status RecoverFromSSR(const Ort::Logger& logger);
+  Ort::Status RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch);
 
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,

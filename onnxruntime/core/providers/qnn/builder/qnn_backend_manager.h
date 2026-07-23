@@ -29,6 +29,7 @@
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
@@ -192,6 +193,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::string node_name,
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size,
+      const qnn::EpContextIoDispatch& io_dispatch,
       bool is_multi_soc_buffer = false);
 
   // Remove a single context handle from all tracking structures and free it via contextFree.
@@ -202,9 +204,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
   // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
-  // file I/O logic.
+  // file I/O logic. If io_dispatch is non-null and carries a read callback, the
+  // callback is dispatched instead of reading from disk.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer);
+                                    std::vector<char>& buffer,
+                                    const qnn::EpContextIoDispatch& io_dispatch);
 
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
@@ -224,6 +228,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+      // Defaults to a no-callback dispatch so callers that have nothing to do with EPContext
+      // encryption (e.g. compatibility probes) don't have to construct and pass a dummy.
+      const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false);
@@ -489,11 +496,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          const qnn::EpContextIoDispatch& io_dispatch,
                                                           bool enable_htp_graph_splitting = false);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
-                                                            std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+                                                            std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                         const qnn::EpContextIoDispatch& io_dispatch);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   Ort::Status CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,

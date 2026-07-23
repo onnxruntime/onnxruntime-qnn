@@ -24,6 +24,7 @@
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -1253,7 +1254,18 @@ Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
 }
 
 Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                                     std::vector<char>& buffer) {
+                                                     std::vector<char>& buffer,
+                                                     const qnn::EpContextIoDispatch& io_dispatch) {
+  if (io_dispatch.HasReadCallback()) {
+    const std::string filename = std::filesystem::path(context_bin_filepath).filename().string();
+    RETURN_IF_ERROR(io_dispatch.Read(filename, buffer));
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    ("EPContext binary decrypted via App read callback: " + filename +
+                     " (" + std::to_string(buffer.size()) + " bytes)")
+                        .c_str());
+    return Ort::Status();
+  }
+
   size_t buffer_size;
   RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
 
@@ -1270,6 +1282,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+    const qnn::EpContextIoDispatch& io_dispatch,
     bool enable_htp_graph_splitting) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
@@ -1340,12 +1353,13 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     }
   }
 #endif
-  return CreateContextFromListAsync(configs_vec.data(), context_bin_map);
+  return CreateContextFromListAsync(configs_vec.data(), context_bin_map, io_dispatch);
 }
 
 Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                                           std::unordered_map<std::string,
-                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          const qnn::EpContextIoDispatch& io_dispatch) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
@@ -1358,7 +1372,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     auto context_bin_filepath = it.first;
 
     std::vector<char> buffer;
-    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer));
+    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer, io_dispatch));
 
     size_t buffer_size = buffer.size();
     buffer_list.push_back(std::move(buffer));
@@ -1727,6 +1741,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     std::string node_name,
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
     int64_t max_spill_fill_size,
+    const qnn::EpContextIoDispatch& io_dispatch,
     bool is_multi_soc_buffer) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
@@ -1888,11 +1903,13 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("Failed to create context with file mapping enabled. Error: " + QnnErrorHandleToString(rt) + ", Code : " + std::to_string(rt) + ". Retrying with feature disabled.").c_str());
 
         // Read context bin from file since file mapping has failed
-        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, backup_buffer));
+        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, backup_buffer, io_dispatch));
 
         bin_buffer = static_cast<void*>(backup_buffer.data());
       }
     }
+#else
+  ORT_UNUSED_PARAMETER(io_dispatch);
 #endif
     if (!use_file_mapping || rt != QNN_SUCCESS) {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
@@ -1959,12 +1976,22 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool enable_file_mapped_weights,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+    const qnn::EpContextIoDispatch& io_dispatch,
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
     bool enable_htp_graph_splitting) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
+
+    // Shared manager: file_mapped_weights_enabled_ was latched by an earlier session and
+    // wouldn't otherwise see this session's read callback.
+    if (file_mapped_weights_enabled_ && io_dispatch.HasReadCallback()) {
+      file_mapped_weights_enabled_ = false;
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      "EPContext read callback registered on a session reusing an already-set-up "
+                      "backend manager; disabling file mapping for this session.");
+    }
 
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
@@ -1973,6 +2000,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
+                                                           io_dispatch,
                                                            enable_htp_graph_splitting);
       }
 
@@ -2122,6 +2150,7 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
+                                                               io_dispatch,
                                                                enable_htp_graph_splitting)
                  : CreateContext(enable_htp_weight_sharing,
                                  enable_htp_extended_udma_mode,
