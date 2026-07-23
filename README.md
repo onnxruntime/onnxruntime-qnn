@@ -26,13 +26,13 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 
 ## Platform Support
 
-| Package | Windows ARM64 | Windows ARM64EC | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
-|---|---|---|---|---|---|---|---|
-| Python Wheel | Inference | — | — | AOT compilation | Inference | AOT compilation | — |
-| NuGet | - | — | Inference | — | — | — | — |
-| ZIP | Inference | Inference | Inference | AOT compilation | — | AOT compilation | — |
-| tgz | — | — | — | — | Inference | — | — |
-| Maven | — | — | — | — | — | — | Inference |
+| Package | Windows ARM64 | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|---|
+| Python Wheel | Inference | — | AOT compilation | Inference | AOT compilation | — |
+| NuGet | Inference | Inference | AOT compilation | — | — | — |
+| ZIP | Inference | Inference | AOT compilation | — | AOT compilation | — |
+| tgz | — | — | — | Inference | — | — |
+| Maven | — | — | — | — | — | Inference |
 
 ---
 
@@ -99,7 +99,11 @@ pip install onnxruntime-qnn==2.4.0
 - Python 3.11 – 3.14
 - Numpy 1.25.2 or >= 1.26.4
 
-For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 (ARM64X))
+### NuGet
+
+- **2.5.0+**: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) — a single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
+- **2.3.0 and 2.4.0**: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) - Windows ARM64 replaced with Windows ARM64 (ARM64x).
+- **2.0.0 to 2.2.0**: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) - Windows ARM64 only.
 
 ### Linux Wheels and .tgz Files
 
