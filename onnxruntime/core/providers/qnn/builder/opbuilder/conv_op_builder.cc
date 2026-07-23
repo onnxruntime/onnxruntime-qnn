@@ -1211,6 +1211,20 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                 ("Using DepthWiseConv2d instead of Conv2d for node " + node_unit.Name()).c_str());
   }
 
+  // reuse_sparse_indices parameter: only for Conv2d and Conv3d (not DepthWiseConv2d, not ConvTranspose).
+  // Defaults to false. Set to true when the same sparse weight indices are reused across inference calls.
+  if (conv_type == OnnxConvType::kConv && !is_depthwise_conv2d) {
+    Qnn_Scalar_t reuse_sparse_scalar = QNN_SCALAR_INIT;
+    reuse_sparse_scalar.dataType = QNN_DATATYPE_BOOL_8;
+    reuse_sparse_scalar.bool8Value = 0;
+    const char* param_name = is_3d_conv ? QNN_OP_CONV_3D_PARAM_REUSE_SPARSE_INDICIES
+                                        : QNN_OP_CONV_2D_PARAM_REUSE_SPARSE_INDICES;
+    QnnParamWrapper reuse_sparse_paramwrapper(node_unit.Index(), node_unit.Name(),
+                                              param_name, reuse_sparse_scalar);
+    param_tensor_names.push_back(reuse_sparse_paramwrapper.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(reuse_sparse_paramwrapper));
+  }
+
   std::string output_node_type;
   if (is_3d_conv) {
     if (conv_type == OnnxConvType::kConv) {

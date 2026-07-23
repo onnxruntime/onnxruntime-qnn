@@ -527,6 +527,12 @@ void QnnHTPBackendTests::SetUp() {
     if (!query_status.IsOK()) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("QueryQnnPlatformAttributesDirectly failed: " + query_status.GetErrorMessage()).c_str());
     } else {
+      auto version_to_string = [](Qnn_Version_t version) {
+        return std::to_string(version.major) + "." +
+               std::to_string(version.minor) + "." +
+               std::to_string(version.patch);
+      };
+
       // Create a string stream to build the output message
       std::stringstream ss;
       ss << "QNN platform attributes: "
@@ -534,7 +540,9 @@ void QnnHTPBackendTests::SetUp() {
          << ", DLBC supported: " << attrs.dlbc_supported
          << ", VTCM size MB: " << attrs.vtcm_size_mb
          << ", SoC model: " << attrs.soc_model
-         << ", Backend API version: " << attrs.backend_api_version;
+         << ", SDK version: " << attrs.sdk_version
+         << ", Core API version: " << version_to_string(attrs.core_api_version)
+         << ", Backend API version: " << version_to_string(attrs.backend_api_version);
 
       std::string platform_info_str = ss.str();
       std::cout << platform_info_str << std::endl;
@@ -648,18 +656,9 @@ void QnnIRBackendTests::SetUp() {
   }
 }
 
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
-
-// TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
-BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
-#else
-BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
-BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
-#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
@@ -735,6 +734,7 @@ Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackend
   auto logFreeFn = qnn_interface->QNN_INTERFACE_VER_NAME.logFree;
   auto getPlatformInfoFn = qnn_interface->QNN_INTERFACE_VER_NAME.deviceGetPlatformInfo;
   auto freePlatformInfoFn = qnn_interface->QNN_INTERFACE_VER_NAME.deviceFreePlatformInfo;
+  auto backendGetBuildIdFn = qnn_interface->QNN_INTERFACE_VER_NAME.backendGetBuildId;
   auto backendGetApiVersionFn = qnn_interface->QNN_INTERFACE_VER_NAME.backendGetApiVersion;
 
   // Create a log handle (optional, can pass nullptr)
@@ -771,14 +771,22 @@ Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackend
   if (platform_info_ptr->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
     const QnnDevice_PlatformInfoV1_t& p = platform_info_ptr->v1;
 
-    // Get SDK version from backend API version
+    // Get SDK version.
+    if (backendGetBuildIdFn) {
+      char* backend_build_id = nullptr;
+      qnn_status = backendGetBuildIdFn((const char**)&backend_build_id);
+      if (qnn_status == QNN_SUCCESS) {
+        out.sdk_version = std::string(backend_build_id);
+      }
+    }
+
+    // Get core and backend API version.
     if (backendGetApiVersionFn) {
       Qnn_ApiVersion_t api_version;
       qnn_status = backendGetApiVersionFn(&api_version);
       if (qnn_status == QNN_SUCCESS) {
-        out.backend_api_version = std::to_string(api_version.coreApiVersion.major) + "." +
-                                  std::to_string(api_version.coreApiVersion.minor) + "." +
-                                  std::to_string(api_version.coreApiVersion.patch);
+        out.core_api_version = api_version.coreApiVersion;
+        out.backend_api_version = api_version.backendApiVersion;
       }
     }
 

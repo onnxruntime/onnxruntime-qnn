@@ -16,7 +16,7 @@ index f08b974d60..a50d771234 100644
              ORT_THROW("Wrong value for htp_arch. select from: " + str);
            }
 -        } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" || key == "extended_udma") {
-+        } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" || key == "extended_udma" || key == "disable_htp_monolithic_lstm") {
++        } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" || key == "extended_udma" || key == "enable_htp_monolithic_lstm") {
            std::unordered_set<std::string> supported_options = {"0", "1"};
            if (supported_options.find(value) == supported_options.end()) {
              std::ostringstream str_stream;
