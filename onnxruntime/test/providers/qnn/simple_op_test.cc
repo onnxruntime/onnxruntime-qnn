@@ -568,9 +568,8 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U16) {
 // Dequantize pair. With offload_graph_io_quantization=0, the graph's Q/DQ input and output
 // boundary nodes are always present (1 Quantize + 1 Dequantize) even when fused; an extra
 // pair beyond that indicates Softplus itself failed to fuse.
-// Regression test for https://github.com/qcom-ai-hub/tetracode/issues/20283, where Softplus
-// was missing from the QDQ-fusion selector's unary_ops allowlist even though the op-builder
-// fully supports quantized Softplus.
+// Regression test for Softplus being missing from the QDQ-fusion selector's unary_ops
+// allowlist even though the op-builder fully supports quantized Softplus.
 TEST_F(QnnHTPBackendTests, NeuronOpType_Softplus) {
   const std::filesystem::path json_qnn_graph_dir = "NeuronOpType_Softplus";
   std::filesystem::remove_all(json_qnn_graph_dir);
