@@ -24,10 +24,8 @@ class SizeOpBuilder : public BaseOpBuilder {
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
 
-  // Always register the input tensor in the QNN tensor map.
-  // For constant initializers this registers as QNN_TENSOR_TYPE_STATIC (no consumer required).
-  // For NATIVE tensors (output of a prior QNN op) the tensor is already registered;
-  // ProcessInput detects the duplicate and skips re-registration.
+  // Override ProcessInputs: register the input tensor in the QNN tensor map.
+  // Size only reads the input's shape at compile time; no QNN node consumes the input data.
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
@@ -47,14 +45,6 @@ Ort::Status SizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
   const auto& input_def = node_unit.Inputs()[0];
-  const std::string& input_name = input_def.name;
-
-  // Accept constant initializers, previously constant-folded tensors, and NATIVE tensors
-  // produced by other QNN ops. Reject live graph inputs (APP_WRITE): Size emits no QNN
-  // consumer node, so a live APP_WRITE input would be unconsumed and trigger QNN error 6004.
-  RETURN_IF_NOT(qnn_model_wrapper.IsEffectivelyConstantInput(input_name) ||
-                    !qnn_model_wrapper.IsGraphInput(input_name),
-                "QNN EP Size op: live graph inputs are not supported (would cause QNN error 6004).");
 
   // Require a fully static input shape. GetOnnxShape returns false if any dim is dynamic.
   std::vector<uint32_t> input_shape;
@@ -69,8 +59,7 @@ Ort::Status SizeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          const Ort::Logger& logger,
                                          std::vector<std::string>& input_names,
                                          bool /*do_op_validation*/) const {
-  // Always register the input tensor so SetupQnnInputOutput can find it.
-  // For constant initializers this becomes QNN_TENSOR_TYPE_STATIC (no consumer required).
+  // Register the input tensor so SetupQnnInputOutput can find it.
   const auto& input_0 = node_unit.Inputs()[0];
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
   return Ort::Status();
