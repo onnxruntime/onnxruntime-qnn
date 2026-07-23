@@ -294,20 +294,15 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     // Step 1: y_pow2 = x * x, using ElementWiseMultiply instead of ElementWisePower so we don't need to add a new
     // initializer tensor for the power value. The performance difference is negligible.
     const std::string pow2_output_name = utils::UniqueNameGenerator().New(input_name, "_pow2");
-    RETURN_IF_NOT(add_tensor(pow2_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
-                             std::move(input_shape)),
-                  "AddTensorWrapper failed");
-    std::string pow2_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    std::vector<std::string> pow2_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), pow2_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, pow2_param_names));
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(pow2_node_name,
+    QnnTensorWrapper pow2_tensorwrapper(pow2_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
+                                        std::move(input_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pow2_tensorwrapper)), "AddTensorWrapper failed");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY,
+                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {input_name, input_name},
                                                   {pow2_output_name},
-                                                  std::move(pow2_param_names),
+                                                  {},
                                                   do_op_validation),
                   "CreateQnnNode failed");
 
@@ -327,29 +322,21 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
     // Step 3: y = Sqrt(y_pow2_sum)
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output.name);
-    const std::string sqrt_output_name =
-        is_quantized_input ? utils::UniqueNameGenerator().New(output.name, "_f32") : output.name;
-    Qnn_TensorType_t sqrt_tensor_type =
-        (!is_quantized_input && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    // The quantized branch below still needs output_shape for the final Quantize output tensor.
-    RETURN_IF_NOT(add_tensor(sqrt_output_name, sqrt_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
-                             is_quantized_input ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
-                  "AddTensorWrapper failed");
-    std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_UNARY);
-    std::vector<std::string> sqrt_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), sqrt_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT),
-                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sqrt_param_names));
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sqrt_node_name,
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_UNARY,
-                                                  {reduce_output_name},
-                                                  {sqrt_output_name},
-                                                  std::move(sqrt_param_names),
-                                                  do_op_validation),
-                  "CreateQnnNode failed");
-
     if (is_quantized_input) {
+      // Sqrt writes into an intermediate float32 tensor; Quantize converts it into the final output tensor.
+      const std::string sqrt_output_name = utils::UniqueNameGenerator().New(input_name, "_sqrt");
+      RETURN_IF_NOT(add_tensor(sqrt_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape)),
+                    "AddTensorWrapper failed");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                                                    {reduce_output_name},
+                                                    {sqrt_output_name},
+                                                    {},
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
+
       // Insert Quantize (float32 -> quantized) after the float32 decomposition, using the
       // QDQ node unit's output quant params.
       Qnn_DataType_t final_qnn_data_type = QNN_DATATYPE_FLOAT_32;
@@ -366,6 +353,19 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                     {sqrt_output_name}, {output.name}, {},
                                                     do_op_validation),
                     "Failed to add quantize node");
+    } else {
+      Qnn_TensorType_t output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
+                                          QnnQuantParamsWrapper(), std::move(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                                                    {reduce_output_name},
+                                                    {output.name},
+                                                    {},
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
     }
   } else if (node_unit.OpType() == "ReduceLogSumExp") {
     // Decompose ReduceLogSumExp(x, axes, keepdims) numerically-stably as:
