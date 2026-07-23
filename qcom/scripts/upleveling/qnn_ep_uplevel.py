@@ -59,6 +59,8 @@ _SIGNED_LIBS_INDEX = f"{ARTIFACTORY_PREFIXES['zip']}-project"
 
 _QNN_PROVIDER_DLL = "onnxruntime_providers_qnn.dll"
 _QNN_MANAGED_DLL = "Qualcomm.ML.OnnxRuntime.QNN.dll"
+_QNN_NATIVE_ARM64_RID = "win-arm64"
+_QNN_NATIVE_X64_RID = "win-x64"
 
 
 def _clean_dir(path: str) -> None:
@@ -196,6 +198,14 @@ class ArtifactUpleveler(ABC):
             return ssl.get_default_verify_paths().cafile
         return ARTIFACTORY_CERTS_FILE
 
+    def _is_excluded_artifact(self, filename: str) -> bool:
+        """Whether an artifact file should be skipped entirely (never downloaded/uploaded).
+
+        Base implementation excludes nothing; subclasses override to drop artifacts
+        that should never be touched by upleveling (e.g. test packages).
+        """
+        return False
+
     def download_artifacts(self, url: str, download_dir: str) -> list[str]:
         """Download artifacts from the specified URL."""
         logging.info(f"Downloading {self.artifact_format}s from: {url}")
@@ -219,6 +229,11 @@ class ArtifactUpleveler(ABC):
             )
             if m
         ]
+
+        excluded = [f for f in artifact_list if self._is_excluded_artifact(f)]
+        for f in excluded:
+            logging.info(f"Skipping excluded artifact: {f}")
+        artifact_list = [f for f in artifact_list if f not in excluded]
 
         if not artifact_list:
             raise RuntimeError(
@@ -653,11 +668,13 @@ class NugetUpleveler(ArtifactUpleveler):
                             index_server_to via `nuget push`.
       true                — sign flow: download nupkgs into
                             output/unsigned_artifacts/nuget/, fetch signed-libs
-                            nuget.zip from Artifactory, repackage by replacing the
-                            native win-arm64 onnxruntime_providers_qnn.dll AND the
-                            managed Qualcomm.ML.OnnxRuntime.QNN.dll with their
-                            signed copies, then re-version and upload as in the
-                            standard flow.
+                            nuget.zip from Artifactory, repackage by replacing
+                            whichever native runtimes/win-arm64 and/or win-x64
+                            onnxruntime_providers_qnn.dll(s) the package carries
+                            (a merged package has both; a single-arch package has
+                            one) AND the managed Qualcomm.ML.OnnxRuntime.QNN.dll
+                            with their signed copies, then re-version and upload
+                            as in the standard flow.
 
     NuGet versions use SemVer hyphenation (e.g., 2.4.0-rc125), but the signed-libs
     folder is published under the run-on form (e.g., 2.4.0rc125). Hyphens are
@@ -834,7 +851,9 @@ class NugetUpleveler(ArtifactUpleveler):
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
         For each *.nupkg (top-level, excluding *.snupkg) under artifact_dir:
-        extract, replace the native arm64 DLL and the managed wrapper DLL with their
+        extract, replace whichever native per-arch provider DLL(s) the package
+        contains (win-arm64 and/or win-x64 -- a merged package carries both; a
+        single-arch package carries one) and the managed wrapper DLL with their
         signed equivalents from signed_libs_dir, re-zip into output_dir/<original_name>.
 
         Missing signed DLLs are logged and counted as failures, but the .nupkg is still
@@ -867,11 +886,29 @@ class NugetUpleveler(ArtifactUpleveler):
                     shutil.rmtree(extract_dir)
                 self._extract_signed_libs(nupkg_path, extract_dir)
 
-                native_missing = not self._replace_signed_dll(
-                    src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_PROVIDER_DLL),
-                    dst=os.path.join(extract_dir, "runtimes", "win-arm64", "native", _QNN_PROVIDER_DLL),
-                    label="native",
-                )
+                # Replace whichever per-arch native provider DLL(s) are actually present in
+                # this package. A merged package carries both win-arm64 and win-x64; an
+                # older single-arch package carries only one. Only require a replacement for
+                # an arch folder that exists in the package being repackaged.
+                native_missing = False
+                native_replaced_any = False
+                for arch_rid in (_QNN_NATIVE_ARM64_RID, _QNN_NATIVE_X64_RID):
+                    dst = os.path.join(extract_dir, "runtimes", arch_rid, "native", _QNN_PROVIDER_DLL)
+                    if not os.path.exists(dst):
+                        continue  # this package doesn't carry this arch; nothing to replace
+                    if self._replace_signed_dll(
+                        src=os.path.join(signed_libs_dir, nupkg_no_ext, arch_rid, _QNN_PROVIDER_DLL),
+                        dst=dst,
+                        label=f"native ({arch_rid})",
+                    ):
+                        native_replaced_any = True
+                    else:
+                        native_missing = True
+
+                if not native_replaced_any and not native_missing:
+                    logging.warning(f"    No native runtimes/win-*/native/{_QNN_PROVIDER_DLL} found in package")
+                    native_missing = True
+
                 managed_missing = not self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_MANAGED_DLL),
                     dst=os.path.join(extract_dir, "lib", "netstandard2.0", _QNN_MANAGED_DLL),
@@ -951,14 +988,19 @@ class ZipUpleveler(ArtifactUpleveler):
     def _sign_flag(self) -> bool:
         return self.args.sign_artifact
 
+    def _is_excluded_artifact(self, filename: str) -> bool:
+        """Test packages are never upleveled, signed or not."""
+        return filename.endswith("-test_package.zip")
+
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
-        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir.
-        For each one: extract, swap in the signed onnxruntime_providers_qnn.dll from
+        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir. For each
+        one: extract, swap in the signed onnxruntime_providers_qnn.dll from
         signed_libs_dir, re-zip into output_dir/<original_name>.zip.
 
-        All other files are copied as-is
-        into output_dir, flattened (only basename preserved).
+        All other files are copied as-is into output_dir, flattened (only basename
+        preserved). *-test_package.zip is never present here — download_artifacts
+        excludes it via _is_excluded_artifact before this method runs.
 
         Missing signed DLLs are logged and counted as failures, but the zip is still
         re-zipped.

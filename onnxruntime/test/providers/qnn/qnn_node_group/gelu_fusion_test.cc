@@ -233,6 +233,77 @@ GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def, b
   };
 }
 
+// Helper function to build GELU Pattern 4: 0.5 scale on the FIRST Mul after Add, ROOT on the FINAL Mul.
+// Same node sequence as Pattern 2, but the roles of the two trailing Muls are swapped.
+// Pattern 4:
+//                   +--------------------------------------------+
+//                   |                                            |
+//                   |                                            v
+//                [root] --> Div/Mul -----> Erf  --> Add --> Mul --> Mul ==>
+//                          (1.4142... or 1/1.4142...)  (1)   (0.5)  (root)
+GetTestModelFn BuildGeluPattern4TestCase(const TestInputDef<float>& input_def, bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder) -> void {
+    constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;  // 1 / sqrt(2)
+    constexpr float half = 0.5f;
+    constexpr float one = 1.0f;
+
+    builder.graph_->set_name(use_mul ? "gelu_pattern4_mul_graph" : "gelu_pattern4_graph");
+
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // root -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {"input", "inv_sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {"input", "sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    }
+
+    // norm_out -> Erf -> erf_out
+    builder.AddNode("Erf",
+                    "Erf",
+                    {"norm_out"},
+                    {"erf_out"},
+                    kOnnxDomain);
+
+    // erf_out -> Add(1.0) -> add_out
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.AddNode("Add_one",
+                    "Add",
+                    {"erf_out", "one"},
+                    {"add_out"},
+                    kOnnxDomain);
+
+    // add_out * 0.5 -> mul_half_out  (0.5 applied first)
+    builder.MakeScalarInitializer<float>("half", half);
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {"add_out", "half"},
+                    {"mul_half_out"},
+                    kOnnxDomain);
+
+    // root * mul_half_out -> output  (root skip connection on the FINAL Mul)
+    builder.AddNode("Mul_input",
+                    "Mul",
+                    {"input", "mul_half_out"},
+                    {"output"},
+                    kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
 // Helper function to build QDQ GELU Pattern 1
 // QDQ is only at pattern boundaries (input and output), not around internal operators
 template <typename QuantType>
@@ -371,6 +442,81 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
     builder.AddNode("Mul_half",
                     "Mul",
                     {"mul_out", "half"},
+                    {"Y"},
+                    kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y",
+                                                     output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Helper function to build QDQ GELU Pattern 4 (0.5 on first Mul, root on final Mul)
+// QDQ is only at pattern boundaries (input and output), not around internal operators
+template <typename QuantType>
+GetTestQDQModelFn<QuantType> BuildQDQGeluPattern4TestCase(const TestInputDef<float>& input_def,
+                                                          bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder,
+                              std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+    constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;
+    constexpr float half = 0.5f;
+    constexpr float one = 1.0f;
+
+    builder.graph_->set_name(use_mul ? "qdq_gelu_pattern4_mul_graph" : "qdq_gelu_pattern4_graph");
+
+    // input
+    MakeTestInput(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+
+    // Constants: float initializers (no QDQ to keep pattern operators as SingleNode)
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.MakeScalarInitializer<float>("half", half);
+
+    // GELU Pattern 4:
+    // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Add(one) -> Mul(half) -> Mul(input)
+    std::string norm_out = "div_out";
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {input_qdq, "inv_sqrt2"},
+                      {norm_out},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {input_qdq, "sqrt2"},
+                      {norm_out},
+                      kOnnxDomain);
+    }
+
+    // Erf operates on float (no QDQ around it)
+    builder.AddNode("Erf",
+                    "Erf",
+                    {norm_out},
+                    {"erf_out"},
+                    kOnnxDomain);
+
+    builder.AddNode("Add_one",
+                    "Add",
+                    {"erf_out", "one"},
+                    {"add_out"},
+                    kOnnxDomain);
+
+    // 0.5 applied on the first Mul after Add.
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {"add_out", "half"},
+                    {"mul_half_out"},
+                    kOnnxDomain);
+
+    // Root skip connection on the final Mul.
+    builder.AddNode("Mul_input",
+                    "Mul",
+                    {input_qdq, "mul_half_out"},
                     {"Y"},
                     kOnnxDomain);
 
@@ -552,6 +698,38 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   // Test with Mul (Div replaced by Mul)
   ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern3TestCase(input_def, true),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
+}
+
+// Test GELU Pattern 4 (0.5 on first Mul, root on final Mul) with float32 model
+TEST_F(QnnHTPBackendTests, GeluFusionPattern4_Float32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern4_Float32";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern4TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
+
+  // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
+  RunQnnModelTest(BuildGeluPattern4TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(6e-3f)});
@@ -818,6 +996,38 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
 
   TestQDQModelAccuracy(BuildGeluPattern3TestCase(input_def, true),
                        BuildQDQGeluPattern3TestCase<uint8_t>(input_def, true),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
+}
+
+// Test GELU Pattern 4 with QDQ
+TEST_F(QnnHTPBackendTests, GeluFusionPattern4_QDQ_U8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern4_QDQ_U8";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
+
+  TestQDQModelAccuracy(BuildGeluPattern4TestCase(input_def, false),
+                       BuildQDQGeluPattern4TestCase<uint8_t>(input_def, false),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
+
+  ResetQnnGraphDir(json_qnn_graph_dir);
+
+  TestQDQModelAccuracy(BuildGeluPattern4TestCase(input_def, true),
+                       BuildQDQGeluPattern4TestCase<uint8_t>(input_def, true),
                        provider_options,
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
