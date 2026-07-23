@@ -1,4 +1,4 @@
-FROM ubuntu:26.04
+FROM docker-registry.qualcomm.com/library/ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
