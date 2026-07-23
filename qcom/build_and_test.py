@@ -43,7 +43,12 @@ from ep_build.tasks.build import (
     QdcTestsTask,
     RunAsanTask,
 )
-from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_64_TAG, DockerBuildTask
+from ep_build.tasks.docker import (
+    MANYLINUX_2_34_AARCH64_TAG,
+    MANYLINUX_2_34_AARCH64_XCOMPILE_TAG,
+    UBUNTU_22_04_X86_64_TAG,
+    DockerBuildTask,
+)
 from ep_build.tasks.python import (
     CreateOrtVenvTask,
     CreateQdcVenvTask,
@@ -258,6 +263,47 @@ class TaskLibrary:
             env["CCACHE_DIR"] = str(ccache_dir)
         else:
             extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args,
+                env=env,
+                build_archive=self.__build_archive,
+            )
+        )
+
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_aarch64_manylinux_2_34_cross(self, plan: Plan) -> str:
+        """Cross-compile aarch64 from x86_64 container using LLVM toolchain."""
+        extra_args = [
+            "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
+        ]
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-aarch64-manylinux_2_34"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        from ep_build.tools import get_tools_dir  # noqa:PLC0415
+
+        tools_dir = get_tools_dir()
+        tc_dirs = sorted(tools_dir.glob("linux_oe_gcc112_toolchain-*"))
+        if tc_dirs:
+            tc_name = tc_dirs[-1].name
+            container_tools = Path(os.environ.get("ORT_BUILD_TOOLS_PATH", str(tools_dir)))
+            env["ORT_BUILD_LINUX_TOOLCHAIN_ROOT"] = str(container_tools / tc_name)
 
         return plan.add_step(
             BuildEpLinuxTask(
@@ -560,8 +606,29 @@ class TaskLibrary:
                 raise NotImplementedError("Building for Android on this host is not supported.")
 
     @task
-    @depends(["docker_build_manylinux_2_34_aarch64"])
+    @depends(
+        [
+            (is_host_x86_64(), "docker_build_manylinux_2_34_cross"),
+            (not is_host_x86_64(), "docker_build_manylinux_2_34_aarch64"),
+        ]
+    )
     def build_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
+        if is_host_x86_64():
+            return plan.add_step(
+                BuildEpDockerTask(
+                    "Cross-compiling ONNX Runtime for Linux on AArch64 manylinux_2_34",
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__qairt_sdk_root,
+                    self.__docker_ccache_root,
+                    self.__build_archive,
+                    inner_task="_build_ort_linux_aarch64_manylinux_2_34_cross",
+                    docker_tag=MANYLINUX_2_34_AARCH64_XCOMPILE_TAG,
+                    platform="linux/amd64",
+                    python="python3",
+                ),
+            )
         return plan.add_step(
             BuildEpDockerTask(
                 "Building ONNX Runtime for Linux on AArch64 manylinux_2_34",
@@ -820,6 +887,23 @@ class TaskLibrary:
                     "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
                     "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
+            )
+        )
+
+    @task
+    def docker_build_manylinux_2_34_cross(self, plan: Plan) -> str:
+        return plan.add_step(
+            DockerBuildTask(
+                "Building manylinux_2_34 cross-compile Docker image",
+                REPO_ROOT / "qcom" / "scripts" / "linux" / "manylinux_2_34_cross" / "Dockerfile",
+                MANYLINUX_2_34_AARCH64_XCOMPILE_TAG,
+                build_args={
+                    "BUILD_UID": str(os.getuid()),
+                    "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
+                },
+                platform="linux/amd64",
             )
         )
 
