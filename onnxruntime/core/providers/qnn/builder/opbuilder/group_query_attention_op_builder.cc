@@ -131,10 +131,27 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       8u,  // sin_cache
       9u   // position_ids
   };
+  constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
 
-  for (const auto onnx_idx : qnn_idx_to_onnx) {
+  for (size_t qnn_idx = 0; qnn_idx < qnn_idx_to_onnx.size(); ++qnn_idx) {
+    const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
     if (onnx_inputs.size() > onnx_idx && onnx_inputs[onnx_idx].Exists()) {
-      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
+      // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
+      // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
+      if (qnn_idx == kQnnTotalSeqLenIdx) {
+        const std::string& input_name = onnx_inputs[onnx_idx].name;
+        if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
+          TensorInfo tensor_info = {};
+          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[onnx_idx], tensor_info));
+          tensor_info.shape = {};  // override to 0D scalar
+          QnnTensorWrapper tensor_wrapper;
+          RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
+          RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)), "Failed to add tensor.");
+        }
+        input_names.push_back(input_name);
+      } else {
+        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
+      }
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       input_names.emplace_back(null_tensor_name);
