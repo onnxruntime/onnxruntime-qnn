@@ -1,6 +1,6 @@
-From c60a332e9a65dbae2920914adb8537de60f566e7 Mon Sep 17 00:00:00 2001
-From: "Cheng-Hsin Weng (Brian)" <chenweng@qti.qualcomm.com>
-Date: Fri, 13 Mar 2026 15:57:10 +0800
+From f871f0df4bf6a9ab00706db56cb2175d2cd5d297 Mon Sep 17 00:00:00 2001
+From: Badri Narayanan <mbadnara@qti.qualcomm.com>
+Date: Tue, 21 Jul 2026 11:40:16 -0700
 Subject: [PATCH 4/4] Update argument for monolithic lstm
 
 ---
@@ -8,10 +8,10 @@ Subject: [PATCH 4/4] Update argument for monolithic lstm
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/onnxruntime/test/onnx/main.cc b/onnxruntime/test/onnx/main.cc
-index f08b974d60..a50d771234 100644
+index ae7597538..dcb09f927 100644
 --- a/onnxruntime/test/onnx/main.cc
 +++ b/onnxruntime/test/onnx/main.cc
-@@ -615,7 +615,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
+@@ -611,7 +611,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
              std::string str = str_stream.str();
              ORT_THROW("Wrong value for htp_arch. select from: " + str);
            }
@@ -20,5 +20,6 @@ index f08b974d60..a50d771234 100644
            std::unordered_set<std::string> supported_options = {"0", "1"};
            if (supported_options.find(value) == supported_options.end()) {
              std::ostringstream str_stream;
---
+-- 
 2.53.0.windows.1
+
