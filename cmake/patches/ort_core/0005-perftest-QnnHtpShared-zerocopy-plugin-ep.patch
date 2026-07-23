@@ -23,7 +23,7 @@ Fix:
    take the memHandle path. Tensors already on a HOST_ACCESSIBLE allocator, non-tensor
    values, and string tensors are left unchanged.
 
-TODO: We may need update this patch when ort core uplevel, since there is some changes different to current release (1.26.0)
+TODO: We need updat this patch when ort core upleveling, since there are some changes different to current release (1.26.0)
 
 ---
 diff --git a/onnxruntime/test/perftest/ort_test_session.cc b/onnxruntime/test/perftest/ort_test_session.cc
