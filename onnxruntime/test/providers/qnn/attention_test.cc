@@ -554,6 +554,181 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode3) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
+// ===========================================================================
+// GPU Attention tests
+//
+// Two categories:
+//   Native   — GPU + true GQA (n_q > n_kv, divisible) + is_causal=1
+//               + no softcap/attn_mask/qk_output → QNN_OP_GROUP_QUERY_ATTENTION
+//   Decompose — any condition that disqualifies native GQA → decomposition
+//               (same graph as HTP, but runs on Adreno)
+//
+// Gated to _M_ARM64: Adreno GPU is only available on Snapdragon X hardware.
+// ===========================================================================
+#if defined(_M_ARM64)
+
+// ---------------------------------------------------------------------------
+// Native GQA path
+// ---------------------------------------------------------------------------
+
+// GQA 3D, head_ratio=2, causal — all native-GQA conditions met.
+// Q [1,8,32] (4 heads × 8), K/V [1,8,16] (2 heads × 8).
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Native) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// MQA 3D (kv_num_heads=1 — extreme GQA), causal.
+// Q [1,8,32] (4 heads × 8), K/V [1,8,8] (1 head × 8).
+TEST_F(QnnGPUBackendTests, Attention_GPU_MQA_3D_Native) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 8}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 8}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(1)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// GQA 3D with KV cache — past_key/value as static initializers.
+// Q [1,8,32], K/V [1,8,16], past_key/value [1,2,4,8] (S_past=4).
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Native_KVCache) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCaseKV(
+          TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),   // Q
+          TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),   // K
+          TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),   // V
+          TestInputDef<float>({1, 2, 4, 8}, true, -1.0f, 1.0f),  // past_key  (initializer)
+          TestInputDef<float>({1, 2, 4, 8}, true, -1.0f, 1.0f),  // past_value (initializer)
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
+}
+
+// ---------------------------------------------------------------------------
+// Decomposition path on GPU
+// Each test disqualifies exactly one native-GQA condition.
+// ---------------------------------------------------------------------------
+
+// MHA 3D (n_q == n_kv) — not GQA → decomposition.
+TEST_F(QnnGPUBackendTests, Attention_GPU_MHA_3D_Decompose) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// GQA 3D non-causal (is_causal=0) — QNN GQA is always causal → decomposition.
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_NonCausal) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// GQA 3D with softcap — no softcap param in QNN GQA → decomposition.
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_Softcap) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(1)),
+           test::MakeAttribute("softcap", 5.0f)}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// GQA 4D BNSH inputs — QNN GQA uses BSH; 4D falls to decomposition.
+// Q [1,4,8,8] (n_q=4), K/V [1,2,8,8] (n_kv=2).
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_4D_Decompose) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 4, 8, 8}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 2, 8, 8}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 2, 8, 8}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// GQA 3D with explicit attn_mask — no additive mask in QNN GQA → decomposition.
+// mask shape [8,8] broadcast to [1,4,8,8].
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_AttnMask) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCaseWithMask(
+          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},
+          TestInputDef<float>({8, 8}, false, -0.5f, 0.0f),  // additive float mask
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+#endif  // defined(_M_ARM64)
+
 }  // namespace test
 }  // namespace onnxruntime
 
