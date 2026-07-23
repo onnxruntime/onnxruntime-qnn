@@ -1633,6 +1633,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Sin", {}},
       {"Slice", {}},
       {"Softmax", {}},
+      {"Softplus", {}},
       {"SpaceToDepth", {}},
       {"Sqrt", {}},
       {"Tanh", {}}};

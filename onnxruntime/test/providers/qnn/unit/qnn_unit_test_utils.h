@@ -64,6 +64,28 @@ inline Ort::Logger MakeNullLogger() {
   return logger;
 }
 
+// StubApiEnv
+//
+// Convenience bundle of zero-initialised OrtApi / OrtEpApi / OrtModelEditorApi
+// stubs plus an ApiPtrs view and a null logger. Used by tests that exercise
+// EP code paths which only need the API tables for type-erasure and do not
+// dispatch through them (or that pass them to functions whose code paths
+// avoid every uninitialised function pointer).
+//
+// Non-copyable / non-movable because ApiPtrs stores references to the stub
+// API tables.
+struct StubApiEnv {
+  OrtApi stub_ort_api{};
+  OrtEpApi stub_ep_api{};
+  OrtModelEditorApi stub_editor_api{};
+  Ort::Logger logger{MakeNullLogger()};
+  ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
+
+  StubApiEnv() = default;
+  StubApiEnv(const StubApiEnv&) = delete;
+  StubApiEnv& operator=(const StubApiEnv&) = delete;
+};
+
 // OrtGlobalApiOverride
 //
 // RAII guard that replaces the global Ort::GetApi() with a caller-supplied
