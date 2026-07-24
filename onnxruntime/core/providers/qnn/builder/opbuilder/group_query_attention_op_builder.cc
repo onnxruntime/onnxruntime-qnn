@@ -43,9 +43,8 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
-  auto backend_type = qnn_model_wrapper.GetQnnBackendType();
-  RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
-                "GroupQueryAttention is only supported with the GPU backend and HTP backend");
+  RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+                "GroupQueryAttention is only supported with the GPU backend");
 
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();
@@ -135,35 +134,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
 
   for (const auto onnx_idx : qnn_idx_to_onnx) {
     if (onnx_inputs.size() > onnx_idx && onnx_inputs[onnx_idx].Exists()) {
-      if (onnx_idx == 6) {
-        // QNN's GQA op def requires total_sequence_length to be a 0D scalar, but ONNX provides
-        // it as a 1D tensor with shape [1]. Build the QNN tensor directly with an empty (0D) shape
-        // instead of reshaping into one; the element count is unchanged so no data movement is needed.
-        // (Inserting a QNN Reshape op node to do this is rejected by the HTP op validator, which
-        // does not accept a rank-0 Reshape output.)
-        const auto& input = onnx_inputs[onnx_idx];
-        const std::string& input_name = input.name;
-        if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
-          input_names.push_back(input_name);
-        } else {
-          TensorInfo tensor_info = {};
-          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, tensor_info));
-          if (!tensor_info.shape.empty()) {
-            uint32_t total_size = std::accumulate(tensor_info.shape.begin(),
-                                                   tensor_info.shape.end(),
-                                                   1u,
-                                                   std::multiplies<uint32_t>());
-            RETURN_IF_NOT(total_size == 1, "Unexpected shape for total_sequence_length");
-            tensor_info.shape.clear();
-          }
-          QnnTensorWrapper tensor_wrapper;
-          RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
-          RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)), "Failed to add tensor.");
-          input_names.push_back(input_name);
-        }
-      } else {
-        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
-      }
+      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       input_names.emplace_back(null_tensor_name);
@@ -230,14 +201,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   RETURN_IF(head_size == 0, "head_size can't be zero!");
 
   const float scale_default = 1.0f / std::sqrt(static_cast<float>(head_size));
-  // ONNX GroupQueryAttention treats scale == 0 as "use the default", i.e. 1/sqrt(head_size).
-  // node_helper.Get() only falls back to the default when the attribute is absent, so handle the
-  // explicit 0.0 case here as well; otherwise QNN GQA computes QK^T * 0 and the softmax degenerates
-  // to a uniform distribution (output becomes the mean of value).
-  float scale = node_helper.Get("scale", scale_default);
-  if (scale == 0.0f) {
-    scale = scale_default;
-  }
+  const float scale = node_helper.Get("scale", scale_default);
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
                                node_unit.Name(),
