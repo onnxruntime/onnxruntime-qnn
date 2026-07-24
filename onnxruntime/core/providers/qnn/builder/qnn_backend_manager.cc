@@ -1893,6 +1893,13 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     }
   }
 
+  // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
+  if (!context_bin_filepath.empty()) {
+    for (auto& [name, model] : qnn_models) {
+      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_);
+    }
+  }
+
   context_created_ = true;
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Load from cached QNN Context completed.");
@@ -3097,6 +3104,26 @@ Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle
   }
 
   return Ort::Status();
+}
+
+void QnnBackendManager::ReleaseSpecificContextHandle(Qnn_ContextHandle_t old_context) {
+  // Remove name→handle mappings that reference this context.
+  {
+    std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+    for (auto it = ep_context_handle_map_.begin(); it != ep_context_handle_map_.end();) {
+      if (it->second == old_context) {
+        it = ep_context_handle_map_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // Remove from the non-owning vector.
+  contexts_.erase(std::remove(contexts_.begin(), contexts_.end(), old_context), contexts_.end());
+
+  // Remove from the owning map — triggers contextFree via UniqueQnnContextHandle deleter.
+  context_map_.erase(old_context);
 }
 
 bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {

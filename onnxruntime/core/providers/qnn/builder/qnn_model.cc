@@ -8,6 +8,7 @@
 #include <gsl/gsl>
 #include <thread>
 
+#include "HTP/QnnHtpContext.h"
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -470,35 +471,110 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   return Ort::Status();
 }
 
-Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
-                                   const Ort::Logger& logger) {
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
-  size_t num_inputs;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
+Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+              ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
-  size_t num_outputs;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetOutputCount(context, &num_outputs));
-  RETURN_IF_NOT(qnn_input_infos_.size() <= num_inputs, "Inconsistent input sizes");
-  RETURN_IF_NOT(qnn_output_infos_.size() == num_outputs, "Inconsistent output sizes");
+  Qnn_ContextHandle_t old_context = graph_info_->GraphContext();
+  std::string graph_name = graph_info_->Name();
 
+  // Clear tensor I/O metadata (will be rebuilt after recovery).
+  qnn_input_infos_.clear();
+  qnn_output_infos_.clear();
+
+  Qnn_ContextHandle_t new_context = nullptr;
+
+  {
+    // Serialize the check → release → create → register sequence across all models
+    // sharing this QnnBackendManager.  Without this lock, concurrent SSR recovery in
+    // weight-sharing scenarios causes double-free or stale-context reads.
+    std::lock_guard<std::mutex> recovery_lock(qnn_backend_manager_->GetContextRecoveryMutex());
+
+    if (qnn_backend_manager_->HasContextHandle(old_context)) {
+      // We are the first model to recover from this SSR event.
+      // Free the old (shared) context and create a new one from the binary.
+      qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
+
+      // Use the unified file I/O helper instead of duplicating the read logic.
+      std::vector<char> buffer;
+      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer));
+
+      const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+
+      // Build context configs: priority + spill fill buffer.
+      QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
+      RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, priority_config));
+
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+      QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
+      QnnHtpContext_CustomConfig_t spill_fill_custom_config;
+      spill_fill_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+      QnnHtpContext_GroupRegistration_t group_info;
+      group_info.firstGroupHandle = 0x0;  // New group (this is the only context after SSR)
+      group_info.maxSpillFillBuffer = max_spill_fill_size_;
+      spill_fill_custom_config.groupRegistration = group_info;
+      spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+      spill_fill_config.customConfig = &spill_fill_custom_config;
+      QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size_ > 0 ? &spill_fill_config : nullptr;
+#else
+      QnnContext_Config_t* spill_fill_ptr = nullptr;
+#endif
+
+      const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
+
+      auto rt = qnn_interface.contextCreateFromBinary(
+          qnn_backend_manager_->GetQnnBackendHandle(),
+          qnn_backend_manager_->GetQnnDeviceHandle(),
+          context_configs,
+          static_cast<void*>(buffer.data()),
+          static_cast<Qnn_ContextBinarySize_t>(buffer.size()),
+          &new_context,
+          qnn_backend_manager_->GetQnnProfileHandle());
+      RETURN_IF(QNN_SUCCESS != rt,
+                ("SSR recovery: contextCreateFromBinary failed. Error code: " + std::to_string(rt)).c_str());
+      RETURN_IF_ERROR(qnn_backend_manager_->AddQnnContextHandle(new_context));
+    } else {
+      // Another model already recovered and recreated the context from this binary.
+      // Reuse it — it's the only context remaining in context_map_.
+      new_context = qnn_backend_manager_->GetQnnContext(0);
+    }
+  }  // release recovery_lock
+
+  // Retrieve our graph from the (new or reused) context.
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+  Qnn_GraphHandle_t new_graph = nullptr;
+  auto rt = qnn_interface.graphRetrieve(new_context, graph_name.c_str(), &new_graph);
+  RETURN_IF(QNN_SUCCESS != rt,
+            ("SSR recovery: graphRetrieve failed for graph: " + graph_name).c_str());
+
+  // Update graph_info_ with the new handles (tensor metadata is preserved).
+  graph_info_->ResetHandles(new_graph, new_context);
+
+  // Re-build the tensor I/O metadata against the new graph handles.
+  return SetupQnnInputOutput(logger);
+}
+
+Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
+                                          const Ort::Logger& logger,
+                                          Qnn_ErrorHandle_t& execute_status) {
   using namespace qnn::utils;
   auto TensorDataSize = [&ort_api = api_ptrs_.ort_api](auto ort_tensor) -> size_t {
     OrtTensorTypeAndShapeInfo* tensor_type_and_shape = nullptr;
     OrtStatusPtr tensor_status = ort_api.GetTensorTypeAndShape(ort_tensor, &tensor_type_and_shape);
     if (tensor_status != nullptr) {
-      return 0;  // Return 0 on error, will be handled by caller
+      return 0;
     }
     size_t length;
     tensor_status = ort_api.GetTensorShapeElementCount(tensor_type_and_shape, &length);
     if (tensor_status != nullptr) {
       ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
-      return 0;  // Return 0 on error, will be handled by caller
+      return 0;
     }
     ONNXTensorElementDataType element_type;
     tensor_status = ort_api.GetTensorElementType(tensor_type_and_shape, &element_type);
     if (tensor_status != nullptr) {
       ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
-      return 0;  // Return 0 on error, will be handled by caller
+      return 0;
     }
     size_t element_size = GetElementSizeByType(element_type);
     ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
@@ -589,59 +665,110 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
         qnn_outputs.back()));
   }
 
-  Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
-  {
-    const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
-    // Acquire mutex before calling QNN APIs to support calling session.Run() from multiple threads.
-    std::lock_guard<std::mutex> lock(graph_exec_mutex_);
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
 
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
-
-    qnn::profile::ProfilingInfo profiling_info;
+  qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    if (qnn_backend_manager_->ProfilingEnabled()) {
-      profiling_info.start_time = qnn::utils::GetTimeStampInUs();
-    }
-#endif
-    auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
-
-    auto thread_id = std::this_thread::get_id();
-    RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
-
-    execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
-                                                qnn_inputs.data(),
-                                                static_cast<uint32_t>(qnn_inputs.size()),
-                                                qnn_outputs.data(),
-                                                static_cast<uint32_t>(qnn_outputs.size()),
-                                                profile_backend_handle,
-                                                nullptr);
-
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    if (qnn_backend_manager_->ProfilingEnabled()) {
-      profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
-      profiling_info.method_type = ProfilingMethodType::EXECUTE;
-      profiling_info.graph_name = graph_info_->Name();
-    }
-#endif
-
-    RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
-
-    // NOTE: This function returns immediately when profiling is disabled.
-    // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
-    // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-    RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+  if (qnn_backend_manager_->ProfilingEnabled()) {
+    profiling_info.start_time = qnn::utils::GetTimeStampInUs();
   }
+#endif
+  auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
+
+  auto thread_id = std::this_thread::get_id();
+  RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
+
+  execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
+                                              qnn_inputs.data(),
+                                              static_cast<uint32_t>(qnn_inputs.size()),
+                                              qnn_outputs.data(),
+                                              static_cast<uint32_t>(qnn_outputs.size()),
+                                              profile_backend_handle,
+                                              nullptr);
+
+#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
+  if (qnn_backend_manager_->ProfilingEnabled()) {
+    profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
+    profiling_info.method_type = ProfilingMethodType::EXECUTE;
+    profiling_info.graph_name = graph_info_->Name();
+  }
+#endif
+
+  RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
+
+  // NOTE: This function returns immediately when profiling is disabled.
+  // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
+  // and not in production. We can improve synchronization for event profiling if it becomes an issue.
+  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+
+  return Ort::Status();
+}
+
+Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
+                                   const Ort::Logger& logger) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
+  size_t num_inputs;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
+
+  size_t num_outputs;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetOutputCount(context, &num_outputs));
+  RETURN_IF_NOT(qnn_input_infos_.size() <= num_inputs, "Inconsistent input sizes");
+  RETURN_IF_NOT(qnn_output_infos_.size() == num_outputs, "Inconsistent output sizes");
+
+  // Hold graph_exec_mutex_ for the entire bind+execute sequence (including any SSR recovery)
+  // to prevent data races on qnn_input_infos_/qnn_output_infos_ when multiple threads call
+  // session.Run() on the same session.
+  std::lock_guard<std::mutex> lock(graph_exec_mutex_);
+
+  // Proactively recover if a sibling model already freed this context during its own SSR
+  // recovery (multi-partition / weight-sharing scenarios). Check under context_recovery_mutex_
+  // to avoid racing with concurrent modifications to context_map_.
+  if (!context_bin_filepath_.empty()) {
+    bool context_is_stale = false;
+    {
+      std::lock_guard<std::mutex> recovery_lock(qnn_backend_manager_->GetContextRecoveryMutex());
+      context_is_stale = !qnn_backend_manager_->HasContextHandle(graph_info_->GraphContext());
+    }
+    if (context_is_stale) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  "SSR recovery: context was already freed by another QnnModel in the same context, "
+                  "recovering proactively.");
+      RETURN_IF_ERROR(RecoverFromSSR(logger));
+    }
+  }
+
+  // First attempt: bind tensors and execute.
+  Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
+  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
 
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
-    auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
-    std::ostringstream oss;
-    oss << error_message << execute_status;
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    return MAKE_EP_FAIL(oss.str().c_str());
-  }
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
+                "NPU crashed. SSR detected during QNN graph execute.");
+    if (!context_bin_filepath_.empty()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
+      RETURN_IF_ERROR(RecoverFromSSR(logger));
 
-  if (QNN_GRAPH_NO_ERROR != execute_status) {
+      // Retry once with fresh context and re-bound tensors.
+      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
+      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+        return Ort::Status("NPU crashed again after SSR recovery.", ORT_ENGINE_ERROR);
+      }
+      if (QNN_GRAPH_NO_ERROR == execute_status) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
+      }
+    } else {
+      // No context binary filepath — either JIT mode or embed_mode=1.
+      // SSR recovery requires a context binary on disk to reload from, so skip recovery.
+      std::ostringstream oss;
+      oss << "NPU crashed. SSR detected. Recovery not supported"
+             " (no context binary on disk — JIT or embed_mode=1). Error code: "
+          << execute_status;
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+      return Ort::Status(oss.str().c_str(), ORT_ENGINE_ERROR);
+    }
+  } else if (QNN_GRAPH_NO_ERROR != execute_status) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +
                          utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
                             .c_str());
