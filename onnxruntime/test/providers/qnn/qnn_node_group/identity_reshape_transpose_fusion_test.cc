@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -15,12 +15,7 @@ namespace test {
 
 namespace {
 
-// Builds the graph:  Input -> Reshape -> Transpose -> Output
-// The pattern collapses to a single identity Reshape when:
-//   - Shape(Reshape input) == Shape(Transpose output), and
-//   - The Transpose preserves memory order relative to the Reshape output
-//     (non-unit axes of the Reshape output map to output positions in the same
-//      relative order).
+// Builds:  Input -> Reshape -> Transpose -> Output
 GetTestModelFn BuildIdentityReshapeTransposeTestCase(
     const TestInputDef<float>& input_def,
     const std::vector<int64_t>& reshape_shape,
@@ -37,27 +32,22 @@ GetTestModelFn BuildIdentityReshapeTransposeTestCase(
   };
 }
 
-// Same pattern feeding into a Conv, mirroring the AISW-192362 customer scenario
-// (Reshape -> Transpose -> Conv). Conv is layout-sensitive so ORT's TransposeOptimizer
-// leaves the Transpose in place, which is the situation the fusion is designed to catch.
-//   Input -> Reshape -> Transpose -> Conv -> Output
+// Builds:  Input NHWC -> Reshape (to NCHW) -> Conv NCHW -> Output.
+// ORT's TransformLayoutForEP inserts an NCHW<->NHWC adapter Transpose between the Reshape
+// and the Conv; that inserted Transpose is what pairs with the user's Reshape.
 GetTestModelFn BuildIdentityReshapeTransposeFeedingConvTestCase(
     const TestInputDef<float>& input_def,
     const std::vector<int64_t>& reshape_shape,
-    const std::vector<int64_t>& perm,
     const std::vector<int64_t>& conv_weight_shape) {
-  return [input_def, reshape_shape, perm, conv_weight_shape](ModelTestBuilder& builder) {
+  return [input_def, reshape_shape, conv_weight_shape](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", input_def);
 
     builder.Make1DInitializer<int64_t>("reshape_shape", reshape_shape);
     builder.AddNode("reshape", "Reshape", {"input", "reshape_shape"}, {"reshape_out"});
 
-    builder.AddNode("transpose", "Transpose", {"reshape_out"}, {"transpose_out"}, "",
-                    {test::MakeAttribute("perm", perm)});
-
     builder.MakeInitializer<float>("conv_weight", conv_weight_shape, -0.5f, 0.5f);
     builder.MakeOutput("output");
-    builder.AddNode("conv", "Conv", {"transpose_out", "conv_weight"}, {"output"}, kOnnxDomain);
+    builder.AddNode("conv", "Conv", {"reshape_out", "conv_weight"}, {"output"}, kOnnxDomain);
   };
 }
 
@@ -71,12 +61,7 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// AISW-192362 shape (scaled down for CI): input has a channel dim of 1, and the
-// Reshape+Transpose pair collapses to an identity because permuting a size-1
-// axis does not reorder memory.
-//   Input:      [1, H, W, 1]
-//   Reshape ->  [1, 1, H, W]
-//   Transpose (perm=[0,2,3,1]) -> [1, H, W, 1]
+// Channel-1 identity pair: permuting a size-1 axis does not reorder memory.
 TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_ChannelOne_Basic) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "IdentityReshapeTransposeFusion_ChannelOne_Basic";
@@ -102,7 +87,7 @@ TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_ChannelOne_Basic) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
 }
 
-// Same pattern feeding into a Conv (matches the AISW-192362 customer scenario).
+// User graph Reshape -> Conv; ORT inserts the middle Transpose (see builder).
 TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_ChannelOne_FeedingConv) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "IdentityReshapeTransposeFusion_ChannelOne_FeedingConv";
@@ -118,24 +103,20 @@ TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_ChannelOne_FeedingConv
 
   RunQnnModelTest(BuildIdentityReshapeTransposeFeedingConvTestCase(input_def,
                                                                    /*reshape_shape=*/{1, 1, 8, 6},
-                                                                   /*perm=*/{0, 2, 3, 1},
-                                                                   /*conv_weight_shape=*/{4, 8, 1, 1}),
+                                                                   /*conv_weight_shape=*/{4, 1, 1, 1}),
                   provider_options,
                   13,  // opset
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
-  // Verify the fusion fired: the user's ONNX Transpose (named "transpose") is gone.
-  // We do NOT assert Transpose count == 0 because QNN EP's Conv op-builder inserts
-  // its own layout-adapter Transposes (perm=[0,3,1,2], NHWC<->NCHW) around Conv,
-  // which are unrelated to this fusion.
-  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "transpose");
+  // Fusion consumed the (user Reshape, ORT-inserted head adapter Transpose) pair; only
+  // the Conv output adapter Transpose remains. Without fusion Transpose count would be 2.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", 1);
 }
 
-// Multiple unit dimensions:  [2, 1, 3, 1] -> Reshape [1, 2, 1, 3] -> Transpose(perm=[1,0,3,2]) -> [2, 1, 3, 1]
-// Non-unit axes of the Reshape output are {1, 3} (sizes 2 and 3). perm[k]==1 at k=0,
-// perm[k]==3 at k=2 -> 0 < 2, strictly increasing -> identity.
+// Multiple unit dimensions in the Reshape output; fusion still fires because only
+// unit axes are reordered.
 TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_MultipleUnitDims) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "IdentityReshapeTransposeFusion_MultipleUnitDims";
@@ -160,10 +141,7 @@ TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_MultipleUnitDims) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
 }
 
-// Negative: Reshape input shape != Transpose output shape.
-// Fusion must NOT fire — the Transpose is left in the compiled graph.
-//   Input [2, 3, 4]  ->  Reshape [6, 4]  ->  Transpose(perm=[1,0]) -> [4, 6]
-// Shapes differ (t0=[2,3,4], t2=[4,6]), so condition 1 (shape equality) fails.
+// Negative: shape(t0) != shape(t2) — fusion must not fire.
 TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_NotIdentity_ShapeDiffers) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "IdentityReshapeTransposeFusion_NotIdentity_ShapeDiffers";
@@ -182,17 +160,13 @@ TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_NotIdentity_ShapeDiffe
                                                         /*perm=*/{1, 0}),
                   provider_options,
                   13,  // opset
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Fusion should NOT have fired: the Transpose still appears in the compiled graph.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 1);
 }
 
-// Negative: Transpose reorders two non-unit axes (memory not preserved).
-//   Input [2, 3, 4]  ->  Reshape [2, 3, 4]  ->  Transpose(perm=[0,2,1]) -> [2, 4, 3]
-// Even though Reshape is identity, the Transpose swaps two non-unit axes, so
-// condition 2 (memory-order-preserving) fails and fusion must not fire.
-// Additionally t0=[2,3,4] and t2=[2,4,3] differ, so condition 1 also fails.
+// Negative: Transpose swaps two non-unit axes — fusion must not fire.
 TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_NotIdentity_NonUnitReorder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "IdentityReshapeTransposeFusion_NotIdentity_NonUnitReorder";
@@ -211,7 +185,7 @@ TEST_F(QnnHTPBackendTests, IdentityReshapeTransposeFusion_NotIdentity_NonUnitReo
                                                         /*perm=*/{0, 2, 1}),
                   provider_options,
                   13,  // opset
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 1);
 }

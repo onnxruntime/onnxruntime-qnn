@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include "core/providers/qnn/builder/qnn_node_group/identity_reshape_transpose_fusion.h"
 
@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -25,8 +26,8 @@ namespace onnxruntime {
 namespace qnn {
 namespace {
 
-constexpr const char* kOpTypeReshape = "Reshape";
-constexpr const char* kOpTypeTranspose = "Transpose";
+constexpr std::string_view kOpTypeReshape = "Reshape";
+constexpr std::string_view kOpTypeTranspose = "Transpose";
 constexpr const char* kAttrTransposePerm = "perm";
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
@@ -42,8 +43,11 @@ std::optional<std::array<const OrtNodeUnit*, 2>> MatchReshapeTransposePattern(
     return std::nullopt;
   }
 
-  const OrtNodeUnit* transpose = GetChildNodeUnitAllowQdq(
-      qnn_model_wrapper, *reshape, kOpTypeTranspose, node_to_node_unit, node_unit_to_qnn_node_group);
+  // GetOnlyChildOfType rejects children that are part of a QDQ NodeUnit, so any QDQ chain
+  // (DQ->Reshape->Q->DQ->Transpose->Q) declines here without a separate SingleNode check.
+  const std::array<std::string_view, 1> child_types = {kOpTypeTranspose};
+  const OrtNodeUnit* transpose = GetOnlyChildOfType(
+      qnn_model_wrapper, *reshape, child_types, node_to_node_unit, node_unit_to_qnn_node_group);
   if (transpose == nullptr) {
     return std::nullopt;
   }
@@ -61,7 +65,7 @@ bool IsTransposeMemoryPreserving(const std::vector<uint32_t>& t1_dims,
   }
   int64_t last_pos_in_output = -1;
   for (size_t axis = 0; axis < t1_dims.size(); ++axis) {
-    if (t1_dims[axis] <= 1) {
+    if (t1_dims[axis] == 1) {
       continue;
     }
     // Find the output position `k` such that perm[k] == axis.
@@ -155,16 +159,20 @@ std::unique_ptr<IQnnNodeGroup> IdentityReshapeTransposeFusion::TryFusion(
   const OrtNodeUnit* reshape = pattern->at(0);
   const OrtNodeUnit* transpose = pattern->at(1);
 
-  // Reshape's shape input (Inputs()[1]) must be a constant initializer so the inferred
-  // output shape is a runtime invariant. Without this, the fusion could be incorrect at
-  // runtime if the shape input changes.
-  const auto& reshape_inputs = reshape->Inputs();
-  if (reshape_inputs.size() < 2 || !qnn_model_wrapper.IsConstantInput(reshape_inputs[1].name)) {
+  // QDQ path is out of scope (see .h): a DQ->Reshape->Q->DQ->Transpose->Q chain can carry
+  // a rescale across the pair, and collapsing it to a single identity Reshape would silently
+  // drop that rescale. The child (transpose) SingleNode check is already handled inside
+  // MatchReshapeTransposePattern via GetOnlyChildOfType; only the starting Reshape needs
+  // an explicit filter here because the dispatcher exempts Reshape from its SingleNode gate.
+  if (reshape->UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
   }
 
   // Retrieve the three shapes: t0 (Reshape input), t1 (Reshape output = Transpose input),
-  // and t2 (Transpose output). All three must be statically known.
+  // and t2 (Transpose output). All three must be statically known. If the shape input is
+  // a runtime tensor, ORT cannot infer t1 and GetOnnxShape below declines the fusion --
+  // we intentionally do not add a separate IsConstantInput guard, which would also reject
+  // Constant-node outputs whose values are compile-time known and safe to fuse.
   std::vector<uint32_t> t0_dims;
   std::vector<uint32_t> t1_dims;
   std::vector<uint32_t> t2_dims;

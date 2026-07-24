@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #pragma once
 
@@ -20,27 +20,19 @@ class QnnModelWrapper;
 
 /// <summary>
 /// Fuses a [Reshape -> Transpose] pair whose combined effect is a data-preserving identity
-/// into a single identity Reshape (input shape == output shape).
+/// into a single Reshape with matching input/output shape.
 ///
 /// Pattern:  t0 -> Reshape -> t1 -> Transpose(perm) -> t2
+/// Conditions:
+///   - Shape(t0) == Shape(t2)
+///   - Transpose preserves memory order of t1's non-unit axes.
 ///
-/// Conditions for the fusion to fire:
-///   1. Shape(t0) == Shape(t2)  (same shape before Reshape and after Transpose).
-///   2. The Transpose is memory-order-preserving relative to t1:
-///      the non-unit axes of t1 appear in the same relative order in the Transpose output.
-///      i.e., for the axes j of t1 where t1[j] > 1, taken in ascending j, the positions
-///      k such that perm[k] == j must be strictly increasing.
+/// Scope (direction): Reshape->Transpose only. The mirror direction is out of scope;
+/// open a follow-up if a real-world scenario materialises.
 ///
-/// When both hold, the Reshape and Transpose together leave the underlying memory buffer
-/// unchanged (they are collectively a no-op). We collapse them into a single Reshape whose
-/// input and output shapes are equal, which QNN backends treat as pure metadata (no data
-/// movement) — matching the existing convention in TransposeReshapeTransposeFusion of
-/// emitting a Reshape when the combined layout-op sequence reduces to a pure reshape.
-///
-/// Motivation: for inputs whose channel dim is 1 (e.g. grayscale [1,H,W,1]), ORT layout
-/// passes can insert this pair when adapting between ONNX Conv (NCHW) and HTP native
-/// (NHWC) conventions; the ops become identity but are still executed as an 8-9 MB
-/// memory shuffle per inference.
+/// Scope (QDQ): All NodeUnits must be of type SingleNode. A QDQ-wrapped chain
+/// (DQ->Reshape->Q->DQ->Transpose->Q) is out of scope because unequal scales across the
+/// pair would drop a rescale if collapsed to an identity Reshape.
 /// </summary>
 class IdentityReshapeTransposeFusion : public IQnnNodeGroup {
  public:
