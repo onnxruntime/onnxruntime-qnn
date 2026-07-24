@@ -29,8 +29,7 @@ GetTestModelFn BuildReshapeTransposeFloatCase(const std::vector<int64_t>& input_
   return [input_shape, reshape_shape, transpose_perm](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("reshape_transpose_fusion_graph");
 
-    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
-    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(input_shape, false, -1.0f, 1.0f));
 
     builder.MakeScalarInitializer<float>("add_const1", 0.0f);
     builder.AddNode("pre_add", "Add", {"input", "add_const1"}, {"pre_add_out"}, kOnnxDomain);
