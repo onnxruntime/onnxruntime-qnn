@@ -3635,7 +3635,7 @@ TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithBiasPerChannel_BS32) {
 }
 
 // LPBQ: 1x1 Conv, INT4 weight, block_size=8, float (unquantized) bias.
-TEST_F(QnnHTPBackendTests, DISABLED_ConvLPBQ_U16Int4_1x1_WithFloatBias_BS8) {
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithFloatBias_BS8) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
                                       /*weight=*/{4, 32, 1, 1},
@@ -3651,7 +3651,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ConvLPBQ_U16Int4_1x1_WithFloatBias_BS8) {
 }
 
 // LPBQ: 1x1 Conv, INT4 weight, block_size=32, float (unquantized) bias.
-TEST_F(QnnHTPBackendTests, DISABLED_ConvLPBQ_U16Int4_1x1_WithFloatBias_BS32) {
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithFloatBias_BS32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
                                       /*weight=*/{8, 64, 1, 1},
