@@ -1882,7 +1882,9 @@ class QnnHTPBackendTests : public ::testing::Test {
     bool dlbc_supported{false};
     uint32_t vtcm_size_mb{0};
     uint32_t soc_model{QNN_SOC_MODEL_UNKNOWN};
-    std::string backend_api_version;
+    std::string sdk_version;
+    Qnn_Version_t core_api_version = QNN_VERSION_INIT;
+    Qnn_Version_t backend_api_version = QNN_VERSION_INIT;
   };
 
  protected:

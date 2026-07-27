@@ -18,6 +18,8 @@
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
+#define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
+
 // Defined in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
 
@@ -119,11 +121,23 @@ static nlohmann::json RunModelWithTracing(const GetTestModelFn& build_fn,
 static void ValidateTraceStructure(const nlohmann::json& j) {
   ASSERT_TRUE(j.contains("backend_type"));
   ASSERT_TRUE(j.contains("subgraph_traces"));
-  ASSERT_TRUE(j.contains("compilation_target"));
+  // compilation_target lives under soc_traces[i] in the new schema; it is
+  // intentionally not at root anymore. Every caller of this validator runs a
+  // single backend (single-SoC), so soc_traces must have exactly one entry.
+  // Asserting == 1 (not >= 1) also guards the two-pass GetCapabilityImpl
+  // regression: without the trace_ reset, a second partitioner pass would
+  // append a duplicate soc_trace and this would catch it.
+  ASSERT_FALSE(j.contains("compilation_target"))
+      << "compilation_target must NOT be at root in the new schema; "
+         "consumers should read from soc_traces[i].compilation_target";
+  ASSERT_TRUE(j.contains("soc_traces"));
+  ASSERT_EQ(j["soc_traces"].size(), 1u);
+  ASSERT_TRUE(j["soc_traces"][0].contains("compilation_target"));
   ASSERT_TRUE(j.contains("unsupported_nodes"));
   ASSERT_TRUE(j.contains("summary"));
   ASSERT_GE(j["subgraph_traces"].size(), 1u);
   EXPECT_GT(j["summary"]["total_qnn_ops"].get<size_t>(), 0u);
+  EXPECT_EQ(j["summary"]["total_socs"].get<uint32_t>(), 1u);
 }
 
 // ========================= Unit Tests =========================
@@ -135,7 +149,8 @@ TEST_F(QnnFrameworkOpTraceUnit, SerializeDeserializeRoundTrip) {
   qnn::FrameworkOpTrace trace;
   trace.model_name = "test_model.onnx";
   trace.backend_type = "cpu";
-  trace.compilation_target = {"V73", 60, 0};
+  // Single-SoC: soc_traces has exactly one entry holding the CompilationTarget.
+  trace.soc_traces.push_back(qnn::SocTrace{{"V73", 60, 0}});
 
   qnn::OpTraceInfo sg;
   sg.graph_name = "QnnEP_graph_0";
@@ -158,8 +173,13 @@ TEST_F(QnnFrameworkOpTraceUnit, SerializeDeserializeRoundTrip) {
 
   nlohmann::json j = qnn::SerializeFrameworkOpTrace(trace);
   EXPECT_EQ(j["model_name"], "test_model.onnx");
-  EXPECT_EQ(j["compilation_target"]["htp_arch"], "V73");
-  EXPECT_EQ(j["compilation_target"]["soc_model"], 60);
+  // compilation_target is no longer at root - it lives under soc_traces[0].
+  EXPECT_FALSE(j.contains("compilation_target"));
+  ASSERT_TRUE(j.contains("soc_traces"));
+  ASSERT_EQ(j["soc_traces"].size(), 1u);
+  EXPECT_EQ(j["soc_traces"][0]["compilation_target"]["htp_arch"], "V73");
+  EXPECT_EQ(j["soc_traces"][0]["compilation_target"]["soc_model"], 60);
+  EXPECT_EQ(j["soc_traces"][0]["compilation_target"]["device_id"], 0);
   EXPECT_EQ(j["subgraph_traces"][0]["op_mappings"][0]["dst_name"], "Add_0");
   EXPECT_EQ(j["subgraph_traces"][0]["op_mappings"][0]["sources"][0]["type"], "OP");
   // Verify mixed OP+TENSOR sources in Conv_1 (DQ_Q_Fusion)
@@ -168,6 +188,7 @@ TEST_F(QnnFrameworkOpTraceUnit, SerializeDeserializeRoundTrip) {
   EXPECT_EQ(j["subgraph_traces"][0]["op_mappings"][1]["sources"][1]["type"], "TENSOR");
   EXPECT_EQ(j["subgraph_traces"][0]["op_mappings"][1]["sources"][1]["name"], "_out_dq");
   EXPECT_EQ(j["unsupported_nodes"][0]["node_name"], "custom_op_1");
+  EXPECT_EQ(j["summary"]["total_socs"], 1u);
 }
 
 TEST_F(QnnFrameworkOpTraceUnit, ComputeTraceSummary) {
@@ -226,6 +247,132 @@ TEST_F(QnnFrameworkOpTraceUnit, ComputeTraceSummary) {
   EXPECT_EQ(trace.summary.fusion_count["FusionB"], 1u);
   EXPECT_EQ(trace.summary.fusion_count["FusionC"], 1u);
   EXPECT_EQ(trace.summary.fusion_count["FusionD"], 2u);
+}
+
+// ---- MergePerSocUnsupportedNodes: FCB multi-SoC rejection merging ----
+
+// EncodeHtpArch / MakeSocLabel: the single source of truth for the label format.
+TEST_F(QnnFrameworkOpTraceUnit, MakeSocLabel_Format) {
+  // arch encoding: raw number -> "V<n>", 0 -> "".
+  EXPECT_EQ(qnn::EncodeHtpArch(73), "V73");
+  EXPECT_EQ(qnn::EncodeHtpArch(0), "");
+  // arch + soc_model known.
+  EXPECT_EQ(qnn::MakeSocLabel(73, 60), "V73/soc_model=60");
+  // arch known, soc_model unknown (0).
+  EXPECT_EQ(qnn::MakeSocLabel(73, 0), "V73");
+  // arch unknown, soc_model known.
+  EXPECT_EQ(qnn::MakeSocLabel(0, 60), "soc_model=60");
+  // both unknown: arch empty wins, emits the sentinel numeric.
+  EXPECT_EQ(qnn::MakeSocLabel(0, 0), "soc_model=0");
+}
+
+// A node rejected on multiple SoCs for the SAME reason collapses to one row
+// with the SoC labels grouped: "V73,V81: <reason>" (reason listed once).
+TEST_F(QnnFrameworkOpTraceUnit, MergePerSoc_SameReasonGrouped) {
+  std::vector<qnn::PerSocUnsupportedNodes> per_soc = {
+      {"V73", {{"node7", "Foo", 7, "data type not supported"}}},
+      {"V81", {{"node7", "Foo", 7, "data type not supported"}}},
+  };
+  auto merged = qnn::MergePerSocUnsupportedNodes(per_soc);
+  ASSERT_EQ(merged.size(), 1u) << "same node across SoCs must collapse to one row";
+  EXPECT_EQ(merged[0].node_index, 7u);
+  EXPECT_EQ(merged[0].node_name, "node7");
+  EXPECT_EQ(merged[0].op_type, "Foo");
+  // Identical reason listed once, both SoCs attributed to it.
+  EXPECT_EQ(merged[0].reason, "V73,V81: data type not supported");
+}
+
+// A node rejected for DIFFERENT reasons on different SoCs collapses to one row
+// whose reason concatenates the per-SoC causes in first-seen order.
+TEST_F(QnnFrameworkOpTraceUnit, MergePerSoc_DifferentReasonsConcatenated) {
+  std::vector<qnn::PerSocUnsupportedNodes> per_soc = {
+      {"V73", {{"node7", "Foo", 7, "data type"}}},
+      {"V81", {{"node7", "Foo", 7, "rank too high"}}},
+  };
+  auto merged = qnn::MergePerSocUnsupportedNodes(per_soc);
+  ASSERT_EQ(merged.size(), 1u);
+  EXPECT_EQ(merged[0].node_index, 7u);
+  EXPECT_EQ(merged[0].reason, "V73: data type; V81: rank too high");
+}
+
+// Distinct nodes are emitted in first-seen order; each keeps its own reason(s).
+// soc_model= labels (arch unknown) are used verbatim.
+TEST_F(QnnFrameworkOpTraceUnit, MergePerSoc_MultipleNodesFirstSeenOrder) {
+  std::vector<qnn::PerSocUnsupportedNodes> per_soc = {
+      {"soc_model=60", {{"a", "A", 3, "r1"}, {"b", "B", 9, "r2"}}},
+      {"soc_model=88", {{"b", "B", 9, "r2"}, {"c", "C", 1, "r3"}}},
+  };
+  auto merged = qnn::MergePerSocUnsupportedNodes(per_soc);
+  ASSERT_EQ(merged.size(), 3u);
+  // First-seen order across the flattened stream: 3, 9, 1.
+  EXPECT_EQ(merged[0].node_index, 3u);
+  EXPECT_EQ(merged[0].reason, "soc_model=60: r1");
+  EXPECT_EQ(merged[1].node_index, 9u);
+  EXPECT_EQ(merged[1].reason, "soc_model=60,soc_model=88: r2");
+  EXPECT_EQ(merged[2].node_index, 1u);
+  EXPECT_EQ(merged[2].reason, "soc_model=88: r3");
+}
+
+// Empty input yields an empty result (single-SoC never calls this).
+TEST_F(QnnFrameworkOpTraceUnit, MergePerSoc_Empty) {
+  EXPECT_TRUE(qnn::MergePerSocUnsupportedNodes({}).empty());
+  // SoCs present but no rejections -> still empty.
+  std::vector<qnn::PerSocUnsupportedNodes> per_soc = {{"V73", {}}, {"V81", {}}};
+  EXPECT_TRUE(qnn::MergePerSocUnsupportedNodes(per_soc).empty());
+}
+
+// Two SoCs share the same htp_arch but have different soc_model values (e.g.
+// V73/soc_model=60 and V73/soc_model=61). Their labels must be distinct so that
+// same-reason rejections are NOT conflated - each SoC's attribution is preserved.
+// This tests the "V<arch>/soc_model=<n>" label format that GetMultiSocSupportedNodes
+// emits when both htp_arch and a known soc_model are present.
+TEST_F(QnnFrameworkOpTraceUnit, MergePerSoc_SameArchDifferentModel) {
+  std::vector<qnn::PerSocUnsupportedNodes> per_soc = {
+      {"V73/soc_model=60", {{"node5", "Bar", 5, "rank"}}},
+      {"V73/soc_model=61", {{"node5", "Bar", 5, "rank"}}},
+  };
+  auto merged = qnn::MergePerSocUnsupportedNodes(per_soc);
+  ASSERT_EQ(merged.size(), 1u);
+  EXPECT_EQ(merged[0].node_index, 5u);
+  // Both SoC labels must appear, grouped because the reason is identical.
+  EXPECT_EQ(merged[0].reason, "V73/soc_model=60,V73/soc_model=61: rank");
+}
+
+// Multi-SoC serialization: soc_traces holds N entries and summary.total_socs == N.
+// unsupported_nodes carrying merged multi-SoC reasons round-trip through JSON,
+// and summary.unsupported_nodes is a distinct-node count (one row per node).
+TEST_F(QnnFrameworkOpTraceUnit, SerializeMultiSoc) {
+  qnn::FrameworkOpTrace trace;
+  trace.model_name = "fcb_model.onnx";
+  trace.backend_type = "htp";
+  trace.soc_traces.push_back(qnn::SocTrace{{"V73", 60, 0}});
+  trace.soc_traces.push_back(qnn::SocTrace{{"V81", 88, 0}});
+
+  qnn::OpTraceInfo sg;
+  sg.graph_name = "QnnEP_graph_0";
+  sg.op_mappings.push_back({"Add_0",
+                            "QNN_OP_ELEMENT_WISE_ADD",
+                            {{"/add/Add", qnn::TraceTargetType::kOp}},
+                            "OrtNodeUnit"});
+  trace.subgraph_traces.push_back(std::move(sg));
+  // One merged row for a node rejected differently on the two SoCs.
+  trace.unsupported_nodes.push_back({"node7", "Foo", 7, "V73: data type; V81: rank too high"});
+  qnn::ComputeTraceSummary(trace);
+
+  nlohmann::json j = qnn::SerializeFrameworkOpTrace(trace);
+  EXPECT_EQ(j["schema_version"], 2);
+  EXPECT_FALSE(j.contains("compilation_target"));
+  ASSERT_TRUE(j.contains("soc_traces"));
+  ASSERT_EQ(j["soc_traces"].size(), 2u);
+  EXPECT_EQ(j["soc_traces"][0]["compilation_target"]["htp_arch"], "V73");
+  EXPECT_EQ(j["soc_traces"][1]["compilation_target"]["htp_arch"], "V81");
+  EXPECT_EQ(j["soc_traces"][1]["compilation_target"]["soc_model"], 88);
+  EXPECT_EQ(j["summary"]["total_socs"], 2u);
+  // One distinct unsupported node, merged reason preserved.
+  ASSERT_EQ(j["unsupported_nodes"].size(), 1u);
+  EXPECT_EQ(j["unsupported_nodes"][0]["node_index"], 7u);
+  EXPECT_EQ(j["unsupported_nodes"][0]["reason"], "V73: data type; V81: rank too high");
+  EXPECT_EQ(j["summary"]["unsupported_nodes"], 1u);
 }
 
 // Verify that mixed OP+TENSOR srcInfo is serialized correctly.
@@ -716,20 +863,53 @@ TEST_F(QnnCPUBackendTests, FrameworkOpTrace_CustomOutputDir) {
   EXPECT_FALSE(FindTraceFile(custom_dir).empty());
 }
 
-// Test compilation_target metadata (CPU).
-TEST_F(QnnCPUBackendTests, FrameworkOpTrace_CompilationTargetMetadata) {
+// New schema (FCB readiness): single-SoC sessions populate a length-1
+// soc_traces array, no compilation_target at root, subgraph_traces stays at
+// root, and summary.total_socs reflects soc_traces.size(). Consolidates four
+// previously-separate fixture-rebuild tests into one inference run. Also
+// subsumes the former FrameworkOpTrace_CompilationTargetMetadata (same
+// Add-on-CPU model, strict superset of its assertions).
+TEST_F(QnnCPUBackendTests, FrameworkOpTrace_SingleSoc_NewSchema) {
   ScopedTempDir tmp;
   std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   auto j = RunModelWithTracing(
       BuildOpTestCase<float>("add_node", "Add",
-                             {TestInputDef<float>({1, 2, 3}, false, data), TestInputDef<float>({1, 2, 3}, false, data)},
+                             {TestInputDef<float>({1, 2, 3}, false, data),
+                              TestInputDef<float>({1, 2, 3}, false, data)},
                              {}, {}, kOnnxDomain),
       tmp.path(), "cpu");
   if (j.empty()) return;
-  ASSERT_TRUE(j.contains("compilation_target"));
-  EXPECT_TRUE(j["compilation_target"].contains("htp_arch"));
-  EXPECT_TRUE(j["compilation_target"].contains("soc_model"));
-  EXPECT_TRUE(j["compilation_target"].contains("device_id"));
+
+  // soc_traces: exactly one entry with a CompilationTarget on a single-SoC run.
+  ASSERT_TRUE(j.contains("soc_traces"));
+  ASSERT_EQ(j["soc_traces"].size(), 1u)
+      << "Single-SoC session must produce exactly one soc_traces entry";
+  const auto& ct = j["soc_traces"][0]["compilation_target"];
+  EXPECT_TRUE(ct.contains("htp_arch"));
+  EXPECT_TRUE(ct.contains("soc_model"));
+  EXPECT_TRUE(ct.contains("device_id"));
+
+  // Breaking schema change: no compilation_target at root.
+  EXPECT_FALSE(j.contains("compilation_target"))
+      << "compilation_target was moved out of root in the FCB-ready schema; "
+         "consumers must read soc_traces[i].compilation_target instead";
+
+  // subgraph_traces stays at root (SoC-agnostic op-builder output) and is
+  // not duplicated under soc_traces[i].
+  ASSERT_TRUE(j.contains("subgraph_traces"))
+      << "subgraph_traces must be at root (SoC-agnostic op mapping)";
+  ASSERT_GE(j["subgraph_traces"].size(), 1u);
+  for (const auto& soc : j["soc_traces"]) {
+    EXPECT_FALSE(soc.contains("subgraph_traces"))
+        << "subgraph_traces must NOT be duplicated under soc_traces[i]";
+  }
+
+  // summary.total_socs mirrors soc_traces.size().
+  ASSERT_TRUE(j.contains("summary"));
+  ASSERT_TRUE(j["summary"].contains("total_socs"));
+  EXPECT_EQ(j["summary"]["total_socs"].get<uint32_t>(), 1u)
+      << "Single-SoC session must report total_socs == 1";
+  EXPECT_EQ(j["soc_traces"].size(), j["summary"]["total_socs"].get<uint32_t>());
 }
 
 // Test explicit output directory (simulates Android non-writable CWD).
@@ -877,7 +1057,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_OneToMany) {
   ValidateTraceStructure(j);
 }
 
-// Test HTP compilation_target metadata.
+// Test HTP compilation_target metadata. New schema: lives under soc_traces[0].
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_HTP_CompilationTarget) {
   ScopedTempDir tmp;
   std::vector<float> data = GetFloatDataInRange(-10.0f, 10.0f, 6);
@@ -889,8 +1069,12 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_HTP_CompilationTarget) {
   if (j.empty()) return;
 
   EXPECT_EQ(j["backend_type"], "htp");
-  ASSERT_TRUE(j.contains("compilation_target"));
-  EXPECT_TRUE(j["compilation_target"].contains("device_id"));
+  ASSERT_FALSE(j.contains("compilation_target"))
+      << "compilation_target must NOT be at root (moved to soc_traces[0])";
+  ASSERT_TRUE(j.contains("soc_traces"));
+  ASSERT_EQ(j["soc_traces"].size(), 1u);
+  ASSERT_TRUE(j["soc_traces"][0].contains("compilation_target"));
+  EXPECT_TRUE(j["soc_traces"][0]["compilation_target"].contains("device_id"));
 }
 
 // ========================= AOT Path Integration Tests =========================
@@ -2121,6 +2305,202 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase2_NoSidecar_EmitsEmptyColum
       << "Without a sidecar the annotation column should be present but every cell empty; "
       << "got " << annotated.size() << " non-empty annotations";
 }
+
+// ================= FCB multi-SoC framework op trace (x86-only) =================
+// Multi-SoC FCB EP-context compilation is an x86 offline-preparation feature
+// (the EP rejects it on aarch64), so these E2E tests are x86-only.
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+
+namespace {
+
+// SoC config shared by the FCB framework op trace tests: V73 + V81, two SoCs.
+struct FcbTraceTestConfig {
+  static constexpr size_t kNumSocs = 2;
+  static constexpr const char* kHtpArchStr = "73,81";
+#ifdef _WIN32
+  static constexpr const char* kSocModelStr = "60,88";
+#else
+  static constexpr const char* kSocModelStr = "43,87";
+#endif
+  static const std::vector<std::string>& TargetArches() {
+    static const std::vector<std::string> arches = {"73", "81"};
+    return arches;
+  }
+};
+
+// Build the common multi-SoC + framework-op-trace provider options.
+ProviderOptions MakeFcbTraceProviderOptions(const std::string& trace_dir) {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["htp_arch"] = FcbTraceTestConfig::kHtpArchStr;
+  opts["soc_model"] = FcbTraceTestConfig::kSocModelStr;
+  opts["enable_framework_op_trace"] = "1";
+  opts["framework_op_trace_dir"] = trace_dir;
+  return opts;
+}
+
+// Locate qnn_op_trace.json in dir, parse it, and return the JSON object.
+nlohmann::json FindAndParseTraceFile(const std::filesystem::path& dir) {
+  std::filesystem::path trace_file;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (entry.path().extension() == ".json" &&
+        entry.path().stem().string().find("_op_trace") != std::string::npos) {
+      trace_file = entry.path();
+      break;
+    }
+  }
+  EXPECT_FALSE(trace_file.empty()) << "No qnn_op_trace.json found in " << dir;
+  if (trace_file.empty()) return {};
+
+  std::ifstream ifs(trace_file);
+  EXPECT_TRUE(ifs.is_open()) << "Failed to open " << trace_file;
+  if (!ifs.is_open()) return {};
+
+  auto j = nlohmann::json::parse(ifs, nullptr, false);
+  EXPECT_FALSE(j.is_discarded()) << "Failed to parse " << trace_file;
+  return j;
+}
+
+// Assert every-trace invariants. Fatal ASSERT_*; wrap call sites in
+// ASSERT_NO_FATAL_FAILURE so a size mismatch aborts before soc_traces[i] indexing.
+void AssertFcbTraceInvariants(const nlohmann::json& j, size_t num_socs) {
+  ASSERT_FALSE(j.empty());
+  ASSERT_TRUE(j.contains("soc_traces"));
+  ASSERT_EQ(j["soc_traces"].size(), num_socs)
+      << "Multi-SoC trace must have one soc_traces entry per htp_arch";
+  ASSERT_TRUE(j.contains("summary"));
+  EXPECT_EQ(j["summary"]["total_socs"].get<uint32_t>(), static_cast<uint32_t>(num_socs));
+  EXPECT_FALSE(j.contains("compilation_target"))
+      << "compilation_target must not be at root (moved to soc_traces[i])";
+}
+
+}  // namespace
+
+// FCB multi-SoC framework op trace E2E test: exercises GetCapabilityImpl ->
+// GetMultiSocSupportedNodes -> CompileMultiSocOnnxModel with tracing enabled.
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_FrameworkOpTrace) {
+  namespace fs = std::filesystem;
+
+  fs::path trace_dir = fs::temp_directory_path() / "fcb_op_trace_e2e";
+  fs::remove_all(trace_dir);
+  fs::create_directories(trace_dir);
+  fs::path output_model_file = trace_dir / "model_ctx.onnx";
+
+  ProviderOptions provider_options = MakeFcbTraceProviderOptions(trace_dir.string());
+  provider_options["num_graph_prepare_threads"] = "1";
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+
+  ASSERT_TRUE(fs::exists(output_model_file));
+  fs::remove(output_model_file);
+
+  nlohmann::json j = FindAndParseTraceFile(trace_dir);
+  if (j.empty()) {
+    fs::remove_all(trace_dir);
+    return;
+  }
+  ASSERT_NO_FATAL_FAILURE(AssertFcbTraceInvariants(j, FcbTraceTestConfig::kNumSocs));
+
+  // Each soc_traces[i] carries the expected htp_arch.
+  for (size_t i = 0; i < FcbTraceTestConfig::TargetArches().size(); ++i) {
+    ASSERT_TRUE(j["soc_traces"][i].contains("compilation_target"));
+    EXPECT_EQ(j["soc_traces"][i]["compilation_target"]["htp_arch"],
+              "V" + FcbTraceTestConfig::TargetArches()[i])
+        << "soc_traces[" << i << "] htp_arch mismatch";
+  }
+
+  // At least one op was compiled; subgraph_traces is at root, not per SoC.
+  EXPECT_GT(j["summary"]["total_qnn_ops"].get<size_t>(), 0u);
+  ASSERT_TRUE(j.contains("subgraph_traces"));
+  ASSERT_GE(j["subgraph_traces"].size(), 1u);
+  for (const auto& soc : j["soc_traces"]) {
+    EXPECT_FALSE(soc.contains("subgraph_traces"))
+        << "subgraph_traces must not be duplicated under soc_traces[i]";
+  }
+
+  fs::remove_all(trace_dir);
+}
+
+// Mixed partition (Abs supported, NonZero graph-output rejected): verifies both
+// subgraph_traces and SoC-attributed unsupported_nodes in one trace.
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_FrameworkOpTrace_Mixed) {
+  namespace fs = std::filesystem;
+
+  fs::path trace_dir = fs::temp_directory_path() / "fcb_op_trace_mixed";
+  fs::remove_all(trace_dir);
+  fs::create_directories(trace_dir);
+  fs::path output_model_file = trace_dir / "model_ctx.onnx";
+
+  ModelTestBuilder helper;
+  auto build_model = [](ModelTestBuilder& builder) {
+    std::vector<float> data = GetFloatDataInRange(-1.0f, 1.0f, 6);
+    builder.MakeInput<float>("input", {1, 2, 3}, data);
+    builder.AddNode("abs_node", "Abs", {"input"}, {"abs_out"});
+    builder.MakeOutput("Y");
+    builder.AddNode("nonzero_node", "NonZero", {"abs_out"}, {"Y"});
+  };
+  build_model(helper);
+  const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+  opset_id_proto->set_domain("");
+  opset_id_proto->set_version(13);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  ProviderOptions provider_options = MakeFcbTraceProviderOptions(trace_dir.string());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+  nlohmann::json j = FindAndParseTraceFile(trace_dir);
+  if (j.empty()) {
+    fs::remove_all(trace_dir);
+    return;
+  }
+  ASSERT_NO_FATAL_FAILURE(AssertFcbTraceInvariants(j, FcbTraceTestConfig::kNumSocs));
+
+  // Abs was compiled: subgraph_traces non-empty, total_qnn_ops > 0.
+  ASSERT_TRUE(j.contains("subgraph_traces"));
+  EXPECT_GE(j["subgraph_traces"].size(), 1u);
+  EXPECT_GT(j["summary"]["total_qnn_ops"].get<size_t>(), 0u);
+
+  // NonZero was rejected: unsupported_nodes non-empty with SoC-attributed reason.
+  ASSERT_TRUE(j.contains("unsupported_nodes"));
+  ASSERT_GT(j["unsupported_nodes"].size(), 0u);
+  bool found_nonzero = false;
+  for (const auto& un : j["unsupported_nodes"]) {
+    if (un["op_type"].get<std::string>() == "NonZero") {
+      found_nonzero = true;
+      const std::string reason = un["reason"].get<std::string>();
+      EXPECT_FALSE(reason.empty());
+      EXPECT_TRUE(reason.find("V73") != std::string::npos || reason.find("V81") != std::string::npos)
+          << "Multi-SoC reason must carry SoC label; got: " << reason;
+    }
+  }
+  EXPECT_TRUE(found_nonzero) << "NonZero must appear in unsupported_nodes";
+
+  fs::remove_all(trace_dir);
+}
+
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
 
 }  // namespace test
 }  // namespace onnxruntime

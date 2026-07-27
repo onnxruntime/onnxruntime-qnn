@@ -114,8 +114,12 @@ class PerArchAcceptRules:
 
 
 def _iter_release_files(release_dir: Path):
+    is_windows = platform.system() == "Windows"
     for p in release_dir.glob("**/*"):
-        if not p.is_file() or (platform.system() == "Windows" and p.is_symlink()):
+        # Check is_symlink() first: on Windows is_file() raises on some symlinks.
+        if is_windows and p.is_symlink():
+            continue
+        if not p.is_file():
             continue
         if _ALWAYS_REJECT_RE.search(p.as_posix()):
             continue
