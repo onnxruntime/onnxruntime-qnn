@@ -154,10 +154,16 @@ TEST_F(QnnHTPBackendTests, Range_dynamic_input_rejected) {
 }
 
 // delta == 0 must be rejected. See the CPU-side test above for why this needs EXPECT_THROW.
+// On Linux aarch64 the test framework skips FP16/FP32 HTP tests on arch <= 68 without throwing
+// (RunQnnModelTest returns via GTEST_SKIP before the CPU baseline runs), so no EXPECT_THROW there.
 TEST_F(QnnHTPBackendTests, Range_delta_zero_rejected) {
+#if defined(__linux__) && defined(__aarch64__)
+  RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "htp");
+#else
   EXPECT_THROW(
       RunRangeOpTest<float>(0.0f, 5.0f, 0.0f, 11, ExpectedEPNodeAssignment::None, "htp"),
       std::exception);
+#endif
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
