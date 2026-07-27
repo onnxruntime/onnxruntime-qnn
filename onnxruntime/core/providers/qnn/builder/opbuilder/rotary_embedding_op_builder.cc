@@ -36,20 +36,20 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
                                                     const Ort::Logger& logger) const {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Validating RotaryEmbedding op for QNN EP");
 
-  // Only support HTP backend for now
+  RETURN_IF_NOT(node_unit.Domain() != "com.microsoft",
+                "QNN EP only supports standard ONNX RotaryEmbedding (opset 23), "
+                "not com.microsoft.RotaryEmbedding");
+
   RETURN_IF_NOT(IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
                 "QNN RotaryEmbedding is only supported on HTP backend");
 
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
 
-  // Validate input/output counts
-  // Input order: [input, position_ids, cos_cache, sin_cache]
-  RETURN_IF_NOT(inputs.size() == 4,
-                "RotaryEmbedding requires 4 inputs (input, position_ids, cos_cache, sin_cache)");
+  RETURN_IF_NOT(inputs.size() >= 3 && inputs.size() <= 4,
+                "RotaryEmbedding requires 3-4 inputs (X, cos_cache, sin_cache, [position_ids])");
   RETURN_IF_NOT(outputs.size() == 1, "RotaryEmbedding requires exactly 1 output");
 
-  // Validate data types - only FP16 and FP32 supported
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
 
@@ -57,32 +57,22 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
                     input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32,
                 "RotaryEmbedding only supports FP16 and FP32 data types");
 
-  // Validate cos_cache and sin_cache have same dtype as input
   TensorInfo cos_cache_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], cos_cache_info));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], cos_cache_info));
   RETURN_IF_NOT(cos_cache_info.qnn_data_type == input_info.qnn_data_type,
                 "cos_cache must have same data type as input");
 
   TensorInfo sin_cache_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[3], sin_cache_info));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], sin_cache_info));
   RETURN_IF_NOT(sin_cache_info.qnn_data_type == input_info.qnn_data_type,
                 "sin_cache must have same data type as input");
 
-  // Validate shapes
   RETURN_IF_ERROR(ValidateInputShapes(qnn_model_wrapper, node_unit, logger));
 
-  // Validate attributes
   OrtNodeAttrHelper node_helper(node_unit);
-
-  // Native QNN ROPE OP has no equivalent for these two contrib-op attrs.
-  const float scale = node_helper.Get("scale", 1.0f);
-  RETURN_IF_NOT(scale == 1.0f, "QNN RotaryEmbedding does not support scale != 1.0");
-  const int64_t is_packed_batching = node_helper.Get("is_packed_batching", static_cast<int64_t>(0));
-  RETURN_IF_NOT(is_packed_batching == 0, "QNN RotaryEmbedding does not support is_packed_batching");
 
   int64_t rotary_embedding_dim = node_helper.Get("rotary_embedding_dim", static_cast<int64_t>(0));
 
-  // Get input shape to validate rotary_embedding_dim
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape),
                 "Cannot get input shape");
@@ -91,7 +81,6 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
   RETURN_IF_NOT(input_rank == 3 || input_rank == 4,
                 "RotaryEmbedding input must be rank 3 or 4");
 
-  // For 3D input, num_heads attribute is required
   if (input_rank == 3) {
     int64_t num_heads = node_helper.Get("num_heads", static_cast<int64_t>(0));
     RETURN_IF_NOT(num_heads > 0,
@@ -101,7 +90,6 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
                   "hidden_size must be divisible by num_heads");
   }
 
-  // Determine head_size for validation
   uint32_t head_size = 0;
   if (input_rank == 4) {
     head_size = input_shape[3];  // [B, NH, S, HS]
@@ -110,21 +98,17 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
     head_size = input_shape[2] / static_cast<uint32_t>(num_heads);  // [B, S, NH*HS]
   }
 
-  // Validate rotary_embedding_dim
   if (rotary_embedding_dim == 0) {
     rotary_embedding_dim = head_size;
   }
-  RETURN_IF_NOT(rotary_embedding_dim > 0 && rotary_embedding_dim <= static_cast<int64_t>(head_size),
-                "rotary_embedding_dim must be > 0 and <= head_size");
-  RETURN_IF_NOT(rotary_embedding_dim % 2 == 0,
-                "rotary_embedding_dim must be even");
+  RETURN_IF_NOT(rotary_embedding_dim >= 2 && rotary_embedding_dim <= static_cast<int64_t>(head_size),
+                "rotary_embedding_dim must be in [2, head_size]");
 
-  // Validate cos/sin cache shapes
   std::vector<uint32_t> cos_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, cos_shape),
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, cos_shape),
                 "Cannot get cos_cache shape");
   std::vector<uint32_t> sin_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[3].shape, sin_shape),
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, sin_shape),
                 "Cannot get sin_cache shape");
 
   RETURN_IF_NOT(cos_shape.size() == 2 || cos_shape.size() == 3,
@@ -140,10 +124,9 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
   RETURN_IF_NOT(sin_shape.back() == expected_cache_dim,
                 "sin_cache last dimension must equal rotary_embedding_dim/2");
 
-  // Validate position_ids (always at index 1)
-  if (inputs[1].Exists()) {
+  if (inputs.size() > 3 && inputs[3].Exists()) {
     std::vector<uint32_t> pos_ids_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, pos_ids_shape),
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[3].shape, pos_ids_shape),
                   "Cannot get position_ids shape");
     RETURN_IF_NOT(pos_ids_shape.size() == 2,
                   "position_ids must be rank 2 [B, S]");
@@ -170,9 +153,7 @@ Ort::Status RotaryEmbeddingOpBuilder::ValidateInputShapes(QnnModelWrapper& qnn_m
   return Ort::Status();
 }
 
-// Maps the com.microsoft.RotaryEmbedding contrib op directly onto the native
-// QNN ROPE OP. The native op requires rank-4 input
-// [B, NH, S, HS], so rank-3 ONNX input [B, S, NH*HS] is reshaped/transposed in and out
+// Rank-3 input [B, S, NH*HS] is reshaped/transposed to 4D [B, NH, S, HS] for the native op.
 Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                                   const OrtNodeUnit& node_unit,
                                                                   std::vector<std::string>&& input_names,
@@ -205,12 +186,10 @@ Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   uint32_t head_size = 0;
 
   if (is_4d_input) {
-    // Input is already [B, NH, S, HS] -- matches native op layout directly.
     num_heads_val = input_shape[1];
     seq_len = input_shape[2];
     head_size = input_shape[3];
   } else {
-    // Input is [B, S, NH*HS].
     seq_len = input_shape[1];
     RETURN_IF_NOT(num_heads > 0, "num_heads required for 3D input");
     num_heads_val = static_cast<uint32_t>(num_heads);
@@ -219,7 +198,6 @@ Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
 
   const std::vector<uint32_t> native_shape = {batch_size, num_heads_val, seq_len, head_size};
 
-  // Step 1: normalize input to 4D [B, NH, S, HS] for the native op.
   std::string native_input = input_names[0];
   if (!is_4d_input) {
     std::string reshaped = utils::UniqueNameGenerator().New(node_unit, "_reshape_input");
@@ -239,12 +217,10 @@ Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
         false, false));
   }
 
-  // Step 2: build the native QNN_OP_ROTARY_EMBEDDING node.
-  // Native input order: [X, cos_cache, sin_cache, position_ids(optional)].
-  std::vector<std::string> rope_input_names = {native_input, input_names[2], input_names[3]};
-  const bool has_position_ids = inputs[1].Exists();
+  std::vector<std::string> rope_input_names = {native_input, input_names[1], input_names[2]};
+  const bool has_position_ids = (inputs.size() > 3 && inputs[3].Exists());
   if (has_position_ids) {
-    rope_input_names.push_back(input_names[1]);
+    rope_input_names.push_back(input_names[3]);
   }
 
   std::vector<std::string> rope_param_names;
@@ -286,7 +262,6 @@ Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
                     do_op_validation),
                 "Failed to create native RotaryEmbedding node");
 
-  // Step 3: restore original layout for rank-3 input.
   if (!is_4d_input) {
     std::string transposed_back = utils::UniqueNameGenerator().New(node_unit, "_transpose_output");
     std::vector<uint32_t> transpose_perm = {0, 2, 1, 3};
