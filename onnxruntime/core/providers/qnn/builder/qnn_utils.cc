@@ -1747,8 +1747,8 @@ Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
                                     /*out*/ std::vector<uint8_t>& quantized_bias_bytes,
                                     /*out*/ std::vector<float>& bias_scales,
                                     /*out*/ std::vector<int32_t>& bias_offsets) {
-  RETURN_IF_NOT(!float_bias_data.empty(), "Float bias data must not be empty");
-  RETURN_IF_NOT(!weights_scales.empty(), "Weight scales must not be empty");
+  RETURN_IF(float_bias_data.empty(), "Float bias data must not be empty");
+  RETURN_IF(weights_scales.empty(), "Weight scales must not be empty");
   const size_t num_channels = float_bias_data.size();
   bias_scales.resize(num_channels);
   bias_offsets.assign(num_channels, 0);
