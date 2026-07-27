@@ -920,7 +920,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorGamma_PerChannelVar_U16) {
     MakeTestInput<float>(builder, "input", input_def);
     QuantParams<uint16_t> input_qparams = GetTestInputQuantParams<uint16_t>(input_def, /*symmetric*/ true);
     std::string input_qdq = AddQDQNodePair<uint16_t>(builder, "input_qdq", "input",
-                                                    input_qparams.scale, input_qparams.zero_point);
+                                                     input_qparams.scale, input_qparams.zero_point);
 
     // scale (gamma): PER-TENSOR U8 Q/DQ.
     const auto& scale_data_ref = scale_def.GetRawData();
@@ -930,7 +930,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorGamma_PerChannelVar_U16) {
     const float scale_qscale = scale_abs_max / static_cast<float>(std::numeric_limits<uint8_t>::max());
     builder.MakeInitializer<float>("scale_init", {num_channels}, scale_data_ref);
     std::string scale_qdq = AddQDQNodePair<uint8_t>(builder, "scale_qdq", "scale_init",
-                                                   scale_qscale, static_cast<uint8_t>(0));
+                                                    scale_qscale, static_cast<uint8_t>(0));
 
     // bias: raw float initializer (converted internally to S32 by OverrideParamTypeForRequantize).
     builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
@@ -954,14 +954,14 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorGamma_PerChannelVar_U16) {
         builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))};
     builder.MakeInitializer<float>("var_init", {num_channels}, var_vals);
     std::string var_qdq = AddQDQNodePair<uint8_t>(builder, "var_qdq", "var_init",
-                                                 var_scales, var_zps, axis_attr, axis_attr);
+                                                  var_scales, var_zps, axis_attr, axis_attr);
 
     std::vector<ONNX_NAMESPACE::AttributeProto> bn_attrs;
     builder.AddNode("batchnorm", "BatchNormalization",
                     {input_qdq, scale_qdq, "bias", "mean", var_qdq},
                     {"batchnorm_output"}, "", bn_attrs);
     AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "output_qdq", "batchnorm_output",
-                                                   output_qparams[0].scale, output_qparams[0].zero_point);
+                                                    output_qparams[0].scale, output_qparams[0].zero_point);
   };
 
   ProviderOptions provider_options;
