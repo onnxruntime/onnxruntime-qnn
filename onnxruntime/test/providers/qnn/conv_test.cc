@@ -344,11 +344,12 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
     const std::string& auto_pad = "NOTSET",
     bool use_contrib_qdq = false,
     std::optional<OutputActivationInfo> output_activation = std::nullopt,
-    std::optional<std::vector<int64_t>> output_shape = std::nullopt) {
+    std::optional<std::vector<int64_t>> output_shape = std::nullopt,
+    bool use_float_bias = false) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
           dilations, group, auto_pad,
-          use_contrib_qdq, output_activation, output_shape](ModelTestBuilder& builder,
-                                                            std::vector<QuantParams<ActivationQType>>& output_qparams) {
+          use_contrib_qdq, use_float_bias, output_activation, output_shape](ModelTestBuilder& builder,
+                                                                            std::vector<QuantParams<ActivationQType>>& output_qparams) {
     std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
@@ -367,9 +368,15 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
 
     // bias ->
     if (!bias_def.GetShape().empty()) {
-      // Bias requirement taken from python quantization tool: onnx_quantizer.py::quantize_bias_static()
-      const float bias_scale = input_qparams.scale * weights_qparams.scale;
-      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale, use_contrib_qdq));
+      if (use_float_bias) {
+        ASSERT_TRUE(bias_def.IsInitializer() && bias_def.IsRawData()) << "Float bias must be an initializer with raw data";
+        builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+        conv_input_names.push_back("bias");
+      } else {
+        // Bias requirement taken from python quantization tool: onnx_quantizer.py::quantize_bias_static()
+        const float bias_scale = input_qparams.scale * weights_qparams.scale;
+        conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale, use_contrib_qdq));
+      }
     }
 
     // Conv attrs (must be provided at node creation)
@@ -438,9 +445,10 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
     std::optional<int64_t> group,
     const std::string& auto_pad = "NOTSET",
     bool use_contrib_qdq = false,
-    std::optional<OutputActivationInfo> output_activation = std::nullopt) {
+    std::optional<OutputActivationInfo> output_activation = std::nullopt,
+    bool use_float_bias = false) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
-          dilations, group, auto_pad, use_contrib_qdq,
+          dilations, group, auto_pad, use_contrib_qdq, use_float_bias,
           weight_quant_axis, output_activation](ModelTestBuilder& builder,
                                                 std::vector<QuantParams<ActivationQType>>& output_qparams) {
     std::vector<std::string> conv_input_names;
@@ -491,38 +499,43 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
         use_contrib_qdq);
     conv_input_names.push_back("weights_dq");
 
-    // Quantized(bias) -> DQ ->
+    // bias ->
     if (!bias_def.GetShape().empty()) {
       QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
+      if (use_float_bias) {
+        builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+        conv_input_names.push_back("bias");
+      } else {
+        // Quantized(bias) -> DQ -> (per-channel quantization)
+        // bias_scale = input_scale * weight_scale (per-channel)
+        std::vector<float> bias_scales(weight_scales);
+        for (float& s : bias_scales) {
+          s *= input_qparams.scale;
+        }
 
-      // bias_scale = input_scale * weight_scale (per-channel)
-      std::vector<float> bias_scales(weight_scales);
-      for (float& s : bias_scales) {
-        s *= input_qparams.scale;
+        std::vector<int32_t> bias_zero_points(bias_scales.size(), 0);
+        auto bias_shape = bias_def.GetShape();
+
+        std::vector<int32_t> quantized_biases(SizeOfShape(bias_shape));
+        QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases,
+                                       bias_def.GetShape(), bias_scales, bias_zero_points,
+                                       0 /* axis */);
+
+        builder.MakeInitializer<int32_t>("bias_quant", bias_def.GetShape(), quantized_biases);
+        builder.MakeInitializer<float>("bias_scale", {static_cast<int64_t>(bias_scales.size())}, bias_scales);
+        builder.MakeInitializer<int32_t>("bias_zp", {static_cast<int64_t>(bias_zero_points.size())}, bias_zero_points);
+
+        std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
+        bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+
+        builder.AddNode("BiasDQ",
+                        "DequantizeLinear",
+                        {"bias_quant", "bias_scale", "bias_zp"},
+                        {"bias_dq"},
+                        use_contrib_qdq ? kMSDomain : kOnnxDomain,
+                        bias_dq_attrs);
+        conv_input_names.push_back("bias_dq");
       }
-
-      std::vector<int32_t> bias_zero_points(bias_scales.size(), 0);
-      auto bias_shape = bias_def.GetShape();
-
-      std::vector<int32_t> quantized_biases(SizeOfShape(bias_shape));
-      QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases,
-                                     bias_def.GetShape(), bias_scales, bias_zero_points,
-                                     0 /* axis */);
-
-      builder.MakeInitializer<int32_t>("bias_quant", bias_def.GetShape(), quantized_biases);
-      builder.MakeInitializer<float>("bias_scale", {static_cast<int64_t>(bias_scales.size())}, bias_scales);
-      builder.MakeInitializer<int32_t>("bias_zp", {static_cast<int64_t>(bias_zero_points.size())}, bias_zero_points);
-
-      std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
-      bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-
-      builder.AddNode("BiasDQ",
-                      "DequantizeLinear",
-                      {"bias_quant", "bias_scale", "bias_zp"},
-                      {"bias_dq"},
-                      use_contrib_qdq ? kMSDomain : kOnnxDomain,
-                      bias_dq_attrs);
-      conv_input_names.push_back("bias_dq");
     }
 
     // Conv attrs (must be provided at node creation)
@@ -1336,6 +1349,49 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel_BiasRequantization) {
                        13,  // opset
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(0.015f));
+}
+
+// Tests QDQ Conv where activation and weight are per-tensor quantized but bias is a plain float
+// initializer.
+TEST_F(QnnHTPBackendTests, ConvU8U8_FloatBias) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def,
+                           {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvTestCase<uint8_t, uint8_t>("Conv", input_def, weight_def, bias_def,
+                                             {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET",
+                                             /*use_contrib_qdq=*/false, std::nullopt, std::nullopt,
+                                             /*use_float_bias=*/true),
+      provider_options, 13, ExpectedEPNodeAssignment::All, QDQTolerance(0.015f));
+}
+
+// Tests QDQ Conv where activation is per-tensor quantized, weight is per-channel quantized (int8),
+// and bias is a plain float initializer.
+TEST_F(QnnHTPBackendTests, ConvU8S8_PerChannel_FloatBias) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def,
+                           {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQPerChannelConvTestCase<uint8_t, int8_t>("Conv", input_def, weight_def, bias_def,
+                                                      0,  // weight quant axis
+                                                      {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET",
+                                                      /*use_contrib_qdq=*/false, std::nullopt,
+                                                      /*use_float_bias=*/true),
+      provider_options, 13, ExpectedEPNodeAssignment::All, QDQTolerance(0.015f));
 }
 
 // Test per-channel QDQ Conv with INT4 weights and no bias.

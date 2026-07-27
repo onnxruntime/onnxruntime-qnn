@@ -145,10 +145,31 @@ class QnnModel {
 
   const std::string& Name() const { return graph_info_->Name(); }
 
+  // Store info needed to reload the QNN context from disk after an SSR.
+  // Only applicable to embed_mode=0 (external context binary file); the filepath is empty
+  // for embed_mode=1, which disables SSR recovery for that model.
+  void SetContextRecoveryInfo(std::string filepath, int64_t max_spill_fill_size,
+                              ContextPriority context_priority) {
+    context_bin_filepath_ = std::move(filepath);
+    max_spill_fill_size_ = max_spill_fill_size;
+    context_priority_ = context_priority;
+  }
+
+  // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
+  // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
+  Ort::Status RecoverFromSSR(const Ort::Logger& logger);
+
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& logger);
+
+  // Bind ORT tensors to QNN tensors and execute the graph once.
+  // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
+  // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
+  Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
+                                  const Ort::Logger& logger,
+                                  Qnn_ErrorHandle_t& execute_status);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
@@ -180,6 +201,11 @@ class QnnModel {
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
   const ApiPtrs api_ptrs_;
+
+  // SSR recovery state (embed_mode=0 only). An empty filepath disables recovery.
+  std::string context_bin_filepath_;
+  int64_t max_spill_fill_size_ = 0;
+  ContextPriority context_priority_ = ContextPriority::NORMAL;
 };
 
 }  // namespace qnn

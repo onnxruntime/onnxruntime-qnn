@@ -1741,6 +1741,35 @@ bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation
   return std::abs(bias_scale - expected_scale) <= tolerance;
 }
 
+Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
+                                    gsl::span<const float> weights_scales,
+                                    float activation_scale,
+                                    /*out*/ std::vector<uint8_t>& quantized_bias_bytes,
+                                    /*out*/ std::vector<float>& bias_scales,
+                                    /*out*/ std::vector<int32_t>& bias_offsets) {
+  RETURN_IF(float_bias_data.empty(), "Float bias data must not be empty");
+  RETURN_IF(weights_scales.empty(), "Weight scales must not be empty");
+  const size_t num_channels = float_bias_data.size();
+  bias_scales.resize(num_channels);
+  bias_offsets.assign(num_channels, 0);
+  // Compute bias_scale = activation_scale * weight_scale and quantize to int32.
+  // If weights_scales has a single element (per-tensor weight), all channels share the same scale.
+  std::vector<int32_t> quantized_bias(num_channels, 0);
+  for (size_t c = 0; c < num_channels; ++c) {
+    const float weight_scale = (c < weights_scales.size()) ? weights_scales[c] : weights_scales[0];
+    bias_scales[c] = activation_scale * weight_scale;
+    RETURN_IF_NOT(bias_scales[c] > 0.0f, "Bias scale value is non-positive");
+    const double rounded = std::round(static_cast<double>(float_bias_data[c]) / static_cast<double>(bias_scales[c]));
+    quantized_bias[c] = static_cast<int32_t>(std::clamp(rounded,
+                                                        static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                                        static_cast<double>(std::numeric_limits<int32_t>::max())));
+  }
+  // Pack quantized int32 values into bytes
+  quantized_bias_bytes.resize(num_channels * sizeof(int32_t));
+  std::memcpy(quantized_bias_bytes.data(), quantized_bias.data(), quantized_bias_bytes.size());
+  return Ort::Status();
+}
+
 Ort::Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
                                  const std::vector<uint32_t>& bias_shape,
                                  gsl::span<const float> current_scales,

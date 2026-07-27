@@ -204,6 +204,58 @@
         $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
     COMMENT "Copying version, license, README, and release notes files"
   )
+
+  # Bundle libDlModelToolsPy (used by deploy_multi_soc_ep_context.py) from the
+  # QAIRT SDK's dlc_utils into the wheel. The dlc_utils platform sub-directory
+  # name differs from QNN_ARCH_ABI, so map it explicitly (see the SDK's
+  # lib/python/qti/aisw/dlc_utils/__init__.py for the canonical mapping).
+  set(QNN_DLC_UTILS_SUBDIR "")
+  if (QNN_ARCH_ABI STREQUAL "x86_64-linux-clang")
+    set(QNN_DLC_UTILS_SUBDIR "linux-x86_64")
+  elseif (QNN_ARCH_ABI STREQUAL "aarch64-oe-linux-gcc11.2")
+    set(QNN_DLC_UTILS_SUBDIR "linux-aarch64-oe-gcc11.2")
+  elseif (QNN_ARCH_ABI STREQUAL "x86_64-windows-msvc")
+    set(QNN_DLC_UTILS_SUBDIR "windows-x86_64")
+  elseif (QNN_ARCH_ABI STREQUAL "arm64x-windows-msvc")
+    set(QNN_DLC_UTILS_SUBDIR "windows-arm64ec")
+  endif()
+
+  if (NOT QNN_DLC_UTILS_SUBDIR)
+    message(WARNING "dlc_utils sub-directory not found for QNN_ARCH_ABI=${QNN_ARCH_ABI}; "
+                    "libDlModelToolsPy will not be bundled and deploy_multi_soc_ep_context will be unusable")
+  elseif (NOT (Python_VERSION_MAJOR EQUAL 3 AND Python_VERSION_MINOR EQUAL 12))
+    # QAIRT SDK ships libDlModelToolsPy in limited Python version. Considering
+    # QNN-EP's supported Python version, only bundle it in Python 3.12 wheel.
+    message(STATUS "libDlModelToolsPy is only bundled for the Python 3.12 wheel; "
+                   "skipping for Python ${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}")
+  elseif (EXISTS "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}")
+    file(GLOB QNN_DLMODELTOOLS_LIBS LIST_DIRECTORIES false
+         "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}/libDlModelToolsPy312.so"
+         "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}/libDlModelToolsPy312.pyd")
+    if (NOT QNN_DLMODELTOOLS_LIBS)
+      message(WARNING "libDlModelToolsPy312 not found under "
+                      "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}; "
+                      "deploy_multi_soc_ep_context.py will not be bundled and will be unusable")
+    else()
+      foreach(QNN_DLMODELTOOLS_LIB ${QNN_DLMODELTOOLS_LIBS})
+        add_custom_command(
+          TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QNN_DLMODELTOOLS_LIB}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
+          COMMENT "Copying ${QNN_DLMODELTOOLS_LIB} to onnxruntime_qnn for Python Wheel"
+        )
+      endforeach()
+      # Only package the deploy tool alongside its libDlModelToolsPy312 dependency,
+      # so the extension (3.12) and the script always ship together.
+      add_custom_command(
+        TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${ONNXRUNTIME_ROOT}/python/multi_soc/deploy_multi_soc_ep_context.py
+            $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
+        COMMENT "Copying deploy_multi_soc_ep_context.py to onnxruntime_qnn for Python Wheel"
+      )
+    endif()
+  endif()
+
   # Create document destination directory first to ensure it exists
   add_custom_command(
     TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
