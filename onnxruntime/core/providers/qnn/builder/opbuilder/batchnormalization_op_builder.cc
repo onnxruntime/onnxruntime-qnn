@@ -500,11 +500,15 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
 // Single source of truth for float execution, shared by ProcessInputs (stores params) and
 // ProcessAttributesAndOutputs (emits the op).
 //   - has_float_output: quantized input, no output Q -> float island; BN emits float directly.
-//   - use_float_params: also covers u8/u16 input where any ONNX BN param (scale/bias/mean/var)
-//     is per-channel. QNN BN takes only per-tensor fused_scale/fused_bias, so folding a
-//     per-channel input into the fused weight (gamma/sqrt(var+eps)) or fused bias
-//     (beta - mean*fused_scale) and then squeezing it back to one scale is lossy — the
-//     per-channel divergence baked in cannot be recovered. The float-promotion path
+//   - use_float_params: also covers u8/u16 input where the fused params carry per-channel
+//     range that QNN BN cannot represent. Two ways that happens:
+//       (a) an ONNX BN param (scale/bias/mean/var) is itself per-channel quantized;
+//       (b) mean or var arrives as raw float in an otherwise quantized op — the float
+//           values vary per channel just the same, they simply carry no quant params.
+//     Either way, QNN BN takes only per-tensor fused_scale/fused_bias, so folding those
+//     inputs into the fused weight (gamma/sqrt(var+eps)) or fused bias
+//     (beta - mean*fused_scale) and then squeezing the result back to one scale is lossy —
+//     the per-channel divergence baked in cannot be recovered. The float-promotion path
 //     (Dequantize -> BN in F32 -> Quantize) preserves that divergence.
 struct BatchNormFloatExecution {
   bool has_float_output;
