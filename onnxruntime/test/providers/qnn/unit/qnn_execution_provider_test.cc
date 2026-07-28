@@ -347,6 +347,15 @@ TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_UnknownOp_ReturnsN
 // ===========================================================================
 // Group 4: Constructor — backend_type option branches
 // ===========================================================================
+//
+// Assertion strength (Groups 4-7): QnnEp exposes no public getter for parsed
+// constructor options, so these ctor-option tests can only assert that
+// construction does not throw. They exercise each option-parsing branch for
+// coverage but cannot observe the parsed result; options whose only effect is a
+// log line have no other observable side effect to assert. Tests with an
+// observable result assert it directly (early throws in Group 8; error codes in
+// Groups 10-12). Adding a getter purely for tests would break EP encapsulation,
+// so the weak assertion here is a deliberate component-level plateau.
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BackendTypeGenie_Succeeds) {
   EpStubContext ctx;

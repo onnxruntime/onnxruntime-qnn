@@ -179,8 +179,15 @@ struct OrtApiStubContext {
 //
 // libQnnHtp.so is part of the QAIRT SDK that ships with every supported CI image,
 // so a missing library is a CI configuration error rather than a normal condition.
-// Tests should ASSERT_TRUE(backend.IsValid()) so a missing SDK fails the test
-// loudly instead of silently skipping.
+// When a test *uses* the handle this produces (reads qnn_interface / backend_handle
+// to drive the code under test), ASSERT_TRUE(backend.IsValid()) so a missing SDK
+// fails loudly instead of passing silently with a dead handle.
+//
+// Exception: when used only as an availability *probe* in a fixture SetUp() that gates
+// a whole real-backend test group (the handle itself is discarded — the tests build
+// their own backend via the code under test), GTEST_SKIP() is the established
+// convention, mirroring QnnHTPBackendTests::SetUp() and QnnUnit_BackendManagerHtpTest.
+// The group's individual tests keep their own ASSERT_TRUE behavioral checks.
 //
 // Note: this helper only produces a Qnn_BackendHandle_t. It does NOT create a QNN
 // context/session (no contextCreate call) and does NOT create a graph. The validation
