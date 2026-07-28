@@ -1323,16 +1323,21 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   }
 #endif
 
-  const QnnContext_Config_t* configs[] = {&context_priority_config,
+  // Build config list dynamically to avoid nullptr entries in the middle of a
+  // nullptr-terminated array (QNN would stop iterating at the first nullptr).
+  std::vector<const QnnContext_Config_t*> configs_vec;
+  configs_vec.push_back(&context_priority_config);
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
-                                          &context_config_resource_sharing,
-                                          &resource_sharing_opt_type_config,
-                                          &context_config_weight_sharing,
+  configs_vec.push_back(&context_config_resource_sharing);
+  configs_vec.push_back(&resource_sharing_opt_type_config);
+  configs_vec.push_back(&context_config_weight_sharing);
 #endif
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-                                          enable_gpe ? &context_config_gpe_vtcm : nullptr,
+  if (enable_gpe) {
+    configs_vec.push_back(&context_config_gpe_vtcm);
+  }
 #endif
-                                          nullptr};
+  configs_vec.push_back(nullptr);  // terminator
 
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
   if (enable_gpe && gpe_kway_partitions > 0) {
@@ -1348,7 +1353,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   if (file_mapped_weights_enabled_ && file_mapper_) {
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
-    auto res = CreateContextFromListAsyncWithCallback(configs, context_bin_map);
+    auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
     } else {
@@ -1356,7 +1361,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     }
   }
 #endif
-  return CreateContextFromListAsync(configs, context_bin_map);
+  return CreateContextFromListAsync(configs_vec.data(), context_bin_map);
 }
 
 Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Config_t** configs,
@@ -1583,16 +1588,22 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   }
 #endif
 
-  const QnnContext_Config_t* npu_context_configs[] = {
-      &context_priority_config,
-      &context_config_weight_sharing,
-      &context_config_extended_udma,
-      &context_config_prepare_only,
-      enable_htp_ref_weight_sharing ? &context_config_ref_weight_sharing : nullptr,
+  // Build config list dynamically to avoid nullptr entries in the middle of a
+  // nullptr-terminated array (QNN would stop iterating at the first nullptr).
+  std::vector<const QnnContext_Config_t*> npu_context_configs_vec;
+  npu_context_configs_vec.push_back(&context_priority_config);
+  npu_context_configs_vec.push_back(&context_config_weight_sharing);
+  npu_context_configs_vec.push_back(&context_config_extended_udma);
+  npu_context_configs_vec.push_back(&context_config_prepare_only);
+  if (enable_htp_ref_weight_sharing) {
+    npu_context_configs_vec.push_back(&context_config_ref_weight_sharing);
+  }
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-      enable_gpe ? &context_config_gpe : nullptr,
+  if (enable_gpe) {
+    npu_context_configs_vec.push_back(&context_config_gpe);
+  }
 #endif
-      nullptr};
+  npu_context_configs_vec.push_back(nullptr);  // terminator
 
   const QnnContext_Config_t* empty_context_configs[] = {nullptr};
 
@@ -1600,7 +1611,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   switch (GetQnnBackendType()) {
     case QnnBackendType::HTP:
     case QnnBackendType::DSP:
-      configs = npu_context_configs;
+      configs = npu_context_configs_vec.data();
       break;
     case QnnBackendType::GPU:
     case QnnBackendType::SERIALIZER:
