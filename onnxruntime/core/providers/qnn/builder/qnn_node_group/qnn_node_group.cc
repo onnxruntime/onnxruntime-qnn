@@ -25,11 +25,12 @@
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/qnn_node_group/reciprocal_mul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
-#include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
@@ -100,6 +101,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
+    {"Reciprocal", {ReciprocalMulFusion::TryFusion}},
     {"Tanh", {TanhGeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
@@ -143,6 +145,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except
   // MatMul w/ LPBQ encodings, Erf, and Reshape.
   if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode &&
+      starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Erf" &&
