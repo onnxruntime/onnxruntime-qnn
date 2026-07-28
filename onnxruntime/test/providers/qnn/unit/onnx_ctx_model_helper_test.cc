@@ -283,10 +283,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_Returns
   CtxHelperTestContext ctx;
   FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
   FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
-  // Mixed-case input pins the GetLowercaseString call in the source: the
-  // returned path must come back lowercased. NOTE: lowercasing a filesystem
-  // path is a source-side concern on case-sensitive systems (Linux) — this
-  // assertion documents the current behaviour, it does not endorse it.
+  // Mixed-case input pins the source's GetLowercaseString call; an
+  // already-lowercase input could not distinguish it.
   FakeOpAttr dlc_ctx = FakeOpAttr::MakeString("ep_dlc_context", "Path/To/Model.DLC");
   FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
   node.attrs[SOURCE] = &source;

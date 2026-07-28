@@ -478,18 +478,15 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
                       void* buf, size_t buf_size, size_t* out_size) noexcept -> OrtStatus* {
     auto* fa = reinterpret_cast<const FakeOpAttr*>(attr);
     if (fa->type != expected_type) {
-      // Type mismatch. For STRING/array reads this branch is unreachable
-      // because ConstOpAttr::GetValue<T>() calls CheckAttrType (→ OpAttr_GetType)
-      // first. But the scalar numeric path (Ort::ConstOpAttr::GetNumericValue)
-      // calls ReadOpAttr directly with NO preceding CheckAttrType, so a
-      // wrong-typed numeric Get WILL reach here. The real API returns an error
-      // there (which the caller maps to its default value); this stub instead
-      // returns OK with *out_size = 0 and leaves the caller's buffer untouched.
-      // No current test exercises a mismatched numeric Get, so this divergence
-      // is latent — a test that relies on it must make this return a real error
-      // first, otherwise it would read an uninitialized value.
+      // Type mismatch. The scalar numeric path (Ort::ConstOpAttr::GetNumericValue)
+      // calls ReadOpAttr directly with no preceding CheckAttrType, so a wrong-typed
+      // numeric Get reaches here; the real API returns an error, which the caller
+      // (OrtNodeAttrHelper::Get) maps to its default value. Return a real error to
+      // match that contract. (STRING/array reads never hit this branch because
+      // ConstOpAttr::GetValue<T>() calls CheckAttrType via OpAttr_GetType first.)
       *out_size = 0;
-      return nullptr;
+      return reinterpret_cast<OrtStatus*>(
+          new FakeOrtStatus{ORT_INVALID_ARGUMENT, "ReadOpAttr: attribute type mismatch"});
     }
     if (expected_type == OrtOpAttrType::ORT_OP_ATTR_STRING) {
       *out_size = fa->string_value.size();
