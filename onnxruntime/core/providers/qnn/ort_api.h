@@ -97,6 +97,12 @@ namespace onnxruntime {
     }                                                   \
   } while (0)
 
+#define LOG_AND_THROW_ERROR(logger, msg)                   \
+  do {                                                     \
+    ORT_CXX_LOG((logger), ORT_LOGGING_LEVEL_ERROR, (msg)); \
+    throw std::runtime_error((msg));                       \
+  } while (0)
+
 // Ort::Logger must be standard-layout so that its first declared member (logger_) is
 // guaranteed to reside at offset 0 with no vtable or padding before it. If this assert
 // fires, ORT changed the class layout and IsNullLogger's memcpy approach must be revised.
