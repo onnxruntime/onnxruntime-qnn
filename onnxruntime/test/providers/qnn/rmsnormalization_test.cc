@@ -169,19 +169,20 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale) {
 }
 
 // ONNX RMSNormalization allows `scale` to be any shape unidirectionally broadcastable to X, but
-// QNN's RmsNorm OpDef requires rank(gamma) == size(axes). The builder squeezes the leading 1-dims
-// to bridge the two; these tests cover the shapes that squeeze is responsible for.
+// QNN's RmsNorm OpDef requires rank(gamma) == size(axes). The builder squeezes leading 1-dims to
+// bridge the two; the tests below cover the shapes that squeeze is responsible for.
 //
-// The rank-3 scale cases below are extracted from Pi05ActionExpert (tetracode issue #20549), whose
-// 18 transformer blocks each normalize X [1, 50, 1024] with a scale of shape [1, 1, 1024]. Before
-// the squeeze, every one of those 37 RMSNorm nodes was rejected by QNN op validation
-// (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) and fell back to CPU, splitting the graph into 38 QNN
-// partitions. Dims are scaled down here to keep the test fast; the rank relationship is what matters.
+// The rank-3 scale shape comes from Pi05ActionExpert (tetracode issue #20549), which normalizes
+// X [1, 50, 1024] with a scale of shape [1, 1, 1024]. Dims are scaled down here for speed; the
+// rank relationship is what is under test.
 static void RunRMSNormFp32Test(const TestInputDef<float>& input_def,
                                const TestInputDef<float>& scale_def,
                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                ExpectedEPNodeAssignment expected_ep_assignment,
                                float fp32_abs_err = 0.01f) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -196,8 +197,7 @@ static void RunRMSNormFp32Test(const TestInputDef<float>& input_def,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
-// Static rank-3 scale [1, 1, C] against X [1, S, C]: squeezed in place, no Reshape node needed
-// because dropping leading 1-dims does not change the element layout.
+// Static scale: squeezed by re-declaring the dims, no Reshape node.
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_StaticScale) {
   RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
                      TestInputDef<float>({1, 1, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
@@ -205,9 +205,7 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_StaticScale) {
                      ExpectedEPNodeAssignment::All);
 }
 
-// Dynamic rank-3 scale [1, 1, C] -- the exact Pi05ActionExpert shape, where every scale is a
-// computed Add output rather than an initializer, so the rank can only be fixed by an in-graph
-// Reshape. This is the case the original failure hinged on.
+// Computed (non-initializer) scale, as in Pi05ActionExpert: only an in-graph Reshape can fix the rank.
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_DynamicScale) {
   RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
                      TestInputDef<float>({1, 1, 3}, false, GetFloatDataInRange(0.5f, 1.5f, 3)),
@@ -215,8 +213,7 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_DynamicScale) {
                      ExpectedEPNodeAssignment::All);
 }
 
-// Rank-2 scale [1, C] also needs one dim squeezed; verifies the squeeze is driven by size(axes)
-// rather than by a hardcoded "rank 3 -> rank 1" assumption.
+// Squeeze is driven by size(axes), not by a fixed source rank.
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank2Scale_LeadingOnes) {
   RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
                      TestInputDef<float>({1, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
@@ -224,7 +221,7 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank2Scale_LeadingOnes) {
                      ExpectedEPNodeAssignment::All);
 }
 
-// Rank-4 X with a rank-4 scale [1, 1, 1, C]: squeeze must drop all three leading 1-dims.
+// Multiple leading 1-dims must all be dropped.
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank4Scale_LeadingOnes) {
   RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 18)),
                      TestInputDef<float>({1, 1, 1, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
@@ -232,14 +229,29 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank4Scale_LeadingOnes) {
                      ExpectedEPNodeAssignment::All);
 }
 
-// A scale whose leading dim is not 1 cannot be squeezed to size(axes). IsOpSupported must reject it
-// so the node falls back to CPU with a clear message, instead of being claimed and then failing
-// inside QNN op validation.
-TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_NonOneLeadingDim_Unsupported) {
-  RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
-                     TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 6)),
-                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                     ExpectedEPNodeAssignment::None);
+// Quantized squeeze: exercises the scale's quant params being carried onto the squeezed tensor and
+// the dummy beta (SDK < 2.49) inheriting the post-squeeze rank.
+TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_QDQ_StaticScale) {
+  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+                                      TestInputDef<float>({1, 1, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+                                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                      ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_QDQ_DynamicScale) {
+  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+                                      TestInputDef<float>({1, 1, 3}, false, GetFloatDataInRange(0.0f, 1.0f, 3)),
+                                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                      ExpectedEPNodeAssignment::All);
+}
+
+// axis=1 over X {2, 3, 4} normalizes 2 axes, so the scale squeezes to rank 2 rather than rank 1.
+// Uses the CPU backend because the HTP path requires the last axis only.
+TEST_F(QnnCPUBackendTests, RMSNorm_Rank3Scale_LeadingOne_MultipleAxes) {
+  RunRMSNormCpuTest(TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 24)),
+                    TestInputDef<float>({1, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 12)),
+                    {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+                    ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
