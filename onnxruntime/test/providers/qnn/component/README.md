@@ -1,10 +1,12 @@
-# QNN EP Unit Tests
+# QNN EP Component-Tier Unit Tests
 
 ## Why this directory exists
 
 Tests in `onnxruntime/test/providers/qnn/` have historically been integration tests — they require a QNN SDK runtime, physical hardware, and a fully compiled EP stack. This makes them expensive to run and impossible to execute in most developer and CI environments.
 
-The `unit/` subdirectory introduces a separate testing tier: **function-level and component-level unit tests** that target the internal logic of the QNN EP. No on-device hardware is required — all tests run on a Linux x86-64 host. Tests that exercise op validation load `libQnnHtp.so` locally on the host (validation only, not graph execution); those tests are automatically skipped if the SDK is unavailable.
+The `component/` subdirectory is the **component tier** in the tier-first test layout: **function-level and component-level white-box tests** that target the internal logic of the QNN EP. No on-device hardware is required — all tests run on a Linux x86-64 host. Tests that exercise op validation load `libQnnHtp.so` locally on the host (validation only, not graph execution); those tests are automatically skipped if the SDK is unavailable.
+
+Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wrapper factory, golden utils, op specs) lives one level up in `test_infra/` and is reused by the sibling `snapshot/` and `session_snapshot/` tiers as well — include it via `test/providers/qnn/test_infra/qnn_unit_test_utils.h`. The graph-structure (`snapshot/`, `session_snapshot/`) and accuracy (`accuracy/`) tiers have their own directories; see the top-level `README.md` for the full tier map.
 
 ## What problem this solves
 
@@ -30,6 +32,19 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `qnn_ep_utils_test.cc` | `QnnUnit_EpUtilsTest` | `qnn_ep_utils.cc` |
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 | `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
+| `builder/opbuilder/<op>_test.cc` | `QnnUnit_Component_<Op>Test` | `builder/opbuilder/<op>_op_builder.cc` |
+
+The last row is the **op-builder component tier**: unlike the core-component
+files above (which sit directly in `component/` and each cover one non-op-builder
+source file), op-builder tests mirror the production source tree under
+`component/builder/opbuilder/` and target the white-box logic of a single op
+builder — the partition reject path and the dtype-dispatch switch arms that the
+`snapshot/` tier cannot reach. One `<op>_test.cc` per op builder; the op's
+QNN-graph structure and inference accuracy are covered by the sibling
+`snapshot/` and `accuracy/` tiers, which share one set of op specs from
+`test_infra/specs/`. This row is a pattern, not an enumeration — new ops follow
+it without adding a table row (e.g. `clip_test.cc` → `QnnUnit_Component_ClipTest`
+→ `clip_op_builder.cc`).
 
 ## Benefits
 
@@ -73,13 +88,13 @@ A complete file showing the required layout. Use this as a starting template:
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
 
 TEST(QnnUnit_ModelWrapperTest, GetQnnBackendType_ReturnsHTP) {
-  QnnModelWrapperTestContext ctx;
+  OpBuilderTestContext ctx;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
   EXPECT_EQ(wrapper->GetQnnBackendType(), qnn::QnnBackendType::HTP);
@@ -101,7 +116,7 @@ Pick the lowest-cost layer that lets you write the test. Cost increases top to b
 |---|---|
 | Pure logic / utility — touches neither QNN nor ORT | Direct call, no fixture |
 | Needs `OrtApi` but no real graph/logger object | Declare an `OrtApi stub{}` locally and stub only the function pointers your test path exercises |
-| Needs `QnnModelWrapper`, no real graph/logger | Use `QnnModelWrapperTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
+| Needs `QnnModelWrapper`, no real graph/logger | Use `OpBuilderTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
 | Needs the QNN backend interface but no real SDK | Zero-init `QNN_INTERFACE_VER_TYPE` and override the function pointers your test path exercises (lowest cost, fully controllable) |
 | Needs a real `Qnn_BackendHandle_t` (e.g., `backendValidateOpConfig`) | Use `QnnRealHtpBackendContext`: `dlopen` `libQnnHtp.so` + `backendCreate`. **Does not create a QNN context/session** — the validation path does not need one. Use `GTEST_SKIP()` when the SDK is unavailable |
 | Needs a real QNN context/session, graph operations | **No helper today.** Please raise it — we need a fixture-shared session (avoid rebuilding per test) before adding such tests |
@@ -170,13 +185,13 @@ wrap with `OrtGlobalApiOverride` from `qnn_unit_test_utils.h` to redirect the gl
 Copy-paste the block below when asking Claude Code (or another agent) to add a unit test. The template is self-contained — the agent does not need additional context beyond the source file path you provide.
 
 ````
-You are adding a function-level unit test to onnxruntime/test/providers/qnn/unit/.
+You are adding a function-level unit test to onnxruntime/test/providers/qnn/component/.
 
 Target file: <path/to/source.cc>
 New function(s) / behaviour to cover: <describe what the UT must exercise>
 
 Policy (must follow):
-1. Add the test to onnxruntime/test/providers/qnn/unit/<source_basename>_test.cc.
+1. Add the test to onnxruntime/test/providers/qnn/component/<source_basename>_test.cc.
    Create the file if it does not exist; wrap the entire body in:
      #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
      ...
@@ -185,7 +200,7 @@ Policy (must follow):
 3. Pick the lowest-cost mocking layer that works:
    - Pure logic: direct call, no fixture.
    - Needs OrtApi: local OrtApi stub{} + stub only the function pointers used.
-   - Needs QnnModelWrapper: QnnModelWrapperTestContext from qnn_unit_test_utils.h.
+   - Needs QnnModelWrapper: OpBuilderTestContext from qnn_unit_test_utils.h.
    - Needs QNN backend interface only: zero-init QNN_INTERFACE_VER_TYPE + override
      the function pointers used.
    - Needs a real Qnn_BackendHandle_t: QnnRealHtpBackendContext + GTEST_SKIP if !IsValid().
@@ -218,6 +233,6 @@ The infrastructure is designed to grow in two directions:
 
 1. **Coverage gap filling** — for core components not yet covered at the unit tier (e.g., `qnn_backend_manager.cc`, `qnn_execution_provider.cc`), add targeted unit tests to cover paths that are difficult to reach through integration tests: error paths, edge cases, and internal branch logic. (`qnn_def.cc` and `qnn_model_wrapper.cc` already meet the ≥90% line / 100% function target via the test suites listed above; small follow-up patches to fill remaining branches are still welcome.)
 
-2. **Op builder test migration** — op builders (`opbuilder/*.cc`) are currently covered by on-device integration tests, which are expensive to run and structurally limited in reaching component-level logic. The goal is to migrate these tests into this tier, using QNN HTP SDK on the Linux host for op validation — no device required. Coverage improvement is a natural outcome of this migration, but the primary driver is lower test cost and better component-level precision.
+2. **Op builder test migration** — op builders (`opbuilder/*.cc`) are currently covered by on-device integration tests, which are expensive to run and structurally limited in reaching component-level logic. The goal is to migrate these tests into the tier-first layout: dtype-dispatch and reject-path logic land in this `component/` tier, QNN-graph structure lands in the `snapshot/` (op-builder) and `session_snapshot/` tiers, and inference accuracy lands in the `accuracy/` tier — all sharing one set of op specs from `test_infra/specs/`, using the QNN HTP SDK on the Linux host for op validation (no device required). Coverage improvement is a natural outcome of this migration, but the primary driver is lower test cost and better component-level precision.
 
 Coverage builds run in CI on every PR. Strict regression gating (failing PRs that drop coverage) is being rolled out in stages.

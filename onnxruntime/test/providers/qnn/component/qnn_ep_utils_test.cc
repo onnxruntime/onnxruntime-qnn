@@ -13,8 +13,8 @@
 #include <vector>
 
 #include "core/providers/qnn/qnn_ep_utils.h"
-#include "test/providers/qnn/unit/qnn_fake_ort_graph.h"
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_fake_ort_graph.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 using namespace onnxruntime::QDQ;
 using namespace onnxruntime::test;
