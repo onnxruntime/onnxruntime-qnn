@@ -122,7 +122,7 @@ typedef struct HtpGraphConfigs {
   int32_t vtcm_size_in_mb = 0;
   HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
   bool enable_htp_fp16_precision = false;
-  bool disable_htp_monolithic_lstm = false;
+  bool enable_htp_monolithic_lstm = false;
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {
@@ -684,6 +684,13 @@ class GraphInfo {
   const std::vector<QnnTensorWrapper>& OutputTensors() const { return output_tensors_; }
   Qnn_GraphHandle_t Graph() const { return graph_; }
   Qnn_ContextHandle_t GraphContext() const { return graph_context_; }
+
+  // Update graph and context handles in-place (used during SSR recovery).
+  void ResetHandles(Qnn_GraphHandle_t graph, Qnn_ContextHandle_t context) {
+    graph_ = graph;
+    graph_context_ = context;
+  }
+
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GraphInfo);
 
  private:

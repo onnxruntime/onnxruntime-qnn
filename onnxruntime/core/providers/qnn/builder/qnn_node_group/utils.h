@@ -85,12 +85,6 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& qnn_model_wrapp
                                           const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map);
 
 /// <summary>
-/// Utility function to read a constant initializer shape input into a vector of int64 values.
-/// </summary>
-std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(const QnnModelWrapper& qnn_model_wrapper,
-                                                              const OrtNodeUnitIODef& shape_input);
-
-/// <summary>
 /// Reads a scalar constant initializer by tensor name and returns its value as float.
 /// Supports float32 and float16 element types. Returns nullopt if the input is not a
 /// constant, not a scalar (element count != 1), or has an unsupported element type.
