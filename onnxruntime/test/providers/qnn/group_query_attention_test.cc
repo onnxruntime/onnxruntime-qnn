@@ -322,7 +322,11 @@ static void RunGQATest(
   }
 }
 
-#if defined(_M_ARM64)
+#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
+#define GQA_SUPPORTED
+#endif // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
+
+#if defined(_M_ARM64) && defined(GQA_SUPPORTED)
 //
 // GPU tests:
 //
@@ -1474,7 +1478,7 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
 }
 
 #endif  // defined(_WIN32)
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // defined(_M_ARM64) && defined(GQA_SUPPORTED) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime
