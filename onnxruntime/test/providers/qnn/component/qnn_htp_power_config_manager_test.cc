@@ -37,7 +37,7 @@
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
 #include "core/providers/qnn/ort_api.h"
 
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {

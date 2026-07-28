@@ -39,7 +39,7 @@
 #include "core/providers/qnn/qnn_execution_provider.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
