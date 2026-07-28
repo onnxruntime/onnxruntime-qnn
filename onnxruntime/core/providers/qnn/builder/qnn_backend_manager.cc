@@ -1281,6 +1281,98 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   return Ort::Status();
 }
 
+Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& context_bin_filepath,
+                                                         int64_t max_spill_fill_size,
+                                                         bool is_multi_soc_buffer,
+                                                         Qnn_ContextHandle_t& new_context) {
+  ORT_UNUSED_PARAMETER(is_multi_soc_buffer);
+
+  QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
+  RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
+
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+  QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t custom_config;
+  custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+  QnnHtpContext_GroupRegistration_t group_info;
+  group_info.firstGroupHandle = 0x0;  // New group after SSR — this is the only context
+  group_info.maxSpillFillBuffer = max_spill_fill_size;
+  custom_config.groupRegistration = group_info;
+  spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+  spill_fill_config.customConfig = &custom_config;
+  QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size > 0 ? &spill_fill_config : nullptr;
+#else
+  QnnContext_Config_t* spill_fill_ptr = nullptr;
+#endif
+
+  const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_ptr, nullptr};
+
+  RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
+            "Invalid function pointer for contextCreateFromBinary.");
+
+  Qnn_ErrorHandle_t rt = QNN_SUCCESS;
+  uint64_t buffer_length = 0;
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // Attempt file mapping first if enabled (matches initial load behavior).
+  if (file_mapped_weights_enabled_ && file_mapper_) {
+    RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
+              "Invalid function pointer for contextCreateFromBinaryWithCallback.");
+
+    RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
+
+    void* bin_buffer = nullptr;
+    RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
+
+    auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
+
+    Qnn_ContextBinaryCallback_t callbacks;
+    callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
+    callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
+    callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
+    callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
+    callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
+
+    file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+
+    rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
+                                                            device_handle_,
+                                                            context_configs,
+                                                            &callbacks,
+                                                            bin_buffer,
+                                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                            &new_context,
+                                                            profile_backend_handle_,
+                                                            NULL);
+    if (rt != QNN_SUCCESS) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      ("SSR recovery: file mapping failed (" + QnnErrorHandleToString(rt) +
+                       "). Retrying with direct read.").c_str());
+    }
+  }
+#endif
+
+  if (!file_mapped_weights_enabled_ || rt != QNN_SUCCESS) {
+    // Direct read fallback (or primary path when file mapping is disabled).
+    std::vector<char> buffer;
+    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer));
+    buffer_length = static_cast<uint64_t>(buffer.size());
+
+    rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
+                                                device_handle_,
+                                                context_configs,
+                                                static_cast<void*>(buffer.data()),
+                                                static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                &new_context,
+                                                profile_backend_handle_);
+  }
+
+  RETURN_IF(QNN_SUCCESS != rt,
+            ("SSR recovery: contextCreateFromBinary failed. Error: " + QnnErrorHandleToString(rt)).c_str());
+  RETURN_IF_ERROR(AddQnnContextHandle(new_context));
+  return Ort::Status();
+}
+
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
     const qnn::EpContextIoDispatch& io_dispatch,
@@ -1957,7 +2049,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
   if (!context_bin_filepath.empty()) {
     for (auto& [name, model] : qnn_models) {
-      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_);
+      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_, is_multi_soc_buffer);
     }
   }
 

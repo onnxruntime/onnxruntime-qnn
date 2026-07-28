@@ -210,6 +210,14 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     std::vector<char>& buffer,
                                     const qnn::EpContextIoDispatch& io_dispatch);
 
+  // Creates a new QNN context from a binary file, handling both file-mapped and direct-read
+  // paths.  Used by SSR recovery so it matches the file mapping behavior of the initial load.
+  // The new context handle is registered via AddQnnContextHandle on success.
+  Ort::Status CreateContextFromFilePath(const std::string& context_bin_filepath,
+                                        int64_t max_spill_fill_size,
+                                        bool is_multi_soc_buffer,
+                                        Qnn_ContextHandle_t& new_context);
+
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
     return context_map_.find(context_handle) != context_map_.end();
