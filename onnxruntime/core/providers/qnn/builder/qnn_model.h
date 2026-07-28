@@ -39,6 +39,9 @@ struct QnnModelContext {
   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr;
   std::string json_qnn_graph_path;
 
+  // HTP graph configs for JSON dump (nullable, set only when dump_json_qnn_graph is enabled).
+  const HtpGraphConfigs_t* htp_graph_configs = nullptr;
+
   // Non-null when tracing is enabled; ComposeGraph writes one OpTraceInfo here.
   OpTraceInfo* op_trace_output = nullptr;
 };
