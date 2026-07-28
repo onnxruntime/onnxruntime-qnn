@@ -83,6 +83,7 @@ QnnQuantParamsWrapper QnnQuantParamsWrapper::PerChannel(gsl::span<const float> s
   qp.params_.axisScaleOffsetEncoding.axis = axis;
 
   if (num_elems > 0) {
+    qp.per_channel_scales_size_ = num_elems;
     const size_t num_bytes = num_elems * sizeof(Qnn_ScaleOffset_t);
     constexpr std::uintptr_t align = alignof(Qnn_ScaleOffset_t);
     qp.per_channel_data_ = std::make_unique<char[]>(num_bytes + align);
@@ -707,7 +708,8 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     const int64_t qnn_axis = 1 - axis;
 
     *this = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_scales, per_block_int_scales, lpbq_offsets,
-                                                     qnn_axis, /*block_scale_bitwidth=*/is_int4_type ? 4 : 8);
+                                                     qnn_axis, /*block_scale_bitwidth=*/4);  // LPBQ conversion only supports INT4;
+                                                                                             // guarded by the check at the start of this block
   } else {
     return MAKE_EP_FAIL("Unexpected tensor kind for QuantParamsWrapper::Init()");
   }

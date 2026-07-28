@@ -146,9 +146,9 @@ size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_t
 }
 
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_type) {
-  // TODO can we just treat empty shape as a scalar?
+  // Empty shape means a 0D scalar: exactly 1 element.
   if (shape.empty()) {
-    ORT_CXX_API_THROW("Empty shape not allowed.", ORT_EP_FAIL);
+    return GetQnnTensorDataSizeInBytes(static_cast<size_t>(1), element_type);
   }
   SafeInt<size_t> num_elements = std::accumulate(shape.begin(), shape.end(), SafeInt<size_t>{1}, std::multiplies<>{});
   return GetQnnTensorDataSizeInBytes(num_elements, element_type);
@@ -1741,6 +1741,119 @@ bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation
   return std::abs(bias_scale - expected_scale) <= tolerance;
 }
 
+Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
+                                 std::vector<float>& weights_scales) {
+  const auto& qp = weight_quant_param.Get();
+
+  if (weight_quant_param.IsPerTensor()) {
+    if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+      weights_scales.push_back(qp.scaleOffsetEncoding.scale);
+    } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+      weights_scales.push_back(qp.bwScaleOffsetEncoding.scale);
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.axisScaleOffsetEncoding.scaleOffset != nullptr &&
+                      qp.axisScaleOffsetEncoding.numScaleOffsets > 0,
+                  "Invalid AXIS_SCALE_OFFSET weight quant params");
+    for (size_t i = 0; i < qp.axisScaleOffsetEncoding.numScaleOffsets; ++i) {
+      weights_scales.push_back(qp.axisScaleOffsetEncoding.scaleOffset[i].scale);
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.bwAxisScaleOffsetEncoding.scales != nullptr &&
+                      qp.bwAxisScaleOffsetEncoding.numElements > 0,
+                  "Invalid BW_AXIS_SCALE_OFFSET weight quant params");
+    for (size_t i = 0; i < qp.bwAxisScaleOffsetEncoding.numElements; ++i) {
+      weights_scales.push_back(qp.bwAxisScaleOffsetEncoding.scales[i]);
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION) {
+    RETURN_IF_NOT(qp.blockwiseExpansion != nullptr &&
+                      qp.blockwiseExpansion->scaleOffsets != nullptr &&
+                      weight_quant_param.GetPerChannelScalesSize() > 0,
+                  "Invalid BLOCKWISE_EXPANSION weight quant params");
+    for (size_t c = 0; c < weight_quant_param.GetPerChannelScalesSize(); ++c) {
+      weights_scales.push_back(qp.blockwiseExpansion->scaleOffsets[c].scale);
+    }
+  } else {
+    return MAKE_EP_FAIL("Unsupported weight quantization encoding for bias quantization.");
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
+                                         std::vector<float>& scales,
+                                         std::vector<int32_t>& offsets,
+                                         int32_t& axis) {
+  const auto& qp = bias_quant_param.Get();
+  axis = 0;
+
+  if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
+    scales = {qp.scaleOffsetEncoding.scale};
+    offsets = {qp.scaleOffsetEncoding.offset};
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET) {
+    scales = {qp.bwScaleOffsetEncoding.scale};
+    offsets = {qp.bwScaleOffsetEncoding.offset};
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.axisScaleOffsetEncoding.scaleOffset != nullptr &&
+                      qp.axisScaleOffsetEncoding.numScaleOffsets > 0,
+                  "Invalid AXIS_SCALE_OFFSET bias quant params");
+    axis = qp.axisScaleOffsetEncoding.axis;
+    const size_t n = qp.axisScaleOffsetEncoding.numScaleOffsets;
+    scales.resize(n);
+    offsets.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      scales[i] = qp.axisScaleOffsetEncoding.scaleOffset[i].scale;
+      offsets[i] = qp.axisScaleOffsetEncoding.scaleOffset[i].offset;
+    }
+  } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
+    RETURN_IF_NOT(qp.bwAxisScaleOffsetEncoding.scales != nullptr &&
+                      qp.bwAxisScaleOffsetEncoding.offsets != nullptr &&
+                      qp.bwAxisScaleOffsetEncoding.numElements > 0,
+                  "Invalid BW_AXIS_SCALE_OFFSET bias quant params");
+    axis = qp.bwAxisScaleOffsetEncoding.axis;
+    const size_t n = qp.bwAxisScaleOffsetEncoding.numElements;
+    scales.resize(n);
+    offsets.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      scales[i] = qp.bwAxisScaleOffsetEncoding.scales[i];
+      offsets[i] = qp.bwAxisScaleOffsetEncoding.offsets[i];
+    }
+  } else {
+    return MAKE_EP_FAIL("Unsupported bias quantization encoding for requantization.");
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
+                                    gsl::span<const float> weights_scales,
+                                    float activation_scale,
+                                    /*out*/ std::vector<uint8_t>& quantized_bias_bytes,
+                                    /*out*/ std::vector<float>& bias_scales,
+                                    /*out*/ std::vector<int32_t>& bias_offsets) {
+  RETURN_IF(float_bias_data.empty(), "Float bias data must not be empty");
+  RETURN_IF(weights_scales.empty(), "Weight scales must not be empty");
+  const size_t num_channels = float_bias_data.size();
+  bias_scales.resize(num_channels);
+  bias_offsets.assign(num_channels, 0);
+  // Compute bias_scale = activation_scale * weight_scale and quantize to int32.
+  // If weights_scales has a single element (per-tensor weight), all channels share the same scale.
+  std::vector<int32_t> quantized_bias(num_channels, 0);
+  for (size_t c = 0; c < num_channels; ++c) {
+    const float weight_scale = (c < weights_scales.size()) ? weights_scales[c] : weights_scales[0];
+    bias_scales[c] = activation_scale * weight_scale;
+    RETURN_IF_NOT(bias_scales[c] > 0.0f, "Bias scale value is non-positive");
+    const double rounded = std::round(static_cast<double>(float_bias_data[c]) / static_cast<double>(bias_scales[c]));
+    quantized_bias[c] = static_cast<int32_t>(std::clamp(rounded,
+                                                        static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                                        static_cast<double>(std::numeric_limits<int32_t>::max())));
+  }
+  // Pack quantized int32 values into bytes
+  quantized_bias_bytes.resize(num_channels * sizeof(int32_t));
+  std::memcpy(quantized_bias_bytes.data(), quantized_bias.data(), quantized_bias_bytes.size());
+  return Ort::Status();
+}
+
 Ort::Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
                                  const std::vector<uint32_t>& bias_shape,
                                  gsl::span<const float> current_scales,
@@ -1861,6 +1974,31 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
 
 std::string PtrToString(const void* const ptr) {
   return (std::ostringstream() << ptr).str();
+}
+
+Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
+                                      gsl::span<const float> scales,
+                                      std::vector<uint8_t>& fp16_bytes) {
+  RETURN_IF_NOT(raw_int32_bytes.size() % sizeof(int32_t) == 0,
+                "raw_int32_bytes size must be a multiple of sizeof(int32_t)");
+  const size_t num_elems = raw_int32_bytes.size() / sizeof(int32_t);
+  RETURN_IF_NOT(scales.empty() || scales.size() == 1 || scales.size() == num_elems,
+                "scales must be empty (all 1.0f), per-tensor (size 1), or per-channel (size num_elems)");
+
+  const bool is_per_channel = (scales.size() == num_elems);
+  fp16_bytes.resize(num_elems * sizeof(uint16_t));
+
+  const auto* i32_ptr = reinterpret_cast<const int32_t*>(raw_int32_bytes.data());
+  auto* u16_ptr = reinterpret_cast<uint16_t*>(fp16_bytes.data());
+
+  for (size_t i = 0; i < num_elems; ++i) {
+    const float scale = scales.empty() ? 1.0f : (is_per_channel ? scales[i] : scales[0]);
+    const float f = static_cast<float>(i32_ptr[i]) * scale;
+    const Ort::Float16_t fp16_val(f);
+    std::memcpy(&u16_ptr[i], &fp16_val.val, sizeof(uint16_t));
+  }
+
+  return Ort::Status();
 }
 
 }  // namespace utils

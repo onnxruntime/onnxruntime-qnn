@@ -16,6 +16,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -1170,15 +1171,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     framework_op_trace_dir_ = trace_dir_str;
   }
 
-  // TODO: Re-enable framework op trace for multi-SoC preparation.
-  if (enable_framework_op_trace_ && enable_multi_soc_ep_context_) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                "Option 'enable_framework_op_trace' is unsupported in multi-SoC EP context.");
-    enable_framework_op_trace_ = false;
-    framework_op_trace_dir_ = "";
-  }
-
   if (enable_framework_op_trace_) {
     if (framework_op_trace_dir_.empty()) {
       framework_op_trace_dir_ = std::filesystem::current_path().string();
@@ -1572,7 +1564,15 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
 OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
                                             const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                             const size_t node_unit_size,
-                                            std::vector<const OrtNode*>& supported_nodes) const {
+                                            std::vector<const OrtNode*>& supported_nodes,
+                                            std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
+  // Collect each SoC's rejections tagged with its SoC label, then merge into one
+  // row per ONNX node via MergePerSocUnsupportedNodes.
+  std::vector<qnn::PerSocUnsupportedNodes> per_soc_unsupported;
+  if (enable_framework_op_trace_) {
+    per_soc_unsupported.reserve(htp_arch_per_soc_.size());
+  }
+
   // Iterate each SoC and intersect supported nodes.
   for (size_t idx = 0; idx < htp_arch_per_soc_.size(); ++idx) {
     ORT_CXX_LOG(logger_,
@@ -1585,15 +1585,22 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
     ScopedPerSocQnnBackendSetup scoped_backend_setup(*this);
     RETURN_IF_NOT_OK(scoped_backend_setup.Init(idx));
 
-    // Get SoC-specific supported nodes.
+    // Get SoC-specific supported and unsupported nodes.
     std::vector<const OrtNode*> supported_nodes_per_soc;
-    // Dummy for now as framework op trace is temporarily disabled for multi-SoC preparation.
-    std::vector<qnn::UnsupportedNodeInfo> unsupported_nodes;
+    std::vector<qnn::UnsupportedNodeInfo> unsupported_nodes_per_soc;
     RETURN_IF_NOT_NULL(GetSupportedNodes(graph,
                                          node_unit_map,
                                          node_unit_size,
                                          supported_nodes_per_soc,
-                                         unsupported_nodes));
+                                         unsupported_nodes_per_soc));
+
+    // Tag this SoC's rejections with its (htp_arch, soc_model) label for merging.
+    // Identical (arch, soc_model) configs share a label and merge — acceptable,
+    // they are indistinguishable targets.
+    if (enable_framework_op_trace_) {
+      per_soc_unsupported.emplace_back(htp_arch_per_soc_[idx], soc_model_per_soc_[idx],
+                                       std::move(unsupported_nodes_per_soc));
+    }
 
     if (idx == 0) {
       // Directly move for the first SoC.
@@ -1612,6 +1619,13 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
       supported_nodes.erase(std::remove_if(supported_nodes.begin(), supported_nodes.end(), not_contains),
                             supported_nodes.end());
     }
+  }
+
+  if (enable_framework_op_trace_) {
+    std::vector<qnn::UnsupportedNodeInfo> merged = qnn::MergePerSocUnsupportedNodes(per_soc_unsupported);
+    unsupported_nodes.insert(unsupported_nodes.end(),
+                             std::make_move_iterator(merged.begin()),
+                             std::make_move_iterator(merged.end()));
   }
 
   return nullptr;
@@ -2016,6 +2030,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
+  // GetCapability runs up to twice. Clear before pass 2 so its collection
+  // supersedes pass 1; pass 1's data is kept for the all-unsupported flush below
+  // (reached only on pass 1, since pass 2 doesn't run when nothing is supported).
+  if (ep->enable_framework_op_trace_ && ep->is_post_layout_transform_) {
+    ep->op_trace_builder_.Reset();
+  }
+
   // Store original graph I/O order for use in Compile.
   // The partitioning process may reorder inputs, so we capture the original order here.
   {
@@ -2052,9 +2073,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                              node_unit_map,
                                              node_unit_holder.size(),
                                              supported_nodes,
-                                             ep->trace_.unsupported_nodes));
+                                             ep->op_trace_builder_.UnsupportedNodes()));
   } else {
-    RETURN_IF_NOT_NULL(ep->GetMultiSocSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes));
+    RETURN_IF_NOT_NULL(ep->GetMultiSocSupportedNodes(graph,
+                                                     node_unit_map,
+                                                     node_unit_holder.size(),
+                                                     supported_nodes,
+                                                     ep->op_trace_builder_.UnsupportedNodes()));
   }
 
   // Helper function that returns a string that lists all unsupported nodes.
@@ -2084,8 +2109,15 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // unsupported list collected in GetSupportedNodes would otherwise be
     // discarded. Flush a trace here so the diagnostic record (why every node
     // was rejected) is preserved.
-    if (ep->enable_framework_op_trace_ && !ep->trace_.unsupported_nodes.empty()) {
-      ep->CollectAndWriteFrameworkOpTrace(graph);
+    if (ep->enable_framework_op_trace_ && !ep->op_trace_builder_.UnsupportedNodes().empty()) {
+      // CompileImpl is skipped here, so record every configured SoC (multi-SoC)
+      // or the live target (single-SoC) before writing.
+      if (ep->enable_multi_soc_ep_context_) {
+        ep->AppendMultiSocTraces();
+      } else {
+        ep->AppendSingleSocTrace();
+      }
+      ep->WriteFrameworkOpTrace(graph);
     }
     return nullptr;
   }
@@ -2141,7 +2173,8 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
                                    const OrtNode** fused_nodes,
                                    size_t count,
                                    OrtNodeComputeInfo** node_compute_infos,
-                                   const qnn::HtpGraphConfigs_t& htp_graph_configs) {
+                                   const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                                   bool collect_subgraph_traces) {
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // Initialize now for possible reuse in loop
   auto finalize_start = std::chrono::steady_clock::time_point::min();
@@ -2222,10 +2255,10 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
         /*tensor_name_overrides=*/&tensor_name_overrides_,
         /*json_qnn_graph_path=*/std::string{}};
 
-    // Each ComposeGraph writes its mappings into a slot in trace_.subgraph_traces.
-    if (enable_framework_op_trace_) {
-      trace_.subgraph_traces.push_back(qnn::OpTraceInfo{});
-      context.op_trace_output = &trace_.subgraph_traces.back();
+    // subgraph_traces are SoC-agnostic, so the FCB multi-SoC loop collects them
+    // only on its first iteration (collect_subgraph_traces=false thereafter).
+    if (enable_framework_op_trace_ && collect_subgraph_traces) {
+      context.op_trace_output = op_trace_builder_.NewSubgraphSlot();
     }
 
     if (dump_json_qnn_graph_) {
@@ -2318,12 +2351,14 @@ OrtStatus* QnnEp::CompileMultiSocOnnxModel(const OrtGraph** graphs,
     ScopedPerSocQnnBackendSetup scoped_backend_setup(*this);
     RETURN_IF_NOT_OK(scoped_backend_setup.Init(idx));
 
-    // Compile for current SoC.
+    // Collect subgraph_traces once (on idx 0): the ONNX->QNN op mapping is the
+    // same across SoCs, since which QNN op a node lowers to does not depend on arch.
     RETURN_IF_NOT_NULL(CompileOnnxModel(graphs,
                                         fused_nodes,
                                         count,
                                         node_compute_infos,
-                                        htp_graph_configs_per_soc_[idx]));
+                                        htp_graph_configs_per_soc_[idx],
+                                        /*collect_subgraph_traces=*/idx == 0));
 
     if (idx != htp_arch_per_soc_.size() - 1) {
       // `qnn_models_` and `node_compute_infos` are repeatedly set in each `CompileOnnxModel` call, where previous
@@ -2685,38 +2720,31 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
   return nullptr;
 }
 
-void QnnEp::CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph) {
-  trace_.model_name = std::filesystem::path(GetModelPathString(primary_graph, ort_api)).filename().u8string();
-  if (trace_.model_name.empty()) {
-    trace_.model_name = "<in-memory>";
-  }
-  trace_.backend_type = qnn::QnnBackendTypeToString(qnn_backend_manager_->GetQnnBackendType());
-  trace_.compilation_target.device_id = device_id_;
-
+void QnnEp::AppendSingleSocTrace() {
+  // Single-SoC path: encode from live backend state.
   if (qnn::IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
-    uint32_t soc_model = qnn_backend_manager_->GetSocModel();
-    if (soc_model != QNN_SOC_MODEL_UNKNOWN) {
-      trace_.compilation_target.soc_model = soc_model;
-    }
-    QnnHtpDevice_Arch_t htp_arch = qnn_backend_manager_->GetHtpArch();
-    if (htp_arch != QNN_HTP_DEVICE_ARCH_NONE) {
-      trace_.compilation_target.htp_arch = "V" + std::to_string(htp_arch);
-    }
+    op_trace_builder_.AppendSoc(qnn_backend_manager_->GetHtpArch(),
+                                qnn_backend_manager_->GetSocModel(),
+                                device_id_);
+  } else {
+    // Non-NPU backends have no arch/soc_model; pass the QNN "unknown" sentinels.
+    op_trace_builder_.AppendSoc(QNN_HTP_DEVICE_ARCH_NONE, QNN_SOC_MODEL_UNKNOWN, device_id_);
   }
+}
 
-  qnn::ComputeTraceSummary(trace_);
-
-  // Write when either compiled subgraphs or unsupported nodes are present.
-  // The unsupported-only branch covers the "entire model is unsupported"
-  // case, where ORT may not invoke CompileImpl at all but the trace still
-  // has diagnostic value (it records why every node was rejected).
-  // A wholly empty trace can still occur on EPContext cached runs
-  // - skip the file write there.
-  if (!trace_.subgraph_traces.empty() || !trace_.unsupported_nodes.empty()) {
-    qnn::WriteTraceToFile(trace_,
-                          std::filesystem::path(framework_op_trace_dir_) / "qnn_op_trace.json",
-                          logger_);
+void QnnEp::AppendMultiSocTraces() {
+  // One SocTrace per configured (htp_arch, soc_model) entry, from the member arrays.
+  for (size_t idx = 0; idx < htp_arch_per_soc_.size(); ++idx) {
+    op_trace_builder_.AppendSoc(htp_arch_per_soc_[idx], soc_model_per_soc_[idx], device_id_);
   }
+}
+
+void QnnEp::WriteFrameworkOpTrace(const OrtGraph* primary_graph) {
+  std::string model_name = std::filesystem::path(GetModelPathString(primary_graph, ort_api)).filename().u8string();
+  op_trace_builder_.FinalizeAndWrite(model_name,
+                                     qnn::QnnBackendTypeToString(qnn_backend_manager_->GetQnnBackendType()),
+                                     std::filesystem::path(framework_op_trace_dir_) / "qnn_op_trace.json",
+                                     logger_);
 }
 
 OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
@@ -2738,7 +2766,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 #endif
 
   if (!ep->enable_multi_soc_ep_context_) {
-    RETURN_IF_NOT_NULL(ep->CompileOnnxModel(graphs, fused_nodes, count, node_compute_infos, ep->htp_graph_configs_));
+    RETURN_IF_NOT_NULL(ep->CompileOnnxModel(graphs,
+                                            fused_nodes,
+                                            count,
+                                            node_compute_infos,
+                                            ep->htp_graph_configs_,
+                                            /*collect_subgraph_traces=*/true));
   } else {
     RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
   }
@@ -2748,10 +2781,14 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // below to serialize the io_name_overrides attribute into the EPContext model.
   ep->onnx_graph_io_names_.reset();
 
-  // Framework op trace: serialize and write JSON.
-  // When multiple graphs are compiled, all subgraph traces are collected into a single file.
+  // Framework op trace: record SoC trace(s), then finalize and write.
   if (ep->enable_framework_op_trace_) {
-    ep->CollectAndWriteFrameworkOpTrace(graphs[0]);
+    if (ep->enable_multi_soc_ep_context_) {
+      ep->AppendMultiSocTraces();
+    } else {
+      ep->AppendSingleSocTrace();
+    }
+    ep->WriteFrameworkOpTrace(graphs[0]);
   }
 
   if (ep->context_cache_enabled_) {
