@@ -33,6 +33,12 @@
 // in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
 
+// Exported from QnnMockSSR.dll: returns true if contextCreateFromBinaryWithCallback
+// was called after SSR was injected (i.e., file mapping was used for recovery).
+// Only meaningful on Windows ARM64 with QNN >= 2.32 (QNN_FILE_MAPPED_WEIGHTS_AVAILABLE);
+// always returns false on other platforms.
+extern "C" bool QnnMockSSR_WasFileMappingUsedForRecovery();
+
 using namespace ONNX_NAMESPACE;
 
 namespace onnxruntime {
@@ -160,6 +166,15 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedMode) {
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,  // Load from the generated context model
                        run_session_opts);
+
+  // Verify that SSR recovery used file mapping (contextCreateFromBinaryWithCallback)
+  // when the feature is available.  On platforms without file mapping support this
+  // assertion is vacuously true (the function always returns false there).
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  EXPECT_TRUE(QnnMockSSR_WasFileMappingUsedForRecovery())
+      << "SSR recovery should have used contextCreateFromBinaryWithCallback (file mapping) "
+         "but it did not. Check CreateContextFromFilePath in qnn_backend_manager.cc.";
+#endif
 
   CleanUpCtxFile(context_model_file);
 }

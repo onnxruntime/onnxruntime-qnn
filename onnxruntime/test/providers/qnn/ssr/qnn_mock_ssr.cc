@@ -36,6 +36,12 @@ extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
   g_always_crash_mode = always_crash;
 }
 
+// Tracks whether contextCreateFromBinaryWithCallback was invoked during SSR recovery
+// (i.e., after g_ssr_fired became true).  Reset alongside g_ssr_fired each session.
+// Only meaningful when QNN_FILE_MAPPED_WEIGHTS_AVAILABLE is defined (Windows ARM64,
+// QNN >= 2.32); always false on other platforms since the API doesn't exist there.
+static bool g_file_mapping_used_for_recovery = false;
+
 namespace {
 #if defined(_WIN32)
 // Load QnnHtp.dll at DLL startup and resolve the real QnnInterface_getProviders.
@@ -77,6 +83,7 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   }
   if (!g_ssr_fired) {
     g_ssr_fired = true;
+    g_file_mapping_used_for_recovery = false;  // Reset: anything after this is recovery.
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
   if (!real_providerList) {
@@ -86,7 +93,41 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
       graphHandle, inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
 }
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+// Intercepts contextCreateFromBinaryWithCallback: records whether it was called during
+// SSR recovery (g_ssr_fired == true).  Calls before SSR are the initial load and are
+// not counted.
+QNN_API
+Qnn_ErrorHandle_t QnnContext_createFromBinaryWithCallback(
+    Qnn_BackendHandle_t backendHandle,
+    Qnn_DeviceHandle_t deviceHandle,
+    const QnnContext_Config_t** config,
+    const Qnn_ContextBinaryCallback_t* callbacks,
+    const void* binaryBuffer,
+    Qnn_ContextBinarySize_t binaryBufferSize,
+    Qnn_ContextHandle_t* context,
+    Qnn_ProfileHandle_t profileHandle,
+    void* reserved) {
+  if (g_ssr_fired) {
+    g_file_mapping_used_for_recovery = true;
+  }
+  if (!real_providerList) {
+    return QNN_COMMON_ERROR_GENERAL;
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.contextCreateFromBinaryWithCallback(
+      backendHandle, deviceHandle, config, callbacks, binaryBuffer, binaryBufferSize,
+      context, profileHandle, reserved);
+}
+#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+
 #endif  // defined(_WIN32)
+
+// Returns true if contextCreateFromBinaryWithCallback was invoked during SSR recovery
+// in the current session.  Can be queried by tests after triggering SSR to verify that
+// file mapping was used for recovery.
+extern "C" bool QnnMockSSR_WasFileMappingUsedForRecovery() {
+  return g_file_mapping_used_for_recovery;
+}
 
 // 'interface' is #defined as 'struct' in <objbase.h> (pulled in via <windows.h>).
 // Use a different name to avoid that macro collision.
@@ -94,6 +135,7 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
                                                        uint32_t* numProviders) {
   // Reset mock state for each new session that loads this provider.
   g_ssr_fired = false;
+  g_file_mapping_used_for_recovery = false;
 
   static QnnInterface_t mock_interface;
 #if defined(_WIN32)
@@ -112,6 +154,11 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
     mock_interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
     // Intercept graphExecute to simulate SSR.
     mock_interface.QNN_INTERFACE_VER_NAME.graphExecute = QnnGraph_execute;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    // Intercept contextCreateFromBinaryWithCallback to detect file mapping during recovery.
+    mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinaryWithCallback =
+        QnnContext_createFromBinaryWithCallback;
+#endif
   }
 #endif  // defined(_WIN32)
   static std::vector<const QnnInterface_t*> m_providerPtrs = {&mock_interface};
