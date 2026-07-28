@@ -1347,7 +1347,8 @@ Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& cont
     if (rt != QNN_SUCCESS) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       ("SSR recovery: file mapping failed (" + QnnErrorHandleToString(rt) +
-                       "). Retrying with direct read.").c_str());
+                       "). Retrying with direct read.")
+                          .c_str());
     }
   }
 #endif
