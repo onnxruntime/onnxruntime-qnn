@@ -2837,14 +2837,21 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                 "prepare_and_load mode: reloading compiled context for multi-PD inference.");
 
     // 1. Extract the compiled context binary (while compile context is still alive).
-    //    GetContextBinaryBuffer returns a unique_ptr — buffer is freed automatically on all
-    //    return paths below (RAII), including early returns via RETURN_IF_NOT_OK.
+    //    Wrap immediately in unique_ptr so the buffer is freed on all return paths (RAII).
     uint64_t buffer_size = 0;
-    std::unique_ptr<unsigned char[]> context_buffer =
-        ep->qnn_backend_manager_->GetContextBinaryBuffer(buffer_size);
-    if (!context_buffer || buffer_size == 0) {
+    unsigned char* raw_context_buffer = nullptr;
+    Ort::Status get_buf_status = ep->qnn_backend_manager_->GetContextBinaryBuffer(
+        /*is_multi_soc_buffer=*/false, &raw_context_buffer, buffer_size);
+    if (!get_buf_status.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL,
-                                      "prepare_and_load: Failed to extract context binary buffer.");
+                                      ("prepare_and_load: Failed to extract context binary buffer: " +
+                                       std::string(get_buf_status.GetErrorMessage()))
+                                          .c_str());
+    }
+    std::unique_ptr<unsigned char[]> context_buffer(raw_context_buffer);
+    if (buffer_size == 0) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                      "prepare_and_load: Context binary buffer is empty.");
     }
 
     // 2. Collect fused node names before clearing models
