@@ -305,7 +305,8 @@ static Ort::Status ProcessRequantizeBias(QnnModelWrapper& qnn_model_wrapper,
       weights_scales, activation_scale, bias_info.qnn_data_type,
       new_bias_data, new_scales, new_offsets, axis_opt));
 
-  RETURN_IF_ERROR(AddStaticBiasTensor(qnn_model_wrapper, bias_def.name, bias_info.shape,
+  const std::string rq_bias_name = utils::UniqueNameGenerator().New(bias_def.name, "_rq");
+  RETURN_IF_ERROR(AddStaticBiasTensor(qnn_model_wrapper, rq_bias_name, bias_info.shape,
                                       bias_info.qnn_data_type,
                                       BuildBiasQuantParams(new_scales, new_offsets, bias_quant_axis),
                                       std::move(new_bias_data), input_names));
@@ -335,7 +336,8 @@ static Ort::Status ProcessFloatBias(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(utils::QuantizeFloatBiasTensor(
       gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels),
       weights_scales, activation_scale, new_bias_data, new_scales, new_offsets));
-  RETURN_IF_ERROR(AddStaticBiasTensor(qnn_model_wrapper, bias_def.name, bias_info.shape,
+  const std::string q_bias_name = utils::UniqueNameGenerator().New(bias_def.name, "_q");
+  RETURN_IF_ERROR(AddStaticBiasTensor(qnn_model_wrapper, q_bias_name, bias_info.shape,
                                       QNN_DATATYPE_SFIXED_POINT_32,
                                       BuildBiasQuantParams(new_scales, new_offsets, bias_quant_axis),
                                       std::move(new_bias_data), input_names));
