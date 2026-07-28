@@ -523,12 +523,17 @@ BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
                                      bias_info.quant_param.IsPerChannel() ||
                                      mean_info.quant_param.IsPerChannel() ||
                                      var_info.quant_param.IsPerChannel();
+  // Raw float mean/var in a quantized op: the fused tensors inherit per-channel divergence
+  // from those float values, and Postprocess squeezes them into a single per-tensor scale.
+  const bool has_unquantized_params = is_quantized_op &&
+                                      (!mean_info.quant_param.IsQuantized() ||
+                                       !var_info.quant_param.IsQuantized());
   const bool use_float_params =
       has_float_output ||
       (is_quantized_op &&
        (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
         input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
-       any_param_per_channel);
+       (any_param_per_channel || has_unquantized_params));
   return {has_float_output, use_float_params};
 }
 
