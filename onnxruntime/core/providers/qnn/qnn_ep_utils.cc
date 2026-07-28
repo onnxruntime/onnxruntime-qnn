@@ -1373,6 +1373,30 @@ bool OrtRMSNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const Or
   return (dt_input.value() == dt_output.value());
 }
 
+bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
+                                            const OrtApi& ort_api,
+                                            const OrtNode* node,
+                                            const OrtNode* redundant_clip_node,
+                                            const std::vector<const OrtNode*>& dq_nodes,
+                                            const std::vector<const OrtNode*>& q_nodes) const {
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, /*num_dq_inputs*/ 1)) {
+    return false;
+  }
+
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input.has_value() || !dt_output.has_value()) {
+    return false;
+  }
+
+  if (dt_input.value() != dt_output.value()) {
+    return false;
+  }
+
+  return true;
+}
+
 // Helper function to get QDQ selection for a node
 std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtApi& ort_api,
                                                const OrtNode* node, const OrtNodeGroupSelector* selector) {
@@ -1780,6 +1804,10 @@ void OrtSelectorManager::CreateSelectors() {
       {"RMSNormalization", {}},
       {"SimplifiedLayerNormalization", {}}};
   ort_selectors_.RegisterSelector(rmsnorm_ops, std::make_unique<OrtRMSNormalizationNodeGroupSelector>());
+
+  // Register MatMulNBits ops.
+  OrtOpVersionsAndSelector::OpVersionsMap matmulnbits_ops = {{"MatMulNBits", {}}};
+  ort_selectors_.RegisterSelector(matmulnbits_ops, std::make_unique<OrtMatMulNBitsNodeGroupSelector>());
 }
 
 void OrtSelectorManager::InitializeSelectorsMap() {
