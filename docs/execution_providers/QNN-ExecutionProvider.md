@@ -327,7 +327,7 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 
 **Behavior matrix:**
 
-|`ep.context_enable`|`prepare_and_load`|Behavior|
+|`ep.context_enable`|`enable_htp_prepare_and_load`|Behavior|
 |---|---|---|
 |0|0|Existing JIT flow (unchanged)|
 |1|0|Existing AOT flow (unchanged)|
@@ -341,8 +341,8 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 **Constraints:**
 - Mutually exclusive with `enable_htp_prepare_only`. Setting both to `'1'` raises an error.
 - Forces `ep.context_embed_mode` to `'0'` (external binary). If user explicitly sets `embed_mode=1`, a warning is logged and the value is overridden.
-- Setting `prepare_and_load=1` with `ep.context_enable=0` AND an explicit `ep.context_file_path` raises an error (contradictory: "don't persist" + "here's where to persist").
-- If the input model is already a pre-compiled context model (`_ctx.onnx`), `prepare_and_load` is silently ignored with a warning — the model loads directly via the existing AOT path.
+- Setting `enable_htp_prepare_and_load=1` with `ep.context_enable=0` AND an explicit `ep.context_file_path` raises an error (contradictory: "don't persist" + "here's where to persist").
+- If the input model is already a pre-compiled context model (`_ctx.onnx`), `enable_htp_prepare_and_load` is silently ignored with a warning — the model loads directly via the existing AOT path.
 
 ### Run Options
 

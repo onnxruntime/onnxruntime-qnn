@@ -2177,7 +2177,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                        OrtNode** ep_context_nodes) {
   // All partitioned graph share single QNN context, included in the same context binary
   uint64_t buffer_size(0);
-  auto context_buffer = qnn_backend_manager_->GetContextBinaryBuffer(buffer_size);
+  std::unique_ptr<unsigned char[]> context_buffer = qnn_backend_manager_->GetContextBinaryBuffer(buffer_size);
   // Get max spill fill buffer size
   uint64_t max_spill_fill_buffer_size = 0;
   if (enable_spill_fill_buffer_) {
@@ -2504,9 +2504,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_and_load mode: reloading compiled context for multi-PD inference.");
 
-    // 1. Extract the compiled context binary (while compile context is still alive)
+    // 1. Extract the compiled context binary (while compile context is still alive).
+    //    GetContextBinaryBuffer returns a unique_ptr — buffer is freed automatically on all
+    //    return paths below (RAII), including early returns via RETURN_IF_NOT_OK.
     uint64_t buffer_size = 0;
-    auto context_buffer = ep->qnn_backend_manager_->GetContextBinaryBuffer(buffer_size);
+    std::unique_ptr<unsigned char[]> context_buffer =
+        ep->qnn_backend_manager_->GetContextBinaryBuffer(buffer_size);
     if (!context_buffer || buffer_size == 0) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL,
                                       "prepare_and_load: Failed to extract context binary buffer.");
