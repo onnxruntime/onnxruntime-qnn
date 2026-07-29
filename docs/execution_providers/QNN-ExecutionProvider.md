@@ -332,18 +332,18 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. Disabled.|
 |'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
 
-|`"htp_enable_gpe"`|Description|
+|`"enable_htp_graph_splitting"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable Graph Program Executor (GPE): the HTP backend splits the LLM graph into independently-prepareable sub-graphs and packages them as a program in the context binary. Reduces context-binary prepare time by ~30% (single-thread) and ~78% (8 threads). Requires QAIRT SDK 2.49+ at runtime; using this option with an older runtime will cause context creation to fail. Only effective during context-binary generation (`ep.context_enable=1`); no impact when loading from a cached binary.|
+|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time by ~30% (single-thread) and ~78% (8 threads). Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail.|
 
-|`"htp_gpe_num_prepare_threads"`|Description|
+|`"htp_graphsplitter_num_prepare_threads"`|Description|
 |---|---|
-|Integer string ≥ 1, default `"8"`|Number of threads used to prepare GPE sub-graphs in parallel. Only effective when `htp_enable_gpe=1`. `"0"` means auto (uses `min(hardware_concurrency, number_of_splits)`). Higher values reduce prepare time at the cost of peak CPU/memory usage during preparation.|
+|Integer string ≥ 1, default `"8"`|Number of threads used to prepare sub-graphs in parallel. Only effective when `enable_htp_graph_splitting=1`. `"0"` means auto (uses `min(hardware_concurrency, number_of_splits)`). Higher values reduce prepare time at the cost of peak CPU/memory usage during preparation.|
 
-|`"gpe_kway_partitions"`|Description|
+|`"htp_graph_splitting_kway_partitions"`|Description|
 |---|---|
-|Integer string, default `"4"`|Number of sub-graphs (k-way partitions) the HTP backend splits the model into during GPE context creation. `"0"` leaves the decision to the SDK. Only effective when `htp_enable_gpe=1`. Equivalent to setting the `GPE_KWAY_PARTITIONS` environment variable; setting this provider option is preferred since it applies per-session without process-wide side effects (note: implementation sets the env var immediately before context creation).|
+|Integer string, default `"4"`|Number of sub-graphs (k-way partitions) the HTP backend splits the model into during context creation. `"0"` leaves the decision to the SDK. Only effective when `enable_htp_graph_splitting=1`. Equivalent to setting the `GPE_KWAY_PARTITIONS` environment variable; setting this provider option is preferred since it applies per-session without process-wide side effects (note: implementation sets the env var immediately before context creation).|
 
 |`"session.disable_cpu_ep_fallback"`|Description|
 |---|---|

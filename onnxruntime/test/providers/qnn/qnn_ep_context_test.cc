@@ -3286,12 +3286,12 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 // ============================================================
 
 // Helper: build session options with GPE enabled.
-static void SetGpeOptions(Ort::SessionOptions& so,
-                          const std::string& ctx_path,
-                          const std::string& num_threads = "") {
+static void SetGraphSplittingOptions(Ort::SessionOptions& so,
+                                     const std::string& ctx_path,
+                                     const std::string& num_threads = "") {
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
-  so.AddConfigEntry("ep.qnnexecutionprovider.htp_enable_gpe", "1");
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_graph_splitting", "1");
   if (!num_threads.empty()) {
     so.AddConfigEntry("ep.qnnexecutionprovider.htp_gpe_num_prepare_threads", num_threads.c_str());
   }
@@ -3300,10 +3300,10 @@ static void SetGpeOptions(Ort::SessionOptions& so,
 // Test 1: GPE enabled with default thread count — context binary is written.
 // On SDK 2.48 the GPE config block is compiled out; the test still passes because
 // QnnContext_create succeeds without option 22.
-TEST_F(QnnHTPBackendTests, GpeEnabled_DefaultThreads_CompileSucceeds) {
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
 #if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "GPE requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -3326,11 +3326,11 @@ TEST_F(QnnHTPBackendTests, GpeEnabled_DefaultThreads_CompileSucceeds) {
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
-  const std::string ctx_path = "./qnn_gpe_default_threads_test.onnx";
+  const std::string ctx_path = "./qnn_graph_splitting_default_threads_test.onnx";
   std::remove(ctx_path.c_str());
 
   Ort::SessionOptions so;
-  SetGpeOptions(so, ctx_path);
+  SetGraphSplittingOptions(so, ctx_path);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
@@ -3342,10 +3342,10 @@ TEST_F(QnnHTPBackendTests, GpeEnabled_DefaultThreads_CompileSucceeds) {
 }
 
 // Test 2: GPE enabled with a custom thread count (4 threads) — context binary is written.
-TEST_F(QnnHTPBackendTests, GpeEnabled_CustomThreads_CompileSucceeds) {
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_CustomThreads_CompileSucceeds) {
 #if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "GPE requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -3368,11 +3368,11 @@ TEST_F(QnnHTPBackendTests, GpeEnabled_CustomThreads_CompileSucceeds) {
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
-  const std::string ctx_path = "./qnn_gpe_custom_threads_test.onnx";
+  const std::string ctx_path = "./qnn_graph_splitting_custom_threads_test.onnx";
   std::remove(ctx_path.c_str());
 
   Ort::SessionOptions so;
-  SetGpeOptions(so, ctx_path, "4");
+  SetGraphSplittingOptions(so, ctx_path, "4");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
@@ -3384,7 +3384,7 @@ TEST_F(QnnHTPBackendTests, GpeEnabled_CustomThreads_CompileSucceeds) {
 }
 
 // Test 3: GPE disabled (key unset) — existing path is unchanged, no regression.
-TEST_F(QnnHTPBackendTests, GpeDisabled_NoRegression) {
+TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3406,7 +3406,7 @@ TEST_F(QnnHTPBackendTests, GpeDisabled_NoRegression) {
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
-  const std::string ctx_path = "./qnn_gpe_disabled_test.onnx";
+  const std::string ctx_path = "./qnn_graph_splitting_disabled_test.onnx";
   std::remove(ctx_path.c_str());
 
   Ort::SessionOptions so;
@@ -3424,10 +3424,10 @@ TEST_F(QnnHTPBackendTests, GpeDisabled_NoRegression) {
 }
 
 // Test: GPE enabled with explicit kway partition count.
-TEST_F(QnnHTPBackendTests, GpeEnabled_KwayPartitions_CompileSucceeds) {
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_KwayPartitions_CompileSucceeds) {
 #if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "GPE requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -3435,15 +3435,15 @@ TEST_F(QnnHTPBackendTests, GpeEnabled_KwayPartitions_CompileSucceeds) {
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
-  provider_options["gpe_kway_partitions"] = "4";
+  provider_options["htp_graph_splitting_kway_partitions"] = "4";
 
-  const std::string ctx_path = "./qnn_gpe_kway_test.onnx";
+  const std::string ctx_path = "./qnn_graph_splitting_kway_test.onnx";
   std::remove(ctx_path.c_str());
 
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
-  SetGpeOptions(so, ctx_path);
+  SetGraphSplittingOptions(so, ctx_path);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);

@@ -1244,21 +1244,21 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   {
     std::string gpe_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("htp_enable_gpe"), "0", gpe_str);
-    enable_gpe_ = gpe_str == "1";
+                                   FormatEPConfigKey("enable_htp_graph_splitting"), "0", gpe_str);
+    enable_htp_graph_splitting_ = gpe_str == "1";
   }
-  bool user_set_gpe_threads = false;
+  bool user_set_graph_splitting_threads = false;
   {
     std::string gpe_threads_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("htp_gpe_num_prepare_threads"), "", gpe_threads_str);
-    user_set_gpe_threads = !gpe_threads_str.empty();
-    if (user_set_gpe_threads) {
+                                   FormatEPConfigKey("htp_graphsplitter_num_prepare_threads"), "", gpe_threads_str);
+    user_set_graph_splitting_threads = !gpe_threads_str.empty();
+    if (user_set_graph_splitting_threads) {
       try {
         unsigned long val = std::stoul(gpe_threads_str);
-        gpe_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 8u;
+        htp_graphsplitter_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 8u;
       } catch (...) {
-        gpe_num_prepare_threads_ = 8;
+        htp_graphsplitter_num_prepare_threads_ = 8;
       }
     }
   }
@@ -1266,24 +1266,24 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   {
     std::string kway_str;
     GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("gpe_kway_partitions"), "", kway_str);
+                                   FormatEPConfigKey("htp_graph_splitting_kway_partitions"), "", kway_str);
     user_set_kway = !kway_str.empty();
     if (user_set_kway) {
       try {
-        gpe_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
+        htp_graph_splitting_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
       } catch (...) {
-        gpe_kway_partitions_ = 4;
+        htp_graph_splitting_kway_partitions_ = 4;
       }
     }
   }
-  if (!enable_gpe_) {
-    if (user_set_gpe_threads) {
+  if (!enable_htp_graph_splitting_) {
+    if (user_set_graph_splitting_threads) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "htp_gpe_num_prepare_threads is set but htp_enable_gpe=0. Value will be ignored.");
+                  "htp_graphsplitter_num_prepare_threads is set but enable_htp_graph_splitting=0. Value will be ignored.");
     }
     if (user_set_kway) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "gpe_kway_partitions is set but htp_enable_gpe=0. Value will be ignored.");
+                  "htp_graph_splitting_kway_partitions is set but enable_htp_graph_splitting=0. Value will be ignored.");
     }
   }
 
@@ -2043,9 +2043,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 context_bin_map,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
-                                                ep->enable_gpe_,
-                                                ep->gpe_num_prepare_threads_,
-                                                ep->gpe_kway_partitions_);
+                                                ep->enable_htp_graph_splitting_,
+                                                ep->htp_graphsplitter_num_prepare_threads_,
+                                                ep->htp_graph_splitting_kway_partitions_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3382,9 +3382,9 @@ Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
                                                                   ep_.enable_htp_ref_weight_sharing_,
-                                                                  ep_.enable_gpe_,
-                                                                  ep_.gpe_num_prepare_threads_,
-                                                                  ep_.gpe_kway_partitions_));
+                                                                  ep_.enable_htp_graph_splitting_,
+                                                                  ep_.htp_graphsplitter_num_prepare_threads_,
+                                                                  ep_.htp_graph_splitting_kway_partitions_));
 
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
     ep_.CreateHtpPowerConfigId();

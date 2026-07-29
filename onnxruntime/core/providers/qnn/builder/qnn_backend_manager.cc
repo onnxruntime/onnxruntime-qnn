@@ -1268,9 +1268,9 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-    bool enable_gpe,
-    uint32_t gpe_num_prepare_threads,
-    uint32_t gpe_kway_partitions) {
+    bool enable_htp_graph_splitting,
+    uint32_t graphsplitter_num_prepare_threads,
+    uint32_t graph_splitting_kway_partitions) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
@@ -1303,22 +1303,22 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-  QnnContext_Config_t context_config_gpe_vtcm = QNN_CONTEXT_CONFIG_INIT;
-  QnnHtpContext_CustomConfig_t gpe_custom_config_vtcm;
-  if (enable_gpe) {
-    gpe_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
-    gpe_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
-    gpe_custom_config_vtcm.graphSplittingConfigs.numPrepareThreads = gpe_num_prepare_threads;
-    context_config_gpe_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    context_config_gpe_vtcm.customConfig = &gpe_custom_config_vtcm;
+  QnnContext_Config_t context_config_graph_splitting_vtcm = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t graph_splitting_custom_config_vtcm;
+  if (enable_htp_graph_splitting) {
+    graph_splitting_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
+    graph_splitting_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
+    graph_splitting_custom_config_vtcm.graphSplittingConfigs.numPrepareThreads = graphsplitter_num_prepare_threads;
+    context_config_graph_splitting_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    context_config_graph_splitting_vtcm.customConfig = &graph_splitting_custom_config_vtcm;
   }
 #else
-  ORT_UNUSED_PARAMETER(enable_gpe);
-  ORT_UNUSED_PARAMETER(gpe_num_prepare_threads);
-  ORT_UNUSED_PARAMETER(gpe_kway_partitions);
-  if (enable_gpe) {
+  ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
+  ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
+  ORT_UNUSED_PARAMETER(graph_splitting_kway_partitions);
+  if (enable_htp_graph_splitting) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                    "htp_enable_gpe=1 was set but this build was compiled against QAIRT SDK < 2.49. "
+                    "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
                     "GPE is not available and the option will be ignored.");
   }
 #endif
@@ -1333,15 +1333,15 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(&context_config_weight_sharing);
 #endif
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-  if (enable_gpe) {
-    configs_vec.push_back(&context_config_gpe_vtcm);
+  if (enable_htp_graph_splitting) {
+    configs_vec.push_back(&context_config_graph_splitting_vtcm);
   }
 #endif
   configs_vec.push_back(nullptr);  // terminator
 
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-  if (enable_gpe && gpe_kway_partitions > 0) {
-    const std::string kway_str = std::to_string(gpe_kway_partitions);
+  if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
+    const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
     _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
 #else
@@ -1517,9 +1517,9 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
                                              bool enable_htp_extended_udma_mode,
                                              bool enable_htp_prepare_only,
                                              bool enable_htp_ref_weight_sharing,
-                                             bool enable_gpe,
-                                             uint32_t gpe_num_prepare_threads,
-                                             uint32_t gpe_kway_partitions) {
+                                             bool enable_htp_graph_splitting,
+                                             uint32_t graphsplitter_num_prepare_threads,
+                                             uint32_t graph_splitting_kway_partitions) {
   if (true == context_created_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
@@ -1568,22 +1568,22 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   }
 
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-  QnnContext_Config_t context_config_gpe = QNN_CONTEXT_CONFIG_INIT;
-  QnnHtpContext_CustomConfig_t gpe_custom_config;
-  if (enable_gpe) {
-    gpe_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
-    gpe_custom_config.graphSplittingConfigs.graphSplittingEnabled = true;
-    gpe_custom_config.graphSplittingConfigs.numPrepareThreads = gpe_num_prepare_threads;
-    context_config_gpe.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    context_config_gpe.customConfig = &gpe_custom_config;
+  QnnContext_Config_t context_config_graph_splitting = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t graph_splitting_custom_config;
+  if (enable_htp_graph_splitting) {
+    graph_splitting_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
+    graph_splitting_custom_config.graphSplittingConfigs.graphSplittingEnabled = true;
+    graph_splitting_custom_config.graphSplittingConfigs.numPrepareThreads = graphsplitter_num_prepare_threads;
+    context_config_graph_splitting.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    context_config_graph_splitting.customConfig = &graph_splitting_custom_config;
   }
 #else
-  ORT_UNUSED_PARAMETER(enable_gpe);
-  ORT_UNUSED_PARAMETER(gpe_num_prepare_threads);
-  ORT_UNUSED_PARAMETER(gpe_kway_partitions);
-  if (enable_gpe) {
+  ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
+  ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
+  ORT_UNUSED_PARAMETER(graph_splitting_kway_partitions);
+  if (enable_htp_graph_splitting) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                    "htp_enable_gpe=1 was set but this build was compiled against QAIRT SDK < 2.49. "
+                    "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
                     "GPE is not available and the option will be ignored.");
   }
 #endif
@@ -1599,8 +1599,8 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     npu_context_configs_vec.push_back(&context_config_ref_weight_sharing);
   }
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-  if (enable_gpe) {
-    npu_context_configs_vec.push_back(&context_config_gpe);
+  if (enable_htp_graph_splitting) {
+    npu_context_configs_vec.push_back(&context_config_graph_splitting);
   }
 #endif
   npu_context_configs_vec.push_back(nullptr);  // terminator
@@ -1628,8 +1628,8 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   }
 
 #if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
-  if (enable_gpe && gpe_kway_partitions > 0) {
-    const std::string kway_str = std::to_string(gpe_kway_partitions);
+  if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
+    const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
     _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
 #else
@@ -2005,9 +2005,9 @@ Ort::Status QnnBackendManager::SetupBackend(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
-    bool enable_gpe,
-    uint32_t gpe_num_prepare_threads,
-    uint32_t gpe_kway_partitions) {
+    bool enable_htp_graph_splitting,
+    uint32_t graphsplitter_num_prepare_threads,
+    uint32_t graph_splitting_kway_partitions) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
@@ -2018,7 +2018,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
-        return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map, enable_gpe, gpe_num_prepare_threads, gpe_kway_partitions);
+        return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map, enable_htp_graph_splitting, graphsplitter_num_prepare_threads, graph_splitting_kway_partitions);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2166,16 +2166,16 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                                                                 enable_gpe,
-                                                                                                 gpe_num_prepare_threads,
-                                                                                                 gpe_kway_partitions)
+                                                                                                 enable_htp_graph_splitting,
+                                                                                                 graphsplitter_num_prepare_threads,
+                                                                                                 graph_splitting_kway_partitions)
                                                    : CreateContext(enable_htp_weight_sharing,
                                                                    enable_htp_extended_udma_mode,
                                                                    enable_htp_prepare_only,
                                                                    false /*enable_htp_ref_weight_sharing*/,
-                                                                   enable_gpe,
-                                                                   gpe_num_prepare_threads,
-                                                                   gpe_kway_partitions);
+                                                                   enable_htp_graph_splitting,
+                                                                   graphsplitter_num_prepare_threads,
+                                                                   graph_splitting_kway_partitions);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
@@ -2267,9 +2267,9 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                                                      bool enable_htp_extended_udma_mode,
                                                      bool enable_htp_prepare_only,
                                                      bool enable_htp_ref_weight_sharing,
-                                                     bool enable_gpe,
-                                                     uint32_t gpe_num_prepare_threads,
-                                                     uint32_t gpe_kway_partitions) {
+                                                     bool enable_htp_graph_splitting,
+                                                     uint32_t graphsplitter_num_prepare_threads,
+                                                     uint32_t graph_splitting_kway_partitions) {
   RETURN_IF_NOT(backend_partial_setup_completed_, "QNN backend manager must be partially setup first.");
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager completely setup already.");
@@ -2290,9 +2290,9 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                            enable_htp_extended_udma_mode,
                            enable_htp_prepare_only,
                            enable_htp_ref_weight_sharing,
-                           enable_gpe,
-                           gpe_num_prepare_threads,
-                           gpe_kway_partitions);
+                           enable_htp_graph_splitting,
+                           graphsplitter_num_prepare_threads,
+                           graph_splitting_kway_partitions);
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN context created.");
