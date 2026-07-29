@@ -1016,6 +1016,68 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
 }
 
+// Builds: weight_q0 (int8 init) -> DQ0 -> Q1 -> weight_q1 -> {DQ1 -> Conv0, DQ2 -> Conv1}.
+// The fan-out is on a Q output on purpose: ORT rewrites a shared DQ output into per-consumer
+// "<name>/duplicated" values before the EP runs, so a DQ fan-out never reaches the EP with more
+// than one consumer, while a Q fan-out does.
+//
+// This is the fence for the sole-consumer guard in TryReleaseFoldedChainInput. weight_q1 is folded
+// and read by two Q/DQ units, so the first unit to fold must NOT release it. If that guard is
+// neutered to always release, the second unit's read fails and the fold no longer covers the graph,
+// so this test fails rather than silently reading an empty payload.
+static GetTestModelFn BuildSharedFoldedWeightConvTestCase() {
+  return [](ModelTestBuilder& builder) {
+    constexpr int64_t out_ch = 2;
+    constexpr int64_t in_ch = 3;
+    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
+    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
+
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
+
+    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
+    builder.MakeInitializer<float>("scale0", {out_ch}, std::vector<float>{0.1f, 0.2f});
+    builder.MakeInitializer<int8_t>("zp0", {out_ch}, std::vector<int8_t>{0, 0});
+    builder.MakeInitializer<float>("scale1", {out_ch}, std::vector<float>{0.05f, 0.4f});
+    builder.MakeInitializer<int8_t>("zp1", {out_ch}, std::vector<int8_t>{-2, 3});
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+
+    builder.AddNode("WeightDQ0", "DequantizeLinear", {"weight_q0", "scale0", "zp0"}, {"weight_dq0"},
+                    kOnnxDomain, axis_attrs);
+    builder.AddNode("WeightQ1", "QuantizeLinear", {"weight_dq0", "scale1", "zp1"}, {"weight_q1"},
+                    kOnnxDomain, axis_attrs);
+    // Both DQs read the folded weight_q1, giving it two consumers at the EP.
+    builder.AddNode("WeightDQ1", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq1"},
+                    kOnnxDomain, axis_attrs);
+    builder.AddNode("WeightDQ2", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq2"},
+                    kOnnxDomain, axis_attrs);
+
+    builder.MakeOutput("output0");
+    builder.MakeOutput("output1");
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+
+    builder.AddNode("Conv0", "Conv", {"input", "weight_dq1"}, {"output0"}, kOnnxDomain, conv_attrs);
+    builder.AddNode("Conv1", "Conv", {"input", "weight_dq2"}, {"output1"}, kOnnxDomain, conv_attrs);
+  };
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_SharedFoldedWeight_NotReleasedWhileStillRead) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildSharedFoldedWeightConvTestCase(),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+}
+
 // Tests for reuse_sparse_indices parameter (always false, verifies the parameter is accepted by QNN without errors).
 // Conv2d: reuse_sparse_indices should be added to the QNN node parameters.
 TEST_F(QnnCPUBackendTests, Conv2D_ReuseSparseIndices) {

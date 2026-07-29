@@ -26,15 +26,18 @@ Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper
     RETURN_IF(init == nullptr, "Constant initializer not found for tensor.");
     return qnn_model_wrapper.UnpackInitializerData(init, bytes);
   }
-  if (qnn_model_wrapper.IsFoldedConstant(tensor_name) &&
-      qnn_model_wrapper.IsQnnTensorWrapperExist(tensor_name)) {
+  if (qnn_model_wrapper.IsFoldedConstant(tensor_name)) {
+    // A folded name without a wrapper was released by TryReleaseFoldedChainInput, which only
+    // happens when the releasing unit was the sole consumer. Reaching here means it was not.
+    RETURN_IF(!qnn_model_wrapper.IsQnnTensorWrapperExist(tensor_name),
+              "Folded constant was released after its sole consumer folded; it must not be read again.");
     const QnnTensorWrapper& wrapper = qnn_model_wrapper.GetQnnTensorWrapper(tensor_name);
     const Qnn_ClientBuffer_t& buf = GetQnnTensorClientBuf(wrapper.GetQnnTensor());
     const uint8_t* data_ptr = reinterpret_cast<const uint8_t*>(buf.data);
     bytes.assign(data_ptr, data_ptr + buf.dataSize);
     return Ort::Status();
   }
-  return MAKE_EP_FAIL("Tensor is not a constant initializer or folded constant.");
+  return MAKE_EP_FAIL("Tensor is neither a constant initializer nor a folded constant.");
 }
 
 namespace {
@@ -58,14 +61,29 @@ void TryReleaseFoldedChainInput(QnnModelWrapper& qnn_model_wrapper,
   // Q/DQ read the folded tensor on input 0 only; scale and zero_point must be initializers.
   size_t num_inputs = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&node, &num_inputs), ort_api, void());
+  if (num_inputs == 0) {
+    return;
+  }
   std::vector<const OrtValueInfo*> inputs(num_inputs, nullptr);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&node, inputs.data(), inputs.size()), ort_api, void());
-  if (inputs.empty() || inputs[0] == nullptr) {
+  if (inputs[0] == nullptr) {
+    return;
+  }
+
+  // The count below is taken on the node's own input 0, so confirm it names the tensor being
+  // released rather than assuming the node and node-unit views agree.
+  const char* value_name = nullptr;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoName(inputs[0], &value_name), ort_api, void());
+  if (value_name == nullptr || input_name != value_name) {
     return;
   }
 
   // Counts usages, not distinct nodes, so this can only over-count relative to the single fold
   // done here, which errs toward retaining the payload.
+  //
+  // This is the precondition that makes the release safe, and it does fire: ORT rewrites a shared
+  // DQ output into per-consumer values before the EP runs, but a Q output feeding several DQs
+  // reaches us with its fan-out intact (see Convf32_SharedFoldedWeight_NotReleasedWhileStillRead).
   size_t num_consumers = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(inputs[0], &num_consumers), ort_api, void());
   if (num_consumers != 1) {

@@ -234,9 +234,15 @@ class QnnModelWrapper {
 
   bool IsQnnTensorWrapperExist(const std::string& tensor_name) const;
 
-  // Drops a tensor wrapper and the payload it owns. Only safe for a tensor that no QNN node
-  // references and that is not graph I/O; see TryReleaseFoldedChainInput. Releasing a still-needed
-  // name fails loudly rather than silently: GetQnnTensorWrapper throws.
+  // Drops a tensor wrapper and the payload it owns. The caller must have established that no QNN
+  // node references the tensor and that it is not graph I/O; see TryReleaseFoldedChainInput, whose
+  // sole-consumer check is the only thing keeping this safe.
+  //
+  // Releasing a still-needed name does NOT fail loudly on the op-builder path: the name stays in
+  // folded_constant_tensors_, so a later BaseOpBuilder::ProcessInput rebuilds it via
+  // MakeTensorWrapper, where is_initializer is false for a folded name. That yields a STATIC tensor
+  // with an empty payload in place of the folded weights, silently. Only the folding path itself
+  // (GetEffectivelyConstantTensorBytes) detects the released state and fails the compile.
   void ReleaseTensorWrapper(const std::string& tensor_name);
 
   bool IsGraphOutput(const std::string& tensor_name) const {
