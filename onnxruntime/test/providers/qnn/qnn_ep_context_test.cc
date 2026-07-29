@@ -3776,9 +3776,8 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
   auto bin_path = std::filesystem::path(ctx_path).replace_extension("").string() + "_qnn.bin";
   EXPECT_FALSE(std::filesystem::exists(bin_path));
 
-  // Verify inference completes (session was created successfully above)
-
-  CleanUpCtxFile(ctx_path);
+  // Clean up: only the .onnx exists (no .bin to remove in embed mode)
+  ASSERT_EQ(std::remove(ctx_path.c_str()), 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
