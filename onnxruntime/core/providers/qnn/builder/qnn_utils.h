@@ -83,13 +83,6 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type);
 
 size_t GetElementSizeByType(ONNXTensorElementDataType elem_type);
 
-// Returns true if the QNN data type is a 16-bit fixed-point quantized type.
-// QNN-side counterpart of the ONNX-side Is16BitIntType in qnn_ep_utils.cc.
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 ||
-         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
 std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type);
 
 // Class that allows building a JSON representation of a QNN graph.

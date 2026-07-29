@@ -91,7 +91,8 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                input_info_1.quant_param.IsLPBQ() &&
                input_info_1.shape.size() == 2 &&
                input_info_1.is_initializer &&
-               input_info_0.shape.size() >= 2;
+               input_info_0.shape.size() >= 2 &&
+               utils::IsQuant16bit(input_info_0.qnn_data_type);
 
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
   // Validation crashes if use QNN FullyConnected in QNN SDK versions 2.26 - 2.27
