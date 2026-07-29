@@ -64,6 +64,7 @@ def generate_golden_for_model(test_def: ModelTestDef) -> bool:
     # Write manifest
     manifest = {
         **get_current_versions(),
+        "htp_arch": None,  # null = shared golden, valid for any arch
         "graphs": sorted(f.name for f in json_files),
     }
     (model_output_dir / GOLDEN_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))

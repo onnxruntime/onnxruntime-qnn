@@ -16,6 +16,8 @@ from typing import NamedTuple
 
 import onnxruntime_qnn
 
+import onnxruntime
+
 GOLDEN_MANIFEST_FILENAME = "golden_manifest.json"
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,18 @@ def get_current_versions() -> dict[str, str]:
         "ort_version": onnxruntime_qnn.build_and_package_info.__version__,
         "qnn_version": onnxruntime_qnn.build_and_package_info.qnn_version,
     }
+
+
+def get_current_device_id() -> int | None:
+    """Return the HTP device_id of the current machine, or None if unavailable."""
+    try:
+        ep_devices = [ed for ed in onnxruntime.get_ep_devices() if ed.ep_name == onnxruntime_qnn.get_ep_names()[0]]
+        for ed in ep_devices:
+            if ed.device.type == onnxruntime.OrtHardwareDeviceType.NPU:
+                return ed.device.device_id
+    except Exception:
+        pass
+    return None
 
 
 def load_golden_manifest(golden_dir: Path) -> dict | None:
@@ -92,8 +106,36 @@ def compare_graphs(dumped_dir: Path, golden_dir: Path) -> tuple[bool, str]:
     return True, "all graphs match"
 
 
+def _resolve_golden_dir(model_root: Path) -> Path | None:
+    """Resolve the golden directory, checking arch-specific subdirs first.
+
+    Priority:
+      1. goldens/<device_id>/  — arch-specific golden
+      2. goldens/              — shared golden (htp_arch is null)
+
+    Returns the golden dir to use, or None if no goldens exist.
+    """
+    goldens_root = model_root / "goldens"
+    if not goldens_root.is_dir():
+        return None
+
+    # Check for arch-specific subdir
+    device_id = get_current_device_id()
+    if device_id is not None:
+        arch_dir = goldens_root / str(device_id)
+        if arch_dir.is_dir():
+            return arch_dir
+
+    # Fall back to shared golden (files directly in goldens/)
+    manifest = goldens_root / GOLDEN_MANIFEST_FILENAME
+    if manifest.exists():
+        return goldens_root
+
+    return None
+
+
 def check_gate(model_root: Path, dumped_dir: Path) -> GateResult:
-    """Main gate check: version match + graph diff.
+    """Main gate check: version match + arch match + graph diff.
 
     Args:
         model_root: Path to the model directory (contains goldens/ subdirectory).
@@ -102,11 +144,17 @@ def check_gate(model_root: Path, dumped_dir: Path) -> GateResult:
     Returns:
         GateResult indicating whether accuracy can be skipped.
     """
-    golden_dir = model_root / "goldens"
+    model_name = model_root.name
+    golden_dir = _resolve_golden_dir(model_root)
 
     # Check golden exists
+    if golden_dir is None:
+        logger.info(f"[Graph Gate] {model_name}: no golden found -> run accuracy")
+        return GateResult(skip_accuracy=False, reason="no golden found")
+
     manifest = load_golden_manifest(golden_dir)
     if manifest is None:
+        logger.info(f"[Graph Gate] {model_name}: no golden manifest -> run accuracy")
         return GateResult(skip_accuracy=False, reason="no golden manifest found")
 
     # Check version match
@@ -115,19 +163,32 @@ def check_gate(model_root: Path, dumped_dir: Path) -> GateResult:
     golden_qnn = manifest.get("qnn_version")
 
     if current["ort_version"] != golden_ort:
-        return GateResult(
-            skip_accuracy=False,
-            reason=f"ORT version changed: {golden_ort} -> {current['ort_version']}",
-        )
+        reason = f"ORT version changed: {golden_ort} -> {current['ort_version']}"
+        logger.info(f"[Graph Gate] {model_name}: {reason} -> run accuracy")
+        return GateResult(skip_accuracy=False, reason=reason)
     if current["qnn_version"] != golden_qnn:
-        return GateResult(
-            skip_accuracy=False,
-            reason=f"QAIRT version changed: {golden_qnn} -> {current['qnn_version']}",
-        )
+        reason = f"QAIRT version changed: {golden_qnn} -> {current['qnn_version']}"
+        logger.info(f"[Graph Gate] {model_name}: {reason} -> run accuracy")
+        return GateResult(skip_accuracy=False, reason=reason)
+
+    # Check arch match (if golden specifies an arch)
+    golden_arch = manifest.get("htp_arch")
+    if golden_arch is not None:
+        device_id = get_current_device_id()
+        if device_id is not None and str(device_id) != str(golden_arch):
+            reason = f"arch mismatch (device={device_id}, golden={golden_arch})"
+            logger.info(f"[Graph Gate] {model_name}: {reason} -> run accuracy")
+            return GateResult(skip_accuracy=False, reason=reason)
 
     # Compare graphs
     match, detail = compare_graphs(dumped_dir, golden_dir)
     if match:
+        logger.info(
+            f"[Graph Gate] {model_name}: versions match (ort={current['ort_version']},"
+            f" qnn={current['qnn_version']}), graph match -> skip accuracy"
+        )
         return GateResult(skip_accuracy=True, reason="graph unchanged")
 
-    return GateResult(skip_accuracy=False, reason=f"graph diff detected: {detail}")
+    reason = f"graph diff detected: {detail}"
+    logger.info(f"[Graph Gate] {model_name}: {reason} -> run accuracy")
+    return GateResult(skip_accuracy=False, reason=reason)
