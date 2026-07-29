@@ -3732,8 +3732,8 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_ContextDisabledWithFilePath_Throws) {
   }
 }
 
-// Test 5: prepare_and_load with embed_mode=1 — silently overridden, creates external .bin.
-TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeOverridden) {
+// Test 5: prepare_and_load with embed_mode=1 — binary is embedded in .onnx, no separate .bin.
+TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3761,7 +3761,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeOverridden) {
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
-  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");  // should be overridden to 0
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");  // should be respected
   so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -3772,9 +3772,11 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeOverridden) {
   // Verify ctx.onnx exists
   EXPECT_TRUE(std::filesystem::exists(ctx_path));
 
-  // Verify external .bin was created (embed_mode was overridden to 0)
+  // Verify embed_mode=1 was respected: binary is embedded, no separate .bin file
   auto bin_path = std::filesystem::path(ctx_path).replace_extension("").string() + "_qnn.bin";
-  EXPECT_TRUE(std::filesystem::exists(bin_path));
+  EXPECT_FALSE(std::filesystem::exists(bin_path));
+
+  // Verify inference completes (session was created successfully above)
 
   CleanUpCtxFile(ctx_path);
 }

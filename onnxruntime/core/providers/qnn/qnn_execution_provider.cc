@@ -687,14 +687,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
           "Set only one of them to 1.");
     }
 
-    if (prepare_and_load_ && qnn_context_embed_mode_) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  "prepare_and_load=1 requires external binary mode (embed_mode=0). "
-                  "Overriding ep.context_embed_mode to 0.");
-      qnn_context_embed_mode_ = false;
-    }
-
     if (prepare_and_load_ && !context_cache_enabled_ && !context_cache_path_cfg_.empty()) {
       throw std::runtime_error(
           "Contradictory options: prepare_and_load=1 with context_enable=0 means no artifact is persisted, "
