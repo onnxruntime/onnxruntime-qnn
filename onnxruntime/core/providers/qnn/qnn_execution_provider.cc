@@ -305,6 +305,29 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
+// Parses a uint32 session config entry. Returns `default_value` if the key is
+// absent or unparseable (logs a WARNING in the latter case).
+// If `was_set` is non-null it is set to true when the key is explicitly present.
+static uint32_t ParseUint32ConfigEntry(const OrtApi& ort_api,
+                                       const OrtSessionOptions& session_options,
+                                       const std::string& key,
+                                       uint32_t default_value,
+                                       const Ort::Logger& logger,
+                                       bool* was_set = nullptr) {
+  std::string str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options, key, "", str);
+  if (was_set) *was_set = !str.empty();
+  if (str.empty()) return default_value;
+  try {
+    return static_cast<uint32_t>(std::stoul(str));
+  } catch (...) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                ("Invalid value for " + key + ": '" + str + "'. Using default " +
+                 std::to_string(default_value) + ".").c_str());
+    return default_value;
+  }
+}
+
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -668,6 +691,30 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       throw std::runtime_error(
           "enable_htp_prepare_only=1 requires ep.context_enable=1. "
           "prepare_only mode only generates the context model for ahead-of-time compilation.");
+    }
+
+    std::string prepare_and_load_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey("enable_htp_prepare_and_load"),
+                                   "0",
+                                   prepare_and_load_str);
+    prepare_and_load_ = prepare_and_load_str == "1";
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("User specified option - enable_htp_prepare_and_load: " + prepare_and_load_str).c_str());
+
+    if (prepare_and_load_ && prepare_only_) {
+      throw std::runtime_error(
+          "enable_htp_prepare_and_load and enable_htp_prepare_only are mutually exclusive. "
+          "Set only one of them to 1.");
+    }
+
+    if (prepare_and_load_ && !context_cache_enabled_ && !context_cache_path_cfg_.empty()) {
+      throw std::runtime_error(
+          "Contradictory options: prepare_and_load=1 with context_enable=0 means no artifact is persisted, "
+          "but ep.context_file_path is explicitly set. Either set context_enable=1 to persist the artifact, "
+          "or remove context_file_path.");
     }
   }
 
@@ -1240,42 +1287,33 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
-  // GPE (Graph Program Executor / Graph Splitting). Requires SDK 2.49+ at runtime.
-  {
-    std::string gpe_str;
-    GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("enable_htp_graph_splitting"), "0", gpe_str);
-    enable_htp_graph_splitting_ = gpe_str == "1";
+  // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
+  // Supported in both JIT and AOT workflows.
+  enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
+                                                 session_options_,
+                                                 FormatEPConfigKey("enable_htp_graph_splitting"),
+                                                 false,
+                                                 logger_);
+#ifndef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+  if (enable_htp_graph_splitting_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
+                "Graph splitting is not available and the option will be ignored.");
   }
+#endif
+
   bool user_set_graph_splitting_threads = false;
-  {
-    std::string gpe_threads_str;
-    GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("htp_graphsplitter_num_prepare_threads"), "", gpe_threads_str);
-    user_set_graph_splitting_threads = !gpe_threads_str.empty();
-    if (user_set_graph_splitting_threads) {
-      try {
-        unsigned long val = std::stoul(gpe_threads_str);
-        htp_graphsplitter_num_prepare_threads_ = val > 0 ? static_cast<uint32_t>(val) : 8u;
-      } catch (...) {
-        htp_graphsplitter_num_prepare_threads_ = 8;
-      }
-    }
-  }
+  htp_graphsplitter_num_prepare_threads_ = ParseUint32ConfigEntry(
+      ort_api, session_options_,
+      FormatEPConfigKey("htp_graphsplitter_num_prepare_threads"),
+      8u, logger_, &user_set_graph_splitting_threads);
+
   bool user_set_kway = false;
-  {
-    std::string kway_str;
-    GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                   FormatEPConfigKey("htp_graph_splitting_kway_partitions"), "", kway_str);
-    user_set_kway = !kway_str.empty();
-    if (user_set_kway) {
-      try {
-        htp_graph_splitting_kway_partitions_ = static_cast<uint32_t>(std::stoul(kway_str));
-      } catch (...) {
-        htp_graph_splitting_kway_partitions_ = 4;
-      }
-    }
-  }
+  htp_graph_splitting_kway_partitions_ = ParseUint32ConfigEntry(
+      ort_api, session_options_,
+      FormatEPConfigKey("htp_graph_splitting_kway_partitions"),
+      4u, logger_, &user_set_kway);
+
   if (!enable_htp_graph_splitting_) {
     if (user_set_graph_splitting_threads) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
@@ -2035,7 +2073,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   Ort::Status rt;
   if (!ep->enable_multi_soc_ep_context_) {
     rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
-                                                ep->context_cache_enabled_,
+                                                ep->context_cache_enabled_ || ep->prepare_and_load_,
                                                 ep->share_ep_contexts_,
                                                 ep->htp_share_resource_optimization_,
                                                 ep->enable_file_mapped_weights_,
@@ -2334,8 +2372,9 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 #endif
 
       // SetupQnnInputOutput populates qnn_input_infos_/qnn_output_infos_ which are only consumed
-      // in ExecuteGraph during inference. In prepare_only mode inference never runs, so skip.
-      if (!prepare_only_) {
+      // in ExecuteGraph during inference. In prepare_only/prepare_and_load mode these compile-time
+      // models are discarded after binary extraction, so skip.
+      if (!prepare_only_ && !prepare_and_load_) {
         RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
       }
 
@@ -2366,7 +2405,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
       RETURN_IF_NOT_OK(std::move(model_info.result));
 
       auto qnn_model = std::move(model_info.model);
-      if (!prepare_only_) {
+      if (!prepare_only_ && !prepare_and_load_) {
         RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
       }
 
@@ -2654,7 +2693,6 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                                                 &raw_context_buffer,
                                                                 buffer_size));
   std::unique_ptr<unsigned char[]> context_buffer(raw_context_buffer);
-
   // Get max spill fill buffer size
   uint64_t max_spill_fill_buffer_size = 0;
   if (enable_spill_fill_buffer_) {
@@ -2806,6 +2844,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
+    if (ep->prepare_and_load_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "prepare_and_load=1 is ignored because the input model is already a pre-compiled context model. "
+                  "The model will be loaded directly via the AOT path.");
+    }
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
     return ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
@@ -2825,11 +2868,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   } else {
     RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
   }
-
-  // Clean up transient GetCapability→Compile state.
-  // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
-  // below to serialize the io_name_overrides attribute into the EPContext model.
-  ep->onnx_graph_io_names_.reset();
+  // NOTE: onnx_graph_io_names_ cleanup is deferred to after the prepare_and_load reload block
+  // (which needs the names for I/O mapping). tensor_name_overrides_ must NOT be cleared here;
+  // it is read by CreateEPContextNodes below to serialize io_name_overrides into the EPContext model.
 
   // Framework op trace: record SoC trace(s), then finalize and write.
   if (ep->enable_framework_op_trace_) {
@@ -2845,7 +2886,113 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
 
-  // Clear only after CreateEPContextNodes has serialized the map into the EPContext model.
+  // prepare_and_load mode: after compilation (and optional context save), reload the compiled
+  // binary via the AOT path so the QNN runtime can spread splits across multiple PDs.
+  if (ep->prepare_and_load_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "prepare_and_load mode: reloading compiled context for multi-PD inference.");
+
+    // 1. Extract the compiled context binary (while compile context is still alive).
+    //    Wrap immediately in unique_ptr so the buffer is freed on all return paths (RAII).
+    uint64_t buffer_size = 0;
+    unsigned char* raw_context_buffer = nullptr;
+    Ort::Status get_buf_status = ep->qnn_backend_manager_->GetContextBinaryBuffer(
+        /*is_multi_soc_buffer=*/false, &raw_context_buffer, buffer_size);
+    if (!get_buf_status.IsOK()) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                      ("prepare_and_load: Failed to extract context binary buffer: " +
+                                       std::string(get_buf_status.GetErrorMessage()))
+                                          .c_str());
+    }
+    std::unique_ptr<unsigned char[]> context_buffer(raw_context_buffer);
+    if (buffer_size == 0) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                      "prepare_and_load: Context binary buffer is empty.");
+    }
+
+    // 2. Collect fused node names before clearing models
+    InlinedVector<std::string> fused_node_names;
+    fused_node_names.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+      const char* node_name = nullptr;
+      auto st = ep->ort_api.Node_GetName(fused_nodes[i], &node_name);
+      if (st != nullptr) {
+        ep->ort_api.ReleaseStatus(st);
+        return ep->ort_api.CreateStatus(ORT_EP_FAIL, "prepare_and_load: Failed to get fused node name.");
+      }
+      fused_node_names.emplace_back(node_name);
+    }
+
+    // 3. Clear compile-time QNN models (drops compile-time graph handles)
+    ep->qnn_models_.clear();
+
+    // 4. Release the compile-time QNN context (frees single-PD HW allocation)
+    Ort::Status release_status = ep->qnn_backend_manager_->ReleaseContext();
+    if (!release_status.IsOK()) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                      ("prepare_and_load: ReleaseContext failed: " +
+                                       std::string(release_status.GetErrorMessage()))
+                                          .c_str());
+    }
+
+    // 5. Load from the in-memory binary buffer via AOT path (multi-PD)
+    std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> loaded_models;
+    Ort::Status load_status = ep->qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+        reinterpret_cast<char*>(context_buffer.get()),
+        buffer_size,
+        "",  // no file path needed for in-memory load
+        fused_node_names[0],
+        loaded_models,
+        0);
+
+    if (!load_status.IsOK()) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                      ("prepare_and_load: Failed to reload context: " +
+                                       std::string(load_status.GetErrorMessage()))
+                                          .c_str());
+    }
+
+    // 6. Wire up loaded models: SetGraphInputOutputInfo + SetupQnnInputOutput
+    for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+      const std::string& fused_node_name = fused_node_names[graph_idx];
+
+      // Find the model in loaded_models by fused node name
+      auto model_it = loaded_models.find(fused_node_name);
+      if (model_it == loaded_models.end()) {
+        // For single-graph case or when QNN uses different internal names,
+        // take the first available model if there's exactly one
+        if (loaded_models.size() == 1 && count == 1) {
+          model_it = loaded_models.begin();
+        } else {
+          return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                          ("prepare_and_load: No loaded model found for fused node: " +
+                                           fused_node_name)
+                                              .c_str());
+        }
+      }
+
+      auto qnn_model = std::move(model_it->second);
+      loaded_models.erase(model_it);
+
+      const auto& onnx_input_names = ep->onnx_graph_io_names_->first;
+      const auto& onnx_output_names = ep->onnx_graph_io_names_->second;
+
+      RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(
+          qnn::QnnModelContext{*graphs[graph_idx], *fused_nodes[graph_idx], ep->logger_,
+                               &onnx_input_names, &onnx_output_names,
+                               nullptr, nullptr, nullptr, std::string{}}));
+      RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+
+      ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+    }
+
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "prepare_and_load mode: context reload complete. Session is ready for inference.");
+  }
+
+  // Clean up transient GetCapability→Compile state (after prepare_and_load reload which needs
+  // onnx_graph_io_names_, and after CreateEPContextNodes which needs tensor_name_overrides_).
+  ep->onnx_graph_io_names_.reset();
   ep->tensor_name_overrides_.clear();
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))

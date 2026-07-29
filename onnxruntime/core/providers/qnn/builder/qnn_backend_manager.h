@@ -227,8 +227,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false,
-      uint32_t graphsplitter_num_prepare_threads = 1,
-      uint32_t graph_splitting_kway_partitions = 0);
+      uint32_t graphsplitter_num_prepare_threads = 8,
+      uint32_t graph_splitting_kway_partitions = 4);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -239,8 +239,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,
                                     bool enable_htp_graph_splitting = false,
-                                    uint32_t graphsplitter_num_prepare_threads = 1,
-                                    uint32_t graph_splitting_kway_partitions = 0);
+                                    uint32_t graphsplitter_num_prepare_threads = 8,
+                                    uint32_t graph_splitting_kway_partitions = 4);
 
   void ReleaseDeviceAndContext();
 
@@ -416,6 +416,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
+  // Release the current QNN context handles (frees HW resources).
+  // Idempotent — safe to call even if no context is active.
+  Ort::Status ReleaseContext();
   bool IsDx12SharedMemoryAllocatorSupported();
 
  private:
@@ -478,16 +481,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             bool enable_htp_prepare_only,
                             bool enable_htp_ref_weight_sharing,
                             bool enable_htp_graph_splitting = false,
-                            uint32_t graphsplitter_num_prepare_threads = 1,
-                            uint32_t graph_splitting_kway_partitions = 0);
+                            uint32_t graphsplitter_num_prepare_threads = 8,
+                            uint32_t graph_splitting_kway_partitions = 4);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
                                                           bool enable_htp_graph_splitting = false,
-                                                          uint32_t graphsplitter_num_prepare_threads = 1,
-                                                          uint32_t graph_splitting_kway_partitions = 0);
+                                                          uint32_t graphsplitter_num_prepare_threads = 8,
+                                                          uint32_t graph_splitting_kway_partitions = 4);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
@@ -498,8 +501,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      std::unordered_map<std::string,
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 #endif
-
-  Ort::Status ReleaseContext();
 
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
   Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,

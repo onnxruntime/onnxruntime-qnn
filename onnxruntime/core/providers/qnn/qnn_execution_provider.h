@@ -224,6 +224,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool prepare_only_ = false;
+  bool prepare_and_load_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
@@ -270,7 +271,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool enable_htp_extended_udma_mode_ = false;
 
-  // GPE (Graph Program Executor / Graph Splitting). Requires SDK 2.49+ at runtime.
+  // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   bool enable_htp_graph_splitting_ = false;
   uint32_t htp_graphsplitter_num_prepare_threads_ = 8;
   uint32_t htp_graph_splitting_kway_partitions_ = 4;  // 0 = use SDK default (do not set GPE_KWAY_PARTITIONS env var)

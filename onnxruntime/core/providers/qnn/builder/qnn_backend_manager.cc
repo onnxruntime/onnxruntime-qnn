@@ -1302,7 +1302,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   QnnContext_Config_t context_config_graph_splitting_vtcm = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t graph_splitting_custom_config_vtcm;
   if (enable_htp_graph_splitting) {
@@ -1316,15 +1316,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
   ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
   ORT_UNUSED_PARAMETER(graph_splitting_kway_partitions);
-  if (enable_htp_graph_splitting) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                    "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
-                    "GPE is not available and the option will be ignored.");
-  }
 #endif
 
-  // Build config list dynamically to avoid nullptr entries in the middle of a
-  // nullptr-terminated array (QNN would stop iterating at the first nullptr).
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
@@ -1332,14 +1325,14 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
 #endif
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting) {
     configs_vec.push_back(&context_config_graph_splitting_vtcm);
   }
 #endif
-  configs_vec.push_back(nullptr);  // terminator
+  configs_vec.push_back(nullptr);
 
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
     const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
@@ -1567,7 +1560,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     enable_htp_ref_weight_sharing = false;
   }
 
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   QnnContext_Config_t context_config_graph_splitting = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t graph_splitting_custom_config;
   if (enable_htp_graph_splitting) {
@@ -1581,15 +1574,8 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
   ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
   ORT_UNUSED_PARAMETER(graph_splitting_kway_partitions);
-  if (enable_htp_graph_splitting) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                    "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
-                    "GPE is not available and the option will be ignored.");
-  }
 #endif
 
-  // Build config list dynamically to avoid nullptr entries in the middle of a
-  // nullptr-terminated array (QNN would stop iterating at the first nullptr).
   std::vector<const QnnContext_Config_t*> npu_context_configs_vec;
   npu_context_configs_vec.push_back(&context_priority_config);
   npu_context_configs_vec.push_back(&context_config_weight_sharing);
@@ -1598,12 +1584,12 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   if (enable_htp_ref_weight_sharing) {
     npu_context_configs_vec.push_back(&context_config_ref_weight_sharing);
   }
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting) {
     npu_context_configs_vec.push_back(&context_config_graph_splitting);
   }
 #endif
-  npu_context_configs_vec.push_back(nullptr);  // terminator
+  npu_context_configs_vec.push_back(nullptr);
 
   const QnnContext_Config_t* empty_context_configs[] = {nullptr};
 
@@ -1627,7 +1613,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     configs = nullptr;
   }
 
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
     const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
@@ -2018,7 +2004,10 @@ Ort::Status QnnBackendManager::SetupBackend(
       auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
-        return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map, enable_htp_graph_splitting, graphsplitter_num_prepare_threads, graph_splitting_kway_partitions);
+        return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
+                                                           enable_htp_graph_splitting,
+                                                           graphsplitter_num_prepare_threads,
+                                                           graph_splitting_kway_partitions);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2165,17 +2154,18 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
-    status = htp_share_resource_optimization_ == 1 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                                                                 enable_htp_graph_splitting,
-                                                                                                 graphsplitter_num_prepare_threads,
-                                                                                                 graph_splitting_kway_partitions)
-                                                   : CreateContext(enable_htp_weight_sharing,
-                                                                   enable_htp_extended_udma_mode,
-                                                                   enable_htp_prepare_only,
-                                                                   false /*enable_htp_ref_weight_sharing*/,
-                                                                   enable_htp_graph_splitting,
-                                                                   graphsplitter_num_prepare_threads,
-                                                                   graph_splitting_kway_partitions);
+    status = htp_share_resource_optimization_ == 1
+                 ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
+                                                               enable_htp_graph_splitting,
+                                                               graphsplitter_num_prepare_threads,
+                                                               graph_splitting_kway_partitions)
+                 : CreateContext(enable_htp_weight_sharing,
+                                 enable_htp_extended_udma_mode,
+                                 enable_htp_prepare_only,
+                                 false /*enable_htp_ref_weight_sharing*/,
+                                 enable_htp_graph_splitting,
+                                 graphsplitter_num_prepare_threads,
+                                 graph_splitting_kway_partitions);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
