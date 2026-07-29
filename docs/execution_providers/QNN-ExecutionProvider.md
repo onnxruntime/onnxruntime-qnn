@@ -335,20 +335,7 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |`"enable_htp_graph_splitting"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time by ~30% (single-thread) and ~78% (8 threads). Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail.|
-
-|`"htp_graphsplitter_num_prepare_threads"`|Description|
-|---|---|
-|Integer string ≥ 1, default `"8"`|Number of threads used to prepare sub-graphs in parallel. Only effective when `enable_htp_graph_splitting=1`. `"0"` means auto (uses `min(hardware_concurrency, number_of_splits)`). Higher values reduce prepare time at the cost of peak CPU/memory usage during preparation.|
-
-|`"htp_graph_splitting_kway_partitions"`|Description|
-|---|---|
-|Integer string, default `"4"`|Number of sub-graphs (k-way partitions) the HTP backend splits the model into during context creation. `"0"` leaves the decision to the SDK. Only effective when `enable_htp_graph_splitting=1`. Equivalent to setting the `GPE_KWAY_PARTITIONS` environment variable; setting this provider option is preferred since it applies per-session without process-wide side effects (note: implementation sets the env var immediately before context creation).|
-
-|`"enable_htp_graph_splitting"`|Description|
-|---|---|
-|'0'|Default. Disabled.|
-|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail.|
+|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail.|
 
 |`"htp_graphsplitter_num_prepare_threads"`|Description|
 |---|---|
