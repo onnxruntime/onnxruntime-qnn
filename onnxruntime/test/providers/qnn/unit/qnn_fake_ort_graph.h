@@ -489,6 +489,9 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
           new FakeOrtStatus{ORT_INVALID_ARGUMENT, "ReadOpAttr: attribute type mismatch"});
     }
     if (expected_type == OrtOpAttrType::ORT_OP_ATTR_STRING) {
+      // Byte count of string_value, NOT including a null terminator — matches
+      // the real ReadOpAttr contract and how Ort::ConstOpAttr::GetValue<std::string>
+      // consumes it (result.resize(size) + memcpy(size), no trailing '\0').
       *out_size = fa->string_value.size();
       if (buf != nullptr && buf_size >= fa->string_value.size()) {
         std::memcpy(buf, fa->string_value.data(), fa->string_value.size());

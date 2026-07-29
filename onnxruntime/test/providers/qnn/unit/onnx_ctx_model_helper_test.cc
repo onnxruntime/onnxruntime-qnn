@@ -22,8 +22,31 @@
 #include "test/providers/qnn/unit/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/unit/qnn_unit_test_utils.h"
 
-using namespace onnxruntime::qnn;
-using namespace onnxruntime::test;
+namespace onnxruntime {
+namespace test {
+
+// Specific using-declarations (not `using namespace`) so each helper/constant
+// pulled from onnxruntime::qnn is named explicitly. Fake* graph types and the
+// stub helpers already live in onnxruntime::test, this file's own namespace.
+using onnxruntime::qnn::EMBED_MODE;
+using onnxruntime::qnn::EP_CACHE_CONTEXT;
+using onnxruntime::qnn::EP_CONTEXT_TYPE;
+using onnxruntime::qnn::EP_CONTEXT_TYPE_BIN;
+using onnxruntime::qnn::EP_CONTEXT_TYPE_DLC;
+using onnxruntime::qnn::GetEpContextDlcPath;
+using onnxruntime::qnn::GetEpContextFromMainNode;
+using onnxruntime::qnn::GetMainContextNode;
+using onnxruntime::qnn::GraphHasDlcContextNode;
+using onnxruntime::qnn::GraphHasEpContextNode;
+using onnxruntime::qnn::IO_NAME_OVERRIDES;
+using onnxruntime::qnn::IsOrtGraphHasCtxNode;
+using onnxruntime::qnn::IsOrtGraphHasDlcCtxNode;
+using onnxruntime::qnn::MAIN_CONTEXT;
+using onnxruntime::qnn::MAX_SIZE;
+using onnxruntime::qnn::ParseIoNameOverrides;
+using onnxruntime::qnn::QnnModelLookupTable;
+using onnxruntime::qnn::SOURCE;
+using onnxruntime::qnn::TryGetMaxSpillFillSize;
 
 namespace {
 
@@ -326,7 +349,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_SecondGraphHasDlcNode_R
 // TryGetMaxSpillFillSize
 //
 // Iterates main_context_pos_list, reads MAX_SIZE from each EPContext node, and
-// swaps the largest to position 0 in main_context_pos_list (L270: swap path).
+// swaps the largest to position 0 in main_context_pos_list.
 // =============================================================================
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_ZeroContexts_ReturnsOk) {
@@ -379,8 +402,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_SecondContextLarger_
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_NonConsecutivePosList_IndexesThroughPosList) {
-  // Regression guard for the `graphs[main_context_pos_list[idx]]` indirection
-  // (source L261). pos_list is non-identity ({2, 0}) and graph 1 — which the
+  // Regression guard for the `graphs[main_context_pos_list[idx]]` indirection.
+  // pos_list is non-identity ({2, 0}) and graph 1 — which the
   // pos_list never references — carries the largest MAX_SIZE as a trap.
   // Correct code reads graphs 2 then 0 (max=500, already at front → no swap).
   // A mutation to `graphs[idx]` would instead read graphs 0 then 1, pick up the
@@ -412,26 +435,42 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_NonConsecutivePosLis
   EXPECT_EQ(pos_list[1], 0);
 }
 
+TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_GraphWithMultipleNodes_ReturnsError) {
+  // Each main-context graph must contain exactly one EPContext node; a graph
+  // whose node count is not 1 is rejected before any MAX_SIZE read. Two nodes
+  // exercises that guard (ZeroContexts_ReturnsOk above instead skips the loop
+  // via count=0, so it never reaches this check).
+  CtxHelperTestContext ctx;
+  FakeNode n0{"n0", "EPContext", "", 1, {}, {}};
+  FakeNode n1{"n1", "EPContext", "", 1, {}, {}};
+  FakeGraph g{{n0, n1}, {}, {}, {}};
+  const OrtGraph* graphs[] = {g.AsGraph()};
+  std::vector<int> pos_list = {0};
+  int64_t max_size = 0;
+  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 1, max_size, pos_list);
+  EXPECT_FALSE(status.IsOK());
+}
+
 // =============================================================================
 // ParseIoNameOverrides
 //
 // Parses the IO_NAME_OVERRIDES attribute from an EPContext node into an
 // internal→external name map. Edge cases:
-//   - nullptr node           → L122: early return empty map
-//   - no trailing semicolon  → L131: sep = encoded.size()
-//   - consecutive semicolons → L136: empty pair → continue
-//   - pair with no '='       → L140: malformed pair → continue
+//   - nullptr node           → early return empty map
+//   - no trailing semicolon  → separator falls back to encoded.size()
+//   - consecutive semicolons → empty pair → continue
+//   - pair with no '='       → malformed pair → continue
 // =============================================================================
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_NullNode_ReturnsEmpty) {
-  // L122: ep_context_node == nullptr → returns empty map immediately.
+  // ep_context_node == nullptr → returns empty map immediately.
   auto overrides = ParseIoNameOverrides(nullptr);
   EXPECT_TRUE(overrides.empty());
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_SinglePairNoTrailingSemicolon_Parsed) {
   CtxHelperTestContext ctx;
-  // "a=b" — no trailing semicolon; sep falls back to encoded.size() (L131).
+  // "a=b" — no trailing semicolon; separator falls back to encoded.size().
   FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "a=b");
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[IO_NAME_OVERRIDES] = &attr;
@@ -442,7 +481,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_SinglePairNoTrailingSe
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EmptyPair_Skipped) {
   CtxHelperTestContext ctx;
-  // ";a=b" — leading semicolon produces an empty first pair (L136: continue).
+  // ";a=b" — leading semicolon produces an empty first pair (skipped via continue).
   FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, ";a=b");
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[IO_NAME_OVERRIDES] = &attr;
@@ -453,7 +492,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EmptyPair_Skipped) {
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_MalformedPairNoEquals_Skipped) {
   CtxHelperTestContext ctx;
-  // "noeq;a=b" — first pair has no '=' (L140: continue). Second is valid.
+  // "noeq;a=b" — first pair has no '=' (skipped via continue). Second is valid.
   FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "noeq;a=b");
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[IO_NAME_OVERRIDES] = &attr;
@@ -477,7 +516,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_MultiplePairs_AllParse
 TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EqualsInsideValue_SplitsOnFirst) {
   CtxHelperTestContext ctx;
   // "a=b=c" — pair.find('=') splits on the FIRST '=', so internal="a",
-  // external="b=c" (the remaining '=' stays in the value, L142-143).
+  // external="b=c" (the remaining '=' stays in the value).
   FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "a=b=c");
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[IO_NAME_OVERRIDES] = &attr;
@@ -489,7 +528,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EqualsInsideValue_Spli
 TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EmptyInternalOrExternal_Skipped) {
   CtxHelperTestContext ctx;
   // "=b" has an empty internal, "a=" has an empty external; both fail the
-  // L144 !internal.empty() && !external.empty() guard and are skipped. Only the
+  // !internal.empty() && !external.empty() guard and are skipped. Only the
   // fully-populated "c=d" survives.
   FakeOpAttr attr = FakeOpAttr::MakeString(IO_NAME_OVERRIDES, "=b;a=;c=d");
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
@@ -507,7 +546,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, ParseIoNameOverrides_EmptyInternalOrExterna
 // =============================================================================
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_ZeroGraphs_ReturnsError) {
-  // count=0 → loop never executes → L115: pos empty → error.
+  // count=0 → loop never executes → pos empty → error.
   CtxHelperTestContext ctx;
   std::vector<int> pos;
   auto status = GetMainContextNode(nullptr, 0, ctx.api, pos);
@@ -515,7 +554,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_ZeroGraphs_ReturnsError)
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_GraphWithTwoNodes_ReturnsError) {
-  // L97: num_nodes != 1 → error.
+  // num_nodes != 1 → error.
   CtxHelperTestContext ctx;
   FakeNode n0{"n0", "Relu", "", 13, {}, {}};
   FakeNode n1{"n1", "Relu", "", 13, {}, {}};
@@ -527,7 +566,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_GraphWithTwoNodes_Return
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_WrongOpType_ReturnsError) {
-  // L106: op_type != EPCONTEXT_OP → error.
+  // op_type != EPCONTEXT_OP → error.
   CtxHelperTestContext ctx;
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   FakeGraph g{{node}, {}, {}, {}};
@@ -538,7 +577,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_WrongOpType_ReturnsError
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_NoMainContextAttr_ReturnsError) {
-  // No MAIN_CONTEXT attr → defaults to 0 → not marked main → L115 error.
+  // No MAIN_CONTEXT attr → defaults to 0 → not marked main → empty pos → error.
   CtxHelperTestContext ctx;
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   FakeGraph g{{node}, {}, {}, {}};
@@ -585,10 +624,10 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_TwoGraphsSecondIsMain_Re
 // GetEpContextFromMainNode — path validation (no QnnBackendManager needed)
 //
 // Unit-testable error paths that fire before any filesystem or backend access:
-//   L159: wrong op_type
-//   L178: embed_mode=false, ep_cache_context empty (default "")
-//   L194: embed_mode=false, absolute path (starts with '/')
-//   L198: embed_mode=false, path contains ".."
+//   wrong op_type
+//   embed_mode=false, ep_cache_context empty (default "")
+//   embed_mode=false, absolute path (starts with '/')
+//   embed_mode=false, path contains ".."
 //
 // Deliberately NOT unit-tested here (deferred to integration tests):
 //   - embed_mode=true: calls QnnBackendManager::LoadCachedQnnContextFromBuffer,
@@ -602,7 +641,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_TwoGraphsSecondIsMain_Re
 // =============================================================================
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_ReturnsError) {
-  // L159: op_type != EPCONTEXT_OP → error before any attr or path access.
+  // op_type != EPCONTEXT_OP → error before any attr or path access.
   CtxHelperTestContext ctx;
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   QnnModelLookupTable models;
@@ -664,7 +703,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
 }
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFound_ReturnsError) {
-  // embed_mode=0, valid relative path but file does not exist → L206-208 error.
+  // embed_mode=0, valid relative path but file does not exist → not-found error.
   // No real file is needed; std::filesystem::is_regular_file returns false for
   // a non-existent path, triggering the "does not exist or is not accessible" guard.
   CtxHelperTestContext ctx;
@@ -677,5 +716,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
   EXPECT_FALSE(status.IsOK());
 }
+
+}  // namespace test
+}  // namespace onnxruntime
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
