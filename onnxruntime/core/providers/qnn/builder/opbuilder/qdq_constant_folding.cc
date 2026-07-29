@@ -39,6 +39,42 @@ Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper
 
 namespace {
 
+// Releases a folded hop's input, so an N-hop chain does not hold all N intermediates until the
+// graph is composed. Safe only when this unit is the input's sole consumer: any other reader
+// resolves the name through model_tensors_map_, whether it folds too or emits a real QNN op.
+// Any failure or extra consumer leaves the tensor in place, as before this optimization existed.
+void TryReleaseFoldedChainInput(QnnModelWrapper& qnn_model_wrapper,
+                                const OrtNodeUnit& node_unit,
+                                const std::string& input_name) {
+  // Real initializers are left to the generic path; they are commonly shared weights.
+  // Graph outputs are excluded because consumer counts ignore graph-output-ness.
+  if (!qnn_model_wrapper.IsFoldedConstant(input_name) || qnn_model_wrapper.IsGraphOutput(input_name)) {
+    return;
+  }
+
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  const OrtNode& node = node_unit.GetNode();
+
+  // Q/DQ read the folded tensor on input 0 only; scale and zero_point must be initializers.
+  size_t num_inputs = 0;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&node, &num_inputs), ort_api, void());
+  std::vector<const OrtValueInfo*> inputs(num_inputs, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&node, inputs.data(), inputs.size()), ort_api, void());
+  if (inputs.empty() || inputs[0] == nullptr) {
+    return;
+  }
+
+  // Counts usages, not distinct nodes, so this can only over-count relative to the single fold
+  // done here, which errs toward retaining the payload.
+  size_t num_consumers = 0;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(inputs[0], &num_consumers), ort_api, void());
+  if (num_consumers != 1) {
+    return;
+  }
+
+  qnn_model_wrapper.ReleaseTensorWrapper(input_name);
+}
+
 // SafeInt guards against overflow from an adversarial shape before allocation.
 Ort::Status ComputeNumElements(gsl::span<const uint32_t> shape, /*out*/ size_t& num_elems) {
   SafeInt<size_t> safe_num_elems = 1;
@@ -131,11 +167,14 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint8_t> output_bytes(fp32_data.size() * sizeof(float));
   std::memcpy(output_bytes.data(), fp32_data.data(), output_bytes.size());
 
-  return RegisterFoldedStaticTensor(qnn_model_wrapper, output_def.name,
-                                    QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
-                                    std::vector<uint32_t>(output_info.shape),
-                                    std::move(output_bytes),
-                                    "Failed to add folded DequantizeLinear output tensor.");
+  RETURN_IF_ERROR(RegisterFoldedStaticTensor(qnn_model_wrapper, output_def.name,
+                                             QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
+                                             std::vector<uint32_t>(output_info.shape),
+                                             std::move(output_bytes),
+                                             "Failed to add folded DequantizeLinear output tensor."));
+
+  TryReleaseFoldedChainInput(qnn_model_wrapper, node_unit, input_def.name);
+  return Ort::Status();
 }
 
 // Only fp32 Q input is supported; fp16/bf16 sources fall back to the normal op.
@@ -146,13 +185,14 @@ Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
 
   RETURN_IF(!output_def.quant_param.has_value(), "Q output has no quant param.");
 
-  std::vector<uint8_t> input_bytes;
-  RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input_def.name, input_bytes));
-
+  // Check the dtype before unpacking, so an unsupported source falls back without copying it.
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));
   RETURN_IF(input_info.qnn_data_type != QNN_DATATYPE_FLOAT_32,
             "Folded QuantizeLinear only supports float32 input.");
+
+  std::vector<uint8_t> input_bytes;
+  RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input_def.name, input_bytes));
 
   size_t num_elems = 0;
   RETURN_IF_ERROR(ComputeNumElements(gsl::make_span(input_info.shape), num_elems));
@@ -179,12 +219,15 @@ Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
       gsl::make_span(scales), gsl::make_span(offsets),
       gsl::make_span(quant_bytes), output_info.qnn_data_type, axis));
 
-  return RegisterFoldedStaticTensor(qnn_model_wrapper, output_def.name,
-                                    output_info.qnn_data_type,
-                                    std::move(output_info.quant_param),
-                                    std::vector<uint32_t>(output_info.shape),
-                                    std::move(quant_bytes),
-                                    "Failed to add folded QuantizeLinear output tensor.");
+  RETURN_IF_ERROR(RegisterFoldedStaticTensor(qnn_model_wrapper, output_def.name,
+                                             output_info.qnn_data_type,
+                                             std::move(output_info.quant_param),
+                                             std::vector<uint32_t>(output_info.shape),
+                                             std::move(quant_bytes),
+                                             "Failed to add folded QuantizeLinear output tensor."));
+
+  TryReleaseFoldedChainInput(qnn_model_wrapper, node_unit, input_def.name);
+  return Ort::Status();
 }
 
 }  // namespace

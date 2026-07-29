@@ -2520,6 +2520,40 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_GetTensorTypeIsStatic) {
   EXPECT_EQ(wrapper->GetTensorType("folded"), QNN_TENSOR_TYPE_STATIC);
 }
 
+// The name stays effectively constant after release, so a later hop still resolves it as folded
+// rather than as a runtime graph input.
+TEST(QnnUnit_ModelWrapperTest, ReleaseTensorWrapper_DropsPayloadButKeepsFoldedName) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  std::vector<uint8_t> payload(1024, 0x7f);
+  qnn::QnnTensorWrapper tensor("w_dq", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{16, 16},
+                               std::move(payload));
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(tensor)));
+  wrapper->MarkTensorAsFoldedConstant("w_dq");
+  ASSERT_TRUE(wrapper->IsQnnTensorWrapperExist("w_dq"));
+
+  wrapper->ReleaseTensorWrapper("w_dq");
+
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("w_dq"));
+  EXPECT_TRUE(wrapper->IsFoldedConstant("w_dq"));
+  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("w_dq"));
+  EXPECT_EQ(wrapper->GetTensorType("w_dq"), QNN_TENSOR_TYPE_STATIC);
+}
+
+// The release path is best-effort and may run on a tensor a failed fold never registered.
+TEST(QnnUnit_ModelWrapperTest, ReleaseTensorWrapper_UnknownNameIsNoOp) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  wrapper->ReleaseTensorWrapper("never_added");
+
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("never_added"));
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

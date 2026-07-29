@@ -234,6 +234,11 @@ class QnnModelWrapper {
 
   bool IsQnnTensorWrapperExist(const std::string& tensor_name) const;
 
+  // Drops a tensor wrapper and the payload it owns. Only safe for a tensor that no QNN node
+  // references and that is not graph I/O; see TryReleaseFoldedChainInput. Releasing a still-needed
+  // name fails loudly rather than silently: GetQnnTensorWrapper throws.
+  void ReleaseTensorWrapper(const std::string& tensor_name);
+
   bool IsGraphOutput(const std::string& tensor_name) const {
     return graph_outputs_.indices.find(tensor_name) != graph_outputs_.indices.end();
   }

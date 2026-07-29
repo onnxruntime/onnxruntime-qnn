@@ -159,6 +159,14 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
   return true;
 }
 
+void QnnModelWrapper::ReleaseTensorWrapper(const std::string& tensor_name) {
+  if (model_tensors_map_.erase(tensor_name) == 0) {
+    return;
+  }
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Released folded constant tensor: " + tensor_name).c_str());
+}
+
 const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) {
   auto map_iter = model_tensors_map_.find(tensor_name);
   if (map_iter != model_tensors_map_.end()) {
