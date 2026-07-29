@@ -323,7 +323,8 @@ static uint32_t ParseUint32ConfigEntry(const OrtApi& ort_api,
   } catch (...) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                 ("Invalid value for " + key + ": '" + str + "'. Using default " +
-                 std::to_string(default_value) + ".").c_str());
+                 std::to_string(default_value) + ".")
+                    .c_str());
     return default_value;
   }
 }
@@ -1290,10 +1291,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
-                                                 session_options_,
-                                                 FormatEPConfigKey("enable_htp_graph_splitting"),
-                                                 false,
-                                                 logger_);
+                                                session_options_,
+                                                FormatEPConfigKey("enable_htp_graph_splitting"),
+                                                false,
+                                                logger_);
 #ifndef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting_) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
