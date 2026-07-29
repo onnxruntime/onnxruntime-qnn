@@ -126,8 +126,6 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
 //   1. is_rank1:          input is rank-1 (reshaped to [1, K] for MatMul/FC compatibility).
 //   2. shape_mismatch:    target_shape is provided and differs from the current shape
 //                         (used by the Conv2D path to produce 4D NHWC layout).
-//   3. use_fully_connected && rank > 2: leading dims are flattened to a single batch dim
-//                         so QNN FullyConnected receives a 2D input.
 // Note: target_shape and use_fully_connected are mutually exclusive - the Conv2D path
 // always passes target_shape and never sets use_fully_connected.
 Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
@@ -142,7 +140,7 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
   assert(!(use_fully_connected && target_shape != nullptr));
   const bool is_rank1 = input_0_info.shape.size() == 1;
   const bool shape_mismatch = (target_shape != nullptr && input_0_info.shape != *target_shape);
-  const bool reshape_input_0 = is_rank1 || shape_mismatch || (use_fully_connected && input_0_info.shape.size() > 2);
+  const bool reshape_input_0 = is_rank1 || shape_mismatch;
   std::string actual_input_0_name = original_input_0_name;
 
   if (reshape_input_0) {
@@ -150,17 +148,11 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint32_t> reshape_target;
     if (shape_mismatch) {
       reshape_target = *target_shape;
-    } else if (is_rank1) {
-      reshape_target = {1, input_0_info.shape[0]};
     } else {
-      reshape_target = {std::accumulate(input_0_info.shape.begin(), input_0_info.shape.end() - 1,
-                                        static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
-                        input_0_info.shape.back()};
+      reshape_target = {1, input_0_info.shape[0]};
     }
     QnnQuantParamsWrapper quant_param_reshaped = input_0_info.quant_param.Copy();
-    if (is_rank1 || shape_mismatch) {
-      RETURN_IF_ERROR(quant_param_reshaped.HandleUnsqueeze<uint32_t>(input_0_info.shape, reshape_target));
-    }
+    RETURN_IF_ERROR(quant_param_reshaped.HandleUnsqueeze<uint32_t>(input_0_info.shape, reshape_target));
 
     // If input_0 is initializer, unpack it and add the tensor with new quantization parameter and shape.
     // Otherwise, add a Reshape node.
