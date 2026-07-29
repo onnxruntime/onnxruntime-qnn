@@ -247,6 +247,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void DeInitializePerfTimer();
 
+  // Drops a per-session power-config id from the release timer's boosted set.
+  // Call before destroying the id when the (possibly shared) timer may still be
+  // live, so it will not relax a destroyed id.
+  void DropBoostedPowerConfigId(uint32_t htp_power_config_id);
+
   Ort::Status DestroyHtpPowerConfigId(uint32_t htp_power_config_id);
 
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);

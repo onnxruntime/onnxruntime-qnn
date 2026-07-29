@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
 
+#include <algorithm>
 #include <vector>
 
 #include <QnnInterface.h>
@@ -348,10 +349,11 @@ void HtpPowerConfigManager::SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_
 }
 
 void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  // timer_ / timer_callback_arg_ are guarded by perf_mutex_ (see header).
+  std::lock_guard<std::mutex> lk(perf_mutex_);
   const Ort::Logger& logger = OrtLoggingManager::GetDefaultLogger();
   if (timer_ == nullptr) {
-    std::unique_ptr<Timer> temp(new Timer());
+    std::shared_ptr<Timer> temp = std::make_shared<Timer>();
     if (temp != nullptr) {
       timer_ = std::move(temp);
       timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
@@ -371,23 +373,29 @@ void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_i
 }
 
 void HtpPowerConfigManager::ReleaseTimerThread() {
-  std::unique_ptr<Timer> local_timer;
+  std::shared_ptr<Timer> local_timer;
   std::unique_ptr<TimerCallbackArg> local_callback_arg;
+  // Reset run/graph state under state_mutex_. timer_active_ is atomic; clearing
+  // it first means any timer callback that fires from here on early-returns.
   {
     std::lock_guard<std::mutex> lk(state_mutex_);
-    if (timer_ != nullptr) {
-      timer_resource_.timer_active_ = false;
-      graph_state_ = GraphState::NONE;
-      timer_resource_.caller_busy_ = false;
-      // Move ownership out while holding the lock: timer_ becomes nullptr
-      // atomically, so CreateTimerThread sees null and can safely create
-      // a new timer. We hold exclusive ownership in the locals.
-      local_timer = std::move(timer_);
-      local_callback_arg = std::move(timer_callback_arg_);
-    }
+    timer_resource_.timer_active_ = false;
+    graph_state_ = GraphState::NONE;
+    timer_resource_.inflight_run_count_ = 0;
+  }
+  // Move the timer/callback-arg ownership out under perf_mutex_ (which now guards
+  // the timer lifecycle) and clear the boosted-id set. timer_ becomes nullptr so
+  // CreateTimerThread can safely recreate. We hold the only remaining references
+  // in the locals. Follows the state_mutex_-before-perf_mutex_ order (state scope
+  // already closed).
+  {
+    std::lock_guard<std::mutex> lk(perf_mutex_);
+    local_timer = std::move(timer_);
+    local_callback_arg = std::move(timer_callback_arg_);
+    boosted_config_ids_.clear();
   }
   // Deinitialize outside the lock to avoid deadlock: an in-flight
-  // TimerCallback calls SetState() which acquires state_mutex_.
+  // TimerCallback calls SetState() which acquires state_mutex_/perf_mutex_.
   // Note: DeInitialize()->join() ensures any in-flight callback completes
   // before the timer and callback_arg are destroyed, so no additional
   // synchronization is needed to protect callback access to these objects.
@@ -399,32 +407,68 @@ void HtpPowerConfigManager::ReleaseTimerThread() {
 }
 
 Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, const HtpPerfConfig_t& config, const Ort::Logger& logger) {
-  std::lock_guard<std::mutex> lk(perf_mutex_);
+  // The TIMEOUT case runs on the timer thread (via TimerCallback -> SetState).
+  // Other cases (RUN_*/INIT_*) run on caller threads that may hold perf_mutex_
+  // across a blocking AbortTimer(). If the timer fires in the tiny window between
+  // a caller's IsTimerThreadRunning() check and its AbortTimer() call, the caller
+  // waits for the timer to reach IDLE while holding perf_mutex_, and the timer's
+  // callback would block acquiring perf_mutex_ here -> deadlock. To break the
+  // cycle the TIMEOUT path uses try_lock and bails on contention: contention means
+  // a run is either starting (we must not relax) or finishing (it will re-arm the
+  // timer), so skipping this relax is always safe.
+  std::unique_lock<std::mutex> lk(perf_mutex_, std::defer_lock);
+  if (state == GraphState::TIMEOUT) {
+    if (!lk.try_lock()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  "Release timer contended with a run transition; skipping relax (will re-arm).");
+      return Ort::Status();
+    }
+  } else {
+    lk.lock();
+  }
+
   Ort::Status status = Ort::Status();
 
   std::chrono::microseconds sustainedDurationUs(timer_resource_.sustained_timer_duration_);
 
   switch (state) {
     case GraphState::RUN_DONE:
+      // This id holds a burst/sustained vote; the release timer owns relaxing it.
+      RegisterBoostedId(config.htp_power_config_client_id);
       if (IsTimerThreadRunning()) {
         timer_->AbortTimer();
       }
-      RETURN_IF_NOT(timer_->Launch(sustainedDurationUs), "Not able to launch timer thread.");
-      timer_resource_.caller_busy_ = false;
+      // (Re)arm the release timer. Because RUN_DONE aborts any pending timer and
+      // relaunches, the release is always measured from the most recent done.
+      // Whether the timer is actually allowed to relax performance when it fires
+      // is gated on the in-flight run count in the TIMEOUT case below, so a
+      // still-running concurrent graph is never dropped to SVS mid-computation.
+      //
+      // Launch() can fail if the timer is momentarily in the CALLING state (a
+      // just-fired timeout whose callback has not yet returned to IDLE): in that
+      // narrow race IsTimerThreadRunning() reports false (remaining duration is 0
+      // while CALLING), so the abort above is skipped and Launch() sees a non-IDLE
+      // timer. This is a best-effort power-down optimization, not a correctness
+      // gate: the graph has already executed. Log and continue rather than failing
+      // the run; the timer is re-armed on the next RUN_DONE.
+      if (!timer_->Launch(sustainedDurationUs)) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    "Release timer busy (concurrent timeout); power-down will be re-armed on next run.");
+      }
       break;
     case GraphState::RUN_START:
+      // This id holds a burst/sustained vote; the release timer owns relaxing it.
+      RegisterBoostedId(config.htp_power_config_client_id);
       if (IsTimerThreadRunning()) {
         timer_->AbortTimer();
       } else {
         status = SetHtpPowerConfigs(config, logger);
       }
-      timer_resource_.caller_busy_ = true;
       break;
     case GraphState::INIT_DONE: {
       QnnHtpPerfInfrastructure_PowerConfig_t init_done_htp_performance_cfg{};
       SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, config.htp_power_config_client_id);
       status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, init_done_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
-      timer_resource_.caller_busy_ = false;
       break;
     }
     case GraphState::INIT_START:
@@ -433,13 +477,40 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
       } else {
         status = SetHtpPowerConfigs(config, logger);
       }
-      timer_resource_.caller_busy_ = true;
       break;
     case GraphState::TIMEOUT: {
-      if (!timer_resource_.caller_busy_) {
-        QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg{};
-        SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, config.htp_power_config_client_id);
-        status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, timeout_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency, logger);
+      // Only relax to sustained/released performance once the last concurrent
+      // run across all graphs sharing this manager has finished. If any run is
+      // still in flight the drop is skipped, leaving performance boosted.
+      if (timer_resource_.inflight_run_count_.load() == 0) {
+        // Relax every id that currently holds a burst/sustained vote — not just
+        // the timer's construction-time id. Under a shared manager each session
+        // owns a distinct non-zero power-config id, and each is an independent
+        // DCVS voter (QnnHtpPerfInfrastructure.h: setPowerConfig is per client
+        // id). Relaxing only one would leave the other sessions' boost votes
+        // standing and keep the HTP elevated while idle. Ids that moved to a
+        // low-power/default vote were removed from the set, so their intentional
+        // low state is preserved. Best-effort: log and continue so one id's
+        // failure does not skip the rest.
+        //
+        // Invariant: the set is non-empty whenever the timer fires. The timer is
+        // only armed by a burst/sustained RUN_DONE, which calls RegisterBoostedId
+        // first; every path that calls RemoveBoostedId also aborts the timer
+        // (AbortTimer blocks until the callback is idle). So there is no need to
+        // fall back to config.htp_power_config_client_id here.
+        for (uint32_t id : boosted_config_ids_) {
+          QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg{};
+          SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, id);
+          Ort::Status relax_status = SetHtpPowerCustomConfigs(id, timeout_htp_performance_cfg,
+                                                              config.rpc_polling_time,
+                                                              config.rpc_control_latency, logger);
+          if (!relax_status.IsOK()) {
+            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                        "Failed to relax HTP perf for a power-config id on timeout.");
+          }
+        }
+        // All boosted ids have been relaxed; the next RUN_START re-registers.
+        boosted_config_ids_.clear();
       }
       break;
     }
@@ -498,15 +569,45 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
 Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfig_t& config, const Ort::Logger& logger) {
   {
     std::lock_guard<std::mutex> lk(state_mutex_);
-    if (state != graph_state_) {
-      graph_state_ = state;
-    } else {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
-      return Ort::Status();
-    }
+    graph_state_ = state;
+
     if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
+      // timer_active_ (atomic) is only set true after timer_ is successfully
+      // created and cleared before timer_ is released, so it implies a live
+      // timer. We deliberately do NOT read timer_ here: timer_ is guarded by
+      // perf_mutex_ and reading it under state_mutex_ would both race and violate
+      // the state-before-perf lock order.
       RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot apply sustained/burst performance config.");
-      RETURN_IF(timer_ == nullptr, "timer is not started");
+    }
+
+    // Track the number of runs in flight across ALL graphs that share this
+    // manager. A single session can drive several QnnModels (each with its own
+    // graph_exec_mutex_) through this one manager concurrently. We must key the
+    // count on the graph state rather than on the perf mode, because a run's
+    // start and done may use different perf modes (e.g. burst pre-run and
+    // power_saver post-run), which would otherwise leak the count.
+    //
+    // Note: unlike the previous single busy flag, we intentionally do NOT
+    // early-return when state == graph_state_. Two different graphs can both be
+    // in RUN_START at once; deduping would drop the second graph's start (and,
+    // symmetrically, prevent the last concurrent RUN_DONE from arming the
+    // release timer). For a single graph the states strictly alternate, so this
+    // has no effect there. The counter is updated after the sustained/burst
+    // validity checks above so a rejected start does not leak a count.
+    switch (state) {
+      case GraphState::RUN_START:
+      case GraphState::INIT_START:
+        timer_resource_.inflight_run_count_.fetch_add(1);
+        break;
+      case GraphState::RUN_DONE:
+      case GraphState::INIT_DONE:
+        // Clamp at 0 to stay robust against any unpaired done transition.
+        if (timer_resource_.inflight_run_count_.load() > 0) {
+          timer_resource_.inflight_run_count_.fetch_sub(1);
+        }
+        break;
+      default:
+        break;
     }
   }
 
@@ -519,14 +620,17 @@ Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfi
   if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
     status = SetSustainedPerformance(state, config, logger);
   } else if (config.perf_mode == qnn::HtpPerformanceMode::kHtpDefault) {
-    if (timer_ && timer_->TimerInUse()) {
-      timer_->AbortTimer();
-    }
+    // No longer a boosted vote: abort any pending timer and drop this id so the
+    // release timer will not relax it. Snapshot timer_ and remove the id under
+    // perf_mutex_, then abort on the snapshot outside the lock (AbortTimer blocks
+    // on the timer thread, which itself needs perf_mutex_ via the callback).
+    AbortActiveTimerAndDropBoostedId(config.htp_power_config_client_id);
     status = Ort::Status();
   } else {
-    if (timer_ && timer_->TimerInUse()) {
-      timer_->AbortTimer();
-    }
+    // This id is being set to an intentional low-power/non-boosted vote. Same
+    // snapshot-then-abort discipline; SetPerformance re-acquires perf_mutex_ after
+    // our critical section has closed.
+    AbortActiveTimerAndDropBoostedId(config.htp_power_config_client_id);
     status = SetPerformance(state, config, logger);
   }
 
@@ -552,6 +656,7 @@ void HtpPowerConfigManager::TimerCallback(void* user_data) {
 }
 
 bool HtpPowerConfigManager::IsTimerThreadRunning() {
+  // Caller holds perf_mutex_ (SetSustainedPerformance), which guards timer_.
   std::chrono::microseconds remainUs = std::chrono::microseconds::zero();
   uint64_t remaining_duration = 0;
   if (timer_ && timer_->TimerInUse() && timer_->RemainingDuration(remainUs)) {
@@ -559,6 +664,45 @@ bool HtpPowerConfigManager::IsTimerThreadRunning() {
     return remaining_duration > 0 && remaining_duration < timer_resource_.sustained_timer_duration_;
   }
   return false;
+}
+
+void HtpPowerConfigManager::AbortActiveTimerAndDropBoostedId(uint32_t htp_power_config_client_id) {
+  // Snapshot the timer and drop the id under perf_mutex_, then abort on the
+  // snapshot OUTSIDE the lock. AbortTimer() blocks until the timer thread reaches
+  // IDLE, and that thread (TimerCallback -> SetState -> SetSustainedPerformance)
+  // needs perf_mutex_; holding it across AbortTimer() would deadlock. The
+  // shared_ptr snapshot keeps the Timer alive even if ReleaseTimerThread resets
+  // timer_ concurrently, and Timer::AbortTimer() early-returns if the timer was
+  // already deinitialized, so the abort can never hang.
+  std::shared_ptr<Timer> timer_snapshot;
+  {
+    std::lock_guard<std::mutex> lk(perf_mutex_);
+    timer_snapshot = timer_;
+    RemoveBoostedId(htp_power_config_client_id);
+  }
+  if (timer_snapshot && timer_snapshot->TimerInUse()) {
+    timer_snapshot->AbortTimer();
+  }
+}
+
+void HtpPowerConfigManager::RegisterBoostedId(uint32_t htp_power_config_client_id) {
+  // Caller holds perf_mutex_.
+  if (std::find(boosted_config_ids_.begin(), boosted_config_ids_.end(),
+                htp_power_config_client_id) == boosted_config_ids_.end()) {
+    boosted_config_ids_.push_back(htp_power_config_client_id);
+  }
+}
+
+void HtpPowerConfigManager::RemoveBoostedId(uint32_t htp_power_config_client_id) {
+  // Caller holds perf_mutex_.
+  boosted_config_ids_.erase(
+      std::remove(boosted_config_ids_.begin(), boosted_config_ids_.end(), htp_power_config_client_id),
+      boosted_config_ids_.end());
+}
+
+void HtpPowerConfigManager::DropBoostedPowerConfigId(uint32_t htp_power_config_client_id) {
+  std::lock_guard<std::mutex> lk(perf_mutex_);
+  RemoveBoostedId(htp_power_config_client_id);
 }
 
 Ort::Status HtpPowerConfigManager::SetHtpPowerConfigs(const HtpPerfConfig_t& config, const Ort::Logger& logger) {

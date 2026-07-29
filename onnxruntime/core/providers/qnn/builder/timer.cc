@@ -80,6 +80,15 @@ bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg)
 
 void Timer::AbortTimer() {
   std::unique_lock<std::mutex> lk(mtx_);
+  // If the timer thread has been (or is being) deinitialized, or never started,
+  // there is no running thread that will ever reach IDLE; waiting would block
+  // forever. This makes AbortTimer safe to call on a shared_ptr snapshot whose
+  // underlying timer was released concurrently by ReleaseTimerThread.
+  if (is_timer_deinit_ ||
+      thread_status_ == threadState::DEINIT ||
+      thread_status_ == threadState::FAILED) {
+    return;
+  }
   is_timer_stopped_ = true;
   cv_.notify_all();
   cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE; });

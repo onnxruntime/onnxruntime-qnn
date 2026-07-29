@@ -1403,9 +1403,15 @@ QnnEp::~QnnEp() {
   if (qnn_backend_manager_) {
     auto thread_id = std::this_thread::get_id();
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
-    qnn_backend_manager_->DeInitializePerfTimer();
+    // NOTE: do NOT tear down the release timer here. The QnnBackendManager may be
+    // shared across sessions (htp_share_resource_optimization_/weight sharing);
+    // killing the timer on the first session's destruction would break the others.
+    // The timer is released with the manager itself (QnnBackendManager::ReleaseResources).
     std::lock_guard<std::mutex> lock(config_id_mutex_);
     if (htp_power_config_id_.has_value()) {
+      // Drop this id from the (possibly still-live shared) timer's boosted set
+      // before destroying it, so the timer never relaxes a destroyed id.
+      qnn_backend_manager_->DropBoostedPowerConfigId(*htp_power_config_id_);
       qnn_backend_manager_->DestroyHtpPowerConfigId(*htp_power_config_id_);
     }
   }
@@ -2008,9 +2014,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
-    // Set the power config id and the default power mode from provider option for main thread,
-    // otherwise it will mess up the power mode if user just create session without run it.
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
+    // Create the HTP power config id (and its release timer) for the main thread.
+    // The perf mode itself is not voted here: it is applied around graph compile
+    // via the INIT_START/INIT_DONE power guard in CompileImpl, and per run via
+    // SetPerThreadHtpPowerConfigs. The id is torn down with the session, so a
+    // session created but never run ends compile in the relaxed state and frees
+    // its vote on destruction.
     ep->CreateHtpPowerConfigId();
 
     ep->WarnIfHnrdPathActive();
@@ -3104,6 +3114,14 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
         } else {
           ep->dynamic_rpc_polling_time_ = 0;
         }
+      } else {
+        // Reset the dynamic override so a caller can revert to default. OnRunStart
+        // prefers dynamic_htp_performance_mode_ over the session default, so without
+        // this reset a previously set non-default mode would latch permanently. With
+        // it cleared, OnRunStart falls back to the session default perf mode (or
+        // applies nothing if that is also default).
+        ep->dynamic_htp_performance_mode_ = qnn::HtpPerformanceMode::kHtpDefault;
+        ep->dynamic_rpc_polling_time_ = 0;
       }
     } else {
       ORT_CXX_LOG(ep->logger_,

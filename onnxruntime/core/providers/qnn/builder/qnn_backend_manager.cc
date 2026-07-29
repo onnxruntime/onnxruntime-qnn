@@ -2219,6 +2219,10 @@ void QnnBackendManager::DeInitializePerfTimer() {
   htp_power_config_manager_.ReleaseTimerThread();
 }
 
+void QnnBackendManager::DropBoostedPowerConfigId(uint32_t htp_power_config_id) {
+  htp_power_config_manager_.DropBoostedPowerConfigId(htp_power_config_id);
+}
+
 Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
@@ -2345,6 +2349,15 @@ Ort::Status QnnBackendManager::TerminateQnnLog() {
 void QnnBackendManager::ReleaseResources() {
   // Each sub-function guards against releasing resources that were never created,
   // so all calls are safe regardless of how far setup progressed.
+
+  // Tear down the HTP release timer FIRST. Its callback drives the QNN device
+  // (SetPowerConfig), so it must be joined before the device/context is released
+  // to avoid the callback touching freed QNN handles. Tying timer teardown to the
+  // manager's lifetime (rather than to an individual QnnEp destructor) is also
+  // what makes a shared manager safe: the timer now dies with the manager (the
+  // last session out), not when the first sharing session is destroyed.
+  DeInitializePerfTimer();
+
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
