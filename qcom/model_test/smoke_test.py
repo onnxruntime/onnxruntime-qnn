@@ -3,12 +3,15 @@
 
 import json
 import os
+import warnings
 from pathlib import Path
 
 import onnxruntime_qnn
 import pytest
 from model_test import ModelTestCase, ModelTestDef, ModelTestSuite
 from model_zoo_test import get_xfails
+
+import onnxruntime
 
 SMOKE_TESTS = list(
     ModelTestSuite(
@@ -41,6 +44,15 @@ def test_json_graph_dump(tmp_path: Path) -> None:
     """Verify that dump_json_qnn_graph produces valid JSON graph files."""
     if not SMOKE_TESTS:
         pytest.skip("No smoke test models available")
+
+    # Log device info for CI visibility (warnings bypass pytest capture)
+    ep_devices = [ed for ed in onnxruntime.get_ep_devices() if ed.ep_name == onnxruntime_qnn.get_ep_names()[0]]
+    for ed in ep_devices:
+        warnings.warn(
+            f"[Device Info] ep={ed.ep_name}, type={ed.device.type},"
+            f" device_id={ed.device.device_id} (hex={hex(ed.device.device_id)})",
+            stacklevel=1,
+        )
 
     test_def = SMOKE_TESTS[0]
 
