@@ -3191,9 +3191,10 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
                                      bool include_bias = false,
                                      int weight_bits = 4,
                                      bool weight_is_unsigned = false,
-                                     bool bias_per_channel = false) {
+                                     bool bias_per_channel = false,
+                                     bool is_bias_quantized = true) {
   return [input_shape, weight_shape, block_size, include_bias, weight_bits,
-          weight_is_unsigned, bias_per_channel](ModelTestBuilder& builder) -> void {
+          weight_is_unsigned, bias_per_channel, is_bias_quantized](ModelTestBuilder& builder) -> void {
     const int64_t OC = weight_shape[0];
     const int64_t IC = weight_shape[1];
     const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
@@ -3269,10 +3270,15 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     // ── Conv ─────────────────────────────────────────────────────────────────
     std::vector<std::string> conv_inputs{act_dql_out, "weight_dql_out"};
     if (include_bias) {
-      // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
-      // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
-      if (bias_per_channel) {
-        // Per-channel bias: distinct quantized value and scale per output channel (DQ axis=0).
+      if (!is_bias_quantized) {
+        // Float bias: pass directly as a float initializer (no DQ node).
+        std::vector<float> bias_data(static_cast<size_t>(OC), 0.01f);
+        builder.Make1DInitializer<float>("bias", bias_data);
+        conv_inputs.push_back("bias");
+      } else if (bias_per_channel) {
+        // Per-channel quantized bias: distinct quantized value and scale per output channel (DQ axis=0).
+        // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
+        // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
         // Non-zero quant values ensure the per-channel scale indexing is actually exercised.
         // Omit zero_point (symmetric): ORT per-axis DQ requires zp be null or 1D of size OC.
         std::vector<int32_t> bias_quant(static_cast<size_t>(OC));
@@ -3286,15 +3292,17 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
         builder.AddNode("bias_dql", "DequantizeLinear",
                         {"bias_quant", "bias_scale"}, {"bias_dql_out"}, "",
                         {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+        conv_inputs.push_back("bias_dql_out");
       } else {
+        // Per-tensor quantized bias.
         const float bias_scale = act_scale * 0.03f;
         builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
         builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
         builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(OC), 0));
         builder.AddNode("bias_dql", "DequantizeLinear",
                         {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+        conv_inputs.push_back("bias_dql_out");
       }
-      conv_inputs.push_back("bias_dql_out");
     }
     builder.AddNode("conv", "Conv",
                     conv_inputs, {"conv_out"}, kOnnxDomain,
@@ -3317,6 +3325,19 @@ ProviderOptions GetBQConvProviderOptions() {
 #if defined(__linux__) && !defined(__aarch64__)
   // On the x86_64 Linux HTP simulator, specify SM8850 to enable BW_FLOAT_BLOCK support.
   // On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+// Provider options for the LPBQ (BLOCKWISE_EXPANSION) path.
+// enable_block_quant_weight_optimization=1 triggers BQ -> LPBQ conversion.
+ProviderOptions GetLPBQConvProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["enable_block_quant_weight_optimization"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
   opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
   return opts;
@@ -3523,6 +3544,124 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
                                       /*weight_bits=*/8,
                                       /*weight_is_unsigned=*/true),
                   GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Tests Conv2D with ONNX block-quantized (BQ) weights using the BQ -> QNN LPBQ conversion path.
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=8, no bias. IC=16, 2 blocks/OC.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_NoBias_BS8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*include_bias=*/false),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=16, no bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_NoBias_BS16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
+                                      /*weight=*/{4, 64, 1, 1},
+                                      /*block_size=*/16,
+                                      /*include_bias=*/false),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=16, with per-tensor quantized bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithBias_BS16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
+                                      /*weight=*/{4, 64, 1, 1},
+                                      /*block_size=*/16,
+                                      /*include_bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/false),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=64, with per-tensor quantized bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithBias_BS64) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 128, 1, 1},
+                                      /*weight=*/{4, 128, 1, 1},
+                                      /*block_size=*/64,
+                                      /*include_bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/false),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=16, with per-channel quantized bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithBiasPerChannel_BS16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*include_bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/true),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=32, with per-channel quantized bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithBiasPerChannel_BS32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 128, 4, 4},
+                                      /*weight=*/{4, 128, 1, 1},
+                                      /*block_size=*/32,
+                                      /*include_bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/true),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=8, float (unquantized) bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithFloatBias_BS8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/8,
+                                      /*include_bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/false,
+                                      /*is_bias_quantized=*/false),
+                  GetLPBQConvProviderOptions(),
+                  /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// LPBQ: 1x1 Conv, INT4 weight, block_size=32, float (unquantized) bias.
+TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithFloatBias_BS32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
+                                      /*weight=*/{8, 64, 1, 1},
+                                      /*block_size=*/32,
+                                      /*include_bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false,
+                                      /*bias_per_channel=*/false,
+                                      /*is_bias_quantized=*/false),
+                  GetLPBQConvProviderOptions(),
                   /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }

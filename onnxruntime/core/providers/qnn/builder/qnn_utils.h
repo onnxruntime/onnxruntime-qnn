@@ -33,6 +33,7 @@ namespace onnxruntime {
 namespace qnn {
 class QnnOpConfigWrapper;
 class QnnModelWrapper;
+class QnnQuantParamsWrapper;
 
 namespace utils {
 /**
@@ -129,6 +130,12 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
                            Qnn_DataType_t& tensor_data_type,
                            QnnBackendType backend_type = QnnBackendType::CPU);
+
+// Returns true if the QNN data type is a 16-bit fixed-point quantized type.
+inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
+}
 
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
@@ -653,6 +660,20 @@ uint64_t GetTimeStampInUs();
 bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
                          float tolerance = 1e-5f);
 
+// Extracts weight scales from a QnnQuantParamsWrapper.
+// Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,
+// BW_AXIS_SCALE_OFFSET), and LPBQ (BLOCKWISE_EXPANSION).
+Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
+                                 std::vector<float>& weights_scales);
+
+// Extracts current scales, offsets, and axis from a bias's quant params.
+// Supports SCALE_OFFSET, BW_SCALE_OFFSET, AXIS_SCALE_OFFSET, BW_AXIS_SCALE_OFFSET.
+// Returns failure for unsupported encodings.
+Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
+                                         std::vector<float>& scales,
+                                         std::vector<int32_t>& offsets,
+                                         int32_t& axis);
+
 // Quantizes a float bias tensor to int32 using bias_scale = activation_scale * weight_scale.
 // Used when the bias is provided as float (no quantization info) but activation and weight are quantized.
 // If weights_scales has a single element, per-tensor bias quantization is used (all channels share one scale).
@@ -856,6 +877,18 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
    Intended for ORT logging
 */
 std::string PtrToString(const void* const ptr);
+
+/**
+ * Dequantizes a packed INT32 bias tensor to FP16 bytes.
+ * Each element is computed as: fp16(int32[i] * scale[i or 0]).
+ * @param raw_int32_bytes  Packed INT32 data (num_elems * sizeof(int32_t) bytes).
+ * @param scales           Per-tensor (size 1) or per-channel (size num_elems) float scales.
+ *                         Empty means all scales are 1.0f.
+ * @param fp16_bytes       Output: FP16 bytes (num_elems * sizeof(uint16_t) bytes).
+ */
+Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
+                                      gsl::span<const float> scales,
+                                      std::vector<uint8_t>& fp16_bytes);
 
 }  // namespace utils
 }  // namespace qnn
