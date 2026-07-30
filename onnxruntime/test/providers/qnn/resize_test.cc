@@ -382,6 +382,16 @@ TEST_F(QnnCPUBackendTests, Resize_DownSample_Linear_HalfPixel_scales) {
                                ExpectedEPNodeAssignment::All);
 }
 
+// Test CPU Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "floor". The CPU backend lowers via the same Resize(2x, ASYMMETRIC) + StridedSlice
+// decomposition as HTP (the tf dispatch is not gated on is_npu_backend).
+TEST_F(QnnCPUBackendTests, Resize2xNearestTfHalfPixelForNNFloor) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                     {1, 3, 8, 8}, "nearest", "tf_half_pixel_for_nn", "floor",
+                     ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:
@@ -574,6 +584,30 @@ static void RunQDQResizeAndAssertQnnOp(const std::vector<int64_t>& input_shape,
                                        const std::string& dump_dir_name) {
   namespace fs = std::filesystem;
   const fs::path graph_dir = fs::temp_directory_path() / dump_dir_name;
+
+  int64_t num_elements = 1;
+  for (int64_t d : input_shape) num_elements *= d;
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, static_cast<size_t>(num_elements));
+
+  // Run without graph dump first to check if the test should be skipped on this device
+  // (e.g., QCS6490 / HTP arch <= 68 where ResizeBilinear is not exercised).
+  // Filesystem operations (create_directories, dump_json_qnn_graph) must not be
+  // attempted on devices that skip this test, as they can crash the test process
+  // before producing any output (NoLogs failure on QDC).
+  {
+    ProviderOptions probe_options;
+    probe_options["backend_type"] = "htp";
+    probe_options["offload_graph_io_quantization"] = "0";
+    TestQDQModelAccuracy<uint8_t>(
+        GetResizeModelBuilder(TestInputDef<float>(input_shape, false, input_data),
+                              output_shape, "linear", transformation_mode, ""),
+        GetQDQResizeModelBuilder<uint8_t>(TestInputDef<float>(input_shape, false, input_data),
+                                          output_shape, "linear", transformation_mode, ""),
+        probe_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All);
+    if (::testing::Test::IsSkipped()) return;
+  }
+
+  // Device supports this test: now re-run with graph dump enabled to inspect the QNN graph.
   fs::remove_all(graph_dir);
   fs::create_directories(graph_dir);
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
@@ -586,19 +620,12 @@ static void RunQDQResizeAndAssertQnnOp(const std::vector<int64_t>& input_shape,
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
-
-  int64_t num_elements = 1;
-  for (int64_t d : input_shape) num_elements *= d;
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, static_cast<size_t>(num_elements));
   TestQDQModelAccuracy<uint8_t>(
       GetResizeModelBuilder(TestInputDef<float>(input_shape, false, input_data),
                             output_shape, "linear", transformation_mode, ""),
       GetQDQResizeModelBuilder<uint8_t>(TestInputDef<float>(input_shape, false, input_data),
                                         output_shape, "linear", transformation_mode, ""),
       provider_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All);
-
-  if (::testing::Test::IsSkipped()) return;
-
   AssertOpInQnnGraph(graph_dir, expected_qnn_op, 1);
   AssertOpInQnnGraph(graph_dir, forbidden_qnn_op, 0);
 }
@@ -764,6 +791,73 @@ TEST_F(QnnHTPBackendTests, ResizeU8_HalfNearestAsymmetricFloor) {
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                               {1, 3, 2, 2}, "nearest", "asymmetric", "floor",
                               ExpectedEPNodeAssignment::All);
+}
+
+// Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "round_prefer_floor". Not supported on QNN HTP; falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestTfHalfPixelForNNRoundPreferFloor_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "nearest", "tf_half_pixel_for_nn", "round_prefer_floor",
+                              ExpectedEPNodeAssignment::None);
+}
+
+// Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "round_prefer_ceil". Not supported on QNN HTP; falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestTfHalfPixelForNNRoundPreferCeil_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "nearest", "tf_half_pixel_for_nn", "round_prefer_ceil",
+                              ExpectedEPNodeAssignment::None);
+}
+
+// Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestTfHalfPixelForNNFloor) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "nearest", "tf_half_pixel_for_nn", "floor",
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Test 0.5x QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
+TEST_F(QnnHTPBackendTests, ResizeU8_HalfNearestTfHalfPixelForNNFloor) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 2, 2}, "nearest", "tf_half_pixel_for_nn", "floor",
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ Resize downsample with mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "floor". Maps to QNN Resize(2x, ASYMMETRIC) + StridedSlice.
+TEST_F(QnnHTPBackendTests, Resize_DownSample_Nearest_TfHalfPixelForNN) {
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 1, 2, 4}, false, input_data),
+                              {1, 1, 1, 2}, "nearest", "tf_half_pixel_for_nn", "floor",
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Tripwire: linear + tf_half_pixel_for_nn is not supported on QNN HTP.
+// IsOpSupported rejects it (only nearest+floor is admitted); the node falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearTfHalfPixelForNN_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "linear", "tf_half_pixel_for_nn", "",
+                              ExpectedEPNodeAssignment::None);
+}
+
+// Tripwire: cubic + tf_half_pixel_for_nn is not supported on QNN HTP.
+// IsOpSupported rejects it (only nearest+floor is admitted); the node falls back to CPU EP.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicTfHalfPixelForNN_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "cubic", "tf_half_pixel_for_nn", "",
+                              ExpectedEPNodeAssignment::None,
+                              19,
+                              QDQTolerance(),
+                              {},
+                              GraphOptimizationLevel::ORT_DISABLE_ALL);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

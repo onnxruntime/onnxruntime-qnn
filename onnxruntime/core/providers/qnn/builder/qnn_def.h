@@ -684,6 +684,13 @@ class GraphInfo {
   const std::vector<QnnTensorWrapper>& OutputTensors() const { return output_tensors_; }
   Qnn_GraphHandle_t Graph() const { return graph_; }
   Qnn_ContextHandle_t GraphContext() const { return graph_context_; }
+
+  // Update graph and context handles in-place (used during SSR recovery).
+  void ResetHandles(Qnn_GraphHandle_t graph, Qnn_ContextHandle_t context) {
+    graph_ = graph;
+    graph_context_ = context;
+  }
+
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GraphInfo);
 
  private:

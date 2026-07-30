@@ -524,6 +524,25 @@ TEST(QnnUnit_EpUtilsTest, Split_Rejects4BitWhenDisallowed) {
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
+namespace {
+// Conv producer map for the positional DQ check in OrtConvNodeGroupSelector::Check.
+// Maps each Conv input (OrtValueInfo*) to the DQ node that produces it.
+std::unordered_map<const OrtValueInfo*, const OrtNode*> g_conv_producer_map;
+OrtStatus* FakeConvProducerStub(const OrtValueInfo* vi, const OrtNode** producer,
+                                size_t* output_index) noexcept {
+  auto it = g_conv_producer_map.find(vi);
+  if (producer) *producer = (it != g_conv_producer_map.end()) ? it->second : nullptr;
+  if (output_index) *output_index = 0;
+  return nullptr;
+}
+struct ConvProducerGuard {
+  explicit ConvProducerGuard(std::unordered_map<const OrtValueInfo*, const OrtNode*> map) {
+    g_conv_producer_map = std::move(map);
+  }
+  ~ConvProducerGuard() { g_conv_producer_map.clear(); }
+};
+}  // namespace
+
 // =============================================================================
 // OrtConvNodeGroupSelector::Check
 //
@@ -535,16 +554,25 @@ TEST(QnnUnit_EpUtilsTest, Split_Rejects4BitWhenDisallowed) {
 
 TEST(QnnUnit_EpUtilsTest, Conv_Accepts2DqUint8) {
   EpUtilsTestContext ctx;
-  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
+  // Conv inputs are the DQ outputs — wire them so the positional DQ check passes.
+  FakeValueInfo conv_in0{"conv_in0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo conv_in1{"conv_in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
-  FakeNode main_node{"conv", "Conv", "", 1, {&dummy, &dummy}, {&main_out}};
+  FakeNode main_node{"conv", "Conv", "", 1, {&conv_in0, &conv_in1}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // Install producer stub: conv_in0 → dq_data, conv_in1 → dq_wt.
+  ConvProducerGuard guard({{conv_in0.AsValueInfo(), dq_data.AsNode()},
+                           {conv_in1.AsValueInfo(), dq_wt.AsNode()}});
+  ctx.api.ValueInfo_GetValueProducer = &FakeConvProducerStub;
+  OrtGlobalApiOverride global_guard(&ctx.api);
 
   OrtConvNodeGroupSelector sel;
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
@@ -571,16 +599,25 @@ TEST(QnnUnit_EpUtilsTest, Conv_RejectsInt8WhenDisallowed) {
 
 TEST(QnnUnit_EpUtilsTest, Conv_AcceptsInt8WhenAllowed) {
   EpUtilsTestContext ctx;
-  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
+  // Conv inputs are the DQ outputs — wire them so the positional DQ check passes.
+  FakeValueInfo conv_in0{"conv_in0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo conv_in1{"conv_in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
-  FakeNode main_node{"conv", "Conv", "", 1, {&dummy, &dummy}, {&main_out}};
+  FakeNode main_node{"conv", "Conv", "", 1, {&conv_in0, &conv_in1}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // Install producer stub: conv_in0 → dq_data, conv_in1 → dq_wt.
+  ConvProducerGuard guard({{conv_in0.AsValueInfo(), dq_data.AsNode()},
+                           {conv_in1.AsValueInfo(), dq_wt.AsNode()}});
+  ctx.api.ValueInfo_GetValueProducer = &FakeConvProducerStub;
+  OrtGlobalApiOverride global_guard(&ctx.api);
 
   OrtConvNodeGroupSelector sel(/*int8_allowed=*/true);
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
@@ -605,6 +642,73 @@ TEST(QnnUnit_EpUtilsTest, Conv_Rejects3DqWithNonInt32Bias) {
   OrtConvNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                          {dq_data.AsNode(), dq_wt.AsNode(), dq_bias.AsNode()}, {q.AsNode()}));
+}
+
+// Tests that Conv with quantized input, quantized weight, and a plain float bias
+// (no DQ node for bias) is accepted.
+TEST(QnnUnit_EpUtilsTest, Conv_AcceptsFloatBias) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
+
+  // Conv inputs: DQ output for activation, DQ output for weight, float bias (no DQ).
+  FakeValueInfo conv_in0{"conv_in0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo conv_in1{"conv_in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo float_bias{"bias", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"conv", "Conv", "", 1, {&conv_in0, &conv_in1, &float_bias}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // Install producer stub: conv_in0 → dq_data, conv_in1 → dq_wt.
+  // float_bias has no entry → producer = nullptr (float, no DQ node).
+  ConvProducerGuard guard({{conv_in0.AsValueInfo(), dq_data.AsNode()},
+                           {conv_in1.AsValueInfo(), dq_wt.AsNode()}});
+  ctx.api.ValueInfo_GetValueProducer = &FakeConvProducerStub;
+  OrtGlobalApiOverride global_guard(&ctx.api);
+
+  OrtConvNodeGroupSelector sel;
+  // 2 DQ nodes (activation + weight, no bias DQ) → float bias is allowed.
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
+}
+
+// Tests that Conv with a float (unquantized) activation input is rejected
+// when weight and bias are quantized. inputs[0] is not DQ-produced, so the
+// positional DQ check fails.
+TEST(QnnUnit_EpUtilsTest, Conv_RejectsFloatInputWithQuantWeight) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dq_wt_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeValueInfo dq_bias_in{"b", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, {}};
+  FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_wt_in}, {}};
+  FakeNode dq_bias{"dq2", "DequantizeLinear", "", 13, {&dq_bias_in}, {}};
+
+  // Conv inputs: float activation (no DQ), DQ output for weight, DQ output for bias.
+  FakeValueInfo float_input{"input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo conv_in1{"conv_in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo conv_in2{"conv_in2", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeNode main_node{"conv", "Conv", "", 1, {&float_input, &conv_in1, &conv_in2}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // Install producer stub: conv_in1 → dq_wt, conv_in2 → dq_bias.
+  // float_input has no entry → producer = nullptr → positional check fails at slot 0.
+  ConvProducerGuard guard({{conv_in1.AsValueInfo(), dq_wt.AsNode()},
+                           {conv_in2.AsValueInfo(), dq_bias.AsNode()}});
+  ctx.api.ValueInfo_GetValueProducer = &FakeConvProducerStub;
+  // OrtGlobalApiOverride not needed: producer for inputs[0] is nullptr so
+  // GetOperatorType() is never reached.
+
+  OrtConvNodeGroupSelector sel;
+  // inputs[0] is not DQ-produced → positional check fails → false.
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq_wt.AsNode(), dq_bias.AsNode()}, {q.AsNode()}));
 }
 
 // =============================================================================

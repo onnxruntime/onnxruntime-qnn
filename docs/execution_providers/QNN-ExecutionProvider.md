@@ -284,6 +284,13 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |---|---|
 |Directory path (string)|Directory path for framework op trace JSON files. Only effective when `enable_framework_op_trace` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to (e.g. read-only mount, missing permissions), framework op tracing is disabled with a WARNING log and no trace file is produced. Trace files use the pattern `qnn_op_trace.json`.|
 
+**Schema migration note:** The `qnn_op_trace.json` schema moves the `compilation_target` object out of the document root and into a new `soc_traces` array. Single-SoC sessions emit exactly one entry; multi-SoC FCB sessions emit one entry per `(htp_arch, soc_model)` pair. `subgraph_traces` (the ONNX-to-QNN op mapping) stays at the document root because op-builder output is SoC-agnostic. A new `summary.total_socs` field reports the entry count. A top-level `"schema_version"` field (currently `2`) is bumped on every breaking schema change so consumers can branch on it.
+
+- Old (legacy): `j["compilation_target"]["htp_arch"]`
+- New: `j["soc_traces"][0]["compilation_target"]["htp_arch"]`
+
+Consumers that read the compilation target must update the JSON path. Consumers of `subgraph_traces`, `unsupported_nodes`, and `summary` are unaffected.
+
 |`"qnn_ir_backend_path"`|Description|
 |---|---|
 |Backend path (string)|Path to the QNN IR backend library. Defaults to 'libQnnIr.so' or 'QnnIr.dll'. Only effective when `dump_qnn_ir_dlc` is enabled.|
@@ -356,6 +363,83 @@ ep_options = {
 }
 # ep.context_enable must be set to 1; enable_htp_prepare_only is enabled automatically.
 ```
+
+#### Stripping an FCB for deployment (`deploy_multi_soc_ep_context.py`)
+After an FCB is generated, you may want to **prune** the SoCs it targets — for example, to ship a smaller artifact that only covers the devices you actually support. The `deploy_multi_soc_ep_context.py` helper (shipped in the `onnxruntime-qnn` Python wheel) lists and removes the per-SoC HTP cache records inside the FCB, and keeps the accompanying ONNX model's compatibility metadata in sync.
+
+The script works on both EP context model layouts, selected by which input you pass:
+
+* **Non-embed mode** (`ep.context_embed_mode = "0"`, the default): the context binary is a standalone `*_qnn.bin` file alongside the ONNX model. Pass it via `--input_bin` (and `--input_onnx` for the metadata). The stripped binary is written to `--output_bin` and the updated model to `--output_onnx`; both inputs are left untouched. Pass `--inplace` to overwrite the inputs instead.
+* **Embed mode** (`ep.context_embed_mode = "1"`): the context binary is embedded inside the EP context node of the ONNX model. Omit `--input_bin` and pass the model via `--input_onnx`; the tool extracts the embedded binary to a temporary file, edits it, and re-embeds the result into `--output_onnx`. The input model is left untouched. Pass `--inplace` to overwrite `--input_onnx` instead.
+
+Run it as a module from an installed wheel:
+
+```bash
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context --input_bin model_ctx_qnn.bin --list
+```
+
+|Argument|Description|
+|---|---|
+|`--input_bin`|Path to a standalone context binary / EP-context file (**non-embed mode**). Omit it for an embed-mode model, in which case the embedded binary is read from `--input_onnx`.|
+|`--input_onnx`|Path to the input EP context ONNX model. **Required with `--remove_record`** so its `ep_compatibility_info.QNNExecutionProvider` metadata is kept in sync. In embed mode this is also the source of the embedded binary, so it is always required there.|
+|`-l`, `--list`|List every HTP cache record with its DSP architecture, SoC model and (first-graph) VTCM size.|
+|`-r`, `--remove_record`|Comma-separated HTP cache record name(s) to remove (e.g. `-r backend.metadata0,backend.metadata1`).|
+|`--output_onnx`|**Required with `--remove_record`** (both modes) unless `--inplace` is given. Destination path for the updated ONNX model. In embed mode the stripped binary is re-embedded into it; in non-embed mode it carries the updated metadata. The input `--input_onnx` is left untouched.|
+|`--output_bin`|**Required with `--remove_record` in non-embed mode** unless `--inplace` is given. Destination path for the stripped binary. The input `--input_bin` is left untouched.|
+|`--temp_bin`|*Embed mode only, optional.* Path to stage the extracted binary while it is edited. When omitted, an auto-generated temporary file is used. The file is removed when the tool finishes either way.|
+|`--inplace`|*Optional.* Overwrite the input model (and, in non-embed mode, the input binary) in place instead of writing to new paths. Mutually exclusive with `--output_onnx` / `--output_bin`.|
+
+**Listing the packaged SoCs:**
+
+```bash
+# Non-embed mode (standalone context binary)
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context --input_bin model_ctx_qnn.bin --list
+
+# Embed mode (context binary embedded in the ONNX model)
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context --input_onnx model_ctx.onnx --list
+```
+
+**Removing a SoC (non-embed mode)** — writes the pruned binary and updated model to new paths, leaving the inputs untouched:
+
+```bash
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_bin model_ctx_qnn.bin \
+    --input_onnx model_ctx.onnx \
+    --output_bin model_ctx_qnn.pruned.bin \
+    --output_onnx model_ctx.pruned.onnx \
+    -r backend.metadata0
+```
+
+**Removing a SoC (embed mode)** — extracts, edits, and re-embeds the binary into a new model:
+
+```bash
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_onnx model_ctx.onnx \
+    --output_onnx model_ctx.pruned.onnx \
+    -r backend.metadata0 \
+    --list
+```
+
+**Removing a SoC in place** — overwrite the inputs instead of writing new files (works in both modes):
+
+```bash
+# Non-embed mode: overwrites both model_ctx_qnn.bin and model_ctx.onnx
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_bin model_ctx_qnn.bin \
+    --input_onnx model_ctx.onnx \
+    --inplace \
+    -r backend.metadata0
+
+# Embed mode: overwrites model_ctx.onnx
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_onnx model_ctx.onnx \
+    --inplace \
+    -r backend.metadata0
+```
+
+> **Note**: `deploy_multi_soc_ep_context.py` depends on the `libDlModelToolsPy` extension from the QAIRT SDK. The `onnxruntime-qnn` wheel bundles it next to the script, so `python -m onnxruntime_qnn.deploy_multi_soc_ep_context` works out of the box. When running the script directly from a source checkout instead, the SDK's `lib/python/qti/aisw/dlc_utils/<platform>` directory must be on `PYTHONPATH`.
+
+> **Note**: Only **Python 3.12** is supported. The `onnxruntime-qnn` wheel bundles the `libDlModelToolsPy` extension (compiled for Python 3.12) only into the 3.12 wheel, and the script imports it directly. The script is thus not shipped in the wheels other than Python 3.12 one.
 
 ### Run Options
 
@@ -500,7 +584,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Relu||
 |ai.onnx:RMSNormalization||
 |ai.onnx:Reshape||
-|ai.onnx:Resize||
+|ai.onnx:Resize|tf_half_pixel_for_nn coordinate_transformation_mode: only mode "nearest" with nearest_mode "floor" on rank-4 input is supported on HTP; other combinations fall back to CPU|
 |ai.onnx:RoiAlign||
 |ai.onnx:Round||
 |ai.onnx:RotaryEmbedding|HTP backend only|
