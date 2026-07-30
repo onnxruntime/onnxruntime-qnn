@@ -15,6 +15,7 @@
 
 #include "QnnInterface.h"
 
+#include "core/providers/qnn/builder/i_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -288,6 +289,15 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg);
 
+// IGraphEmitter overload — routes through the abstract emitter interface.
+bool CreateTensorInQnnGraph(IGraphEmitter& emitter,
+                            const Qnn_GraphHandle_t& graph,
+                            const std::string& node_name,
+                            const std::string& tensor_name,
+                            Qnn_Tensor_t& qnn_tensor,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
+                            std::string& error_msg);
+
 uint32_t GetQnnTensorID(const Qnn_Tensor_t& qnn_tensor);
 void SetQnnTensorID(Qnn_Tensor_t& qnn_tensor, uint32_t id);
 Qnn_TensorType_t GetQnnTensorType(const Qnn_Tensor_t& qnn_tensor);
@@ -475,6 +485,16 @@ class QnnTensorWrapper {
                                   qnn_tensor_, tensors_created_table, error_msg);
   }
 
+  // IGraphEmitter overload.
+  bool CreateQnnGraphTensor(IGraphEmitter& emitter,
+                            const Qnn_GraphHandle_t& graph,
+                            const std::string& node_name,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
+                            std::string& error_msg) {
+    return CreateTensorInQnnGraph(emitter, graph, node_name, GetResolvedTensorName(),
+                                  qnn_tensor_, tensors_created_table, error_msg);
+  }
+
  private:
   void SwapOther(QnnTensorWrapper&& other) noexcept {
     std::swap(tensor_name_, other.tensor_name_);
@@ -592,6 +612,13 @@ class QnnParamWrapper {
                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                            std::string& error_msg);
 
+  // IGraphEmitter overload.
+  bool CreateQnnGraphParam(IGraphEmitter& emitter,
+                           const Qnn_GraphHandle_t& graph,
+                           const std::string& node_name,
+                           std::unordered_map<std::string, uint32_t>& tensors_created_table,
+                           std::string& error_msg);
+
  private:
   std::string name_;
   std::string tensor_name_;
@@ -686,7 +713,17 @@ class QnnOpConfigWrapper {
                             const Qnn_BackendHandle_t& backend_handle,
                             std::string& error_msg);
 
+  // IGraphEmitter overload.
+  bool QnnGraphOpValidation(IGraphEmitter& emitter,
+                            const Qnn_BackendHandle_t& backend_handle,
+                            std::string& error_msg);
+
   bool CreateQnnGraphOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                        const Qnn_GraphHandle_t& graph,
+                        std::string& error_msg);
+
+  // IGraphEmitter overload.
+  bool CreateQnnGraphOp(IGraphEmitter& emitter,
                         const Qnn_GraphHandle_t& graph,
                         std::string& error_msg);
 

@@ -123,6 +123,16 @@
       QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR})
   endif()
 
+  # QAIRT C++ API integration.
+  # When ON, builds QairtBackendManager + QairtGraphEmitter as an alternative to the QNN C path.
+  # QAIRT C++ API is header-only; the Api class loads the backend .dll at runtime via dlopen.
+  option(onnxruntime_USE_QAIRT_API "Enable QAIRT C++ API path (experimental)" OFF)
+  if(onnxruntime_USE_QAIRT_API)
+    target_compile_definitions(onnxruntime_providers_qnn PRIVATE USE_QAIRT_API=1)
+    target_include_directories(onnxruntime_providers_qnn SYSTEM PRIVATE
+                               ${onnxruntime_QNN_HOME}/include/QAIRT)
+  endif()
+
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
     if(ENABLE_COVERAGE AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
