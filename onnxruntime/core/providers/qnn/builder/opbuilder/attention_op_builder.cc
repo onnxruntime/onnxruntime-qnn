@@ -350,7 +350,11 @@ Ort::Status AttentionOpBuilder::ProcessInputsNativeGQA(const AttentionOpBuilder&
   auto AddNull = [&](const char* suffix) -> Ort::Status {
     const std::string name = utils::UniqueNameGenerator().New(node_unit, suffix);
     input_names.push_back(name);
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(QnnTensorWrapper::MakeNull(name)),
+    // Use QNN_DATATYPE_UNDEFINED — matches GroupQueryAttentionOpBuilder's null tensor
+    // pattern. QNN_DATATYPE_FLOAT_32 (from MakeNull) causes validator error 3110.
+    QnnTensorWrapper null_wrapper(name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
+                                  QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_wrapper)),
                   ("Failed to add null tensor: " + name).c_str());
     return Ort::Status();
   };

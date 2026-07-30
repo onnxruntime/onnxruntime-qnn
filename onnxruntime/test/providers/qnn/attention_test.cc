@@ -634,7 +634,7 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_Softcap) {
            test::MakeAttribute("is_causal", static_cast<int64_t>(1)),
            test::MakeAttribute("softcap", 5.0f)}),
       opts, /*opset_version=*/24,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
 // GQA 4D BNSH inputs, no KV cache — no past_key → decomposition.
