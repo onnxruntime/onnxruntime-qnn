@@ -127,6 +127,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         build_as_x: bool = False,
         build_nuget: bool = False,
         build_archive: bool = False,
+        use_qairt_api: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "windows" / "build.ps1"),
@@ -156,6 +157,9 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
 
         if build_archive:
             cmd.extend(["-BuildArchive", "1"])
+
+        if use_qairt_api:
+            cmd.append("-UseQairtApi")
 
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 

@@ -46,6 +46,10 @@ param (
     [ValidateSet("", "3.11", "3.12", "3.13", "3.14")]
     [string]$TargetPyVersion = "",
 
+    [Parameter(Mandatory = $false,
+               HelpMessage = "Enable QAIRT C++ API path (experimental).")]
+    [switch]$UseQairtApi,
+
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
     [string]$PyVEnv
@@ -143,6 +147,9 @@ if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
 }
 
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+if ($UseQairtApi) {
+    $QnnArgs += "--cmake_extra_defines", "onnxruntime_USE_QAIRT_API=ON"
+}
 if ($OrtPrebuiltRoot -ne "") {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
     $QnnArgs += "--ort_home"
