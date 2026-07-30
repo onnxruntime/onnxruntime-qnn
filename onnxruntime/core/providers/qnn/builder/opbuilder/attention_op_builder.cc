@@ -164,7 +164,7 @@ static bool ShouldUseNativeGQA(QnnBackendType backend,
                                uint32_t n_q, uint32_t n_kv,
                                int64_t is_causal, float softcap,
                                bool has_attn_mask, bool has_qk_output,
-                               bool has_past_key);
+                               bool has_present_key);
 
 // ---------------------------------------------------------------------------
 // ProcessInputs — register Q, K, V, attn_mask, past_key, past_value,
@@ -201,7 +201,7 @@ Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
                                 node_unit.Outputs()[3].Exists());
     if (ShouldUseNativeGQA(qnn_model_wrapper.GetQnnBackendType(),
                            n_q, n_kv, is_causal, softcap, has_attn_mask, has_qk_output,
-                           (onnx_inputs.size() > 4 && onnx_inputs[4].Exists()))) {
+                           (node_unit.Outputs().size() > 1 && node_unit.Outputs()[1].Exists()))) {
       return ProcessInputsNativeGQA(*this, qnn_model_wrapper, node_unit, logger, input_names);
     }
   }
@@ -241,7 +241,7 @@ Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
 // QNN_OP_GROUP_QUERY_ATTENTION node is emitted.  This covers both MHA
 // (n_q == n_kv) and GQA/MQA (n_q > n_kv).  4D BNSH inputs are handled by
 // inserting Transpose+Reshape before and after the native op.
-// All other cases (non-causal, softcap, HTP) fall to decomposition.
+// All other cases (non-causal, softcap, no KV cache, HTP) fall to decomposition.
 // ---------------------------------------------------------------------------
 
 static bool ShouldUseNativeGQA(QnnBackendType backend,
@@ -250,13 +250,17 @@ static bool ShouldUseNativeGQA(QnnBackendType backend,
                                float softcap,
                                bool has_attn_mask,
                                bool has_qk_output,
-                               bool /*has_past_key*/) {
+                               bool has_present_key) {
+  // TODO: Remove has_present_key once GPU backend adds support for absent KV
+  // cache outputs (currently present_key/present_value are required by the GPU
+  // validator even though the QNN op def marks them as optional).
   return IsGpuBackend(backend) &&
-         n_q % n_kv == 0 &&  // covers MHA (n_q == n_kv) and GQA/MQA (n_q > n_kv)
-         is_causal == 1 &&   // QNN GQA is always causal — no is_causal param
-         softcap == 0.0f &&  // no softcap param in QNN GQA
-         !has_attn_mask &&   // no additive mask input in QNN GQA
-         !has_qk_output;     // no per-stage debug output in QNN GQA
+         n_q % n_kv == 0 &&      // covers MHA (n_q == n_kv) and GQA/MQA (n_q > n_kv)
+         is_causal == 1 &&        // QNN GQA is always causal — no is_causal param
+         softcap == 0.0f &&       // no softcap param in QNN GQA
+         !has_attn_mask &&        // no additive mask input in QNN GQA
+         !has_qk_output &&        // no per-stage debug output in QNN GQA
+         has_present_key;         // GPU validator currently requires KV cache outputs
 }
 
 // Synthesize seqlens_k and total_sequence_length that QNN GQA requires but
@@ -514,9 +518,8 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   // When the ONNX model does not declare present_key/present_value, allocate
   // private NATIVE scratch tensors so QNN can write to them — the caller
   // never reads these, but the QNN op def for GQA requires them.
-  const std::vector<uint32_t> pk_shape = {B, kv_num_heads_u32, S_total, head_size};
-  const std::vector<uint32_t> pv_shape = {B, kv_num_heads_u32, S_total, v_hs};
-  const std::vector<uint32_t>* cache_shapes[2] = {&pk_shape, &pv_shape};
+  // present_key and present_value (output slots 1-2).
+  // ShouldUseNativeGQA requires has_present_key=true so both are always declared.
   for (size_t i = 1; i <= 2; ++i) {
     const bool declared = (onnx_outputs.size() > i && onnx_outputs[i].Exists());
     if (declared) {
@@ -532,13 +535,13 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cw)),
                     ("Failed to add output: " + name).c_str());
     } else {
-      // Private scratch tensor — NATIVE (not APP_READ), never exposed to caller.
-      const std::string priv_name = utils::UniqueNameGenerator().New(node_unit, "_priv_cache");
-      output_names.push_back(priv_name);
-      QnnTensorWrapper pw(priv_name, QNN_TENSOR_TYPE_NATIVE, dtype, QnnQuantParamsWrapper{},
-                          std::vector<uint32_t>(*cache_shapes[i - 1]));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pw)),
-                    "Failed to add private cache scratch tensor.");
+      // Absent cache output — use null tensor.  ShouldUseNativeGQA ensures
+      // present_key is always declared, so only present_value can reach here
+      // if the model omits it.
+      const std::string null_name = utils::UniqueNameGenerator().New(node_unit, "_null_out");
+      output_names.push_back(null_name);
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(QnnTensorWrapper::MakeNull(null_name)),
+                    "Failed to add null cache output.");
     }
   }
 
@@ -1080,7 +1083,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   // ---- GPU native GQA path ----
   if (ShouldUseNativeGQA(qnn_model_wrapper.GetQnnBackendType(),
                          n_q, n_kv, is_causal, softcap, has_attn_mask, has_qk_output,
-                         has_past_key)) {
+                         (onnx_outputs.size() > 1 && onnx_outputs[1].Exists()))) {
     return EmitNativeGQANode(qnn_model_wrapper, node_unit,
                              std::move(input_names), do_op_validation);
   }
