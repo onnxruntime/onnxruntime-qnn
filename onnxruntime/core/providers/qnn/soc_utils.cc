@@ -192,7 +192,7 @@ bool HasFastRpcCdspDevice() {
 #if defined(__ANDROID__)
   char manufacturer[PROP_VALUE_MAX] = {};
   __system_property_get("ro.soc.manufacturer", manufacturer);
-  return std::strncasecmp(manufacturer, "QTI", 3) == 0;
+  return strncasecmp(manufacturer, "QTI", 3) == 0;
 #endif
   DIR* d = opendir("/dev");
   if (!d) {
