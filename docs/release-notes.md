@@ -1,3 +1,71 @@
+# ONNX Runtime QNN Execution Provider v2.5.0
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.26.0)<br>
+**QAIRT SDK Compatibility:** 2.49.40
+
+```
+pip install onnxruntime==1.26.0
+pip install onnxruntime-qnn==2.5.0
+```
+
+## Packaging
+
+### Platform Support
+
+| Package | Windows ARM64 | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|---|
+| Python Wheel | Inference | — | AOT compilation | Inference | AOT compilation | — |
+| NuGet | - | Inference | — | — | — | — |
+| ZIP | Inference | Inference | AOT compilation | — | AOT compilation | — |
+| tgz | — | — | — | Inference | — | — |
+| Maven | — | — | — | — | — | Inference |
+
+## New Features, Operators and Fusions
+
+- **Flexible Context Binary (FCB)** — Packages multiple per-SoC/HTP-arch QNN context binaries into a single DLC for cross-SoC deployment, via new `htp_arch_per_soc` session option and multi-SoC `GetCapability`/`Compile` path. Requires QAIRT 2.48+. ([#482](https://github.com/onnxruntime/onnxruntime-qnn/pull/482))
+- **Shape** — CPU and HTP. Downcasts int64 output to int32; `start`/`end` attributes forwarded as QNN scalar params. ([#510](https://github.com/onnxruntime/onnxruntime-qnn/pull/510))
+- **ReduceLogSumExp** — CPU (FP32) and HTP (FP16/BF16). Decomposed as `log(ReduceSum(exp(X − ReduceMax(X)))) + ReduceMax(X)` for FP16-safety. Supports opsets 1–25. ([#463](https://github.com/onnxruntime/onnxruntime-qnn/pull/463))
+- **QLinearMatMul** — CPU and HTP. int8/uint8 inputs, per-tensor scale/zero-point only; maps to `QNN_OP_MAT_MUL` / `QNN_OP_FULLY_CONNECTED`. Per-axis quant, dynamic scale/zero-point, and float8 fall back to CPU EP. ([#467](https://github.com/onnxruntime/onnxruntime-qnn/pull/467))
+- **NonMaxSuppression** — CPU and HTP (FP32, QDQ uint8/uint16). Maps to native `QNN_OP_NON_MAX_SUPPRESSION`; `center_point_box != 0` and absent/zero `max_output_boxes_per_class` fall back to CPU EP. ([#559](https://github.com/onnxruntime/onnxruntime-qnn/pull/559))
+- **If** — CPU, HTP, and GPU. Inlines both branches and lowers to a single `ElementWiseSelect`; both branches always execute. Requires a scalar condition and matching-shape/dtype branch outputs. ([#409](https://github.com/onnxruntime/onnxruntime-qnn/pull/409))
+- **Reshape-Gemm-Reshape(-Reshape) fusion** — Fuses `Reshape(ND→2D) → Gemm → [Reshape(2D→MD) → [Reshape(MD→PD)]]` into `QNN_OP_FULLY_CONNECTED` (+ `QNN_OP_RESHAPE`), matching the pattern ORT emits for ND matmul+add. ([#232](https://github.com/onnxruntime/onnxruntime-qnn/pull/232))
+- **BQ → LPBQ encoding conversion** — Converts block-quantized ONNX encodings to HTP-supported Low-Power Block Quantization encodings, enabling block-quantized models to run on HTP. ([#307](https://github.com/onnxruntime/onnxruntime-qnn/pull/307))
+- **MatMul → Conv2D (1x1) for LPBQ** — Lowers `MatMul` to `QNN_OP_CONV_2D` with 1x1 weights when LPBQ encodings are present, since Conv2D is more performant/complete than MatMul/FC for this case. ([#357](https://github.com/onnxruntime/onnxruntime-qnn/pull/357))
+- **Pad** — Added float16 support for the `constant_value` attribute on HTP, avoiding CPU fallback. ([#546](https://github.com/onnxruntime/onnxruntime-qnn/pull/546))
+- **ReduceL2 (QDQ)** — Registered in the QDQ node-unit selector so quantized `ReduceL2` fuses correctly instead of silently decomposing into an unquantized float32 island. ([#596](https://github.com/onnxruntime/onnxruntime-qnn/pull/596))
+- **Clip** — Accepts `min`/`max` fed by a `DequantizeLinear` over a constant initializer (common AIMET-export pattern), by treating folded-constant DQ outputs the same as initializers. ([#586](https://github.com/onnxruntime/onnxruntime-qnn/pull/586))
+
+For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
+
+## Improvements
+
+- **QNN GPU weight sharing** — Extends weight sharing (previously HTP-only) to the QNN GPU backend, reducing per-session memory when multiple sessions share weights. ([#67](https://github.com/onnxruntime/onnxruntime-qnn/pull/67))
+- **QNN context priority levels** — Extended from 4 to 8 levels, adding `NORMAL_LOW`, `HIGH_PLUS`, `CRITICAL`, `CRITICAL_PLUS`. ([#106](https://github.com/onnxruntime/onnxruntime-qnn/pull/106), [#568](https://github.com/onnxruntime/onnxruntime-qnn/pull/568))
+- **Framework op tracing** — Added profiling↔trace auto-merge (onnx-op column in profiling output at detailed/optrace levels) and AOT Phase 2 sidecar discovery. ([#488](https://github.com/onnxruntime/onnxruntime-qnn/pull/488))
+- **Framework op tracing** — Added `dump_qnn_ep_input_graph` session config, a source-to-optimized ONNX structural matcher, and profiling-CSV enrichment with original ONNX source ops, closing the source→optimized→QNN-op provenance gap. ([#491](https://github.com/onnxruntime/onnxruntime-qnn/pull/491))
+- **QNN API error diagnostics** — `graphFinalize`, `graphExecute`, `graphCreate`, and `contextApplyBinarySection` failures now include the QNN symbolic error string, not just a bare integer code. ([#532](https://github.com/onnxruntime/onnxruntime-qnn/pull/532))
+- **RMSNorm (HTP)** — Removed the dummy all-zeros beta tensor on QAIRT SDK 2.49+, which now accepts beta as a truly optional input. ([#581](https://github.com/onnxruntime/onnxruntime-qnn/pull/581))
+
+## Bug Fixes
+
+- **Utils** — Fixed undefined behavior from calling `std::vector::assign` with a reference into the same vector, which crashed MSVC debug builds. ([#511](https://github.com/onnxruntime/onnxruntime-qnn/pull/511))
+- **Softmax** — Fixed HTP misbehaving when AIMET populates a non-natural output encoding (outside `[0, 1]`) to satisfy older symmetric-input MatMul requirements; now emits the correct `[0, 1]` encoding plus a `Convert` op. Recovers major accuracy loss on YoloV10/V11 detection models. ([#558](https://github.com/onnxruntime/onnxruntime-qnn/pull/558))
+- **SpaceToDepth CRD fusion** — Fixed a regression where dynamic batch dimension (`-1`) in Reshape shape initializers was rejected, causing 6D-tensor CPU fallback on dynamic-batch models. ([#567](https://github.com/onnxruntime/onnxruntime-qnn/pull/567))
+- **BatchNormalization** — Fixed incorrect bias-tensor reuse when two BN nodes share the same ONNX bias initializer but have different mean/variance, silently producing wrong output. Recovers major accuracy loss on Sinet. ([#582](https://github.com/onnxruntime/onnxruntime-qnn/pull/582))
+- **GroupQueryAttention (GPU)** — Fixed a shape mismatch where QNN's GQA op def requires `total_sequence_length` as a 0D scalar while ONNX's `com.microsoft.GroupQueryAttention` supplies it as a 1D `[1]` tensor, causing op validation failure. ([#654](https://github.com/onnxruntime/onnxruntime-qnn/pull/654))
+
+**Full Changelog:** [rel-2.4.0...rel-2.5.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.4.0...rel-2.5.0)
+
+## Contributors
+
+This release includes contributions from:
+
+[Ashima Jain](https://github.com/qti-ashimaj), [Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Nagesh](https://github.com/nagesh-qti), [Nischay Mamidi](https://github.com/qti-niscmami), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Vineeth Jatoth](https://github.com/vjatoth-qti), [Yathindra Kota](https://github.com/yath1), [Yu-Hung Chuang](https://github.com/yuhuchua-qti), [Yuduo Wu](https://github.com/qti-yuduo)
+
+---
+
+---
+
 # ONNX Runtime QNN Execution Provider v2.4.0
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.26.0)<br>
