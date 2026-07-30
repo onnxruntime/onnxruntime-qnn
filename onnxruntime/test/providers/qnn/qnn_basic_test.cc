@@ -1527,6 +1527,435 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
                   /*verify_output*/ true);
 }
 
+// Shared model + checker helpers for the "op_affinity" provider-option tests below. Every
+// one of these tests uses the same tiny Conv -> Softmax graph (both ops are static-shape and
+// QNN-supported, so without any filter both land on QNN) and only differs in the filter value and
+// the expected per-op EP assignment. Factoring these out keeps each test to just its option value
+// and expectation.
+
+// Builds a Conv -> Softmax graph. Only the graph name varies between tests.
+static std::function<void(ModelTestBuilder&)> MakeConvSoftmaxBuilder(const std::string& graph_name) {
+  return [graph_name](ModelTestBuilder& builder) {
+    builder.graph_->set_name(graph_name);
+
+    builder.MakeInput<float>("input1",
+                             std::vector<int64_t>{1, 2, 8, 8},
+                             GetFloatDataInRange(0.0f, 1.0f, 128));
+    builder.MakeInitializer<float>("weight",
+                                   std::vector<int64_t>{2, 2, 2, 2},
+                                   GetFloatDataInRange(-0.3f, 0.3f, 16));
+    builder.MakeInitializer<float>("bias",
+                                   std::vector<int64_t>{2},
+                                   {0.0f, 1.0f});
+
+    builder.AddNode("Conv", "Conv", {"input1", "weight", "bias"}, {"conv_output"}, kOnnxDomain);
+    builder.AddNode("Softmax", "Softmax", {"conv_output"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Builds an EP-assignment checker that asserts each named op type is assigned to the expected EP.
+// `expected` maps ONNX op type -> EP name (e.g. {{"Softmax", kCpuExecutionProvider},
+// {"Conv", kQnnExecutionProvider}}). Every listed op must be seen exactly on its expected EP.
+static std::function<void(const Ort::Session&)> MakeOpAssignmentChecker(
+    std::unordered_map<std::string, std::string> expected) {
+  return [expected](const Ort::Session& session) {
+    std::unordered_map<std::string, bool> seen;
+    for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+      std::string ep_name = subgraph.GetEpName();
+      for (const auto& node : subgraph.GetNodes()) {
+        std::string op_type = node.GetOperatorType();
+        auto it = expected.find(op_type);
+        if (it != expected.end()) {
+          EXPECT_EQ(ep_name, it->second) << op_type << " assigned to unexpected EP";
+          seen[op_type] = (ep_name == it->second);
+        }
+      }
+    }
+    for (const auto& [op_type, ep_name] : expected) {
+      EXPECT_TRUE(seen[op_type]) << op_type << " node not found on expected EP " << ep_name;
+    }
+  };
+}
+
+// Test the "op_affinity" provider option in the default (exclude) mode: a fully-static,
+// QNN-supported op listed in the filter must be kept off QNN and fall back to the CPU EP, while
+// the rest of the graph stays on QNN. Without the option both ops would be assigned to QNN.
+TEST_F(QnnHTPBackendTests, EPFilterExcludesOpType) {
+  // Conv -> Softmax, both static-shape and both QNN-supported.
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_exclude_graph");
+
+  // Softmax was filtered off via op_affinity (exclude) -> must be on CPU EP; Conv stays on QNN.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  // "exclude:" prefix omitted on purpose -> exercises the default-mode path.
+  provider_options["op_affinity"] = "Softmax";  // keep Softmax off QNN
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Test the "op_affinity" backend scope (phase 1) on a matching backend: "htp:exclude:Softmax" on an
+// HTP session behaves exactly like the unscoped exclude test -- Softmax falls back to CPU, Conv
+// stays on QNN. Confirms the "htp:" prefix is parsed and matches the running backend.
+TEST_F(QnnHTPBackendTests, EPFilterBackendScopeMatches) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_backend_scope_match_graph");
+
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "htp:exclude:Softmax";  // scoped to htp -> applies this session
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Test the "op_affinity" backend scope (phase 1) on a non-matching backend: "gpu:exclude:Softmax" on
+// an HTP session is inert -- the filter is skipped, so Softmax stays on QNN just as if no option
+// were set. Both ops must be assigned to QNN. This is the guarantee that a config scoped to a
+// different backend does not affect the session it isn't for.
+TEST_F(QnnHTPBackendTests, EPFilterBackendScopeMismatchIsInert) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_backend_scope_mismatch_graph");
+
+  // gpu-scoped filter on an htp session -> no effect: both ops stay on QNN.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kQnnExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "gpu:exclude:Softmax";  // scoped to gpu -> inert on this htp session
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Test the "op_affinity" provider option in include mode: ONLY the listed op types are
+// claimed by QNN; every other op type is forced to fall back. Here "include:Conv" keeps Conv on
+// QNN and pushes Softmax to the CPU EP (the mirror image of the exclude-mode test above).
+TEST_F(QnnHTPBackendTests, EPFilterIncludesOpType) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_include_graph");
+
+  // include:Conv -> Conv stays on QNN; Softmax (not in the list) is forced to CPU EP.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "include:Conv";  // only Conv on QNN, rest fall back
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// C1: op_affinity supplied via a JSON config file ("@<path>") in exclude mode. The file
+// { "mode": "exclude", "op_types": ["Softmax"] } must have the same effect as the inline
+// "Softmax" spec in EPFilterExcludesOpType: Softmax falls back to CPU, Conv stays on QNN.
+TEST_F(QnnHTPBackendTests, EPFilterExcludesOpTypeFromConfigFile) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_exclude_configfile_graph");
+
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  // Write the JSON config file to a temp path and pass it as "@<path>".
+  const std::filesystem::path cfg_path =
+      std::filesystem::temp_directory_path() / "ort_qnn_op_affinity_exclude.json";
+  {
+    nlohmann::json j;
+    j["mode"] = "exclude";
+    j["op_types"] = {"Softmax"};
+    std::ofstream(cfg_path) << j.dump();
+  }
+  ASSERT_TRUE(std::filesystem::exists(cfg_path));
+  auto cleanup = gsl::finally([&cfg_path]() { std::filesystem::remove(cfg_path); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "@" + cfg_path.string();  // config-file path
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// C2: op_affinity supplied via a JSON config file ("@<path>") in include mode. The file
+// { "mode": "include", "op_types": ["Conv"] } must mirror the inline "include:Conv" spec in
+// EPFilterIncludesOpType: only Conv stays on QNN, Softmax is forced to the CPU EP.
+TEST_F(QnnHTPBackendTests, EPFilterIncludesOpTypeFromConfigFile) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_include_configfile_graph");
+
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  const std::filesystem::path cfg_path =
+      std::filesystem::temp_directory_path() / "ort_qnn_op_affinity_include.json";
+  {
+    nlohmann::json j;
+    j["mode"] = "include";
+    j["op_types"] = {"Conv"};
+    std::ofstream(cfg_path) << j.dump();
+  }
+  ASSERT_TRUE(std::filesystem::exists(cfg_path));
+  auto cleanup = gsl::finally([&cfg_path]() { std::filesystem::remove(cfg_path); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "@" + cfg_path.string();  // config-file path
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Edge case: an op type in the filter list that matches no node in the graph (e.g. a typo
+// "Softmaxx") must be a quiet no-op -- every op stays on QNN -- plus a WARNING in GetSupportedNodes
+// ("did not match any node ... check for a typo"). Here neither op is filtered off, so both Conv
+// and Softmax remain on QNN.
+TEST_F(QnnHTPBackendTests, EPFilterUnknownOpTypeIsIgnored) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_unknown_optype_graph");
+
+  // Nothing is filtered -> both ops stay on QNN.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kQnnExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "Softmaxx";  // typo: matches no node -> no-op + WARNING
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Edge case: op type matching is case-sensitive (documented behavior). "softmax" (lowercase) must
+// NOT match the "Softmax" node, so the filter is a no-op and both ops stay on QNN.
+TEST_F(QnnHTPBackendTests, EPFilterOpTypeMatchIsCaseSensitive) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_case_sensitive_graph");
+
+  // "softmax" != "Softmax" -> nothing filtered -> both ops stay on QNN.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kQnnExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "softmax";  // lowercase -> case-sensitive miss -> no-op
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Edge case: a config file path that does not exist. The parser logs a WARNING and leaves the
+// filter disabled (default exclude + empty list), so the option is a no-op and every op stays on
+// QNN. Uses a path under the temp dir that we assert does not exist.
+TEST_F(QnnHTPBackendTests, EPFilterConfigFileNotFoundFallsBackToDefault) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_configfile_missing_graph");
+
+  // Parse fails -> filter disabled -> both ops stay on QNN.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kQnnExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  const std::filesystem::path missing_path =
+      std::filesystem::temp_directory_path() / "ort_qnn_op_affinity_does_not_exist.json";
+  std::filesystem::remove(missing_path);  // ensure it is absent
+  ASSERT_FALSE(std::filesystem::exists(missing_path));
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "@" + missing_path.string();  // nonexistent -> WARNING + no-op
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// Edge case: include mode with an empty op-type list ("include:"). Since ONLY listed op types may
+// stay on QNN and the list is empty, EVERY op is forced to fall back to the CPU EP (logged at
+// WARNING in OnnxOpAffinity). Both Conv and Softmax must land on CPU.
+TEST_F(QnnHTPBackendTests, EPFilterIncludeEmptyForcesAllOff) {
+  auto model_build_fn = MakeConvSoftmaxBuilder("ep_filter_include_empty_graph");
+
+  // include + empty list -> everything falls back to CPU.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kCpuExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["op_affinity"] = "include:";  // empty list -> all ops off QNN + WARNING
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  // Everything falls back to CPU -> no node lands on QNN.
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
+}
+
+// N-2: op_affinity combined with session.disable_cpu_ep_fallback. When a filtered-off op
+// has no other EP to run on and CPU fallback is disabled, session creation must fail. The conflict
+// itself is enforced by the ORT framework (not the QNN EP): once the filter keeps Softmax off QNN,
+// it is assigned to the default CPU EP, which the framework then rejects because fallback is off.
+TEST_F(QnnHTPBackendTests, TestDisableCPUFallback_OpTypeToFilterForcesFallback) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // Conv -> Softmax, both QNN(HTP)-supported. Filtering Softmax off QNN leaves it on the default
+  // CPU EP; with fallback disabled the session must throw.
+  auto model_func = [](ModelTestBuilder& builder) {
+    builder.graph_->set_name("op_affinity_fallback_conflict");
+    builder.MakeInput<float>("input1", std::vector<int64_t>{1, 2, 8, 8},
+                             GetFloatDataInRange(0.0f, 1.0f, 128));
+    builder.MakeInitializer<float>("weight", std::vector<int64_t>{2, 2, 2, 2},
+                                   GetFloatDataInRange(-0.3f, 0.3f, 16));
+    builder.MakeInitializer<float>("bias", std::vector<int64_t>{2}, {0.0f, 1.0f});
+    builder.AddNode("Conv", "Conv", {"input1", "weight", "bias"}, {"conv_output"}, kOnnxDomain);
+    builder.AddNode("Softmax", "Softmax", {"conv_output"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 19}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  model_func(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
+
+  ProviderOptions options;
+  options["backend_type"] = "htp";
+#if defined(__linux__) && !defined(__aarch64__)
+  options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  options["offload_graph_io_quantization"] = "0";
+  options["enable_htp_fp16_precision"] = "1";
+  options["op_affinity"] = "Softmax";  // force Softmax off QNN -> lands on CPU EP
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  try {
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+    FAIL();  // Should not get here!
+  } catch (const Ort::Exception& excpt) {
+    ASSERT_EQ(excpt.GetOrtErrorCode(), ORT_FAIL);
+    ASSERT_THAT(excpt.what(), testing::HasSubstr("This session contains graph nodes that are assigned to the default "
+                                                 "CPU EP, but fallback to CPU EP has been explicitly disabled by "
+                                                 "the user."));
+  }
+}
+
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   ProviderOptions options;
@@ -1977,6 +2406,31 @@ TEST_F(QnnGPUBackendTests, CosineSimilarityVerifier) {
                   options,
                   13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, CosineSimilarityVerifier(0.99f)});
+}
+
+// op_affinity is documented as EP-wide (works with any backend_type), but its integration tests
+// otherwise all live under QnnHTPBackendTests. Exercise the GPU backend directly so a backend-name
+// drift bug (e.g. the known-backend-name check falling out of sync with the runtime's backend-type
+// strings) would fail CI on GPU, not just be caught by synthetic backend-scope unit tests.
+TEST_F(QnnGPUBackendTests, EPFilterExcludesOpType) {
+  // Conv -> Softmax, both float32 (unquantized) and both QNN(GPU)-supported.
+  auto model_build_fn = MakeConvSoftmaxBuilder("gpu_ep_filter_exclude_graph");
+
+  // Softmax was filtered off via op_affinity (exclude) -> must be on CPU EP; Conv stays on QNN.
+  std::function<void(const Ort::Session&)> ep_graph_checker =
+      MakeOpAssignmentChecker({{"Softmax", kCpuExecutionProvider}, {"Conv", kQnnExecutionProvider}});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["op_affinity"] = "gpu:exclude:Softmax";  // scoped to gpu -> applies this session
+
+  RunQnnModelTest(model_build_fn,
+                  provider_options,
+                  /*opset*/ 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f),
+                                       &ep_graph_checker},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_output*/ true);
 }
 
 // Returns true if QNN EP was created and QNN HTP shared memory allocator is available, false otherwise.

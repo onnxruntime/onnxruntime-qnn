@@ -889,6 +889,21 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                               logger_);
   }
 
+  // Op affinity: keep certain ONNX op types/op names on/off QNN, optionally scoped to a backend.
+  std::string op_affinity_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey("op_affinity"), "", op_affinity_str);
+  op_affinity_ = qnn::OnnxOpAffinity::FromOptionValue(op_affinity_str, logger_);
+  // Heads-up only (not a hard error): if op_affinity keeps a node off QNN and CPU EP fallback is also
+  // disabled, session creation will fail. Can't tell "will definitely conflict" from "possibly inert"
+  // here -- qnn_backend_manager_ (needed to know the running backend) doesn't exist yet.
+  if (op_affinity_.IsActive() && disable_cpu_ep_fallback_) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "op_affinity is configured and fallback to the CPU EP is disabled (disable_cpu_ep_fallback). "
+                "If op_affinity keeps a node off QNN and no other EP can run it, session creation will fail.");
+  }
+
   // HTP FP16 precision mode
   htp_graph_configs_.enable_htp_fp16_precision = ParseBoolOption(ort_api,
                                                                  session_options_,
@@ -1463,6 +1478,24 @@ static void LogNodeSupport(const Ort::Logger& logger,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, msg.c_str());
 }
 
+// Append one UnsupportedNodeInfo per node in the group, all sharing the same reason. Shared by the
+// op_affinity-filtered and IsSupported()-rejected branches below.
+static void AppendUnsupportedNodesForGroup(const qnn::IQnnNodeGroup& qnn_node_group,
+                                           const std::string& reason,
+                                           std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) {
+  for (const OrtNodeUnit* node_unit : qnn_node_group.GetNodeUnits()) {
+    for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
+      Ort::ConstNode const_node(node);
+      unsupported_nodes.push_back({
+          std::string(const_node.GetName()),
+          std::string(const_node.GetOperatorType()),
+          const_node.GetId(),
+          reason,
+      });
+    }
+  }
+}
+
 OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const size_t node_unit_size,
@@ -1528,6 +1561,23 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   }
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
+    // Apply the user's op affinity. Inactive affinity always returns false, so this is a no-op when
+    // the option is unset.
+    if (op_affinity_.ShouldFilterOff(*qnn_node_group->GetTargetNodeUnit(),
+                                     qnn_backend_manager_->GetQnnBackendType())) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("op_affinity: keeping op type '" + qnn_node_group->GetTargetNodeUnit()->OpType() +
+                   "' off QNN; it will fall back to another EP.")
+                      .c_str());
+      // Record in the framework op trace (when enabled) so the report shows these nodes were
+      // intentionally filtered by the user, not truly unsupported.
+      if (enable_framework_op_trace_) {
+        AppendUnsupportedNodesForGroup(*qnn_node_group, "Filtered off QNN by op_affinity provider option",
+                                       unsupported_nodes);
+      }
+      continue;
+    }
+
     Ort::Status support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
     const bool supported = support_status.IsOK();
 
@@ -1539,25 +1589,11 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
         }
       }
     } else if (enable_framework_op_trace_) {
-      std::vector<qnn::UnsupportedNodeInfo> batch;
-      for (const OrtNodeUnit* node_unit : qnn_node_group->GetNodeUnits()) {
-        for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
-          Ort::ConstNode const_node(node);
-          batch.push_back({
-              std::string(const_node.GetName()),
-              std::string(const_node.GetOperatorType()),
-              const_node.GetId(),
-              std::string(support_status.GetErrorMessage()),
-          });
-        }
-      }
-      if (!batch.empty()) {
-        unsupported_nodes.insert(unsupported_nodes.end(),
-                                 std::make_move_iterator(batch.begin()),
-                                 std::make_move_iterator(batch.end()));
-      }
+      AppendUnsupportedNodesForGroup(*qnn_node_group, support_status.GetErrorMessage(), unsupported_nodes);
     }
   }
+
+  op_affinity_.WarnUnmatchedEntries(qnn_backend_manager_->GetQnnBackendType(), logger_);
   return nullptr;
 }
 

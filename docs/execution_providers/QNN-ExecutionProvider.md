@@ -59,7 +59,7 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) 
+- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - A single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
 - Archives (`.zip` and `.tgz`)
   - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Windows and Linux hosts and targets.
@@ -247,6 +247,10 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"op_packages"`|Description|
 |---|---|
 |Op package config (string)|Register custom op packages. Format: `<OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>]`. Multiple packages can be separated by commas.|
+
+|`"op_affinity"`|Description|
+|---|---|
+|Filter spec (string) — inline `"[backend:][mode:]<op types>"` or `"@<path to json file>"`|Controls which ONNX op types the QNN EP claims. **Two modes:** `exclude` (default) keeps every op on QNN *except* the listed op types, which fall back to another EP (typically the CPU EP); `include` claims *only* the listed op types and forces every other op type to fall back.<br><br>**Inline form:** `"exclude:Softmax,LayerNormalization"` or `"include:Conv,MatMul"`. `mode:` is optional and defaults to `exclude`, so `"Softmax"` ≡ `"exclude:Softmax"`. Op types are comma-separated, matched **case-sensitively**, and must not contain spaces.<br><br>**Backend scope (optional):** prefix with a backend name to scope the filter to one backend, e.g. `"htp:exclude:Softmax"`. Accepts the same QNN backend names as `backend_type`: `cpu`/`gpu`/`htp`/`dsp`/`ir` (`htp` also matches `htp_fp16` sessions). Without this prefix, the filter applies no matter what backend the session is actually running (via `backend_type`/`backend_path`).<br><br>**Config-file form:** `"@C:\path\to\filter.json"` — a path (prefixed with `@`) to a JSON file, for long lists. Schema: `{ "backend": "htp", "mode": "exclude" \| "include", "op_types": ["Softmax", "Conv"] }` (`"backend"` optional; JSONC comments allowed).<br><br>See [OP Affinity - Details](#op-affinity---details) for matching granularity, defaults, and the `disable_cpu_ep_fallback` interaction.|
 
 |`"dump_json_qnn_graph"`|Description|
 |---|---|
@@ -1667,3 +1671,24 @@ Currently, only pre-compiled models with EPContext nodes are supported. The  exa
 ```
 <graph name>;<adapter binary section path>
 ```
+
+
+## OP Affinity - Details
+
+#### Matching examples
+1. For a graph `Conv → Softmax` (two separate node groups), `"exclude:Softmax"` keeps `Conv` on QNN and falls `Softmax` back to
+another EP (typically CPU).
+2. For a fused QDQ group `DequantizeLinear → Conv → QuantizeLinear`, filter on the group's target op type: `"exclude:Conv"` removes
+  the whole group from QNN; `"exclude:DequantizeLinear"` has no effect.
+
+#### Backend scope mismatch
+On a session running a backend other than the one the filter is scoped to, the filter is skipped entirely (logged at INFO) rather
+than applied.
+
+#### Empty list and default
+- Default (option unset) is `exclude` with an empty list — all ops go to QNN.
+- `include` with an empty list forces **all** ops off QNN (logged at WARNING).
+- An op type in the list that matches no node is ignored with a WARNING (typically a typo).
+
+#### Interaction with `session.disable_cpu_ep_fallback`
+Setting both is logged at WARNING; if a filtered-off op has no other EP to run on, session creation fails.
