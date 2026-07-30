@@ -984,10 +984,10 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelGamma_PerTensorVar_U16) {
   constexpr int64_t W = 2;
   // All channels have similar variance (~1-4) so per-tensor U8 can represent them.
   std::vector<float> input_data = {
-      -2.0f, -1.0f, 1.0f, 2.0f,   // ch0: var ~= 2.5
-      -1.5f, -0.5f, 0.5f, 1.5f,   // ch1: var ~= 1.25
-      3.0f, 4.0f, 5.0f, 6.0f,     // ch2: var ~= 1.25
-      -3.0f, -1.0f, 1.0f, 3.0f    // ch3: var ~= 2.5
+      -2.0f, -1.0f, 1.0f, 2.0f,  // ch0: var ~= 2.5
+      -1.5f, -0.5f, 0.5f, 1.5f,  // ch1: var ~= 1.25
+      3.0f, 4.0f, 5.0f, 6.0f,    // ch2: var ~= 1.25
+      -3.0f, -1.0f, 1.0f, 3.0f   // ch3: var ~= 2.5
   };
   std::vector<float> scale_data = {0.5f, 2.0f, 5.0f, 10.0f};  // wide spread triggers per-channel benefit
   std::vector<float> bias_data = {0.0f, 0.5f, 1.0f, -1.0f};
