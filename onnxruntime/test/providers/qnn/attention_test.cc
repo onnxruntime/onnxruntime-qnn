@@ -568,49 +568,13 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode3) {
 #if defined(_M_ARM64)
 
 // ---------------------------------------------------------------------------
-// Native GQA path
+// Native GQA path — requires KV cache with APP_WRITE (dynamic) past_key/past_value.
+// GPU QNN GQA kernel needs live cache buffers; STATIC initializers are rejected.
 // ---------------------------------------------------------------------------
 
-// GQA 3D, head_ratio=2, causal — all native-GQA conditions met.
-// Q [1,8,32] (4 heads × 8), K/V [1,8,16] (2 heads × 8).
-TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Native) {
-  ProviderOptions opts;
-  opts["backend_type"] = "gpu";
-  opts["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(
-      BuildAttentionTestCase(
-          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
-           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),
-           TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
-           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
-      opts, /*opset_version=*/24,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
-}
-
-// MQA 3D (kv_num_heads=1 — extreme GQA), causal.
-// Q [1,8,32] (4 heads × 8), K/V [1,8,8] (1 head × 8).
-TEST_F(QnnGPUBackendTests, Attention_GPU_MQA_3D_Native) {
-  ProviderOptions opts;
-  opts["backend_type"] = "gpu";
-  opts["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(
-      BuildAttentionTestCase(
-          {TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),
-           TestInputDef<float>({1, 8, 8}, false, -1.0f, 1.0f),
-           TestInputDef<float>({1, 8, 8}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(1)),
-           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
-      opts, /*opset_version=*/24,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
-}
-
-// GQA 3D with KV cache — past_key/value as static initializers.
-// Q [1,8,32], K/V [1,8,16], past_key/value [1,2,4,8] (S_past=4).
+// GQA 3D with KV cache, causal — native QNN_OP_GROUP_QUERY_ATTENTION.
+// past_key/past_value are dynamic (is_initializer=false) → APP_WRITE as required by GPU.
+// Q [1,8,32] (4 heads × 8), K/V [1,8,16] (2 heads × 8), S_past=4.
 TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Native_KVCache) {
   ProviderOptions opts;
   opts["backend_type"] = "gpu";
@@ -618,11 +582,11 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Native_KVCache) {
 
   RunQnnModelTest(
       BuildAttentionTestCaseKV(
-          TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),   // Q
-          TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),   // K
-          TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),   // V
-          TestInputDef<float>({1, 2, 4, 8}, true, -1.0f, 1.0f),  // past_key  (initializer)
-          TestInputDef<float>({1, 2, 4, 8}, true, -1.0f, 1.0f),  // past_value (initializer)
+          TestInputDef<float>({1, 8, 32}, false, -1.0f, 1.0f),    // Q
+          TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),    // K
+          TestInputDef<float>({1, 8, 16}, false, -1.0f, 1.0f),    // V
+          TestInputDef<float>({1, 2, 4, 8}, false, -1.0f, 1.0f),  // past_key  (dynamic APP_WRITE)
+          TestInputDef<float>({1, 2, 4, 8}, false, -1.0f, 1.0f),  // past_value (dynamic APP_WRITE)
           {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
            test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
@@ -632,29 +596,12 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Native_KVCache) {
 
 // ---------------------------------------------------------------------------
 // Decomposition path on GPU
-// Each test disqualifies exactly one native-GQA condition.
+// Tests without KV cache fall here because ShouldUseNativeGQA requires
+// has_past_key=true.  Each other test disqualifies one remaining condition.
 // ---------------------------------------------------------------------------
 
-// MHA 3D (n_q == n_kv) — not GQA → decomposition.
-TEST_F(QnnGPUBackendTests, Attention_GPU_MHA_3D_Decompose) {
-  ProviderOptions opts;
-  opts["backend_type"] = "gpu";
-  opts["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(
-      BuildAttentionTestCase(
-          {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
-           TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
-           TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
-          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
-           test::MakeAttribute("is_causal", static_cast<int64_t>(1))}),
-      opts, /*opset_version=*/24,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
-}
-
-// GQA 3D non-causal (is_causal=0) — QNN GQA is always causal → decomposition.
-TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_NonCausal) {
+// GQA 3D causal, no KV cache — no past_key → decomposition.
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_NoKVCache) {
   ProviderOptions opts;
   opts["backend_type"] = "gpu";
   opts["offload_graph_io_quantization"] = "0";
@@ -690,7 +637,7 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_Softcap) {
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
-// GQA 4D BNSH inputs — QNN GQA uses BSH; 4D falls to decomposition.
+// GQA 4D BNSH inputs, no KV cache — no past_key → decomposition.
 // Q [1,4,8,8] (n_q=4), K/V [1,2,8,8] (n_kv=2).
 TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_4D_Decompose) {
   ProviderOptions opts;
@@ -722,6 +669,24 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_AttnMask) {
           TestInputDef<float>({8, 8}, false, -0.5f, 0.0f),  // additive float mask
           {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("kv_num_heads", static_cast<int64_t>(2)),
+           test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
+      opts, /*opset_version=*/24,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// MHA 3D non-causal (is_causal=0) — causal required for native → decomposition.
+TEST_F(QnnGPUBackendTests, Attention_GPU_MHA_3D_Decompose_NonCausal) {
+  ProviderOptions opts;
+  opts["backend_type"] = "gpu";
+  opts["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(
+      BuildAttentionTestCase(
+          {TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f),
+           TestInputDef<float>({1, 8, 64}, false, -1.0f, 1.0f)},
+          {test::MakeAttribute("q_num_heads", static_cast<int64_t>(4)),
+           test::MakeAttribute("kv_num_heads", static_cast<int64_t>(4)),
            test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
