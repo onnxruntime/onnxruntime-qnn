@@ -132,6 +132,8 @@ static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
 // ORT_OP_ATTR_INT. Add more value fields if other attribute types are needed.
 // ---------------------------------------------------------------------------
 struct FakeOpAttr {
+  // For debugging only. Node_GetAttributeByName looks up attrs by the map key in
+  // FakeNode::attrs, not by this field — stubs never read FakeOpAttr::name.
   std::string name;
   OrtOpAttrType type = OrtOpAttrType::ORT_OP_ATTR_STRING;
   std::string string_value;

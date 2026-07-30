@@ -76,7 +76,7 @@ Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const Ort
 
         if (op_type != nullptr && std::string(op_type) == EPCONTEXT_OP) {
           OrtNodeAttrHelper node_helper(*node);
-          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get("ep_dlc_context", ""));
+          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get(EP_DLC_CONTEXT, ""));
           if (dlc_path != "") {
             return Ort::Status();
           }

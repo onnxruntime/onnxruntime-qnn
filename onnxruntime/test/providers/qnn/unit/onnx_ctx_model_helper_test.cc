@@ -15,9 +15,15 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "HTP/QnnHtpDevice.h"
+
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "test/providers/qnn/unit/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/unit/qnn_unit_test_utils.h"
@@ -26,27 +32,33 @@ namespace onnxruntime {
 namespace test {
 
 // Specific using-declarations (not `using namespace`) so each helper/constant
-// pulled from onnxruntime::qnn is named explicitly. Fake* graph types and the
-// stub helpers already live in onnxruntime::test, this file's own namespace.
-using onnxruntime::qnn::EMBED_MODE;
-using onnxruntime::qnn::EP_CACHE_CONTEXT;
-using onnxruntime::qnn::EP_CONTEXT_TYPE;
-using onnxruntime::qnn::EP_CONTEXT_TYPE_BIN;
-using onnxruntime::qnn::EP_CONTEXT_TYPE_DLC;
-using onnxruntime::qnn::GetEpContextDlcPath;
-using onnxruntime::qnn::GetEpContextFromMainNode;
-using onnxruntime::qnn::GetMainContextNode;
-using onnxruntime::qnn::GraphHasDlcContextNode;
-using onnxruntime::qnn::GraphHasEpContextNode;
-using onnxruntime::qnn::IO_NAME_OVERRIDES;
-using onnxruntime::qnn::IsOrtGraphHasCtxNode;
-using onnxruntime::qnn::IsOrtGraphHasDlcCtxNode;
-using onnxruntime::qnn::MAIN_CONTEXT;
-using onnxruntime::qnn::MAX_SIZE;
-using onnxruntime::qnn::ParseIoNameOverrides;
-using onnxruntime::qnn::QnnModelLookupTable;
-using onnxruntime::qnn::SOURCE;
-using onnxruntime::qnn::TryGetMaxSpillFillSize;
+// pulled from onnxruntime::qnn is named explicitly. The `qnn` alias only
+// shortens these declarations; call sites still use the bare names. Fake* graph
+// types and the stub helpers already live in onnxruntime::test, this file's own
+// namespace.
+namespace qnn = onnxruntime::qnn;
+using qnn::CreateEPContextNodes;
+using qnn::EMBED_MODE;
+using qnn::EP_CACHE_CONTEXT;
+using qnn::EP_CONTEXT_TYPE;
+using qnn::EP_CONTEXT_TYPE_BIN;
+using qnn::EP_CONTEXT_TYPE_DLC;
+using qnn::EP_DLC_CONTEXT;
+using qnn::GetEpContextDlcPath;
+using qnn::GetEpContextFromMainNode;
+using qnn::GetMainContextNode;
+using qnn::GraphHasDlcContextNode;
+using qnn::GraphHasEpContextNode;
+using qnn::IO_NAME_OVERRIDES;
+using qnn::IS_MULTI_SOC_EP_CONTEXT;
+using qnn::IsOrtGraphHasCtxNode;
+using qnn::IsOrtGraphHasDlcCtxNode;
+using qnn::MAIN_CONTEXT;
+using qnn::MAX_SIZE;
+using qnn::ParseIoNameOverrides;
+using qnn::QnnModelLookupTable;
+using qnn::SOURCE;
+using qnn::TryGetMaxSpillFillSize;
 
 namespace {
 
@@ -308,11 +320,11 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_Returns
   FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
   // Mixed-case input pins the source's GetLowercaseString call; an
   // already-lowercase input could not distinguish it.
-  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString("ep_dlc_context", "Path/To/Model.DLC");
+  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString(EP_DLC_CONTEXT, "Path/To/Model.DLC");
   FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
   node.attrs[SOURCE] = &source;
   node.attrs[EP_CONTEXT_TYPE] = &ctx_type;
-  node.attrs["ep_dlc_context"] = &dlc_ctx;
+  node.attrs[EP_DLC_CONTEXT] = &dlc_ctx;
   FakeGraph g{{node}, {}, {}, {}};
   const OrtGraph* graphs[] = {g.AsGraph()};
   std::string dlc_path;
@@ -331,11 +343,11 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_SecondGraphHasDlcNode_R
 
   FakeOpAttr source_dlc = FakeOpAttr::MakeString(SOURCE, "qnn");
   FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
-  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString("ep_dlc_context", "model.dlc");
+  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString(EP_DLC_CONTEXT, "model.dlc");
   FakeNode dlc_node{"ep_dlc", "EPContext", "", 1, {}, {}};
   dlc_node.attrs[SOURCE] = &source_dlc;
   dlc_node.attrs[EP_CONTEXT_TYPE] = &ctx_type;
-  dlc_node.attrs["ep_dlc_context"] = &dlc_ctx;
+  dlc_node.attrs[EP_DLC_CONTEXT] = &dlc_ctx;
   FakeGraph g1{{dlc_node}, {}, {}, {}};
 
   const OrtGraph* graphs[] = {g0.AsGraph(), g1.AsGraph()};
@@ -715,6 +727,136 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
   EXPECT_FALSE(status.IsOK());
+}
+
+// =============================================================================
+// CreateEPContextNodes — IS_MULTI_SOC_EP_CONTEXT attribute
+//
+// CreateEPContextNodes serializes the enable_multi_soc_ep_context flag into the
+// EPContext node as the IS_MULTI_SOC_EP_CONTEXT integer attribute (1 or 0). This
+// is the only multi-SoC behaviour observable in this file: GetEpContextFromMainNode
+// merely reads the same attribute back and forwards it unchanged to the backend
+// manager. The actual behavioural divergence (DLC vs single-SoC context binary)
+// lives in QnnBackendManager and belongs in qnn_backend_manager_test.cc.
+//
+// These tests capture the value the CreateOpAttr stub receives for that
+// attribute, so a regression that stopped writing it (or wrote the wrong value)
+// would fail here rather than silently reaching the backend.
+// =============================================================================
+
+namespace {
+
+// Captures the IS_MULTI_SOC_EP_CONTEXT value seen by the CreateOpAttr stub.
+// File-scope because the stub is a captureless lambda (OrtApi function pointer)
+// and cannot close over the fixture. Reset at the start of each test run.
+struct MultiSocAttrCapture {
+  bool seen = false;
+  int64_t value = -1;
+};
+MultiSocAttrCapture g_multi_soc_capture;
+
+// Minimal QnnBackendManager + QnnModel (no real backend, empty graph I/O names)
+// plus the three stubs the write path touches: Node_GetName, CreateOpAttr, and
+// CreateNode. The tests drive CreateEPContextNodes in embed mode so no context
+// .bin file is written to disk.
+struct CreateEpCtxNodeTestContext {
+  Ort::Logger logger = MakeNullLogger();
+  OrtApi ort_api{};
+  OrtEpApi ep_api{};
+  OrtModelEditorApi editor_api{};
+  std::shared_ptr<qnn::QnnBackendManager> manager;
+  std::unique_ptr<qnn::QnnModel> model;
+
+  CreateEpCtxNodeTestContext() {
+    ort_api.Node_GetName = [](const OrtNode*, const char** name) noexcept -> OrtStatus* {
+      *name = "graph_0";
+      return nullptr;
+    };
+    ort_api.CreateOpAttr = [](const char* name, const void* data, int, OrtOpAttrType type,
+                              OrtOpAttr** op_attr) noexcept -> OrtStatus* {
+      if (type == ORT_OP_ATTR_INT && std::string(name) == IS_MULTI_SOC_EP_CONTEXT) {
+        g_multi_soc_capture.seen = true;
+        g_multi_soc_capture.value = *static_cast<const int64_t*>(data);
+      }
+      // CreateNode (stubbed below) ignores the attributes, so any non-null
+      // sentinel keeps ORT_CXX_RETURN_ON_API_FAIL happy.
+      static int sentinel;
+      *op_attr = reinterpret_cast<OrtOpAttr*>(&sentinel);
+      return nullptr;
+    };
+    editor_api.CreateNode = [](const char*, const char*, const char*,
+                               const char* const*, size_t, const char* const*, size_t,
+                               OrtOpAttr**, size_t, OrtNode** node) noexcept -> OrtStatus* {
+      static int sentinel;
+      *node = reinterpret_cast<OrtNode*>(&sentinel);
+      return nullptr;
+    };
+
+    qnn::QnnBackendManagerConfig cfg;
+    cfg.backend_path = "libQnnHtp.so";
+    cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
+    cfg.profiling_level = qnn::ProfilingLevel::OFF;
+    cfg.context_priority = qnn::ContextPriority::NORMAL;
+    cfg.device_id = 0;
+    cfg.htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
+    cfg.soc_model = 0;
+    cfg.skip_qnn_version_check = true;
+
+    ApiPtrs api_ptrs{ort_api, ep_api, editor_api};
+    manager = qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
+    if (!manager) return;
+    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+  }
+
+  bool IsValid() const { return model != nullptr; }
+};
+
+// Runs CreateEPContextNodes for a single embed-mode EPContext node with the
+// given multi-SoC flag and returns the value the CreateOpAttr stub captured for
+// IS_MULTI_SOC_EP_CONTEXT. Returns -1 (and fails the calling test) on any error.
+int64_t RunCreateEpCtxAndCaptureMultiSoc(bool enable_multi_soc_ep_context) {
+  g_multi_soc_capture = {};
+
+  CreateEpCtxNodeTestContext ctx;
+  EXPECT_TRUE(ctx.IsValid()) << "QnnBackendManager::Create failed";
+  if (!ctx.IsValid()) return -1;
+
+  QnnModelLookupTable qnn_models;
+  qnn_models.emplace("graph_0", std::move(ctx.model));
+
+  const OrtNode* fused_node = reinterpret_cast<const OrtNode*>(0x1);
+  OrtNode* ep_context_node = nullptr;
+  unsigned char buffer[] = {0x1, 0x2, 0x3, 0x4};
+  std::basic_string<ORTCHAR_T> context_model_path;  // unused in embed mode
+  std::unordered_map<std::string, std::string> no_overrides;
+
+  auto status = CreateEPContextNodes(&fused_node, 1, &ep_context_node,
+                                     ctx.ort_api, ctx.editor_api,
+                                     buffer, sizeof(buffer),
+                                     /*sdk_build_version=*/"1.0",
+                                     qnn_models,
+                                     context_model_path,
+                                     /*qnn_context_embed_mode=*/true,
+                                     /*max_spill_fill_buffer_size=*/0,
+                                     ctx.logger,
+                                     /*share_ep_contexts=*/false,
+                                     /*stop_share_ep_contexts=*/false,
+                                     /*ep_name=*/"QNNExecutionProvider",
+                                     no_overrides,
+                                     enable_multi_soc_ep_context);
+  EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_TRUE(g_multi_soc_capture.seen) << "IS_MULTI_SOC_EP_CONTEXT attribute was never written";
+  return g_multi_soc_capture.value;
+}
+
+}  // namespace
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, CreateEPContextNodes_MultiSocEnabled_WritesAttrOne) {
+  EXPECT_EQ(RunCreateEpCtxAndCaptureMultiSoc(/*enable_multi_soc_ep_context=*/true), 1);
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, CreateEPContextNodes_MultiSocDisabled_WritesAttrZero) {
+  EXPECT_EQ(RunCreateEpCtxAndCaptureMultiSoc(/*enable_multi_soc_ep_context=*/false), 0);
 }
 
 }  // namespace test
