@@ -185,7 +185,8 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
 static bool ShouldUseNativeGQA(QnnBackendType backend,
                                uint32_t n_q, uint32_t n_kv,
                                int64_t is_causal, float softcap,
-                               bool has_attn_mask, bool has_qk_output);
+                               bool has_attn_mask, bool has_qk_output,
+                               bool has_past_key);
 
 // ---------------------------------------------------------------------------
 // ProcessInputs — register Q, K, V, attn_mask, past_key, past_value,
