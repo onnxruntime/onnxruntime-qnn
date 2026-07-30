@@ -138,6 +138,7 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
                           const std::vector<uint32_t>* target_shape = nullptr) {
   // use_fully_connected and target_shape (conv2d path) are mutually exclusive
   assert(!(use_fully_connected && target_shape != nullptr));
+  ORT_UNUSED_PARAMETER(use_fully_connected);
   const bool is_rank1 = input_0_info.shape.size() == 1;
   const bool shape_mismatch = (target_shape != nullptr && input_0_info.shape != *target_shape);
   const bool reshape_input_0 = is_rank1 || shape_mismatch;
