@@ -22,10 +22,8 @@ namespace qnn {
 // 3D inputs [B, S, n*hs] (BSH layout, reshape + transpose to BNSH)
 // GQA/MQA, KV cache (past/present), softcap, qk_matmul_output
 //
-// The SDK version guard matches GroupQueryAttentionOpBuilder so that this class
-// is compiled away when building against an SDK without the required op-set
-// version metadata.
-#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
+// The decomposition path is always available; the GPU native path (which emits
+// QNN_OP_GROUP_QUERY_ATTENTION) is gated to SDK >= 2.12 (QNN opset 2.12).
 
 class AttentionOpBuilder : public BaseOpBuilder {
  public:
@@ -50,8 +48,6 @@ class AttentionOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  // GPU native GQA: ProcessInputsNativeGQA is a static member so it can call
-  // the protected ProcessInput() inherited from BaseOpBuilder.
   static Ort::Status ProcessInputsNativeGQA(const AttentionOpBuilder& self,
                                             QnnModelWrapper& qnn_model_wrapper,
                                             const OrtNodeUnit& node_unit,
@@ -116,25 +112,11 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   RETURN_IF(q_rank != 3 && q_rank != 4,
             "Attention: Q input must be rank 3 ([B,S_q,n_q*hs]) or rank 4 ([B,n_q,S_q,hs])");
 
-  // ---- Reject dynamic (0-dim) shapes on Q, K, V ----
-  for (uint32_t d : q_info.shape) {
-    RETURN_IF(d == 0,
-              "Attention: Q input contains a dynamic (0) dimension; only static shapes are supported");
-  }
-
   TensorInfo k_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], k_info));
-  for (uint32_t d : k_info.shape) {
-    RETURN_IF(d == 0,
-              "Attention: K input contains a dynamic (0) dimension; only static shapes are supported");
-  }
 
   TensorInfo v_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], v_info));
-  for (uint32_t d : v_info.shape) {
-    RETURN_IF(d == 0,
-              "Attention: V input contains a dynamic (0) dimension; only static shapes are supported");
-  }
 
   // ---- For 3D inputs, q_num_heads and kv_num_heads attrs are required ----
   if (q_rank == 3) {
@@ -167,10 +149,6 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[4], past_k_info));
     RETURN_IF(past_k_info.shape.size() != 4,
               "Attention: past_key must be rank 4 ([B,n,S_past,hs])");
-    for (uint32_t d : past_k_info.shape) {
-      RETURN_IF(d == 0,
-                "Attention: past_key contains a dynamic (0) dimension; only static shapes are supported");
-    }
   }
 
   // ---- Full validation: build decomposed nodes with do_op_validation=true ----
@@ -253,9 +231,11 @@ Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
+#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 // ---------------------------------------------------------------------------
-// GPU native GQA path
+// GPU native GQA path (SDK >= 2.12 only)
 //
+// QNN_OP_GROUP_QUERY_ATTENTION is only available in QNN opset 2.12+.
 // When backend=GPU, kv_num_heads divides num_heads, is_causal=1, and no
 // features QNN GQA cannot express (softcap/attn_mask/qk_output), a single
 // QNN_OP_GROUP_QUERY_ATTENTION node is emitted.  This covers both MHA
@@ -270,17 +250,13 @@ static bool ShouldUseNativeGQA(QnnBackendType backend,
                                float softcap,
                                bool has_attn_mask,
                                bool has_qk_output,
-                               bool has_past_key) {
-  // GPU native GQA requires KV cache (past_key/past_value must be present as
-  // APP_WRITE tensors). Without a live cache buffer the GPU kernel has no valid
-  // memory to read or write, causing a runtime access violation.
+                               bool /*has_past_key*/) {
   return IsGpuBackend(backend) &&
          n_q % n_kv == 0 &&  // covers MHA (n_q == n_kv) and GQA/MQA (n_q > n_kv)
          is_causal == 1 &&   // QNN GQA is always causal — no is_causal param
          softcap == 0.0f &&  // no softcap param in QNN GQA
          !has_attn_mask &&   // no additive mask input in QNN GQA
-         !has_qk_output &&   // no per-stage debug output in QNN GQA
-         has_past_key;       // KV cache required: past_key must be APP_WRITE (dynamic)
+         !has_qk_output;     // no per-stage debug output in QNN GQA
 }
 
 // Synthesize seqlens_k and total_sequence_length that QNN GQA requires but
@@ -312,8 +288,11 @@ static Ort::Status AddNativeGQASyntheticInputs(QnnModelWrapper& qnn_model_wrappe
   {
     std::vector<uint8_t> bytes(sizeof(int32_t));
     *reinterpret_cast<int32_t*>(bytes.data()) = total_val;
-    // 0D shape (empty dims vector) — QNN requires a scalar, same override used
-    // by GroupQueryAttentionOpBuilder for com.microsoft::GroupQueryAttention.
+    // 0D shape (empty dims vector) — QNN requires a scalar.
+    // TODO: GetOnnxShape in qnn_model_wrapper.cc forces scalars to rank 1;
+    // if total_seq_len ever came from the ONNX graph that shape override pattern
+    // would be needed here too.  Since we synthesize this tensor ourselves we
+    // avoid that issue, but the root cause should be fixed in GetOnnxShape.
     QnnTensorWrapper t(total_seq_len_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_INT_32,
                        QnnQuantParamsWrapper{}, {}, std::move(bytes));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(t)),
@@ -350,11 +329,7 @@ Ort::Status AttentionOpBuilder::ProcessInputsNativeGQA(const AttentionOpBuilder&
   auto AddNull = [&](const char* suffix) -> Ort::Status {
     const std::string name = utils::UniqueNameGenerator().New(node_unit, suffix);
     input_names.push_back(name);
-    // Use QNN_DATATYPE_UNDEFINED — matches GroupQueryAttentionOpBuilder's null tensor
-    // pattern. QNN_DATATYPE_FLOAT_32 (from MakeNull) causes validator error 3110.
-    QnnTensorWrapper null_wrapper(name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
-                                  QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_wrapper)),
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(QnnTensorWrapper::MakeNull(name)),
                   ("Failed to add null tensor: " + name).c_str());
     return Ort::Status();
   };
@@ -372,11 +347,15 @@ Ort::Status AttentionOpBuilder::ProcessInputsNativeGQA(const AttentionOpBuilder&
   RETURN_IF_ERROR(self.ProcessInput(qnn_model_wrapper, onnx_inputs[1], logger, input_names));
   RETURN_IF_ERROR(self.ProcessInput(qnn_model_wrapper, onnx_inputs[2], logger, input_names));
 
-  // [5] past_key  [6] past_value  — always present (has_past_key is required by
-  //   ShouldUseNativeGQA). Must be APP_WRITE (dynamic) tensors — the GPU kernel
-  //   requires live cache buffers, not STATIC initializers.
-  RETURN_IF_ERROR(self.ProcessInput(qnn_model_wrapper, onnx_inputs[4], logger, input_names));
-  RETURN_IF_ERROR(self.ProcessInput(qnn_model_wrapper, onnx_inputs[5], logger, input_names));
+  // [5] past_key  [6] past_value  — 4D BNSH, passed straight through when present.
+  // Null-padded when no KV cache (has_past_key=false).
+  if (has_past_key) {
+    RETURN_IF_ERROR(self.ProcessInput(qnn_model_wrapper, onnx_inputs[4], logger, input_names));
+    RETURN_IF_ERROR(self.ProcessInput(qnn_model_wrapper, onnx_inputs[5], logger, input_names));
+  } else {
+    RETURN_IF_ERROR(AddNull("_null_past_key"));
+    RETURN_IF_ERROR(AddNull("_null_past_value"));
+  }
 
   // [7] cos_cache  [8] sin_cache  [9] position_ids — no rotary in ai.onnx::Attention
   RETURN_IF_ERROR(AddNull("_null_cos"));
@@ -391,9 +370,6 @@ Ort::Status AttentionOpBuilder::ProcessInputsNativeGQA(const AttentionOpBuilder&
 // produce the 3D BSH layout QNN GQA expects, and Reshape+Transpose after
 // the Y output to restore the 4D BNSH shape expected by the ONNX graph.
 // past_key/past_value are always 4D BNSH and are passed straight through.
-// Output shapes are derived from input shapes — not from GetTensorInfo on
-// outputs — because the test models do not run ONNX shape inference on
-// ai.onnx::Attention and the output value_info has no shape.
 static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
                                      const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
@@ -432,16 +408,27 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   const uint32_t S_total = S_past + S_k;
 
   // ---- Params ----
-  const auto opt_q = node_helper.GetInt64("q_num_heads");
-  RETURN_IF_NOT(opt_q.has_value(), "q_num_heads required for native GQA path");
-  const uint32_t num_heads_u32 = SafeInt<uint32_t>(opt_q.value());
+  // For 4D inputs [B, n_q, S_q, hs] the head counts are implicit in the shape;
+  // for 3D inputs [B, S, n*hs] they must be provided as attributes.
+  uint32_t num_heads_u32 = 0;
+  uint32_t kv_num_heads_u32 = 0;
+  if (is_4d) {
+    TensorInfo k_info_4d{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[1], k_info_4d));
+    num_heads_u32 = q_info.shape[1];
+    kv_num_heads_u32 = k_info_4d.shape[1];
+  } else {
+    const auto opt_q = node_helper.GetInt64("q_num_heads");
+    RETURN_IF_NOT(opt_q.has_value(), "q_num_heads attribute required for 3D native GQA path");
+    const auto opt_kv = node_helper.GetInt64("kv_num_heads");
+    RETURN_IF_NOT(opt_kv.has_value(), "kv_num_heads attribute required for 3D native GQA path");
+    num_heads_u32 = SafeInt<uint32_t>(opt_q.value());
+    kv_num_heads_u32 = SafeInt<uint32_t>(opt_kv.value());
+  }
+
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                num_heads_u32,
                                QNN_OP_GROUP_QUERY_ATTENTION_PARAM_NUM_HEADS, param_names));
-
-  const auto opt_kv = node_helper.GetInt64("kv_num_heads");
-  RETURN_IF_NOT(opt_kv.has_value(), "kv_num_heads required for native GQA path");
-  const uint32_t kv_num_heads_u32 = SafeInt<uint32_t>(opt_kv.value());
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                kv_num_heads_u32,
                                QNN_OP_GROUP_QUERY_ATTENTION_PARAM_KV_NUM_HEADS, param_names));
@@ -489,7 +476,6 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // ---- Outputs ----
-  // All shapes are computed from input shapes (not GetTensorInfo on outputs).
   std::vector<std::string> output_names;
 
   // Y: QNN GQA always produces 3D BSH [B, S_q, n_q*v_hs].
@@ -497,10 +483,12 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   //    For 4D input: use an intermediate; reshape+transpose back to 4D after the node.
   std::string gqa_y_name;
   if (onnx_outputs[0].Exists()) {
-    const std::vector<uint32_t> y_bsh = {B, S_q, num_heads_u32 * v_hs};
+    TensorInfo y_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_outputs[0], y_info));
     if (is_4d) {
       gqa_y_name = utils::UniqueNameGenerator().New(node_unit, "_gqa_y_bsh");
-      QnnTensorWrapper y3d(gqa_y_name, QNN_TENSOR_TYPE_NATIVE, dtype,
+      const std::vector<uint32_t> y_bsh = {B, S_q, num_heads_u32 * v_hs};
+      QnnTensorWrapper y3d(gqa_y_name, QNN_TENSOR_TYPE_NATIVE, y_info.qnn_data_type,
                            QnnQuantParamsWrapper{}, std::vector<uint32_t>(y_bsh));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(y3d)),
                     "Failed to add GQA Y intermediate tensor.");
@@ -509,7 +497,8 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
       const bool is_go = qnn_model_wrapper.IsGraphOutput(gqa_y_name);
       QnnTensorWrapper yw(gqa_y_name,
                           is_go ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
-                          dtype, QnnQuantParamsWrapper{}, std::vector<uint32_t>(y_bsh));
+                          y_info.qnn_data_type, std::move(y_info.quant_param),
+                          std::move(y_info.shape));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(yw)),
                     "Failed to add Y output tensor.");
     }
@@ -520,11 +509,11 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   }
   output_names.push_back(gqa_y_name);
 
-  // present_key [B, n_kv, S_total, hs] and present_value [B, n_kv, S_total, v_hs]
+  // present_key and present_value (output slots 1-2).
   // QNN GPU GQA requires real (non-null) tensors for all 3 output slots.
   // When the ONNX model does not declare present_key/present_value, allocate
   // private NATIVE scratch tensors so QNN can write to them — the caller
-  // never reads these, but the op validator requires them to exist.
+  // never reads these, but the QNN op def for GQA requires them.
   const std::vector<uint32_t> pk_shape = {B, kv_num_heads_u32, S_total, head_size};
   const std::vector<uint32_t> pv_shape = {B, kv_num_heads_u32, S_total, v_hs};
   const std::vector<uint32_t>* cache_shapes[2] = {&pk_shape, &pv_shape};
@@ -533,11 +522,13 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
     if (declared) {
       const std::string& name = onnx_outputs[i].name;
       output_names.push_back(name);
+      TensorInfo out_info{};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_outputs[i], out_info));
       const bool is_go = qnn_model_wrapper.IsGraphOutput(name);
       QnnTensorWrapper cw(name,
                           is_go ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
-                          dtype, QnnQuantParamsWrapper{},
-                          std::vector<uint32_t>(*cache_shapes[i - 1]));
+                          out_info.qnn_data_type, std::move(out_info.quant_param),
+                          std::move(out_info.shape));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cw)),
                     ("Failed to add output: " + name).c_str());
     } else {
@@ -552,12 +543,9 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // ---- Emit QNN_OP_GROUP_QUERY_ATTENTION ----
-  // Validation is intentionally left on (do_op_validation passed through).
-  // If past_key/past_value are STATIC initializers the GPU validator returns
-  // error 3110 and IsOpSupported fails — the node falls to CPU EP rather than
-  // crashing at runtime.  APP_WRITE (dynamic) past_key passes validation and
-  // takes the native path.  seqlens_k/total_seq_len being STATIC is accepted
-  // by the GPU validator per gpu_v2.json (confirmed by PR #566 tests).
+  // Validation is intentionally left on (do_op_validation passed through) so
+  // that any unsupported configuration is caught at IsOpSupported time and the
+  // node falls to CPU EP gracefully, rather than failing at runtime.
   const std::string node_name = utils::UniqueNameGenerator().New(node_unit);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -588,6 +576,28 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
 
   return Ort::Status();
 }
+
+#else  // SDK < 2.12: no QNN_OP_GROUP_QUERY_ATTENTION — always use decomposition
+
+static bool ShouldUseNativeGQA(QnnBackendType, uint32_t, uint32_t,
+                               int64_t, float, bool, bool, bool) {
+  return false;
+}
+
+Ort::Status AttentionOpBuilder::ProcessInputsNativeGQA(const AttentionOpBuilder&,
+                                                       QnnModelWrapper&,
+                                                       const OrtNodeUnit&,
+                                                       const Ort::Logger&,
+                                                       std::vector<std::string>&) {
+  return Ort::Status();
+}
+
+static Ort::Status EmitNativeGQANode(QnnModelWrapper&, const OrtNodeUnit&,
+                                     std::vector<std::string>&&, bool) {
+  return Ort::Status();
+}
+
+#endif  // SDK version guard for QNN_OP_GROUP_QUERY_ATTENTION
 
 // ---------------------------------------------------------------------------
 // Helper: emit an ElementWiseBinary (MUL or ADD or DIV) node.
@@ -1534,15 +1544,6 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 void CreateAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<AttentionOpBuilder>());
 }
-
-#else  // SDK version guard
-
-void CreateAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  ORT_UNUSED_PARAMETER(op_type);
-  ORT_UNUSED_PARAMETER(op_registrations);
-}
-
-#endif  // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 
 }  // namespace qnn
 }  // namespace onnxruntime
