@@ -255,12 +255,12 @@ static bool ShouldUseNativeGQA(QnnBackendType backend,
   // cache outputs (currently present_key/present_value are required by the GPU
   // validator even though the QNN op def marks them as optional).
   return IsGpuBackend(backend) &&
-         n_q % n_kv == 0 &&      // covers MHA (n_q == n_kv) and GQA/MQA (n_q > n_kv)
-         is_causal == 1 &&        // QNN GQA is always causal — no is_causal param
-         softcap == 0.0f &&       // no softcap param in QNN GQA
-         !has_attn_mask &&        // no additive mask input in QNN GQA
-         !has_qk_output &&        // no per-stage debug output in QNN GQA
-         has_present_key;         // GPU validator currently requires KV cache outputs
+         n_q % n_kv == 0 &&  // covers MHA (n_q == n_kv) and GQA/MQA (n_q > n_kv)
+         is_causal == 1 &&   // QNN GQA is always causal — no is_causal param
+         softcap == 0.0f &&  // no softcap param in QNN GQA
+         !has_attn_mask &&   // no additive mask input in QNN GQA
+         !has_qk_output &&   // no per-stage debug output in QNN GQA
+         has_present_key;    // GPU validator currently requires KV cache outputs
 }
 
 // Synthesize seqlens_k and total_sequence_length that QNN GQA requires but
@@ -409,7 +409,6 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[4], pk_info));
     S_past = pk_info.shape[2];  // past_key always [B, n_kv, S_past, hs]
   }
-  const uint32_t S_total = S_past + S_k;
 
   // ---- Params ----
   // For 4D inputs [B, n_q, S_q, hs] the head counts are implicit in the shape;
