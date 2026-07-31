@@ -71,6 +71,16 @@ class OnnxOpAffinity {
     return !selected_op_types_.empty() || mode_ == Mode::kInclude;
   }
 
+  // True if this filter is the EP's built-in default (seeded because the user did not set op_affinity),
+  // rather than a value the user typed. Diagnostics differ for the two: an unmatched default entry is
+  // not a user typo, and a default filter's disable_cpu_ep_fallback interaction gets an actionable
+  // (rather than generic) warning. Set via MarkAsDefault() by the EP right after construction.
+  bool IsDefault() const { return is_default_; }
+
+  // Mark this filter as the EP's built-in default. Only the EP calls this, on the instance it seeds
+  // when the user leaves op_affinity unset. See IsDefault().
+  void MarkAsDefault() { is_default_ = true; }
+
   // True if this filter applies to the session's backend. An unscoped filter applies to any backend;
   // a scoped filter applies only when its scope matches the running backend's name -- except "htp"
   // and "htp_fp16" are aliases for the same physical backend. When false, ShouldFilterOff() returns
@@ -88,7 +98,9 @@ class OnnxOpAffinity {
   // exit path, so repeated calls (GetSupportedNodes runs multiple times per session) each start clean.
   // If the filter is scoped to a backend the session isn't running, no entry can match by design, so
   // the per-entry warnings are suppressed in favor of a single INFO line. Takes the session backend to
-  // tell the two cases apart.
+  // tell the two cases apart. A default filter (IsDefault()) suppresses the per-entry typo warnings
+  // entirely: the user never typed those entries, so an unmatched default op type (e.g. a model with
+  // no GroupQueryAttention) is expected, not a typo.
   void WarnUnmatchedEntries(QnnBackendType backend_type, const Ort::Logger& logger) const;
 
  private:
@@ -104,6 +116,9 @@ class OnnxOpAffinity {
   // on every exit path). Mutable diagnostic bookkeeping only -- does not affect filtering. Scoped to
   // "since the last call" because GetSupportedNodes can run multiple times per session.
   mutable std::unordered_set<std::string> matched_op_types_;
+  // True if this filter is the EP's built-in default rather than a user-supplied value. Affects only
+  // diagnostics (typo warnings, disable_cpu_ep_fallback message), never filtering. See IsDefault().
+  bool is_default_ = false;
 };
 
 }  // namespace qnn

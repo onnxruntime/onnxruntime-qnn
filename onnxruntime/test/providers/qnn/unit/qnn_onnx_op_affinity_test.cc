@@ -406,6 +406,28 @@ TEST(QnnUnit_OnnxOpAffinityTest, FromOptionValue_Inline_ParsesActive) {
   EXPECT_TRUE(filter.IsActive());
 }
 
+// "none" is the explicit clear keyword: it drops the EP's default op_affinity and applies no
+// filtering (the inactive filter), which is how a user opts an otherwise-defaulted-off op such as
+// GroupQueryAttention back onto its backend. It is matched case-insensitively.
+TEST(QnnUnit_OnnxOpAffinityTest, FromOptionValue_None_ReturnsInactive) {
+  Ort::Logger logger = MakeNullLogger();
+  for (const char* spelling : {"none", "None", "NONE", "NoNe", " none "}) {
+    OnnxOpAffinity filter = OnnxOpAffinity::FromOptionValue(spelling, logger);
+    EXPECT_FALSE(filter.IsActive()) << "spelling=" << spelling;
+  }
+}
+
+// "none" is only the clear keyword when it is the whole value. As a mode-less inline op-type list it
+// is still just an op type, and as part of a larger spec (or with a backend scope) it stays a literal
+// op type -- so a model with an op literally named "none" is still filterable.
+TEST_F(QnnUnit_OnnxOpAffinityShouldFilterOffTest, None_AsOpTypeInLargerSpec_StaysLiteral) {
+  OnnxOpAffinity filter("exclude:none,Softmax");  // not the bare keyword -> "none" is an op type
+  EXPECT_TRUE(filter.IsActive());
+  EXPECT_TRUE(filter.ShouldFilterOff(MakeNodeUnit("none"), kHtp));
+  EXPECT_TRUE(filter.ShouldFilterOff(MakeNodeUnit("Softmax"), kHtp));
+  EXPECT_FALSE(filter.ShouldFilterOff(MakeNodeUnit("Conv"), kHtp));
+}
+
 TEST(QnnUnit_OnnxOpAffinityTest, FromOptionValue_MissingConfigFile_DegradesToInactive) {
   Ort::Logger logger = MakeNullLogger();
   const std::filesystem::path missing =
@@ -516,6 +538,49 @@ TEST_F(QnnUnit_OnnxOpAffinityShouldFilterOffTest, WarnUnmatchedEntries_AcrossMul
   // again since it already logged), and must correctly find Conv now matched -> no WARNING for it.
   filter.ShouldFilterOff(MakeNodeUnit("Conv"), kHtp);
   filter.WarnUnmatchedEntries(kHtp, logger);
+  SUCCEED();
+}
+
+// ============================================================
+// OnnxOpAffinity::IsDefault / MarkAsDefault -- the built-in-default flag that only affects diagnostics.
+// ============================================================
+
+TEST(QnnUnit_OnnxOpAffinityTest, IsDefault_FalseUntilMarked) {
+  OnnxOpAffinity filter("htp:exclude:GroupQueryAttention");
+  EXPECT_FALSE(filter.IsDefault());
+  filter.MarkAsDefault();
+  EXPECT_TRUE(filter.IsDefault());
+}
+
+// MarkAsDefault changes only diagnostics, never the filter decision: a default filter still keeps its
+// listed op off QNN exactly as an identical user-set filter would.
+TEST_F(QnnUnit_OnnxOpAffinityShouldFilterOffTest, Default_StillFiltersOff) {
+  OnnxOpAffinity filter("htp:exclude:GroupQueryAttention");
+  filter.MarkAsDefault();
+  EXPECT_TRUE(filter.ShouldFilterOff(MakeNodeUnit("GroupQueryAttention"), QnnBackendType::HTP));
+  EXPECT_FALSE(filter.ShouldFilterOff(MakeNodeUnit("Conv"), QnnBackendType::HTP));
+}
+
+// A default filter suppresses the per-entry typo warnings: its entries were seeded by the EP, not
+// typed by the user, so an unmatched default entry (a model with no GroupQueryAttention) is expected.
+// No log-capture infra here, so this is a no-crash smoke test of the is_default_ early-return branch.
+TEST_F(QnnUnit_OnnxOpAffinityShouldFilterOffTest, WarnUnmatchedEntries_Default_Suppressed) {
+  Ort::Logger logger = MakeNullLogger();
+  OnnxOpAffinity filter("htp:exclude:GroupQueryAttention");
+  filter.MarkAsDefault();
+  // No GroupQueryAttention node ever appears; a non-default filter would warn "did you make a typo?".
+  filter.WarnUnmatchedEntries(kHtp, logger);
+  SUCCEED();
+}
+
+// A default filter is also silent on a backend it isn't scoped to (htp default on a GPU session):
+// it must take the is_default_ branch before the backend-mismatch INFO, so the user -- who set
+// nothing -- sees no op_affinity log at all. No-crash smoke test.
+TEST_F(QnnUnit_OnnxOpAffinityShouldFilterOffTest, WarnUnmatchedEntries_Default_OtherBackend_Silent) {
+  Ort::Logger logger = MakeNullLogger();
+  OnnxOpAffinity filter("htp:exclude:GroupQueryAttention");
+  filter.MarkAsDefault();
+  filter.WarnUnmatchedEntries(QnnBackendType::GPU, logger);
   SUCCEED();
 }
 

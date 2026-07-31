@@ -250,7 +250,7 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 |`"op_affinity"`|Description|
 |---|---|
-|Filter spec (string) — inline `"[backend:][mode:]<op types>"` or `"@<path to json file>"`|Controls which ONNX op types the QNN EP claims. **Two modes:** `exclude` (default) keeps every op on QNN *except* the listed op types, which fall back to another EP (typically the CPU EP); `include` claims *only* the listed op types and forces every other op type to fall back.<br><br>**Inline form:** `"exclude:Softmax,LayerNormalization"` or `"include:Conv,MatMul"`. `mode:` is optional and defaults to `exclude`, so `"Softmax"` ≡ `"exclude:Softmax"`. Op types are comma-separated, matched **case-sensitively**, and must not contain spaces.<br><br>**Backend scope (optional):** prefix with a backend name to scope the filter to one backend, e.g. `"htp:exclude:Softmax"`. Accepts the same QNN backend names as `backend_type`: `cpu`/`gpu`/`htp`/`dsp`/`ir` (`htp` also matches `htp_fp16` sessions). Without this prefix, the filter applies no matter what backend the session is actually running (via `backend_type`/`backend_path`).<br><br>**Config-file form:** `"@C:\path\to\filter.json"` — a path (prefixed with `@`) to a JSON file, for long lists. Schema: `{ "backend": "htp", "mode": "exclude" \| "include", "op_types": ["Softmax", "Conv"] }` (`"backend"` optional; JSONC comments allowed).<br><br>See [OP Affinity - Details](#op-affinity---details) for matching granularity, defaults, and the `disable_cpu_ep_fallback` interaction.|
+|Filter spec (string) — inline `"[backend:][mode:]<op types>"` or `"@<path to json file>"`|Controls which ONNX op types the QNN EP claims. **Two modes:** `exclude` (default) keeps every op on QNN *except* the listed op types, which fall back to another EP (typically the CPU EP); `include` claims *only* the listed op types and forces every other op type to fall back.<br><br>**Default (option unset):** seeds `"htp:exclude:GroupQueryAttention"` — `GroupQueryAttention` is kept off the HTP backend (HTP GQA is not enabled by default); every other op still goes to QNN. Setting `op_affinity` to any value replaces this default entirely. To drop the default and let every op run wherever the backend natively supports it (e.g. to run `GroupQueryAttention` on HTP), set `op_affinity` to `"none"` (case-insensitive).<br><br>**Inline form:** `"exclude:Softmax,LayerNormalization"` or `"include:Conv,MatMul"`. `mode:` is optional and defaults to `exclude`, so `"Softmax"` ≡ `"exclude:Softmax"`. Op types are comma-separated, matched **case-sensitively**, and must not contain spaces.<br><br>**Backend scope (optional):** prefix with a backend name to scope the filter to one backend, e.g. `"htp:exclude:Softmax"`. Accepts the same QNN backend names as `backend_type`: `cpu`/`gpu`/`htp`/`dsp`/`ir` (`htp` also matches `htp_fp16` sessions). Without this prefix, the filter applies no matter what backend the session is actually running (via `backend_type`/`backend_path`).<br><br>**Config-file form:** `"@C:\path\to\filter.json"` — a path (prefixed with `@`) to a JSON file, for long lists. Schema: `{ "backend": "htp", "mode": "exclude" \| "include", "op_types": ["Softmax", "Conv"] }` (`"backend"` optional; JSONC comments allowed).<br><br>See [OP Affinity - Details](#op-affinity---details) for matching granularity, defaults, and the `disable_cpu_ep_fallback` interaction.|
 
 |`"dump_json_qnn_graph"`|Description|
 |---|---|
@@ -1686,7 +1686,15 @@ On a session running a backend other than the one the filter is scoped to, the f
 than applied.
 
 #### Empty list and default
-- Default (option unset) is `exclude` with an empty list — all ops go to QNN.
+- Default (option unset) seeds `htp:exclude:GroupQueryAttention` — `GroupQueryAttention` is kept **off** the HTP backend
+  (it falls back to another EP) while every other op type goes to QNN. HTP GQA is not enabled by default. This default applies
+  only on HTP sessions; other backends are unaffected.
+- **Setting `op_affinity` to any value replaces this default entirely** — the GQA-off-HTP default is dropped. For example,
+  `"exclude:Softmax"` removes only `Softmax` and lets `GroupQueryAttention` run on HTP again. To keep GQA off HTP while adding
+  your own filters, include it explicitly, e.g. `"htp:exclude:GroupQueryAttention,Softmax"`.
+- **`"none"` (case-insensitive) clears all affinity** — it drops the default and applies no filtering, so every op is claimed by
+  QNN wherever the backend natively supports it. This is the intended way to run `GroupQueryAttention` on HTP. It is equivalent
+  to an empty exclude list but reads as a deliberate choice rather than a typo.
 - `include` with an empty list forces **all** ops off QNN (logged at WARNING).
 - An op type in the list that matches no node is ignored with a WARNING (typically a typo).
 

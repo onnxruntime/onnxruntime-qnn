@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/qnn_onnx_op_affinity.h"
 
+#include <cctype>
 #include <exception>
 #include <fstream>
 #include <optional>
@@ -25,6 +26,20 @@ namespace {
 // resolves to the safer exclude mode.
 OnnxOpAffinity::Mode ParseMode(const std::string& mode_str) {
   return (mode_str == "include") ? OnnxOpAffinity::Mode::kInclude : OnnxOpAffinity::Mode::kExclude;
+}
+
+// ASCII case-insensitive equality, used only for the "none" clear keyword so a user can write it in
+// any case. Kept local (not a general utility) because it is the sole case-insensitive comparison here.
+bool EqualsIgnoreCase(std::string_view a, std::string_view b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Recognized backend scope names, derived from QnnBackendTypeToString() (the single source of truth)
@@ -154,6 +169,14 @@ OnnxOpAffinity OnnxOpAffinity::FromOptionValue(const std::string& option_value, 
     return OnnxOpAffinity{};  // No filter configured; keep default (exclude + empty list).
   }
 
+  // "none" (case-insensitive) is the explicit "clear all affinity" keyword: it drops the EP's default
+  // op_affinity and applies no filtering, so every op is claimed by QNN wherever the backend natively
+  // supports it (e.g. this is how a user opts GroupQueryAttention back onto HTP). It maps to the same
+  // inactive filter as an empty exclude list, but reads as a deliberate choice rather than a typo.
+  if (EqualsIgnoreCase(trimmed, "none")) {
+    return OnnxOpAffinity{};
+  }
+
   OnnxOpAffinity filter;
   try {
     if (trimmed[0] == '@') {
@@ -233,6 +256,17 @@ void OnnxOpAffinity::WarnUnmatchedEntries(QnnBackendType backend_type, const Ort
   // GetSupportedNodes runs multiple times per session (see header), so matched_op_types_ must not
   // survive past this call -- otherwise an op matched only in a later pass would be wrongly flagged
   // as unmatched here. Cleared unconditionally on every exit path below.
+
+  // The built-in default filter's entries were seeded by the EP, not typed by the user, so it must be
+  // silent here: an unmatched default entry (a model with no GroupQueryAttention) is expected, and a
+  // default scoped to a backend this session isn't running (htp default on a GPU session) is also not
+  // something the user asked about. Neither the per-entry typo warnings nor the backend-mismatch INFO
+  // apply to a value the user never set. Checked before the backend-mismatch branch so the default is
+  // fully quiet regardless of the session backend.
+  if (is_default_) {
+    matched_op_types_.clear();
+    return;
+  }
 
   // A filter scoped to a backend this session isn't running can never match by design, so the
   // per-entry "did you make a typo?" warnings would be misleading. Suppress them and log one INFO.

@@ -43,8 +43,8 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
-  RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
-                "GroupQueryAttention is only supported with the GPU backend");
+  RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()) || IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+                "GroupQueryAttention is only supported with the GPU and HTP backends");
 
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();

@@ -890,19 +890,33 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   // Op affinity: keep certain ONNX op types/op names on/off QNN, optionally scoped to a backend.
+  //
+  // Built-in default applied only when the user does not set op_affinity. This is the single place to
+  // change the EP's default op placement. Format is the inline op_affinity spec
+  // "[backend:][mode:]<comma-separated op types>" -- append op types to extend it (all sharing the one
+  // backend scope and mode). GroupQueryAttention is not enabled on HTP by default, so it is excluded on
+  // htp here. A user-set op_affinity value replaces this default entirely (documented behavior); set
+  // op_affinity to "none" to run every op wherever the backend natively supports it.
+  //
+  // The default is marked via MarkAsDefault() so diagnostics can tell it apart from a user-typed value:
+  // its unmatched entries are not flagged as typos, and its disable_cpu_ep_fallback interaction gets an
+  // actionable message. NOTE: one OnnxOpAffinity carries a single backend scope, so this expresses a
+  // default for one backend only. If a second backend ever needs its own default, this becomes a list
+  // of default OnnxOpAffinity instances that ShouldFilterOff/WarnUnmatchedEntries loop over (see the
+  // op_affinity design doc, "GQA-on-HTP default" sequencing) -- not done now (only HTP GQA needs one).
+  static constexpr const char* kDefaultOpAffinity = "htp:exclude:GroupQueryAttention";
+
   std::string op_affinity_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
                                  FormatEPConfigKey("op_affinity"), "", op_affinity_str);
-  op_affinity_ = qnn::OnnxOpAffinity::FromOptionValue(op_affinity_str, logger_);
-  // Heads-up only (not a hard error): if op_affinity keeps a node off QNN and CPU EP fallback is also
-  // disabled, session creation will fail. Can't tell "will definitely conflict" from "possibly inert"
-  // here -- qnn_backend_manager_ (needed to know the running backend) doesn't exist yet.
-  if (op_affinity_.IsActive() && disable_cpu_ep_fallback_) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                "op_affinity is configured and fallback to the CPU EP is disabled (disable_cpu_ep_fallback). "
-                "If op_affinity keeps a node off QNN and no other EP can run it, session creation will fail.");
+  const bool op_affinity_is_default = op_affinity_str.empty();
+  op_affinity_ = qnn::OnnxOpAffinity::FromOptionValue(
+      op_affinity_is_default ? kDefaultOpAffinity : op_affinity_str, logger_);
+  if (op_affinity_is_default) {
+    op_affinity_.MarkAsDefault();
   }
+  // The disable_cpu_ep_fallback heads-up is emitted later (after the backend manager exists), so it can
+  // be gated on whether op_affinity actually applies to the running backend -- see below.
 
   // HTP FP16 precision mode
   htp_graph_configs_.enable_htp_fp16_precision = ParseBoolOption(ort_api,
@@ -1309,6 +1323,29 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+
+  // Heads-up only (not a hard error): if op_affinity keeps a node off QNN on this backend and CPU EP
+  // fallback is also disabled, session creation will fail once such a node is hit. Deferred to here (vs
+  // the op_affinity parse above) because the backend manager now exists, so AppliesToBackend() can gate
+  // the warning to sessions the filter actually affects -- an htp-scoped filter (including the built-in
+  // default) stays silent on a GPU/CPU session. The built-in default gets an actionable message (how to
+  // opt out); a user-set value restates what they configured.
+  if (disable_cpu_ep_fallback_ && op_affinity_.IsActive() &&
+      op_affinity_.AppliesToBackend(qnn_backend_manager_->GetQnnBackendType())) {
+    if (op_affinity_.IsDefault()) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "GroupQueryAttention is kept off the HTP backend by default and fallback to the CPU EP "
+                  "is disabled (disable_cpu_ep_fallback). A model containing GroupQueryAttention will fail "
+                  "to load. Set the op_affinity provider option to \"none\" to run GroupQueryAttention on "
+                  "HTP instead.");
+    } else {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "op_affinity is configured and fallback to the CPU EP is disabled (disable_cpu_ep_fallback). "
+                  "If op_affinity keeps a node off QNN and no other EP can run it, session creation will fail.");
+    }
+  }
 
   // Choose EP allocator. Must be done after creating the backend manager.
   static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
