@@ -37,6 +37,21 @@ class QnnQuantParamsWrapper;
 
 namespace utils {
 /**
+ * Trims surrounding ASCII whitespace (space, tab, CR, LF) and returns a copy.
+ * Returns an empty string if the input is empty or all-whitespace.
+ * @param s The string to trim.
+ * @return The trimmed copy.
+ */
+inline std::string TrimWhitespace(std::string_view s) {
+  const auto begin = s.find_first_not_of(" \t\r\n");
+  if (begin == std::string_view::npos) {
+    return std::string();
+  }
+  const auto end = s.find_last_not_of(" \t\r\n");
+  return std::string(s.substr(begin, end - begin + 1));
+}
+
+/**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
  * /return The lowercased string.

@@ -1401,6 +1401,29 @@ TEST(QnnUnit_UtilsTest, ConvertBlockQuantScalesToLpbq_UnsupportedBitwdithReturns
   EXPECT_FALSE(st.IsOK());
 }
 
+// =============================================================================
+// qnn::utils::TrimWhitespace(std::string_view)
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, TrimWhitespace_NoWhitespace_Unchanged) {
+  EXPECT_EQ(qnn::utils::TrimWhitespace("Softmax"), "Softmax");
+}
+
+TEST(QnnUnit_UtilsTest, TrimWhitespace_LeadingAndTrailing_Stripped) {
+  EXPECT_EQ(qnn::utils::TrimWhitespace("  Softmax  "), "Softmax");
+  EXPECT_EQ(qnn::utils::TrimWhitespace("\t\r\nSoftmax\n\r\t"), "Softmax");
+}
+
+TEST(QnnUnit_UtilsTest, TrimWhitespace_InnerWhitespace_Preserved) {
+  // Only the ends are trimmed; interior spacing is left intact.
+  EXPECT_EQ(qnn::utils::TrimWhitespace("  a b  "), "a b");
+}
+
+TEST(QnnUnit_UtilsTest, TrimWhitespace_EmptyOrAllWhitespace_ReturnsEmpty) {
+  EXPECT_EQ(qnn::utils::TrimWhitespace(""), "");
+  EXPECT_EQ(qnn::utils::TrimWhitespace("   \t\r\n  "), "");
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

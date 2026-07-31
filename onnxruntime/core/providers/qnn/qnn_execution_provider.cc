@@ -889,6 +889,19 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                               logger_);
   }
 
+  // Op affinity: keep certain ONNX op types/op names on/off QNN, optionally scoped to a backend.
+  std::string op_affinity_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey("op_affinity"), "", op_affinity_str);
+  op_affinity_ = qnn::OnnxOpAffinity::FromOptionValue(op_affinity_str, logger_);
+
+  if (op_affinity_.IsActive() && disable_cpu_ep_fallback_) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "op_affinity is configured and fallback to the CPU EP is disabled (disable_cpu_ep_fallback). "
+                "If op_affinity keeps a node off QNN and no other EP can run it, session creation will fail.");
+  }
+
   // HTP FP16 precision mode
   htp_graph_configs_.enable_htp_fp16_precision = ParseBoolOption(ort_api,
                                                                  session_options_,
@@ -1528,7 +1541,20 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   }
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
-    Ort::Status support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
+    // Apply the user's op affinity. Inactive affinity always returns false, so this is a no-op when
+    // the option is unset.
+    Ort::Status support_status;
+
+    if (op_affinity_.ShouldFilterOff(*qnn_node_group->GetTargetNodeUnit(),
+                                     qnn_backend_manager_->GetQnnBackendType())) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("op_affinity: keeping op type '" + qnn_node_group->GetTargetNodeUnit()->OpType() +
+                   "' off QNN; it will fall back to another EP.")
+                      .c_str());
+      support_status = MAKE_EP_FAIL("Filtered off QNN by op_affinity provider option");
+    } else {
+      support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
+    }
     const bool supported = support_status.IsOK();
 
     LogNodeSupport(logger_, *qnn_node_group, support_status);
@@ -1558,6 +1584,8 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
       }
     }
   }
+
+  op_affinity_.WarnUnmatchedEntries(qnn_backend_manager_->GetQnnBackendType(), logger_);
   return nullptr;
 }
 

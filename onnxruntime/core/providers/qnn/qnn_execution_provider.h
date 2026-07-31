@@ -24,6 +24,7 @@
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
+#include "core/providers/qnn/qnn_onnx_op_affinity.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/qnn_node_compute_info_base.h"
@@ -246,6 +247,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
+
+  // Op Affinity controlling which ONNX op types the QNN EP claims in GetCapability, configured via
+  // the "op_affinity" provider option.
+  qnn::OnnxOpAffinity op_affinity_;
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
