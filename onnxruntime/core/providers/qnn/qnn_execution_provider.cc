@@ -2350,8 +2350,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 #endif
 
       // SetupQnnInputOutput populates qnn_input_infos_/qnn_output_infos_ which are only consumed
-      // in ExecuteGraph during inference. In prepare_only mode these compile-time
-      // models are discarded after binary extraction, so skip.
+      // in ExecuteGraph during inference. In prepare_only mode inference never runs, so skip.
       if (!prepare_only_) {
         RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
       }
@@ -2671,6 +2670,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                                                 &raw_context_buffer,
                                                                 buffer_size));
   std::unique_ptr<unsigned char[]> context_buffer(raw_context_buffer);
+
   // Get max spill fill buffer size
   uint64_t max_spill_fill_buffer_size = 0;
   if (enable_spill_fill_buffer_) {
@@ -2841,8 +2841,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   } else {
     RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
   }
-  // tensor_name_overrides_ must NOT be cleared here;
-  // it is read by CreateEPContextNodes below to serialize io_name_overrides into the EPContext model.
+
+  // Clean up transient GetCapability→Compile state.
+  // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
+  // below to serialize the io_name_overrides attribute into the EPContext model.
+  ep->onnx_graph_io_names_.reset();
 
   // Framework op trace: record SoC trace(s), then finalize and write.
   if (ep->enable_framework_op_trace_) {
@@ -2858,10 +2861,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
 
-  // Clean up transient GetCapability→Compile state.
-  // tensor_name_overrides_ must NOT be cleared here;
-  // it is read by CreateEPContextNodes above to serialize io_name_overrides into the EPContext model.
-  ep->onnx_graph_io_names_.reset();
+  // Clear only after CreateEPContextNodes has serialized the map into the EPContext model.
   ep->tensor_name_overrides_.clear();
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
