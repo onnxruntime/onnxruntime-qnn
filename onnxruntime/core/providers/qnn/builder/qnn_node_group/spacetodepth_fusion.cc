@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -163,40 +162,22 @@ bool HasSpaceToDepthCoreSignature(
     const OrtNodeUnit& reshape1,
     const OrtNodeUnit& transpose,
     const OrtNodeUnit& reshape2) {
-  // Input/outputs need to be rank-4 tensors with concrete positive dims.
+  // Read resolved shapes from ValueInfo, not the Reshape initializers: shape inference has
+  // already replaced any -1 with the concrete dim, so exporter patterns like
+  // reshape(1, -1, H, b, W, b) are accepted without special-casing -1 per position.
   std::vector<uint32_t> input_shape;
   std::vector<uint32_t> output_shape;
+  std::vector<uint32_t> shape_6d;
   if (!qnn_model_wrapper.GetOnnxShape(reshape1.Inputs()[0].shape, input_shape) || input_shape.size() != kRank4 ||
-      !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) || output_shape.size() != kRank4) {
+      !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) || output_shape.size() != kRank4 ||
+      !qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
     return false;
   }
-
-  // check ranks of Reshape 'shape' to be 6 and 4.
-  auto shape_6d = GetInitializerDataAsInt64(qnn_model_wrapper, reshape1.Inputs()[1]);
-  auto shape_4d = GetInitializerDataAsInt64(qnn_model_wrapper, reshape2.Inputs()[1]);
-  if (!shape_6d.has_value() || !shape_4d.has_value()) {
+  // GetOnnxShape permits 0-size dims; reject them here (a prior positivity check did) rather
+  // than deferring a degenerate zero to downstream QNN validation.
+  if (std::any_of(input_shape.begin(), input_shape.end(), [](uint32_t d) { return d == 0; }) ||
+      std::any_of(output_shape.begin(), output_shape.end(), [](uint32_t d) { return d == 0; })) {
     return false;
-  }
-
-  if (shape_6d->size() != kRank6 || shape_4d->size() != kRank4) {
-    return false;
-  }
-
-  // check Reshape 'shape' dimensions to be positive (allow -1 only for the batch dim at index 0).
-  for (size_t i = 0; i < shape_6d->size(); ++i) {
-    const int64_t v = (*shape_6d)[i];
-    if (i == 0 && v == -1) continue;  // dynamic batch
-    if (v <= 0) {
-      return false;
-    }
-  }
-
-  for (size_t i = 0; i < shape_4d->size(); ++i) {
-    const int64_t v = (*shape_4d)[i];
-    if (i == 0 && v == -1) continue;  // dynamic batch
-    if (v <= 0) {
-      return false;
-    }
   }
 
   // [N, C, H, W]
@@ -206,15 +187,15 @@ bool HasSpaceToDepthCoreSignature(
   const int64_t w = static_cast<int64_t>(input_shape[3]);
 
   // [N, C, H / b0, b0, W / b1, b1]
-  const int64_t r_n = (*shape_6d)[0];
-  const int64_t r_c = (*shape_6d)[1];
-  const int64_t h_div = (*shape_6d)[2];
-  const int64_t b0 = (*shape_6d)[3];
-  const int64_t w_div = (*shape_6d)[4];
-  const int64_t b1 = (*shape_6d)[5];
+  const int64_t r_n = static_cast<int64_t>(shape_6d[0]);
+  const int64_t r_c = static_cast<int64_t>(shape_6d[1]);
+  const int64_t h_div = static_cast<int64_t>(shape_6d[2]);
+  const int64_t b0 = static_cast<int64_t>(shape_6d[3]);
+  const int64_t w_div = static_cast<int64_t>(shape_6d[4]);
+  const int64_t b1 = static_cast<int64_t>(shape_6d[5]);
 
-  // r_ are expected to match input [N,C]; allow r_n = -1 for dynamic batch.
-  if ((r_n != -1 && r_n != n) || r_c != c || b0 < 1 || b1 < 1) {
+  // r_ are expected to match input [N,C].
+  if (r_n != n || r_c != c || b0 < 1 || b1 < 1) {
     return false;
   }
 
@@ -228,11 +209,9 @@ bool HasSpaceToDepthCoreSignature(
 
   // [N, C * b0 * b1, H / b0, W / b1]
   const int64_t expected_c = c * b0 * b1;
-  const std::array<int64_t, 4> expected_shape_4d = {n, expected_c, h / b0, w / b1};
+  const std::array<int64_t, 4> expected_output_shape = {n, expected_c, h / b0, w / b1};
   for (size_t i = 0; i < 4; ++i) {
-    // Allow -1 only for the batch dimension (index 0) in the output shape.
-    if (i == 0 && (*shape_4d)[i] == -1) continue;
-    if ((*shape_4d)[i] != expected_shape_4d[i]) {
+    if (static_cast<int64_t>(output_shape[i]) != expected_output_shape[i]) {
       return false;
     }
   }
@@ -341,13 +320,14 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   SpaceToDepthPattern core = BuildPattern(reshape1, *transpose, *reshape2,
                                           matched_head_transpose, matched_tail_transpose);
 
-  // After (3) we know it is S2D RTR pattern but we Skip RTR-only pattern to avoid fusion in 1st get_capability call,
-  // as it results in redundant cancelling Transpose operators added into QnnModelWrapper and gets into DLC.
-  // Fusion needs to happen only after "Layout Transformer" pass, so the Supported forms are strictly:
-  // a) T(NHWC->NCHW) + RTR + T(NCHW->NHWC)
-  // b) T(NHWC->NCHW) + RTR
-  // c) RTR + T(NCHW->NHWC)
-  if (core.node_count == 3) {
+  // Bare RTR (no wrapping Transposes): fuse only after Layout Transformer runs.
+  // Pass-1 fusion would hide the R/T/R from ORT's TransposeOptimizer, which then
+  // pushes NHWC conversions into the Reshape shape constant and breaks the 5-node
+  // Conv->RTR->Conv pattern. Post-LT is safe: CreateOrValidateOnQnn adds pre/post T.
+  if (core.node_count == 3 && !qnn_model_wrapper.IsPostLayoutTransform()) {
+    ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                "SpaceToDepthFusion: skipping bare RTR pattern in pre-Layout-Transform pass; "
+                "fusion will be reattempted in the 2nd pass (if ORT issues one).");
     return std::nullopt;
   }
 
@@ -368,25 +348,19 @@ bool ValidateAndComputeParams(
   // Core structural validation is already done in HasSpaceToDepthCoreSignature from MatchPattern.
   // Here we only extract params needed for QNN op creation and backend-specific guards.
 
-  // 1. Read shape_6d to obtain block sizes.
-  auto shape_6d = GetInitializerDataAsInt64(qnn_model_wrapper, reshape1.Inputs()[1]);
-  if (!shape_6d.has_value() || shape_6d->size() != kRank6) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: reshape1 shape initializer missing/invalid.");
+  // 1. Read shape_6d to obtain block sizes. GetOnnxShape yields concrete non-negative dims,
+  //    so no separate overflow/negativity guard is needed.
+  std::vector<uint32_t> shape_6d;
+  if (!qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: reshape1 output shape unresolved/invalid.");
     return false;
   }
 
   // [N, C, H / b0, b0, W / b1, b1]
-  const int64_t b0 = (*shape_6d)[3];
-  const int64_t b1 = (*shape_6d)[5];
+  const uint32_t b0 = shape_6d[3];
+  const uint32_t b1 = shape_6d[5];
 
-  // 2. explicit uint32 range checks for final QNN param conversion.
-  if (b0 > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
-      b1 > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: block size overflows uint32.");
-    return false;
-  }
-
-  // 3. Validate transpose permutation and resolve mode (DCR / CRD).
+  // 2. Validate transpose permutation and resolve mode (DCR / CRD).
   OrtNodeAttrHelper transpose_attrs(transpose);
   std::vector<int64_t> perm = transpose_attrs.Get(kAttrTransposePerm, std::vector<int64_t>{});
 
@@ -404,7 +378,7 @@ bool ValidateAndComputeParams(
    * SpaceToDepth kernel limitations are fixed.
    * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
    */
-  // 4. Backend-specific constraints for known kernel limitations.
+  // 3. Backend-specific constraints for known kernel limitations.
   const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
 
   if (IsCpuBackend(backend_type) && b0 != b1) {
@@ -414,8 +388,8 @@ bool ValidateAndComputeParams(
   }
   // ============ Backend-specific constraints end =============.
 
-  block_height = static_cast<uint32_t>(b0);
-  block_width = static_cast<uint32_t>(b1);
+  block_height = b0;
+  block_width = b1;
   return true;
 }
 

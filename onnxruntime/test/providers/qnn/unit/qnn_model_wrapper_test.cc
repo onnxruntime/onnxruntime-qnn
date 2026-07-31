@@ -336,10 +336,10 @@ TEST(QnnUnit_ModelWrapperTest, AddReshapeNode_PerChannelQuant_ReturnsError) {
 
   std::vector<float> scales{1.0f, 2.0f};
   std::vector<int32_t> offsets{0, 0};
-  qnn::QnnQuantParamsWrapper per_channel_quant(
+  qnn::QnnQuantParamsWrapper per_channel_quant = qnn::QnnQuantParamsWrapper::PerChannel(
       gsl::make_span(scales.data(), scales.size()),
       gsl::make_span(offsets.data(), offsets.size()),
-      /*axis=*/0, /*is_int4=*/false);
+      /*axis=*/0);
 
   Ort::Status status = wrapper->AddReshapeNode(
       "in", "out", {2u}, {2u},
@@ -400,10 +400,10 @@ TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_PerChannelQuant_ReturnsError) {
 
   std::vector<float> scales{1.0f, 2.0f};
   std::vector<int32_t> offsets{0, 0};
-  qnn::QnnQuantParamsWrapper per_channel_quant(
+  qnn::QnnQuantParamsWrapper per_channel_quant = qnn::QnnQuantParamsWrapper::PerChannel(
       gsl::make_span(scales.data(), scales.size()),
       gsl::make_span(offsets.data(), offsets.size()),
-      /*axis=*/0, /*is_int4=*/false);
+      /*axis=*/0);
 
   Ort::Status status = wrapper->AddTransposeNode(
       0, "t_in", "t_out",
@@ -1409,7 +1409,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // HTP validator requires quantized tensors for Relu — float32 is rejected at validation.
-  qnn::QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  qnn::QnnQuantParamsWrapper quant = qnn::QnnQuantParamsWrapper::PerTensor(/*scale=*/1.0f / 255.0f, /*offset=*/0);
   qnn::QnnTensorWrapper input_tw("relu_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
                                  quant.Copy(), std::vector<uint32_t>{1, 4});
   qnn::QnnTensorWrapper output_tw("relu_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
@@ -1439,7 +1439,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  qnn::QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  qnn::QnnQuantParamsWrapper quant = qnn::QnnQuantParamsWrapper::PerTensor(/*scale=*/1.0f / 255.0f, /*offset=*/0);
   qnn::QnnTensorWrapper input_tw("in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
                                  quant.Copy(), std::vector<uint32_t>{1, 4});
   qnn::QnnTensorWrapper output_tw("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,

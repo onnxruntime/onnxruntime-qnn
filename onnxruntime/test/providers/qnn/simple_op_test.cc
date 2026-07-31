@@ -385,6 +385,27 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tan_fp) {
   );
 }
 
+// Check that QNN compiles DQ -> Tan -> Q as a single unit.
+// Use an input of rank 3.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U8) {
+  RunQDQOpTest<uint8_t>("Tan",
+                        {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                        {},
+                        11,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// Tests accuracy of 16-bit QDQ Tan.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U16) {
+  RunQDQOpTest<uint16_t>("Tan",
+                         {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                         {},
+                         11,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,  // Tan op domain
+                         true);        // Use com.microsoft Q/DQ op domains
+}
+
 // disabled for QNN 2.28.0.241029 backendValidateOpConfig failed
 // still fails on QNN 2.28.2 and QNN 2.30.0
 // QnnDsp <E> [4294967295] has incorrect Value -32768, expected equal to 0.
@@ -561,6 +582,43 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U16) {
                          ExpectedEPNodeAssignment::All,
                          kOnnxDomain,
                          true);
+}
+
+// Check that QNN fuses DQ -> Softplus -> Q into a single quantized ElementWiseNeuron op,
+// instead of leaving Softplus running as unfused float32 bracketed by its own Quantize/
+// Dequantize pair. With offload_graph_io_quantization=0, the graph's Q/DQ input and output
+// boundary nodes are always present (1 Quantize + 1 Dequantize) even when fused; an extra
+// pair beyond that indicates Softplus itself failed to fuse.
+// Regression test for Softplus being missing from the QDQ-fusion selector's unary_ops
+// allowlist even though the op-builder fully supports quantized Softplus.
+TEST_F(QnnHTPBackendTests, NeuronOpType_Softplus) {
+  const std::filesystem::path json_qnn_graph_dir = "NeuronOpType_Softplus";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup =
+      gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({1, 2, 2, 2}, /*is_initializer=*/false, -1.0f, 1.0f)};
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Softplus_node", "Softplus", input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>("Softplus_node", "Softplus", input_defs, {}, {}),
+                       provider_options,
+                       /*opset_version=*/14,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", /*count=*/1);
 }
 
 // Check that QNN compiles DQ -> HardSwish -> Q as a single unit.

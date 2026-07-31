@@ -129,7 +129,7 @@ static void RunRMSNormQDQTest(const TestInputDef<float>& input_def,
                   provider_options,
                   23,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5)},
-                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, false);
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE, false);
 }
 
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis) {

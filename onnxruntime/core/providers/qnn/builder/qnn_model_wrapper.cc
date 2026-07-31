@@ -905,6 +905,52 @@ Ort::Status QnnModelWrapper::AddCastNode(const std::string& cast_node_name,
   return Ort::Status();
 }
 
+namespace {
+// Returns true when dt is any QNN SFIXED_POINT or UFIXED_POINT variant (4/8/16/32-bit).
+bool IsQnnFixedPointType(Qnn_DataType_t dt) {
+  return dt == QNN_DATATYPE_SFIXED_POINT_4 || dt == QNN_DATATYPE_UFIXED_POINT_4 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_8 || dt == QNN_DATATYPE_UFIXED_POINT_8 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_16 || dt == QNN_DATATYPE_UFIXED_POINT_16 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_32 || dt == QNN_DATATYPE_UFIXED_POINT_32;
+}
+}  // namespace
+
+Ort::Status QnnModelWrapper::AddDequantizeNode(const std::string& input_name,
+                                               const std::string& output_name,
+                                               Qnn_DataType_t output_data_type,
+                                               std::vector<uint32_t> output_shape,
+                                               bool do_op_validation) {
+  RETURN_IF(output_data_type != QNN_DATATYPE_FLOAT_16 && output_data_type != QNN_DATATYPE_FLOAT_32,
+            "AddDequantizeNode: output_data_type must be FLOAT_16 or FLOAT_32");
+  QnnTensorWrapper output_wrapper(output_name, QNN_TENSOR_TYPE_NATIVE, output_data_type,
+                                  QnnQuantParamsWrapper(), std::move(output_shape));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(output_wrapper)), "Failed to add Dequantize output tensor.");
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(input_name, "_dequantize"),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
+                              {input_name}, {output_name}, {}, do_op_validation),
+                "Failed to add Dequantize node.");
+  return Ort::Status();
+}
+
+Ort::Status QnnModelWrapper::AddQuantizeNode(const std::string& input_name,
+                                             const std::string& output_name,
+                                             Qnn_TensorType_t output_tensor_type,
+                                             Qnn_DataType_t output_data_type,
+                                             QnnQuantParamsWrapper output_quant_param,
+                                             std::vector<uint32_t> output_shape,
+                                             bool do_op_validation) {
+  RETURN_IF(!IsQnnFixedPointType(output_data_type),
+            "AddQuantizeNode: output_data_type must be a SFIXED_POINT or UFIXED_POINT type");
+  QnnTensorWrapper output_wrapper(output_name, output_tensor_type, output_data_type,
+                                  std::move(output_quant_param), std::move(output_shape));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(output_wrapper)), "Failed to add Quantize output tensor.");
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(input_name, "_quantize"),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
+                              {input_name}, {output_name}, {}, do_op_validation),
+                "Failed to add Quantize node.");
+  return Ort::Status();
+}
+
 Ort::Status QnnModelWrapper::AddReshapeNode(const std::string& input_name, const std::string& output_name,
                                             const std::vector<uint32_t>& input_shape,
                                             const std::vector<uint32_t>& output_shape,

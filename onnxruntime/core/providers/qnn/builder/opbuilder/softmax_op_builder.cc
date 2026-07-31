@@ -83,7 +83,7 @@ static bool NeedsBoundedOutputSplit(const std::string& op_type, const TensorInfo
 static QnnQuantParamsWrapper BuildUnitRangeQuantParams(Qnn_DataType_t qnn_data_type) {
   const size_t bitwidth = utils::GetElementSizeByType(qnn_data_type) * 8;
   const float scale = 1.0f / static_cast<float>(uint64_t{1} << bitwidth);
-  return QnnQuantParamsWrapper(scale, /*offset*/ 0);
+  return QnnQuantParamsWrapper::PerTensor(scale, /*offset*/ 0);
 }
 
 // Creates the QNN Softmax node and wires its output to `output_name`

@@ -12,6 +12,7 @@
 
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 
+#include <algorithm>
 #include <fstream>
 #include <unordered_set>
 
@@ -25,6 +26,7 @@ void ComputeTraceSummary(FrameworkOpTrace& trace) {
   summary.unsupported_nodes = trace.unsupported_nodes.size();
   summary.qnn_subgraphs = trace.subgraph_traces.size();
   summary.total_qnn_ops = 0;
+  summary.total_socs = static_cast<uint32_t>(trace.soc_traces.size());
   summary.fusion_count.clear();
 
   // An ONNX node is "supported" if it appears as an OP-typed source on any QNN
@@ -47,6 +49,91 @@ void ComputeTraceSummary(FrameworkOpTrace& trace) {
 
   summary.supported_nodes = supported_onnx_node_names.size();
   summary.total_onnx_nodes = summary.supported_nodes + summary.unsupported_nodes;
+}
+
+std::string EncodeHtpArch(uint32_t htp_arch) {
+  if (htp_arch == kSocUnknown) {
+    return {};
+  }
+  return "V" + std::to_string(htp_arch);
+}
+
+std::string MakeSocLabel(uint32_t htp_arch, uint32_t soc_model) {
+  std::string arch = EncodeHtpArch(htp_arch);
+  if (arch.empty()) {
+    return "soc_model=" + std::to_string(soc_model);
+  }
+  if (soc_model != kSocUnknown) {
+    return arch + "/soc_model=" + std::to_string(soc_model);
+  }
+  return arch;
+}
+
+std::vector<UnsupportedNodeInfo> MergePerSocUnsupportedNodes(
+    const std::vector<PerSocUnsupportedNodes>& per_soc) {
+  // One merged node: identity fields plus reasons (first-seen order), each with
+  // its contributing SoC labels. Label lists are tiny (<= SoC count), so dedup
+  // uses a linear find rather than a parallel set.
+  struct Merged {
+    std::string node_name;
+    std::string op_type;
+    size_t node_index = 0;
+    std::vector<std::string> reason_order;  // distinct reasons, first-seen
+    std::unordered_map<std::string, std::vector<std::string>> soc_labels_by_reason;
+  };
+
+  std::vector<size_t> node_order;  // first-seen node_index order
+  std::unordered_map<size_t, Merged> merged;
+
+  for (const auto& soc : per_soc) {
+    for (const auto& un : soc.nodes) {
+      auto it = merged.find(un.node_index);
+      if (it == merged.end()) {
+        node_order.push_back(un.node_index);
+        Merged m;
+        m.node_name = un.node_name;
+        m.op_type = un.op_type;
+        m.node_index = un.node_index;
+        it = merged.emplace(un.node_index, std::move(m)).first;
+      }
+      Merged& m = it->second;
+
+      // New reason for this node? Record its first-seen position.
+      auto& labels = m.soc_labels_by_reason[un.reason];
+      if (labels.empty()) {
+        m.reason_order.push_back(un.reason);
+      }
+      // Attribute this SoC to the reason, deduping identical (reason, label).
+      if (std::find(labels.begin(), labels.end(), soc.soc_label) == labels.end()) {
+        labels.push_back(soc.soc_label);
+      }
+    }
+  }
+
+  std::vector<UnsupportedNodeInfo> out;
+  out.reserve(node_order.size());
+  for (size_t node_index : node_order) {
+    const Merged& m = merged[node_index];
+    // Format: "<labels joined by ','>: <reason>" fragments joined by "; ".
+    std::string reason;
+    for (size_t r = 0; r < m.reason_order.size(); ++r) {
+      const std::string& reason_text = m.reason_order[r];
+      const std::vector<std::string>& labels = m.soc_labels_by_reason.at(reason_text);
+      if (r != 0) {
+        reason += "; ";
+      }
+      for (size_t l = 0; l < labels.size(); ++l) {
+        if (l != 0) {
+          reason += ",";
+        }
+        reason += labels[l];
+      }
+      reason += ": ";
+      reason += reason_text;
+    }
+    out.push_back({m.node_name, m.op_type, m.node_index, std::move(reason)});
+  }
+  return out;
 }
 
 namespace detail {
@@ -83,14 +170,22 @@ static nlohmann::json SerializeTraceMapping(const TraceMapping& mapping) {
 
 nlohmann::json SerializeFrameworkOpTrace(const FrameworkOpTrace& trace) {
   nlohmann::json j;
+  j["schema_version"] = kFrameworkOpTraceSchemaVersion;
   j["model_name"] = trace.model_name;
   j["backend_type"] = trace.backend_type;
 
-  nlohmann::json ct;
-  ct["htp_arch"] = trace.compilation_target.htp_arch;
-  ct["soc_model"] = trace.compilation_target.soc_model;
-  ct["device_id"] = trace.compilation_target.device_id;
-  j["compilation_target"] = std::move(ct);
+  // One entry per SoC iteration; compilation_target lives here, not at root.
+  nlohmann::json soc_traces = nlohmann::json::array();
+  for (const auto& soc : trace.soc_traces) {
+    nlohmann::json soc_json;
+    nlohmann::json ct;
+    ct["htp_arch"] = soc.compilation_target.htp_arch;
+    ct["soc_model"] = soc.compilation_target.soc_model;
+    ct["device_id"] = soc.compilation_target.device_id;
+    soc_json["compilation_target"] = std::move(ct);
+    soc_traces.push_back(std::move(soc_json));
+  }
+  j["soc_traces"] = std::move(soc_traces);
 
   nlohmann::json subgraphs = nlohmann::json::array();
   for (const auto& sg : trace.subgraph_traces) {
@@ -131,6 +226,7 @@ nlohmann::json SerializeFrameworkOpTrace(const FrameworkOpTrace& trace) {
   summary["unsupported_nodes"] = s.unsupported_nodes;
   summary["qnn_subgraphs"] = s.qnn_subgraphs;
   summary["total_qnn_ops"] = s.total_qnn_ops;
+  summary["total_socs"] = s.total_socs;
 
   nlohmann::json fc;
   for (const auto& [type, count] : s.fusion_count) {

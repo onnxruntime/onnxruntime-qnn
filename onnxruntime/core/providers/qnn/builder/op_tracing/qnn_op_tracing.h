@@ -88,6 +88,37 @@ bool WriteTraceToFile(const FrameworkOpTrace& trace,
                       const std::filesystem::path& output_path,
                       const Ort::Logger& logger);
 
+// Owns the session's FrameworkOpTrace. NewSubgraphSlot / UnsupportedNodes hand
+// out interior references valid only until the next mutating call.
+class FrameworkOpTraceBuilder {
+ public:
+  // GetCapability runs twice per graph; reset before each pass so pass 2 does
+  // not double-count.
+  void Reset() { trace_ = FrameworkOpTrace{}; }
+
+  // Record one SoC iteration. Raw ids (0 = unknown, omitted); uint32_t keeps
+  // this header SDK-header-free.
+  void AppendSoc(uint32_t htp_arch, uint32_t soc_model, uint32_t device_id);
+
+  // Reserve a subgraph slot for ComposeGraph to fill (valid until the next call).
+  OpTraceInfo* NewSubgraphSlot() {
+    trace_.subgraph_traces.push_back(OpTraceInfo{});
+    return &trace_.subgraph_traces.back();
+  }
+
+  // Out-param the support scan appends rejected nodes into.
+  std::vector<UnsupportedNodeInfo>& UnsupportedNodes() { return trace_.unsupported_nodes; }
+
+  // Compute the summary and write the file, skipping a wholly-empty trace.
+  bool FinalizeAndWrite(const std::string& model_name,
+                        const std::string& backend_type,
+                        const std::filesystem::path& output_path,
+                        const Ort::Logger& logger);
+
+ private:
+  FrameworkOpTrace trace_;
+};
+
 // Loads an OpTraceLookup from a trace JSON sidecar file.
 // Iterates all subgraph_traces[*].op_mappings and builds a flat dst_name->sources map.
 // Returns true on success; logs a warning and returns false on any parse error.

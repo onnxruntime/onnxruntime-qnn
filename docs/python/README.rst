@@ -5,31 +5,35 @@ ONNX Runtime QNN is a plugin execution provider that brings Qualcomm hardware ac
 
 This repository is maintained by Qualcomm. For the general ONNX Runtime project, visit `microsoft/onnxruntime <https://github.com/microsoft/onnxruntime>`_.
 
-
 Changes
 -------
 
+2.4.0
+^^^^^
+
+Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.4.0
+
 2.3.0
-^^^^^^
+^^^^^
 
 Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.3.0
 
 2.2.0
-^^^^^^
+^^^^^
 
 Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.2.0
 
 2.1.1
-^^^^^^
+^^^^^
 
 Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.1.1
 
 2.1.0
-^^^^^^
+^^^^^
 
 Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.1.0
 
 2.0.0
-^^^^^^
+^^^^^
 
 Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.0.0

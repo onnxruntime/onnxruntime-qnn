@@ -39,19 +39,13 @@ namespace {
 QnnQuantParamsWrapper MakePerChannelNonInt4(int32_t axis = 1) {
   const std::vector<float> scales{0.1f, 0.2f, 0.3f};
   const std::vector<int32_t> offsets{1, 2, 3};
-  return QnnQuantParamsWrapper(gsl::make_span(scales),
-                               gsl::make_span(offsets),
-                               axis,
-                               /*is_int4=*/false);
+  return QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), axis);
 }
 
 QnnQuantParamsWrapper MakePerChannelInt4(int32_t axis = 1) {
   const std::vector<float> scales{0.1f, 0.2f, 0.3f};
   const std::vector<int32_t> offsets{1, 2, 3};
-  return QnnQuantParamsWrapper(gsl::make_span(scales),
-                               gsl::make_span(offsets),
-                               axis,
-                               /*is_int4=*/true);
+  return QnnQuantParamsWrapper::PerChannelBw(gsl::make_span(scales), gsl::make_span(offsets), axis, /*bitwidth=*/4);
 }
 
 QnnQuantParamsWrapper MakeLPBQ() {
@@ -59,32 +53,30 @@ QnnQuantParamsWrapper MakeLPBQ() {
   const std::vector<float> per_channel_scales{0.1f, 0.2f, 0.3f};
   const std::vector<uint8_t> per_block_scales{1, 2, 3, 4, 5, 6};
   const std::vector<int32_t> offsets{0, 0, 0};
-  return QnnQuantParamsWrapper(gsl::make_span(per_channel_scales),
-                               gsl::make_span(per_block_scales),
-                               gsl::make_span(offsets),
-                               /*axis=*/1,
-                               /*block_size=*/4,
-                               /*is_int4=*/true);
+  return QnnQuantParamsWrapper::LowPowerBlockwise(gsl::make_span(per_channel_scales),
+                                                  gsl::make_span(per_block_scales),
+                                                  gsl::make_span(offsets),
+                                                  /*axis=*/1,
+                                                  /*block_scale_bitwidth=*/4);
 }
 
 QnnQuantParamsWrapper MakeBlockEncoding() {
   const std::vector<float> scales{0.5f, 0.25f};
   const std::vector<int32_t> offsets{1, 2};
   const std::vector<uint32_t> block_sizes{2, 1};
-  return QnnQuantParamsWrapper(gsl::make_span(scales),
-                               gsl::make_span(offsets),
-                               gsl::make_span(block_sizes),
-                               QNN_DATATYPE_UFIXED_POINT_8);
+  return QnnQuantParamsWrapper::Block(gsl::make_span(scales),
+                                      gsl::make_span(offsets),
+                                      gsl::make_span(block_sizes));
 }
 
 QnnQuantParamsWrapper MakeBwFloatBlock() {
   const std::vector<float> scales{0.5f, 0.25f};
   const std::vector<float> offsets{0.0f, 0.1f};
   const std::vector<uint32_t> block_sizes{2, 1};
-  return QnnQuantParamsWrapper(gsl::make_span(scales),
-                               gsl::make_span(offsets),
-                               /*bitwidth=*/8u,
-                               gsl::make_span(block_sizes));
+  return QnnQuantParamsWrapper::BwFloatBlock(gsl::make_span(scales),
+                                             gsl::make_span(offsets),
+                                             /*bitwidth=*/8u,
+                                             gsl::make_span(block_sizes));
 }
 
 }  // namespace
@@ -105,7 +97,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, Default_NotQuantized_AndAllPredicatesFalse)
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, PerTensor_SetsScaleOffsetEncodingAndScale) {
-  QnnQuantParamsWrapper q(/*scale=*/0.5f, /*offset=*/-3);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensor(/*scale=*/0.5f, /*offset=*/-3);
   EXPECT_TRUE(q.IsQuantized());
   EXPECT_TRUE(q.IsPerTensor());
   EXPECT_FALSE(q.IsPerChannel());
@@ -114,12 +106,23 @@ TEST(QnnUnit_QuantParamsWrapperTest, PerTensor_SetsScaleOffsetEncodingAndScale) 
   EXPECT_EQ(q.Get().scaleOffsetEncoding.offset, -3);
 }
 
+TEST(QnnUnit_QuantParamsWrapperTest, PerTensorBw_SetsBwScaleOffsetEncodingAndBitwidth) {
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensorBw(/*scale=*/0.25f, /*offset=*/7, /*bitwidth=*/4);
+  EXPECT_TRUE(q.IsQuantized());
+  EXPECT_TRUE(q.IsPerTensor(/*include_bw=*/true));
+  EXPECT_FALSE(q.IsPerTensor(/*include_bw=*/false));
+  EXPECT_FALSE(q.IsPerChannel());
+  EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET);
+  EXPECT_EQ(q.Get().bwScaleOffsetEncoding.bitwidth, 4u);
+  EXPECT_FLOAT_EQ(q.Get().bwScaleOffsetEncoding.scale, 0.25f);
+  EXPECT_EQ(q.Get().bwScaleOffsetEncoding.offset, 7);
+}
+
 TEST(QnnUnit_QuantParamsWrapperTest,
      PerChannel_NotInt4_NonEmpty_SetsAxisScaleOffsetAndDeepCopiesData) {
   const std::vector<float> scales{0.1f, 0.2f, 0.3f};
   const std::vector<int32_t> offsets{1, 2, 3};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/2,
-                          /*is_int4=*/false);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/2);
   EXPECT_TRUE(q.IsPerChannel());
   EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET);
   EXPECT_EQ(q.Get().axisScaleOffsetEncoding.axis, 2);
@@ -134,8 +137,7 @@ TEST(QnnUnit_QuantParamsWrapperTest,
 TEST(QnnUnit_QuantParamsWrapperTest, PerChannel_NotInt4_Empty_SetsNullScaleOffsetPointer) {
   const std::vector<float> scales{};
   const std::vector<int32_t> offsets{};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0,
-                          /*is_int4=*/false);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0);
   EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET);
   EXPECT_EQ(q.Get().axisScaleOffsetEncoding.numScaleOffsets, 0u);
   EXPECT_EQ(q.Get().axisScaleOffsetEncoding.scaleOffset, nullptr);
@@ -145,8 +147,7 @@ TEST(QnnUnit_QuantParamsWrapperTest,
      PerChannel_Int4_NonEmpty_SetsBwAxisScaleOffsetAndDeepCopiesScalesAndOffsets) {
   const std::vector<float> scales{0.1f, 0.2f};
   const std::vector<int32_t> offsets{4, 5};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/1,
-                          /*is_int4=*/true);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannelBw(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/1, /*bitwidth=*/4);
   EXPECT_TRUE(q.IsPerChannel());
   EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET);
   EXPECT_EQ(q.Get().bwAxisScaleOffsetEncoding.axis, 1);
@@ -163,8 +164,7 @@ TEST(QnnUnit_QuantParamsWrapperTest,
 TEST(QnnUnit_QuantParamsWrapperTest, PerChannel_Int4_Empty_SetsNullScalesAndOffsetsPointers) {
   const std::vector<float> scales{};
   const std::vector<int32_t> offsets{};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0,
-                          /*is_int4=*/true);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannelBw(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0, /*bitwidth=*/4);
   EXPECT_EQ(q.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET);
   EXPECT_EQ(q.Get().bwAxisScaleOffsetEncoding.numElements, 0u);
   EXPECT_EQ(q.Get().bwAxisScaleOffsetEncoding.scales, nullptr);
@@ -237,11 +237,21 @@ TEST(QnnUnit_QuantParamsWrapperTest,
 // =============================================================================
 
 TEST(QnnUnit_QuantParamsWrapperTest, CopyCtor_PerTensor_DeepCopies) {
-  QnnQuantParamsWrapper src(0.7f, 4);
+  QnnQuantParamsWrapper src = QnnQuantParamsWrapper::PerTensor(0.7f, 4);
   QnnQuantParamsWrapper dst(src);
   EXPECT_TRUE(dst.IsPerTensor());
   EXPECT_FLOAT_EQ(dst.Get().scaleOffsetEncoding.scale, 0.7f);
   EXPECT_EQ(dst.Get().scaleOffsetEncoding.offset, 4);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, CopyCtor_PerTensorBw_CopiesAllFields) {
+  QnnQuantParamsWrapper src = QnnQuantParamsWrapper::PerTensorBw(0.125f, -5, /*bitwidth=*/4);
+  QnnQuantParamsWrapper dst(src);
+  EXPECT_TRUE(dst.IsPerTensor(/*include_bw=*/true));
+  EXPECT_EQ(dst.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET);
+  EXPECT_EQ(dst.Get().bwScaleOffsetEncoding.bitwidth, 4u);
+  EXPECT_FLOAT_EQ(dst.Get().bwScaleOffsetEncoding.scale, 0.125f);
+  EXPECT_EQ(dst.Get().bwScaleOffsetEncoding.offset, -5);
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, CopyCtor_PerChannelInt4_DeepCopies) {
@@ -279,12 +289,23 @@ TEST(QnnUnit_QuantParamsWrapperTest, CopyCtor_BlockEncoding_DeepCopies) {
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_PerTensor_DeepCopies) {
-  QnnQuantParamsWrapper src(1.5f, -2);
+  QnnQuantParamsWrapper src = QnnQuantParamsWrapper::PerTensor(1.5f, -2);
   QnnQuantParamsWrapper dst;
   dst = src;
   EXPECT_TRUE(dst.IsPerTensor());
   EXPECT_FLOAT_EQ(dst.Get().scaleOffsetEncoding.scale, 1.5f);
   EXPECT_EQ(dst.Get().scaleOffsetEncoding.offset, -2);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_PerTensorBw_CopiesAllFields) {
+  QnnQuantParamsWrapper src = QnnQuantParamsWrapper::PerTensorBw(0.0625f, 3, /*bitwidth=*/4);
+  QnnQuantParamsWrapper dst;
+  dst = src;
+  EXPECT_TRUE(dst.IsPerTensor(/*include_bw=*/true));
+  EXPECT_EQ(dst.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET);
+  EXPECT_EQ(dst.Get().bwScaleOffsetEncoding.bitwidth, 4u);
+  EXPECT_FLOAT_EQ(dst.Get().bwScaleOffsetEncoding.scale, 0.0625f);
+  EXPECT_EQ(dst.Get().bwScaleOffsetEncoding.offset, 3);
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_LPBQ_DeepCopies) {
@@ -306,6 +327,28 @@ TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_BlockEncoding_DeepCopies) {
   EXPECT_TRUE(dst.IsBlockQuantized());
   EXPECT_NE(dst.Get().blockEncoding.blockSize, src.Get().blockEncoding.blockSize);
   EXPECT_FLOAT_EQ(dst.Get().blockEncoding.scaleOffset[0].scale, 0.5f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, CopyCtor_BwFloatBlock_DeepCopies) {
+  QnnQuantParamsWrapper src = MakeBwFloatBlock();
+  const auto* src_ptr = src.Get().bwFloatBlockEncoding.floatScaleOffset;
+  QnnQuantParamsWrapper dst(src);
+  EXPECT_TRUE(dst.IsBlockQuantized());
+  EXPECT_EQ(dst.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
+  EXPECT_NE(dst.Get().bwFloatBlockEncoding.floatScaleOffset, src_ptr);
+  EXPECT_EQ(dst.Get().bwFloatBlockEncoding.bitwidth, 8u);
+  EXPECT_FLOAT_EQ(dst.Get().bwFloatBlockEncoding.floatScaleOffset[0].scale, 0.5f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_BwFloatBlock_DeepCopies) {
+  QnnQuantParamsWrapper src = MakeBwFloatBlock();
+  QnnQuantParamsWrapper dst;
+  dst = src;
+  EXPECT_TRUE(dst.IsBlockQuantized());
+  EXPECT_EQ(dst.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
+  EXPECT_NE(dst.Get().bwFloatBlockEncoding.floatScaleOffset, src.Get().bwFloatBlockEncoding.floatScaleOffset);
+  EXPECT_EQ(dst.Get().bwFloatBlockEncoding.bitwidth, 8u);
+  EXPECT_FLOAT_EQ(dst.Get().bwFloatBlockEncoding.floatScaleOffset[1].offset, 0.1f);
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_SelfAssignment_LeavesUnchanged) {
@@ -379,7 +422,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, IsLPBQ_OnlyForBlockwiseExpansion) {
 TEST(QnnUnit_QuantParamsWrapperTest, IsBlockQuantized_AcceptsBlockAndBwFloatBlock) {
   QnnQuantParamsWrapper block = MakeBlockEncoding();
   QnnQuantParamsWrapper bw_float_block = MakeBwFloatBlock();
-  QnnQuantParamsWrapper per_tensor(0.5f, 0);
+  QnnQuantParamsWrapper per_tensor = QnnQuantParamsWrapper::PerTensor(0.5f, 0);
   EXPECT_TRUE(block.IsBlockQuantized());
   EXPECT_TRUE(bw_float_block.IsBlockQuantized());
   EXPECT_FALSE(per_tensor.IsBlockQuantized());
@@ -406,7 +449,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, GetScales_Undefined_ReturnsError) {
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, GetScales_ScaleOffset_ReturnsSingleScalar) {
-  QnnQuantParamsWrapper q(0.25f, 0);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensor(0.25f, 0);
   std::vector<float> out;
   ASSERT_TRUE(q.GetScales(out).IsOK());
   ASSERT_EQ(out.size(), 1u);
@@ -441,8 +484,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, GetScales_AxisScaleOffset_ReturnsAllScales)
 TEST(QnnUnit_QuantParamsWrapperTest, GetScales_AxisScaleOffset_NumElemsZero_ReturnsEmpty) {
   const std::vector<float> scales{};
   const std::vector<int32_t> offsets{};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), 0,
-                          /*is_int4=*/false);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), 0);
   std::vector<float> out{1.0f, 2.0f};  // Pre-existing content should be cleared.
   ASSERT_TRUE(q.GetScales(out).IsOK());
   EXPECT_TRUE(out.empty());
@@ -460,8 +502,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, GetScales_BwAxisScaleOffset_ReturnsAllScale
 TEST(QnnUnit_QuantParamsWrapperTest, GetScales_BwAxisScaleOffset_NumElemsZero_ReturnsEmpty) {
   const std::vector<float> scales{};
   const std::vector<int32_t> offsets{};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), 0,
-                          /*is_int4=*/true);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannelBw(gsl::make_span(scales), gsl::make_span(offsets), 0, /*bitwidth=*/4);
   std::vector<float> out{1.0f};
   ASSERT_TRUE(q.GetScales(out).IsOK());
   EXPECT_TRUE(out.empty());
@@ -1017,7 +1058,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, InitFromIODef_PerTensor_BFloat16Scale_SetsS
 // =============================================================================
 
 TEST(QnnUnit_QuantParamsWrapperTest, HandleTranspose_NotPerChannel_NoOp) {
-  QnnQuantParamsWrapper q(0.5f, 0);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensor(0.5f, 0);
   std::vector<uint32_t> perm{0, 1, 2, 3};
   EXPECT_TRUE(q.HandleTranspose<uint32_t>(gsl::make_span(perm)).IsOK());
 }
@@ -1053,7 +1094,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, HandleTranspose_SizeT_RemapsAxis) {
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, HandleUnsqueeze_NotPerChannel_NoOp) {
-  QnnQuantParamsWrapper q(0.5f, 0);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensor(0.5f, 0);
   std::vector<uint32_t> orig{4, 5};
   std::vector<uint32_t> nu{1, 4, 5};
   EXPECT_TRUE(q.HandleUnsqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
@@ -1072,8 +1113,7 @@ TEST(QnnUnit_QuantParamsWrapperTest,
   // move the per-channel axis from 1 to 2.
   const std::vector<float> scales{0.1f, 0.2f, 0.3f};
   const std::vector<int32_t> offsets{0, 0, 0};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/1,
-                          /*is_int4=*/false);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/1);
   std::vector<uint32_t> orig{3, 4};
   std::vector<uint32_t> nu{1, 3, 4};
   ASSERT_TRUE(q.HandleUnsqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
@@ -1084,8 +1124,7 @@ TEST(QnnUnit_QuantParamsWrapperTest,
      HandleUnsqueeze_BwAxisScaleOffset_ShiftsWhenOnesInsertedBefore) {
   const std::vector<float> scales{0.1f, 0.2f, 0.3f};
   const std::vector<int32_t> offsets{0, 0, 0};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0,
-                          /*is_int4=*/true);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannelBw(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0, /*bitwidth=*/4);
   std::vector<uint32_t> orig{3};
   std::vector<uint32_t> nu{1, 3};
   ASSERT_TRUE(q.HandleUnsqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
@@ -1096,8 +1135,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, HandleUnsqueeze_NoShiftNeeded_LeavesAxisUnc
   // axis=0; new shape {3, 1, 4} appends 1 *after* the per-channel axis ⇒ axis stays at 0.
   const std::vector<float> scales{0.1f, 0.2f, 0.3f};
   const std::vector<int32_t> offsets{0, 0, 0};
-  QnnQuantParamsWrapper q(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0,
-                          /*is_int4=*/false);
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0);
   std::vector<uint32_t> orig{3, 4};
   std::vector<uint32_t> nu{3, 1, 4};
   ASSERT_TRUE(q.HandleUnsqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
@@ -1109,7 +1147,7 @@ TEST(QnnUnit_QuantParamsWrapperTest, HandleUnsqueeze_NoShiftNeeded_LeavesAxisUnc
 // overload (line 49 in the header). Without this test the const-Get line
 // would be header coverage's only genuine gap.
 TEST(QnnUnit_QuantParamsWrapperTest, ConstGet_ReturnsSameParamsAsNonConst) {
-  const QnnQuantParamsWrapper q(0.5f, -2);
+  const QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensor(0.5f, -2);
   EXPECT_FLOAT_EQ(q.Get().scaleOffsetEncoding.scale, 0.5f);
   EXPECT_EQ(q.Get().scaleOffsetEncoding.offset, -2);
 }
