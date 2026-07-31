@@ -390,24 +390,14 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   const bool is_4d = (q_info.shape.size() == 4);
   const Qnn_DataType_t dtype = q_info.qnn_data_type;
 
-  // Derive tensor dimensions.
-  uint32_t B = 0, S_q = 0, S_k = 0, S_past = 0;
+  // Derive tensor dimensions needed for 4D output transforms.
+  uint32_t B = 0, S_q = 0;
   if (is_4d) {
-    // Q [B, n_q, S_q, hs]   V [B, n_kv, S_k, v_hs]
     B = q_info.shape[0];
     S_q = q_info.shape[2];
-    S_k = v_info.shape[2];
   } else {
-    // Q [B, S_q, n_q*hs]   V [B, S_k, n_kv*v_hs]
     B = q_info.shape[0];
     S_q = q_info.shape[1];
-    S_k = v_info.shape[1];
-  }
-  const bool has_past_key = (onnx_inputs.size() > 4 && onnx_inputs[4].Exists());
-  if (has_past_key) {
-    TensorInfo pk_info{};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[4], pk_info));
-    S_past = pk_info.shape[2];  // past_key always [B, n_kv, S_past, hs]
   }
 
   // ---- Params ----
