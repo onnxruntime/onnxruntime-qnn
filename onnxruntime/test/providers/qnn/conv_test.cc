@@ -1192,6 +1192,36 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
+// Smoke test for the fp16_clamp_overflow HTP option
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+#endif
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["fp16_clamp_overflow"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  auto input_def = TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 32));
+  auto weights_def = TestInputDef<float>({2, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 1.0f, 16));
+  auto bias_def = TestInputDef<float>({2}, true, {1.0f, -1.0f});
+
+  RunQnnModelTest(BuildF32ConvTestCase("Conv", input_def, weights_def, bias_def,
+                                       {1, 1},        // strides
+                                       {0, 0, 0, 0},  // pads
+                                       {1, 1},        // dilations
+                                       1),            // group
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
+}
+#endif  // QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
 // Tests bias as a dynamic input.
 TEST_F(QnnHTPBackendTests, ConvU8U8S32_bias_dynamic_input) {
