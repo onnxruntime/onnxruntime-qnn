@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_fusion.h"
 
@@ -24,41 +24,39 @@ namespace {
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
 
-// Derive the permutation a Reshape performs on its input when the Reshape is
-// structurally equivalent to a Transpose. Non-1 dims must appear in the same relative
-// order in the output; size-1 dims may move freely. Fills `perm` on success so that
-// reshape_output_shape[i] == reshape_input_shape[perm[i]].
-bool DeriveReshapeAsPerm(const std::vector<int64_t>& input_shape,
-                         const std::vector<int64_t>& output_shape,
-                         std::vector<int64_t>& perm) {
-  if (input_shape.size() != output_shape.size()) {
+// The fusion drops the intermediate tensor between Reshape and Transpose. In a QDQ group
+// (Reshape -> Q_r -> DQ -> Transpose -> Q_t), that tensor carries Q_r's scale/offset — if
+// those differ from Q_t's, the original graph rescales between the two ops, and collapsing
+// them would silently discard that rescale and produce a wrong DLC. Rare but real.
+bool HaveMatchingIntermediateEncoding(QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnit& reshape_node_unit,
+                                      const OrtNodeUnit& transpose_node_unit) {
+  const OrtNodeUnitIODef& reshape_output = reshape_node_unit.Outputs()[0];
+  const OrtNodeUnitIODef& transpose_output = transpose_node_unit.Outputs()[0];
+
+  const bool reshape_quantized = reshape_output.quant_param.has_value();
+  const bool transpose_quantized = transpose_output.quant_param.has_value();
+  if (reshape_quantized != transpose_quantized) {
     return false;
   }
-  const size_t rank = input_shape.size();
-  for (size_t i = 0; i < rank; ++i) {
-    if (input_shape[i] < 0 || output_shape[i] < 0) {
-      return false;
-    }
+  if (!reshape_quantized) {
+    return true;
   }
 
-  perm.assign(rank, -1);
-  std::vector<int64_t> input_dims = input_shape;
-  for (size_t i = 0; i < rank; ++i) {
-    const int64_t target = output_shape[i];
-    size_t cur = 0;
-    while (cur < rank && input_dims[cur] != target) {
-      if (input_dims[cur] != -1 && input_dims[cur] != 1 && target != 1) {
-        return false;
-      }
-      ++cur;
-    }
-    if (cur == rank) {
-      return false;
-    }
-    perm[i] = static_cast<int64_t>(cur);
-    input_dims[cur] = -1;
+  QnnQuantParamsWrapper reshape_qp;
+  QnnQuantParamsWrapper transpose_qp;
+  if (!reshape_qp.Init(qnn_model_wrapper, reshape_output).IsOK() ||
+      !transpose_qp.Init(qnn_model_wrapper, transpose_output).IsOK()) {
+    return false;
   }
-  return true;
+
+  float scale_diff = 0.0f;
+  int32_t offset_diff = 0;
+  if (!CompareQnnQuantParams(reshape_qp.Get(), transpose_qp.Get(), scale_diff, offset_diff).IsOK()) {
+    // Encoding types differ (or an unsupported encoding) — treat as non-matching.
+    return false;
+  }
+  return scale_diff == 0.0f && offset_diff == 0;
 }
 
 // Try to compose the Reshape-as-perm with the Transpose's perm. Returns true on success
@@ -73,10 +71,11 @@ bool ComputeFusedPerm(const OrtNodeUnit& reshape_node_unit,
     return false;
   }
 
-  std::vector<int64_t> reshape_perm;
-  if (!DeriveReshapeAsPerm(*reshape_input.shape, *reshape_output.shape, reshape_perm)) {
+  if (!IsReshapePermutable(*reshape_input.shape, *reshape_output.shape)) {
     return false;
   }
+  std::vector<int64_t> reshape_perm;
+  ComputeReshapePerm(*reshape_input.shape, *reshape_output.shape, reshape_perm);
   const size_t rank = reshape_perm.size();
 
   OrtNodeAttrHelper transpose_helper(transpose_node_unit);
@@ -201,6 +200,17 @@ std::unique_ptr<IQnnNodeGroup> ReshapeTransposeFusion::TryFusion(
 
   std::vector<int64_t> fused_perm;
   if (!ComputeFusedPerm(reshape_node_unit, *transpose_node_unit, fused_perm)) {
+    return nullptr;
+  }
+
+  // Skip when the Reshape's output encoding differs from the Transpose's — the intermediate
+  // tensor's scale/offset would be silently dropped by the collapse, producing a wrong DLC.
+  if (!HaveMatchingIntermediateEncoding(qnn_model_wrapper, reshape_node_unit, *transpose_node_unit)) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("[ReshapeTransposeFusion] Skipping fusion of Reshape (" + reshape_node_unit.Name() +
+                 ") -> Transpose (" + transpose_node_unit->Name() +
+                 "): intermediate encoding differs from Transpose output encoding")
+                    .c_str());
     return nullptr;
   }
 

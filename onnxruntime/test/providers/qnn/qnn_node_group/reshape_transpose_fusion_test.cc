@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -120,7 +120,7 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_NonTransposeEquivalentReshape_
   const auto dir = MakeDumpDir(provider_options, "ReshapeTransposeFusion_NotFused");
   auto cleanup = gsl::finally([&dir]() { std::filesystem::remove_all(dir); });
 
-  // Rank changes from 3 to 2 -- DeriveReshapeAsPerm returns false.
+  // Rank changes from 3 to 2 -- IsReshapePermutable returns false.
   RunQnnModelTest(BuildReshapeTransposeFloatCase(/*input_shape=*/{1, 4, 4},
                                                  /*reshape_shape=*/{1, 16},
                                                  /*transpose_perm=*/{1, 0}),
@@ -134,7 +134,7 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_NonTransposeEquivalentReshape_
 }
 
 // Two non-1 dims have equal size and sit at non-adjacent positions in the input.
-// DeriveReshapeAsPerm walks the output left-to-right and picks the first still-unclaimed
+// ComputeReshapePerm walks the output left-to-right and picks the first still-unclaimed
 // input dim that matches, so [2,1,2,1] -> [2,2,1,1] resolves to reshape_perm=[0,2,1,3]
 // (first output '2' -> input dim 0, second output '2' -> input dim 2). Composed with
 // Transpose perm=[0,2,1,3] this gives identity, so fusion must fire and emit a single
