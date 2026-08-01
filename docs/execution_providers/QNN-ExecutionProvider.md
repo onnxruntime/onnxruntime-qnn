@@ -337,6 +337,34 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. Unsupported operators fall back to the CPU EP.|
 |'1'|Disable CPU EP fallback. Returns an error if any operator cannot be handled by QNN EP. Set via `session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1")`.|
 
+|`"op_affinity"`|Description|
+|---|---|
+|Path to a JSON config file (string)|Pins specific ONNX op types to a backend. Currently gates `GroupQueryAttention` only. See [OP Affinity](#op-affinity) below. Not set by default.|
+
+#### OP Affinity
+
+The `op_affinity` option points at a JSON config file that pins ONNX op types to a single backend:
+
+```json
+{ "op_type": { "GroupQueryAttention": "HTP" } }
+```
+
+- Backend names are case-insensitive (`"HTP"` == `"htp"`); `htp` and `htp_fp16` are aliases for the same physical backend.
+- A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
+- On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`.
+
+Behavior for `GroupQueryAttention` (the only op gated today):
+
+| Config state | HTP session | GPU session |
+|---|---|---|
+| No config file | not claimed (opt-in) | claimed (opt-out) |
+| File given, GQA not listed | not claimed | claimed |
+| GQA pinned to the running backend | claimed | claimed |
+| GQA pinned to `CPU` | not claimed (falls back to CPU EP) | not claimed (falls back to CPU EP) |
+| GQA pinned to another accelerator | **session creation fails** | **session creation fails** |
+
+An unopenable or malformed config file (bad JSON, unknown backend name, or a multi-backend array) fails session creation.
+
 ### Flexible Context Binary (FCB) / multi-SoC EP context
 
 The Flexible Context Binary (FCB) feature packages one or more QNN context binaries into a single QNN DLC, so a single EPContext ONNX model can be deployed across multiple Snapdragon SoCs. It requires **QAIRT 2.48 or later (QNN API >= 2.37)**.

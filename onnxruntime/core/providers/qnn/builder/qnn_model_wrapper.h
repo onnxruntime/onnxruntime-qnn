@@ -34,12 +34,19 @@ struct TensorInfo {
   const OrtValueInfo* initializer_tensor;
 };
 
+class OpAffinityMap;  // forward declaration; full type in qnn_op_affinity_map.h (avoids include cycle)
+
 struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
   bool enable_htp_monolithic_lstm = false;
+  // Op-to-backend affinity, owned by the EP for the session lifetime. The EP always sets this to a
+  // valid pointer; consumers use OpAffinityMap::IsConfigured() (not nullness) to test whether the
+  // option was set. nullptr only for a ModelSettings not populated by the EP (e.g. default/tests).
+  // A pointer (not a value) because ModelSettings is copied into every QnnModelWrapper.
+  const OpAffinityMap* op_affinity = nullptr;
 };
 
 class QnnModelWrapper {

@@ -9,6 +9,7 @@
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/qnn_op_affinity_map.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -44,6 +45,19 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   ORT_UNUSED_PARAMETER(logger);
 
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
+
+  // op_affinity gate. Evaluate() encodes the full truth table, INCLUDING the per-backend default
+  // when no config is set (HTP opt-in, GPU/other opt-out), so it is the single source of truth --
+  // do not re-derive the default here. See docs/superpowers/specs truth table §3.
+  if (const qnn::OpAffinityMap* affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
+      affinity != nullptr) {
+    const auto decision = affinity->Evaluate("GroupQueryAttention", backend_type);
+    RETURN_IF(decision == qnn::OpAffinityMap::Decision::kError,
+              "GroupQueryAttention op_affinity pins it to a backend this session is not running.");
+    RETURN_IF_NOT(decision == qnn::OpAffinityMap::Decision::kProceed,
+                  "GroupQueryAttention filtered off QNN by the op_affinity provider option.");
+  }
+
   RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
                 "GroupQueryAttention is only supported with the GPU backend and HTP backend");
 

@@ -4,6 +4,8 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -594,6 +596,170 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Rotary_FP32) {
 // FP16 query/cache path, unpacked inputs.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
+}
+
+// === op_affinity EP-assignment gate tests ===
+// These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
+// (see core/providers/qnn/builder/opbuilder/group_query_attention_op_builder.cc IsOpSupported and
+// core/providers/qnn/qnn_op_affinity_map.h). They deliberately do NOT run inference: unlike
+// RunGQATest/RunHTPPackedGQATest above (which couple EP-assignment verification with a buffer-shared
+// device Run against a CPU reference), these only need to observe whether GQA ends up on QNN EP or
+// whether session creation itself fails -- so they build a minimal GQA model directly with
+// BuildGQATestCase and drive session creation the same way RunGQATest does (see the ProviderOptions /
+// RegisterQnnEpLibrary / ScopedOrtSession / VerifyEPNodeAssignment usage at lines ~188-208 above),
+// with one addition: an "op_affinity" provider option pointing at a temp JSON config file.
+
+// Writes `contents` to a uniquely-named temp file (tagged so parallel tests don't collide) and
+// returns its path. Caller deletes it. Mirrors WriteTempConfig in
+// test/providers/qnn/unit/qnn_op_affinity_map_test.cc.
+static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, const std::string& tag) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / ("gqa_op_affinity_" + tag + ".json");
+  std::ofstream ofs(path);
+  ofs << contents;
+  ofs.close();
+  return path;
+}
+
+// Builds a minimal packed-QKV GQA model (decode geometry: num_heads=8, kv_num_heads=4, head_size=32,
+// sequence_length=1, total_seq_len=1024, scale=0 default, do_rotary=0 -- the same shape used by
+// DISABLED_GroupQueryAttention_Basic_FP32's RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, 0.0f, 0)
+// call above), then creates a QNN session with the given backend and (optional) op_affinity config
+// path set as provider options. Does NOT run inference.
+//
+// On success, *expected_ep_assignment is verified via VerifyEPNodeAssignment (mirrors the pattern at
+// lines ~200-208 above). On failure, the Ort::Exception is caught and reported via *session_failed
+// (mirrors the try/catch pattern in qnn_basic_test.cc's TestDisableCPUFallback_BackendNotFound,
+// around lines 70-78 of that file).
+static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
+                                            const std::optional<std::string>& op_affinity_path,
+                                            ExpectedEPNodeAssignment expected_ep_assignment,
+                                            bool* session_failed) {
+  const int32_t num_heads = 8;
+  const int32_t kv_num_heads = 4;
+  const int32_t head_size = 32;
+  const int32_t sequence_length = 1;
+  const int32_t total_seq_len = 1024;
+  const int32_t batch_size = 1;
+  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
+
+  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
+                                       false, -1.0f, 1.0f);
+  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
+  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
+
+  TestInputDef<float> pk_max({batch_size, kv_num_heads, total_seq_len, head_size}, false, -1.0f, 1.0f);
+  TestInputDef<float> pv_max({batch_size, kv_num_heads, total_seq_len, head_size}, false, -1.0f, 1.0f);
+  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
+  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
+
+  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
+  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
+  auto total_sequence_length_def = TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len});
+
+  const std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::nullopt;
+  const std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::nullopt;
+  const std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
+  const std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
+  const std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
+
+  const GetTestModelFn build_test_case = BuildGQATestCase<float, int32_t>(
+      query_def, key_def, value_def, past_key_def, past_value_def,
+      seqlens_k_def, total_sequence_length_def,
+      cos_cache_def, sin_cache_def, position_ids_def, attention_bias_def, head_sink_def,
+      /*do_rotary*/ 0,
+      /*k_quant_type*/ std::nullopt,
+      /*kv_cache_bit_width*/ std::nullopt,
+      kv_num_heads,
+      /*local_window_size*/ std::nullopt,
+      num_heads,
+      /*qk_output*/ std::nullopt,
+      /*rotary_interleaved*/ std::nullopt,
+      /*scale*/ 0.0f,
+      /*smooth_softmax*/ std::nullopt,
+      /*v_quant_type*/ std::nullopt);
+
+  ModelTestBuilder helper;
+  build_test_case(helper);
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_name;
+  if (op_affinity_path.has_value()) {
+    provider_options["op_affinity"] = *op_affinity_path;
+  }
+
+  *session_failed = false;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions qnn_so;
+  qnn_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  RegisterQnnEpLibrary(registered_ep_device, qnn_so, kQnnExecutionProvider, provider_options);
+  try {
+    ScopedOrtSession scoped_qnn_session(
+        std::move(registered_ep_device),
+        Ort::Session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), qnn_so));
+    Ort::Session& qnn_session = scoped_qnn_session.session();
+    ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, expected_ep_assignment));
+  } catch (const Ort::Exception&) {
+    *session_failed = true;
+  }
+}
+
+// No op_affinity config: HTP is opt-in by default (see OpAffinityMap::Evaluate's per-backend
+// default), so GQA is NOT assigned to QNN.
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", std::nullopt, ExpectedEPNodeAssignment::None, &session_failed);
+  ASSERT_FALSE(session_failed);
+}
+
+// op_affinity pins GroupQueryAttention to HTP, session runs HTP -> assigned to QNN.
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
+  const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "htp_pin_htp");
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::All, &session_failed);
+  ASSERT_FALSE(session_failed);
+  std::filesystem::remove(path);
+}
+
+// op_affinity pins GroupQueryAttention to GPU, but the session runs HTP -> pin can never be
+// honored, so session creation must fail (ValidateForSessionBackend reports an error).
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
+  const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
+  ASSERT_TRUE(session_failed);
+  std::filesystem::remove(path);
+}
+
+// op_affinity pins GroupQueryAttention to CPU: a legitimate silent-off intent, so GQA is NOT
+// assigned to QNN but session creation still succeeds (falls back to CPU EP for that node).
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
+  const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "pin_cpu");
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
+  ASSERT_FALSE(session_failed);
+  std::filesystem::remove(path);
+}
+
+// op_affinity points at a config file that does not exist -> FromConfigFile throws
+// std::runtime_error at EP construction time, so session creation must fail.
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
+  const std::filesystem::path missing =
+      std::filesystem::temp_directory_path() / "gqa_op_affinity_does_not_exist_12345.json";
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", missing.string(), ExpectedEPNodeAssignment::None, &session_failed);
+  ASSERT_TRUE(session_failed);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
