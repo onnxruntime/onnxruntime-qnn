@@ -155,7 +155,7 @@ Ort::Status QLinearConvOpBuilder::BuildPerTensorQuantParam(const QnnModelWrapper
     offset = zero_points[0];
   }
 
-  out_quant_param = QnnQuantParamsWrapper(scale, offset);
+  out_quant_param = QnnQuantParamsWrapper::PerTensor(scale, offset);
   return Ort::Status();
 }
 
@@ -187,7 +187,7 @@ Ort::Status QLinearConvOpBuilder::BuildWeightQuantParam(const QnnModelWrapper& q
   if (scales.size() == 1) {
     // Per-tensor weight quantization.
     const int32_t offset = offsets.empty() ? 0 : offsets[0];
-    out_quant_param = QnnQuantParamsWrapper(scales[0], offset);
+    out_quant_param = QnnQuantParamsWrapper::PerTensor(scales[0], offset);
   } else {
     // Per-channel weight quantization on output-channel axis (axis 0 in OIHW).
     RETURN_IF(scales.size() != static_cast<size_t>(num_output_channels),
@@ -197,9 +197,9 @@ Ort::Status QLinearConvOpBuilder::BuildWeightQuantParam(const QnnModelWrapper& q
     }
     RETURN_IF(offsets.size() != scales.size(),
               "QLinearConv: w_zero_point size must match w_scale size for per-channel quantization.");
-    out_quant_param = QnnQuantParamsWrapper(gsl::span<const float>(scales),
-                                            gsl::span<const int32_t>(offsets),
-                                            /*axis=*/0, /*is_int4=*/false);
+    out_quant_param = QnnQuantParamsWrapper::PerChannel(gsl::span<const float>(scales),
+                                                        gsl::span<const int32_t>(offsets),
+                                                        /*axis=*/0);
   }
   return Ort::Status();
 }
@@ -219,16 +219,16 @@ Ort::Status QLinearConvOpBuilder::BuildBiasQuantParam(const QnnModelWrapper& qnn
 
   // Bias quant: scale = x_scale * w_scale, zero_point = 0 (per ONNX QLinearConv spec).
   if (w_scales.size() == 1) {
-    out_quant_param = QnnQuantParamsWrapper(x_scale * w_scales[0], 0);
+    out_quant_param = QnnQuantParamsWrapper::PerTensor(x_scale * w_scales[0], 0);
   } else {
     std::vector<float> bias_scales(w_scales.size());
     for (size_t i = 0; i < w_scales.size(); ++i) {
       bias_scales[i] = x_scale * w_scales[i];
     }
     std::vector<int32_t> bias_offsets(w_scales.size(), 0);
-    out_quant_param = QnnQuantParamsWrapper(gsl::span<const float>(bias_scales),
-                                            gsl::span<const int32_t>(bias_offsets),
-                                            /*axis=*/0, /*is_int4=*/false);
+    out_quant_param = QnnQuantParamsWrapper::PerChannel(gsl::span<const float>(bias_scales),
+                                                        gsl::span<const int32_t>(bias_offsets),
+                                                        /*axis=*/0);
   }
   return Ort::Status();
 }
