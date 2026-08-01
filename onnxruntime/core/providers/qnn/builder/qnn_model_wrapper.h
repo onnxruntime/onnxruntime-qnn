@@ -34,12 +34,17 @@ struct TensorInfo {
   const OrtValueInfo* initializer_tensor;
 };
 
+class OpAffinityMap;  // forward-declared; pointer only (avoids an include cycle)
+
 struct ModelSettings {
   bool offload_graph_io_quantization = false;
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
   bool enable_htp_monolithic_lstm = false;
+  // Owned by the EP (outlives every copy of this struct). The EP always assigns a valid pointer;
+  // nullptr only for a ModelSettings not populated by the EP (e.g. tests constructing a wrapper directly).
+  const OpAffinityMap* op_affinity = nullptr;
 };
 
 class QnnModelWrapper {

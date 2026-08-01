@@ -1063,6 +1063,23 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                     FormatEPConfigKey("htp_bf16_enable"),
                                                     false,
                                                     logger_);
+
+  // op_affinity: path to a JSON config gating which backend claims specific op types (GQA only today).
+  // FromConfigFile is intentionally uncaught -- a bad config fails session creation.
+  std::string op_affinity_path;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey("op_affinity"), "", op_affinity_path);
+  {  // Trim surrounding ASCII whitespace (no shared trim helper in this codebase).
+    const auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    op_affinity_path.erase(op_affinity_path.begin(),
+                           std::find_if(op_affinity_path.begin(), op_affinity_path.end(), not_space));
+    op_affinity_path.erase(std::find_if(op_affinity_path.rbegin(), op_affinity_path.rend(), not_space).base(),
+                           op_affinity_path.end());
+  }
+  if (!op_affinity_path.empty()) {
+    op_affinity_map_ = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
+  }
+  model_settings_.op_affinity = &op_affinity_map_;
   // Check BF16 compatibility early
   if (model_settings_.htp_bf16_enable) {
     // Check SoC model
@@ -2006,6 +2023,23 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
+  }
+
+  // op_affinity: seed GQA's HTP-opt-in default (pin it to CPU unless the config overrides) now that
+  // SetupBackend has resolved the real backend. This is the one op-specific exception to op_affinity's
+  // otherwise generic lookup; Evaluate()/ValidateForSessionBackend() do not special-case any op.
+  const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
+  if (resolved_backend == qnn::QnnBackendType::HTP || resolved_backend == qnn::QnnBackendType::HTP_FP16) {
+    ep->op_affinity_map_.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+  }
+
+  // op_affinity: the real backend is only resolved after SetupBackend, so validate pins here rather
+  // than at construction. GetCapabilityImpl is noexcept, so return a status instead of throwing.
+  if (const std::optional<std::string> affinity_error =
+          ep->op_affinity_map_.ValidateForSessionBackend(resolved_backend);
+      affinity_error.has_value()) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, affinity_error->c_str());
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, affinity_error->c_str());
   }
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {

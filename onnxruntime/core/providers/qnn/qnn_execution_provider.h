@@ -27,6 +27,7 @@
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/qnn_node_compute_info_base.h"
+#include "core/providers/qnn/qnn_op_affinity_map.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
@@ -245,6 +246,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
+  qnn::OpAffinityMap op_affinity_map_;
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 
   bool dump_json_qnn_graph_ = false;
