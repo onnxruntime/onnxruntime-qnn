@@ -58,7 +58,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
     RETURN_IF_NOT(decision == qnn::OpAffinityMap::Decision::kProceed,
                   "GroupQueryAttention filtered off QNN by the op_affinity provider option.");
   }
- 
+
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();
 
