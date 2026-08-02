@@ -46,8 +46,10 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
 
+  RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
+                "GroupQueryAttention is only supported with the GPU backend and HTP backend");
+
   // op_affinity gate. On HTP, the EP seeds a default CPU pin for this op unless config overrides it
-  // (see QnnEp::GetCapabilityImpl), so an HTP session with no override is filtered off here.
   if (const qnn::OpAffinityMap* affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
       affinity != nullptr) {
     const auto decision = affinity->Evaluate("GroupQueryAttention", backend_type);
@@ -56,10 +58,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
     RETURN_IF_NOT(decision == qnn::OpAffinityMap::Decision::kProceed,
                   "GroupQueryAttention filtered off QNN by the op_affinity provider option.");
   }
-
-  RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
-                "GroupQueryAttention is only supported with the GPU backend and HTP backend");
-
+ 
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();
 
