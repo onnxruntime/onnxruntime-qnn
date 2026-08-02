@@ -21,6 +21,10 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
 
+#ifdef _WIN32
+#include "core/providers/qnn/qnn_external_resource_importer.h"
+#endif
+
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
 // But if QNN-EP is distributed separately from the OnnxRuntime library (e.g. EP ABI or WinML), the backend library may
@@ -85,6 +89,12 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   IsStreamAware = IsStreamAwareImpl;
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
+
+#ifdef _WIN32
+  CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
+#else
+  CreateExternalResourceImporterForDevice = nullptr;
+#endif
 
   // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
@@ -499,6 +509,41 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
         "Unknown exception occurred while creating QNN EP for compatibility check");
   }
   return nullptr;
+}
+
+// External resource importer from D3D12
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImpl(
+    OrtEpFactory* this_ptr,
+    const OrtEpDevice* /*ep_device*/,
+    OrtExternalResourceImporterImpl** out_importer) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+  if (out_importer == nullptr) {
+    return factory->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "out_importer cannot be nullptr");
+  }
+
+  *out_importer = nullptr;
+
+#ifdef _WIN32
+  // Since CreateExternalResourceImporterForDeviceImpl doesn't take memory_device
+  // as a parameter (unlike CreateSyncStreamForDeviceImpl), and we don't have direct API
+  // to extract device ID from OrtEpDevice, we currently use 0.
+  // In the future, we could extract device ID from ep_device using OrtApi::EpDevice_MemoryInfo
+  // and then query the resulting OrtMemoryInfo for device ID.
+  int device_id = 0;
+
+  // Create the external resource importer
+  auto* importer = new (std::nothrow) QnnExternalResourceImporterImpl(device_id, factory->ort_api);
+  if (importer == nullptr) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
+  }
+
+  *out_importer = importer;
+  return nullptr;
+#else
+  return factory->ort_api.CreateStatus(
+      ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
+#endif
 }
 
 }  // namespace onnxruntime
