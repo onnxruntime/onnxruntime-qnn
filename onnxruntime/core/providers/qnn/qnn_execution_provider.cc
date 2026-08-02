@@ -1068,7 +1068,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   std::string op_affinity_path;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
                                  FormatEPConfigKey("op_affinity"), "", op_affinity_path);
-
+  {
     const auto not_space = [](unsigned char c) { return !std::isspace(c); };
     op_affinity_path.erase(op_affinity_path.begin(),
                            std::find_if(op_affinity_path.begin(), op_affinity_path.end(), not_space));
