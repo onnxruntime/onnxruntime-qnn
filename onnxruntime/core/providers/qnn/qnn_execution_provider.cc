@@ -1064,12 +1064,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                     false,
                                                     logger_);
 
-  // op_affinity: path to a JSON config gating which backend claims specific op types (GQA only today).
-  // FromConfigFile is intentionally uncaught -- a bad config fails session creation.
+  // op_affinity: path to a JSON config gating which backend claims specific op types
   std::string op_affinity_path;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
                                  FormatEPConfigKey("op_affinity"), "", op_affinity_path);
-  {  // Trim surrounding ASCII whitespace (no shared trim helper in this codebase).
+
     const auto not_space = [](unsigned char c) { return !std::isspace(c); };
     op_affinity_path.erase(op_affinity_path.begin(),
                            std::find_if(op_affinity_path.begin(), op_affinity_path.end(), not_space));
@@ -2025,16 +2024,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  // op_affinity: seed GQA's HTP-opt-in default (pin it to CPU unless the config overrides) now that
-  // SetupBackend has resolved the real backend. This is the one op-specific exception to op_affinity's
-  // otherwise generic lookup; Evaluate()/ValidateForSessionBackend() do not special-case any op.
+  // op_affinity: seed GQA's HTP-opt-in default (pin it to CPU unless the config overrides)
   const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
   if (resolved_backend == qnn::QnnBackendType::HTP || resolved_backend == qnn::QnnBackendType::HTP_FP16) {
     ep->op_affinity_map_.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
   }
 
-  // op_affinity: the real backend is only resolved after SetupBackend, so validate pins here rather
-  // than at construction. GetCapabilityImpl is noexcept, so return a status instead of throwing.
   if (const std::optional<std::string> affinity_error =
           ep->op_affinity_map_.ValidateForSessionBackend(resolved_backend);
       affinity_error.has_value()) {
