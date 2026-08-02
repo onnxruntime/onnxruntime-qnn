@@ -353,18 +353,6 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 - A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
 - On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`.
 
-Behavior for `GroupQueryAttention` (the only op gated today):
-
-| Config state | HTP session | GPU session |
-|---|---|---|
-| No config file | not claimed (opt-in) | claimed (opt-out) |
-| File given, GQA not listed | not claimed | claimed |
-| GQA pinned to the running backend | claimed | claimed |
-| GQA pinned to `CPU` | not claimed (falls back to CPU EP) | not claimed (falls back to CPU EP) |
-| GQA pinned to another accelerator | **session creation fails** | **session creation fails** |
-
-An unopenable or malformed config file (bad JSON, unknown backend name, or a multi-backend array) fails session creation.
-
 ### Flexible Context Binary (FCB) / multi-SoC EP context
 
 The Flexible Context Binary (FCB) feature packages one or more QNN context binaries into a single QNN DLC, so a single EPContext ONNX model can be deployed across multiple Snapdragon SoCs. It requires **QAIRT 2.48 or later (QNN API >= 2.37)**.
