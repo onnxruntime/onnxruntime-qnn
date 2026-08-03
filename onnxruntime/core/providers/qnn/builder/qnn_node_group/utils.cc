@@ -13,11 +13,14 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/providers/qnn/builder/ort_graph_read_helpers.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+using namespace ort_read;
 
 std::optional<std::vector<uint32_t>> GetReduceAxes(const QnnModelWrapper& qmw,
                                                    const OrtNodeUnit& node_unit) {
@@ -71,31 +74,32 @@ std::optional<std::vector<uint32_t>> GetReduceAxes(const QnnModelWrapper& qmw,
   return axes;
 }
 
-const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& /*qnn_model_wrapper*/,
+const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
                                       const OrtNodeUnit& parent_node_unit,
                                       gsl::span<const std::string_view> child_op_types,
                                       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
-  const Ort::ConstNode parent_node(&parent_node_unit.GetNode());
-  std::vector<Ort::ConstValueInfo> outputs = parent_node.GetOutputs();
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  const OrtNode* parent_node = &parent_node_unit.GetNode();
+  std::vector<const OrtValueInfo*> outputs = NodeOutputs(ort_api, parent_node);
 
   // Parent must have a single child and must not produce a graph output.
   if (outputs.size() != 1) {
     return nullptr;
   }
-  for (const Ort::ConstValueInfo& output_info : outputs) {
-    if (output_info.IsGraphOutput()) {
+  for (const OrtValueInfo* output_info : outputs) {
+    if (IsGraphOutput(ort_api, output_info)) {
       return nullptr;
     }
   }
 
-  std::vector<Ort::ValueInfoConsumerProducerInfo> consumers = outputs[0].GetConsumers();
-  if (consumers.size() != 1 || consumers[0].node == nullptr) {
+  std::vector<const OrtNode*> consumers = ConsumerNodes(ort_api, outputs[0]);
+  if (consumers.size() != 1 || consumers[0] == nullptr) {
     return nullptr;
   }
 
-  const Ort::ConstNode child_node = consumers[0].node;
-  const std::string& child_type = child_node.GetOperatorType();
+  const OrtNode* child_node = consumers[0];
+  const std::string child_type = NodeOpType(ort_api, child_node);
   bool is_valid_child_type = false;
 
   for (const auto& valid_op_type : child_op_types) {
@@ -130,13 +134,14 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& /*qnn_model_wrapper
 }
 
 const OrtNodeUnit* GetChildNodeUnitAllowQdq(
-    const QnnModelWrapper& /*qnn_model_wrapper*/,
+    const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& parent_node_unit,
     const std::string& child_op_type,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   try {
-    const Ort::ConstNode parent_node(&parent_node_unit.GetNode());
+    const OrtNode* parent_node = &parent_node_unit.GetNode();
 
     // 1. For QDQ NodeUnits (DQ->op->Q), look at the Q node's output instead of the target node's output.
     const OrtNode* search_node = parent_node;
@@ -148,42 +153,42 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
     }
 
     // 2. Search node must have a single child and must not produce a graph output.
-    const std::vector<Ort::ConstValueInfo> outputs = Ort::ConstNode(search_node).GetOutputs();
-    if (outputs.size() != 1 || outputs[0].IsGraphOutput()) {
+    const std::vector<const OrtValueInfo*> outputs = NodeOutputs(ort_api, search_node);
+    if (outputs.size() != 1 || IsGraphOutput(ort_api, outputs[0])) {
       return nullptr;
     }
 
     // 3. Search node must have exactly one consumer.
-    const std::vector<Ort::ValueInfoConsumerProducerInfo> consumers = outputs[0].GetConsumers();
-    if (consumers.size() != 1 || consumers[0].node == nullptr) {
+    const std::vector<const OrtNode*> consumers = ConsumerNodes(ort_api, outputs[0]);
+    if (consumers.size() != 1 || consumers[0] == nullptr) {
       return nullptr;
     }
 
-    const OrtNode* potential_child = consumers[0].node;
+    const OrtNode* potential_child = consumers[0];
 
     // 4. If the child is Q/DQ wrapper(s), skip through them and look at the next math child.
     // Example: DQ -> op -> Q -> DQ -> ...
     while (potential_child != nullptr) {
-      const std::string child_op = Ort::ConstNode(potential_child).GetOperatorType();
+      const std::string child_op = NodeOpType(ort_api, potential_child);
       if (child_op != QUANTIZE_LINEAR && child_op != DEQUANTIZE_LINEAR) {
         break;
       }
 
-      const std::vector<Ort::ConstValueInfo> qdq_outputs = Ort::ConstNode(potential_child).GetOutputs();
+      const std::vector<const OrtValueInfo*> qdq_outputs = NodeOutputs(ort_api, potential_child);
       if (qdq_outputs.size() != 1) {
         return nullptr;
       }
 
-      const std::vector<Ort::ValueInfoConsumerProducerInfo> qdq_consumers = qdq_outputs[0].GetConsumers();
-      if (qdq_consumers.size() != 1 || qdq_consumers[0].node == nullptr) {
+      const std::vector<const OrtNode*> qdq_consumers = ConsumerNodes(ort_api, qdq_outputs[0]);
+      if (qdq_consumers.size() != 1 || qdq_consumers[0] == nullptr) {
         return nullptr;
       }
 
-      potential_child = qdq_consumers[0].node;
+      potential_child = qdq_consumers[0];
     }
 
     // 5. Check if the child node is of the expected type.
-    if (Ort::ConstNode(potential_child).GetOperatorType() != child_op_type) {
+    if (NodeOpType(ort_api, potential_child) != child_op_type) {
       return nullptr;
     }
 
@@ -212,26 +217,97 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
   }
 }
 
-const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& /*qnn_model_wrapper*/,
+std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(
+    const QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnitIODef& shape_input) {
+  // 1. Require the shape input (eg: Reshape node input[1]) to be a constant initializer.
+  if (!qnn_model_wrapper.IsConstantInput(shape_input.name)) {
+    return std::nullopt;
+  }
+
+  // 2. Get the initializer tensor and ensure it exists.
+  const OrtValueInfo* tensor = qnn_model_wrapper.GetConstantTensor(shape_input.name);
+  if (tensor == nullptr) {
+    return std::nullopt;
+  }
+
+  ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  size_t element_count = 0;
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  try {
+    elem_type = ElemType(ort_api, tensor);
+
+    // 4. Use NodeUnit I/O shape metadata to get the expected number of entries in the shape tensor.
+    std::vector<uint32_t> shape_tensor_dims;
+    if (!qnn_model_wrapper.GetOnnxShape(shape_input.shape, shape_tensor_dims) || shape_tensor_dims.size() != 1) {
+      return std::nullopt;
+    }
+    element_count = static_cast<size_t>(shape_tensor_dims[0]);
+  } catch (const Ort::Exception& e) {
+    // Treated as "no match", but log so a genuine API error is not silently swallowed.
+    if (OrtLoggingManager::HasDefaultLogger()) {
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                  (std::string("GetInitializerDataAsInt64: ignoring Ort::Exception while reading shape: ") +
+                   e.what())
+                      .c_str());
+    }
+    return std::nullopt;
+  }
+
+  // 5. Unpack the raw initializer data.
+  std::vector<uint8_t> raw_bytes;
+  if (!qnn_model_wrapper.UnpackInitializerData(tensor, raw_bytes).IsOK()) {
+    return std::nullopt;
+  }
+
+  std::vector<int64_t> values;
+  values.reserve(element_count);
+
+  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+    // 6. Validate the byte size for int64 data.
+    if (raw_bytes.size() != element_count * sizeof(int64_t)) {
+      return std::nullopt;
+    }
+    const int64_t* data = reinterpret_cast<const int64_t*>(raw_bytes.data());
+    values.assign(data, data + element_count);
+  } else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
+    // 7. Validate the byte size for int32 data.
+    if (raw_bytes.size() != element_count * sizeof(int32_t)) {
+      return std::nullopt;
+    }
+    const int32_t* data = reinterpret_cast<const int32_t*>(raw_bytes.data());
+    for (size_t i = 0; i < element_count; ++i) {
+      values.push_back(static_cast<int64_t>(data[i]));
+    }
+  } else {
+    // 8. Reject unsupported element types.
+    return std::nullopt;
+  }
+
+  return values;
+}
+
+const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& qnn_model_wrapper,
                                    const OrtNodeUnit& child_node_unit,
                                    gsl::span<const std::string_view> parent_op_types,
                                    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
-  const Ort::ConstNode child_node(&child_node_unit.GetNode());
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  const OrtNode* child_node = &child_node_unit.GetNode();
 
-  for (const Ort::ConstValueInfo& input_info : child_node.GetInputs()) {
-    const Ort::ConstNode parent_node = input_info.GetProducerNode().node;
-    if (static_cast<const OrtNode*>(parent_node) == nullptr) {
+  for (const OrtValueInfo* input_info : NodeInputs(ort_api, child_node)) {
+    const OrtNode* parent_node = ProducerNode(ort_api, input_info);
+    if (parent_node == nullptr) {
       continue;
     }
-    for (const Ort::ConstValueInfo& parent_output_info : parent_node.GetOutputs()) {
-      if (parent_output_info.IsGraphOutput()) {
+    for (const OrtValueInfo* parent_output_info : NodeOutputs(ort_api, parent_node)) {
+      if (IsGraphOutput(ort_api, parent_output_info)) {
         // Node is producing a graph output
         return nullptr;
       }
     }
 
-    const std::string parent_type = parent_node.GetOperatorType();
+    const std::string parent_type = NodeOpType(ort_api, parent_node);
     bool is_valid_parent_type = false;
 
     for (const auto& valid_op_type : parent_op_types) {
@@ -267,16 +343,17 @@ const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& /*qnn_model_wrapper*/,
   return nullptr;
 }
 
-const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& /*qnn_model_wrapper*/,
+const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& qnn_model_wrapper,
                                     const OrtNodeUnit& node_unit,
                                     const OrtNodeUnitIODef& input,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   const OrtNode* p_child_node = nullptr;
 
   for (const OrtNode* node : node_unit.GetAllNodesInGroup()) {
-    for (const Ort::ConstValueInfo& input_info : Ort::ConstNode(node).GetInputs()) {
-      if (input_info.GetName() == input.name) {
+    for (const OrtValueInfo* input_info : NodeInputs(ort_api, node)) {
+      if (ValueInfoName(ort_api, input_info) == input.name) {
         p_child_node = node;
         break;
       }
@@ -291,19 +368,17 @@ const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& /*qnn_model_wrapper*/
     return nullptr;
   }
 
-  const Ort::ConstNode child_node(p_child_node);
-
-  for (const Ort::ConstValueInfo& input_info : child_node.GetInputs()) {
-    if (input_info.GetName() != input.name) {
+  for (const OrtValueInfo* input_info : NodeInputs(ort_api, p_child_node)) {
+    if (ValueInfoName(ort_api, input_info) != input.name) {
       continue;
     }
 
-    const Ort::ConstNode parent_node = input_info.GetProducerNode().node;
-    if (static_cast<const OrtNode*>(parent_node) == nullptr) {
+    const OrtNode* parent_node = ProducerNode(ort_api, input_info);
+    if (parent_node == nullptr) {
       return nullptr;
     }
-    for (const Ort::ConstValueInfo& parent_output_info : parent_node.GetOutputs()) {
-      if (parent_output_info.IsGraphOutput()) {
+    for (const OrtValueInfo* parent_output_info : NodeOutputs(ort_api, parent_node)) {
+      if (IsGraphOutput(ort_api, parent_output_info)) {
         // Node is producing a graph output
         return nullptr;
       }
@@ -326,16 +401,17 @@ const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& /*qnn_model_wrapper*/
   return nullptr;
 }
 
-const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& /*qnn_model_wrapper*/,
+const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& qnn_model_wrapper,
                                         const OrtNodeUnit& node_unit,
                                         const OrtNodeUnitIODef& output,
                                         const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                         const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   const OrtNode* p_parent_node = nullptr;
 
   for (const OrtNode* node : node_unit.GetAllNodesInGroup()) {
-    for (const Ort::ConstValueInfo& output_info : Ort::ConstNode(node).GetOutputs()) {
-      if (output_info.GetName() == output.name) {
+    for (const OrtValueInfo* output_info : NodeOutputs(ort_api, node)) {
+      if (ValueInfoName(ort_api, output_info) == output.name) {
         p_parent_node = node;
         break;
       }
@@ -351,29 +427,27 @@ const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& /*qnn_model_wrapp
     return nullptr;
   }
 
-  const Ort::ConstNode parent_node(p_parent_node);
-
-  for (const Ort::ConstValueInfo& parent_output_info : parent_node.GetOutputs()) {
-    if (parent_output_info.IsGraphOutput()) {
+  for (const OrtValueInfo* parent_output_info : NodeOutputs(ort_api, p_parent_node)) {
+    if (IsGraphOutput(ort_api, parent_output_info)) {
       // Node is producing a graph output.
       return nullptr;
     }
   }
 
-  for (const Ort::ConstValueInfo& output_info : parent_node.GetOutputs()) {
+  for (const OrtValueInfo* output_info : NodeOutputs(ort_api, p_parent_node)) {
     // Check if this is the output we're looking for.
-    if (output_info.GetName() != output.name) {
+    if (ValueInfoName(ort_api, output_info) != output.name) {
       continue;
     }
 
-    std::vector<Ort::ValueInfoConsumerProducerInfo> consumers = output_info.GetConsumers();
+    std::vector<const OrtNode*> consumers = ConsumerNodes(ort_api, output_info);
     // Check if there is exactly one child.
     // The returned consumer info should not be nullptr node but check to be safe.
-    if (consumers.size() != 1 || consumers[0].node == nullptr) {
+    if (consumers.size() != 1 || consumers[0] == nullptr) {
       return nullptr;
     }
 
-    const Ort::ConstNode child_node = consumers[0].node;
+    const OrtNode* child_node = consumers[0];
     const auto child_node_unit_it = node_unit_map.find(child_node);
     if (child_node_unit_it == node_unit_map.end()) {
       return nullptr;
@@ -392,30 +466,30 @@ const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& /*qnn_model_wrapp
   return nullptr;
 }
 
-const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wrapper*/,
+const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           const std::string& input_name,
                                           const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                           const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
-  // Walk every node in the group looking for one that consumes `input_name`, then
-  // return the NodeUnit that produces it — subject to the same fusion-safety checks
-  // used by the other Get*Parent* helpers (not a graph output, not already fused, standalone).
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  // Iterate through all nodes in the group
   for (const OrtNode* node : node_unit.GetAllNodesInGroup()) {
-    for (const Ort::ConstValueInfo& input_info : Ort::ConstNode(node).GetInputs()) {
-      if (input_info.GetName() != input_name) {
+    // Check if this node has the input we're looking for
+    for (const OrtValueInfo* input_info : NodeInputs(ort_api, node)) {
+      if (ValueInfoName(ort_api, input_info) != input_name) {
         continue;
       }
 
-      const Ort::ConstNode parent_node = input_info.GetProducerNode().node;
+      const OrtNode* parent_node = ProducerNode(ort_api, input_info);
 
-      if (static_cast<const OrtNode*>(parent_node) == nullptr) {
-        // input_name is a graph input or initializer — no producer node.
+      if (parent_node == nullptr) {
+        // Node is not in this graph
         return nullptr;
       }
 
-      for (const Ort::ConstValueInfo& parent_output_info : parent_node.GetOutputs()) {
-        if (parent_output_info.IsGraphOutput()) {
-          // Producer also feeds a graph output; fusing it would drop that output.
+      for (const OrtValueInfo* parent_output_info : NodeOutputs(ort_api, parent_node)) {
+        if (IsGraphOutput(ort_api, parent_output_info)) {
+          // Node is producing a graph output
           return nullptr;
         }
       }
