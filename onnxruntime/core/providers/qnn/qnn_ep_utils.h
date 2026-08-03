@@ -378,6 +378,21 @@ class OrtRMSNormalizationNodeGroupSelector : public OrtNodeGroupSelector {
              const std::vector<const OrtNode*>& q_nodes) const override;
 };
 
+// Input 1: DQ node for input A.
+// Input 2: no DQ node for input B.
+// Input 3: no DQ node for input scales.
+// Input 4: no DQ node for input zero_points.
+// Output: Q node for output Y.
+class OrtMatMulNBitsNodeGroupSelector : public OrtNodeGroupSelector {
+ private:
+  bool Check(const OrtGraph* graph,
+             const OrtApi& ort_api,
+             const OrtNode* node,
+             const OrtNode* redundant_clip_node,
+             const std::vector<const OrtNode*>& dq_nodes,
+             const std::vector<const OrtNode*>& q_nodes) const override;
+};
+
 // SelectorManager for OrtGraph
 class OrtSelectorManager {
  public:
