@@ -281,13 +281,22 @@ class OrtNodeUnit {
   const std::vector<OrtNodeUnitIODef>& Inputs() const noexcept { return inputs_; }
   const std::vector<OrtNodeUnitIODef>& Outputs() const noexcept { return outputs_; }
 
-  std::string Domain() const noexcept { return Ort::ConstNode(target_node_).GetDomain(); }
-  std::string OpType() const noexcept { return Ort::ConstNode(target_node_).GetOperatorType(); }
-  std::string Name() const noexcept { return Ort::ConstNode(target_node_).GetName(); }
-  int SinceVersion() const noexcept { return Ort::ConstNode(target_node_).GetSinceVersion(); }
+  std::string Domain() const noexcept { return NodeString(ort_api_.Node_GetDomain); }
+  std::string OpType() const noexcept { return NodeString(ort_api_.Node_GetOperatorType); }
+  std::string Name() const noexcept { return NodeString(ort_api_.Node_GetName); }
+  int SinceVersion() const noexcept {
+    int since_version = 0;
+    ort_api_.Node_GetSinceVersion(target_node_, &since_version);
+    return since_version;
+  }
   // Align NodeUnit to name as Index although returning Id since index is inaccessible.
-  size_t Index() const noexcept { return Ort::ConstNode(target_node_).GetId(); }
+  size_t Index() const noexcept {
+    size_t id = 0;
+    ort_api_.Node_GetId(target_node_, &id);
+    return id;
+  }
 
+  const OrtApi& GetOrtApi() const noexcept { return ort_api_; }
   const OrtNode& GetNode() const noexcept { return *target_node_; }
   const OrtNode* GetRedundantClipNode() const noexcept { return redundant_clip_node_; }
   const std::vector<const OrtNode*>& GetDQNodes() const noexcept { return dq_nodes_; }
@@ -311,6 +320,13 @@ class OrtNodeUnit {
   // // Initialization for a NodeUnit that contains a single node
   OrtStatus* InitForSingleNode(const OrtApi& ort_api);
 
+  // Read a node string field through the injected api.
+  std::string NodeString(OrtStatus* (ORT_API_CALL* getter)(const OrtNode*, const char**)) const noexcept {
+    const char* value = nullptr;
+    getter(target_node_, &value);
+    return value != nullptr ? std::string(value) : std::string();
+  }
+
   const std::vector<const OrtNode*> dq_nodes_;  // dq nodes for this NodeUnit, not necessarily all inputs
   const OrtNode* target_node_;
   const OrtNode* redundant_clip_node_ = nullptr;  // Optional redundant clip node for the QDQ group, nullptr if not present.
@@ -319,6 +335,7 @@ class OrtNodeUnit {
 
   std::vector<OrtNodeUnitIODef> inputs_;
   std::vector<OrtNodeUnitIODef> outputs_;
+  const OrtApi& ort_api_;
 };
 
 /**
@@ -329,7 +346,6 @@ class OrtNodeAttrHelper {
  public:
   explicit OrtNodeAttrHelper(const OrtNode& node);
 
-  // Get the attributes from the target node of the node_unit
   explicit OrtNodeAttrHelper(const OrtNodeUnit& node_unit);
 
   /*
@@ -367,6 +383,7 @@ class OrtNodeAttrHelper {
 
  private:
   const OrtNode& node_;
+  const OrtApi& ort_api_;
 };
 
 OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,

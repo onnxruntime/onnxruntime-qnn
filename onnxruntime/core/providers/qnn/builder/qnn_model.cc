@@ -11,6 +11,7 @@
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/ort_graph_read_helpers.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -78,18 +79,18 @@ bool QnnModel::GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::
 
 Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   const OrtGraph& ort_graph = context.ort_graph;
+  const OrtApi& ort_api = api_ptrs_.ort_api;
 
   graph_inputs_.Clear();
   graph_outputs_.Clear();
 
-  Ort::ConstNode fused_node{&context.fused_node};
-  std::vector<Ort::ConstValueInfo> input_defs = fused_node.GetInputs();
+  std::vector<const OrtValueInfo*> input_defs = ort_read::NodeInputs(ort_api, &context.fused_node);
 
   // Collect non-initializer inputs
   std::unordered_set<std::string> fused_input_names;
   std::vector<std::string> fused_input_order;
-  for (const auto& input : input_defs) {
-    std::string name = input.GetName();
+  for (const auto* input : input_defs) {
+    std::string name = ort_read::ValueInfoName(ort_api, input);
     if (!IsConstantInitializer(ort_graph, name)) {
       fused_input_names.insert(name);
       fused_input_order.push_back(name);
@@ -116,13 +117,12 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   }
 
   for (size_t i = 0; i < input_defs.size(); ++i) {
-    const auto& value_info = input_defs[i];
-    std::string name = value_info.GetName();
+    const auto* value_info = input_defs[i];
+    std::string name = ort_read::ValueInfoName(ort_api, value_info);
     if (IsConstantInitializer(ort_graph, name)) continue;
 
-    auto shape_info = value_info.TypeInfo().GetTensorTypeAndShapeInfo();
-    ONNXTensorElementDataType elem_type = shape_info.GetElementType();
-    std::vector<int64_t> shape = shape_info.GetShape();
+    ONNXTensorElementDataType elem_type = ort_read::ElemType(ort_api, value_info);
+    std::vector<int64_t> shape = ort_read::Shape(ort_api, value_info);
 
     for (const auto& s : shape) {
       RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for input: " + name).c_str());
@@ -133,12 +133,12 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
                                   std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
   }
 
-  std::vector<Ort::ConstValueInfo> output_defs = fused_node.GetOutputs();
+  std::vector<const OrtValueInfo*> output_defs = ort_read::NodeOutputs(ort_api, &context.fused_node);
 
   std::unordered_set<std::string> fused_output_names;
   std::vector<std::string> fused_output_order;
-  for (const auto& output : output_defs) {
-    std::string name = output.GetName();
+  for (const auto* output : output_defs) {
+    std::string name = ort_read::ValueInfoName(ort_api, output);
     fused_output_names.insert(name);
     fused_output_order.push_back(name);
   }
@@ -156,12 +156,11 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   }
 
   for (size_t i = 0; i < output_defs.size(); ++i) {
-    const auto& value_info = output_defs[i];
-    std::string name = value_info.GetName();
+    const auto* value_info = output_defs[i];
+    std::string name = ort_read::ValueInfoName(ort_api, value_info);
 
-    auto shape_info = value_info.TypeInfo().GetTensorTypeAndShapeInfo();
-    ONNXTensorElementDataType elem_type = shape_info.GetElementType();
-    std::vector<int64_t> shape = shape_info.GetShape();
+    ONNXTensorElementDataType elem_type = ort_read::ElemType(ort_api, value_info);
+    std::vector<int64_t> shape = ort_read::Shape(ort_api, value_info);
 
     for (const auto& s : shape) {
       RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for output: " + name).c_str());
@@ -266,7 +265,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   ORT_CXX_LOG(logger,
               ORT_LOGGING_LEVEL_VERBOSE,
-              ("ComposeGraph Graph name: " + Ort::ConstGraph(&ort_graph).GetName()).c_str());
+              ("ComposeGraph Graph name: " + ort_read::GraphName(api_ptrs_.ort_api, &ort_graph)).c_str());
 
   // Holder for the OrtNodes in the graph, this will guarantee the OrtNodes is
   // valid throughout the lifetime of the ModelBuilder
@@ -276,7 +275,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, &ort_graph, logger);
 
   // This name must be same with the EPContext node name
-  const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
+  const std::string graph_name = ort_read::NodeName(api_ptrs_.ort_api, &fused_node);
   RETURN_IF_ERROR(SetGraphInputOutputInfo(context));
 
   // Framework op trace: create collector before QnnModelWrapper so it can be
@@ -747,9 +746,10 @@ void QnnModel::LogTensorDetails(QnnModelWrapper& qnn_model_wrapper,
   size_t num_initializers = 0;
 
   // Collect input tensor information
-  const Ort::ConstGraph graph(&qnn_model_wrapper.GetOrtGraph());
-  for (const Ort::ConstValueInfo& input : graph.GetInputs()) {
-    const std::string input_name = input.GetName();
+  const OrtApi& ort_api = api_ptrs_.ort_api;
+  const OrtGraph* graph = &qnn_model_wrapper.GetOrtGraph();
+  for (const OrtValueInfo* input : ort_read::GraphInputs(ort_api, graph)) {
+    const std::string input_name = ort_read::ValueInfoName(ort_api, input);
 
     // Skip if it's an initializer
     if (qnn_model_wrapper.IsConstantInput(input_name)) {
@@ -781,21 +781,21 @@ void QnnModel::LogTensorDetails(QnnModelWrapper& qnn_model_wrapper,
   // Build a map of initializer names to the operators that use them
   std::unordered_map<std::string, std::vector<std::string>> initializer_to_ops;
 
-  for (const Ort::ConstNode& node : graph.GetNodes()) {
-    if (static_cast<const OrtNode*>(node) == nullptr) {
+  for (const OrtNode* node : ort_read::GraphNodes(ort_api, graph)) {
+    if (node == nullptr) {
       continue;
     }
 
-    const std::string op_type = node.GetOperatorType();
-    const std::string node_name = node.GetName();
+    const std::string op_type = ort_read::NodeOpType(ort_api, node);
+    const std::string node_name = ort_read::NodeName(ort_api, node);
 
     // Check each input of the node
-    for (const Ort::ConstValueInfo& input : node.GetInputs()) {
-      if (static_cast<const OrtValueInfo*>(input) == nullptr) {
+    for (const OrtValueInfo* input : ort_read::NodeInputs(ort_api, node)) {
+      if (input == nullptr) {
         continue;
       }
 
-      const std::string input_name = input.GetName();
+      const std::string input_name = ort_read::ValueInfoName(ort_api, input);
 
       // Check if this input is an initializer
       if (qnn_model_wrapper.IsConstantInput(input_name)) {
@@ -807,8 +807,8 @@ void QnnModel::LogTensorDetails(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // Collect initializer tensor information with operator usage
-  for (const Ort::ConstValueInfo& initializer : graph.GetInitializers()) {
-    const std::string initializer_name = initializer.GetName();
+  for (const OrtValueInfo* initializer : ort_read::GraphInitializers(ort_api, graph)) {
+    const std::string initializer_name = ort_read::ValueInfoName(ort_api, initializer);
 
     // Check if this tensor exists in the QNN model
     if (qnn_model_wrapper.IsQnnTensorWrapperExist(initializer_name)) {

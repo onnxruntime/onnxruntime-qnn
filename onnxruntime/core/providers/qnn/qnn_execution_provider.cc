@@ -35,6 +35,8 @@
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_graph_snapshot.h"
+#include "core/providers/qnn/builder/qnn_graph_snapshot_accessors.h"
 #include "core/providers/qnn/builder/qnn_model_classifier.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
@@ -1441,7 +1443,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
           if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
             if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Logs)) != 0) {
               auto ortETWSeverity = etwRegistrationManager.MapLevelToOrtLoggingLevel();
-              (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
+              if (qnn_backend_manager_) (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
             }
             if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
               if (Level != 0) {
@@ -1487,8 +1489,10 @@ QnnEp::~QnnEp() {
     }
   }
 
-  // Explicitly clear the QNN models map to ensure proper cleanup
+  // Drop HTP models before shims/snapshots (models hold OrtApi references into shims).
   htp_models_.clear();
+  htp_shims_.clear();
+  htp_snapshots_.clear();
   if (!qnn_models_.empty()) {
     qnn_models_.clear();
   }
@@ -2194,18 +2198,28 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // claimed partition is guaranteed to compile on GPU (migration window) and HTP (post-migration).
   std::vector<const OrtNode*> supported_nodes;
   if (ep->hot_migration_enabled_ && ep->htp_backend_manager_) {
+    // Validate on both backends concurrently; only nodes supported by both are claimed.
     std::vector<const OrtNode*> gpu_supported_nodes;
-    RETURN_IF_NOT_NULL(ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(),
-                                             gpu_supported_nodes,
-                                             ep->trace_.unsupported_nodes,
-                                             ep->qnn_backend_manager_.get()));
-
     std::vector<const OrtNode*> htp_supported_nodes;
-    RETURN_IF_NOT_NULL(ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(),
-                                             htp_supported_nodes,
-                                             ep->trace_.unsupported_nodes,
-                                             ep->htp_backend_manager_.get()));
+    std::vector<qnn::UnsupportedNodeInfo> htp_unsupported_nodes;
+    OrtStatus* htp_status = nullptr;
+    auto gpu_pass = [&] {
+      return ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(),
+                                   gpu_supported_nodes, ep->trace_.unsupported_nodes,
+                                   ep->qnn_backend_manager_.get());
+    };
+    auto htp_pass = [&] {
+      htp_status = ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(),
+                                         htp_supported_nodes, htp_unsupported_nodes,
+                                         ep->htp_backend_manager_.get());
+    };
 
+    std::thread htp_thread(htp_pass);
+    OrtStatus* gpu_status = gpu_pass();
+    htp_thread.join();
+
+    RETURN_IF_NOT_NULL(gpu_status);
+    RETURN_IF_NOT_NULL(htp_status);
     // Intersection: only claim nodes both backends can compile. Nodes supported by HTP but not
     // GPU fall back to CPU EP for the entire session (partitioning is fixed at session creation).
     std::unordered_set<const OrtNode*> htp_set(htp_supported_nodes.begin(),
@@ -2214,6 +2228,19 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     for (const OrtNode* node : gpu_supported_nodes) {
       if (htp_set.count(node)) {
         supported_nodes.push_back(node);
+      }
+    }
+
+    size_t gpu_only_count = 0;
+    for (const OrtNode* node : gpu_supported_nodes) {
+      if (!htp_set.count(node)) {
+        ++gpu_only_count;
+        Ort::ConstNode const_node(node);
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                    (std::string("QNN hot migration: node '") + const_node.GetName() +
+                     "' (op=" + const_node.GetOperatorType() +
+                     ") supported by GPU but not HTP - falling back to CPU EP for this session.")
+                        .c_str());
       }
     }
 
@@ -2442,8 +2469,6 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 #endif
 
-      // SetupQnnInputOutput populates qnn_input_infos_/qnn_output_infos_ which are only consumed
-      // in ExecuteGraph during inference. In prepare_only mode inference never runs, so skip.
       if (!prepare_only_) {
         RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
       }
@@ -2925,9 +2950,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
   }
 
-  // Hot migration compile path: compose both GPU and HTP graphs while OrtGraph* pointers
-  // are still valid, finalize GPU synchronously, defer HTP finalization to a background
-  // thread. compute_state is wired to model_slots_ for atomic backend switching at runtime.
+  // Hot migration: compose GPU + snapshot graphs synchronously, defer HTP finalization to background.
   if (ep->hot_migration_enabled_ && ep->htp_backend_manager_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "QNN hot migration: composing GPU and HTP graphs in CompileImpl.");
@@ -2939,21 +2962,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     const auto& onnx_input_names = ep->onnx_graph_io_names_->first;
     const auto& onnx_output_names = ep->onnx_graph_io_names_->second;
 
-    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
-        QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-    if (ep->htp_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::HTP) {
-      ep->InitQnnHtpGraphConfigs(ep->htp_graph_configs_, htp_graph_configs_builder);
-    }
-    std::vector<const QnnGraph_Config_t*> htp_all_graph_configs;
-    if (const QnnGraph_Config_t** htp_configs = htp_graph_configs_builder.GetQnnConfigs()) {
-      htp_all_graph_configs.reserve(htp_graph_configs_builder.GetSize() + 1);
-      for (const QnnGraph_Config_t** cfg = htp_configs; *cfg; ++cfg) {
-        htp_all_graph_configs.push_back(*cfg);
-      }
-      htp_all_graph_configs.push_back(nullptr);
-    }
-    const QnnGraph_Config_t** htp_graph_configs_ptr =
-        htp_all_graph_configs.empty() ? nullptr : htp_all_graph_configs.data();
+    // Compose all GPU subgraphs (and snapshot the live graphs) serially, then finalize together.
+    std::vector<GraphFinalizationInfo_t> gpu_model_infos;
+    gpu_model_infos.reserve(count);
 
     for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
       const OrtGraph* graph = graphs[graph_idx];
@@ -2972,64 +2983,185 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
           /*json_qnn_graph_path=*/std::string{}};
 
       RETURN_IF_NOT_OK(gpu_model->ComposeGraph(gpu_context));
-      RETURN_IF_NOT_OK(gpu_model->FinalizeGraphs(ep->logger_));
-      RETURN_IF_NOT_OK(gpu_model->SetupQnnInputOutput(ep->logger_));
 
-      // HTP: compose only. Finalize + SetupQnnInputOutput run on htp_prepare_thread_.
-      auto htp_model = std::make_unique<qnn::QnnModel>(
-          ep->htp_backend_manager_.get(), ApiPtrs{ep->ort_api, ep->ep_api, ep->model_editor_api});
+      std::unique_ptr<qnn::SnapshotGraph> snapshot =
+          qnn::SnapshotGraphFromOrt(ep->ort_api, graph, fused_node, ep->logger_);
+      if (snapshot == nullptr) {
+        return ep->ort_api.CreateStatus(ORT_EP_FAIL, "QNN hot migration: SnapshotGraphFromOrt failed.");
+      }
+      ep->htp_snapshots_.emplace(fused_node_name, std::move(snapshot));
 
-      qnn::QnnModelContext htp_context{
-          *graph, *fused_node, ep->logger_,
-          &onnx_input_names, &onnx_output_names,
-          &ep->model_settings_,
-          htp_graph_configs_ptr,
-          &ep->tensor_name_overrides_,
-          /*json_qnn_graph_path=*/std::string{}};
-
-      RETURN_IF_NOT_OK(htp_model->ComposeGraph(htp_context));
-
-      auto slot = std::make_unique<QnnModelSlot>();
-      slot->active.store(gpu_model.get(), std::memory_order_relaxed);
-      ep->model_slots_.emplace(fused_node_name, std::move(slot));
-
-      ep->qnn_models_.emplace(fused_node_name, std::move(gpu_model));
-      ep->htp_models_.emplace(fused_node_name, std::move(htp_model));
-
-      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
-      node_compute_infos[graph_idx] = node_compute_info.release();
+      auto& model_info = gpu_model_infos.emplace_back();
+      model_info.model_name = fused_node_name;
+      model_info.model = std::move(gpu_model);
+      model_info.graph_idx = graph_idx;
     }
 
-    // OrtGraph* pointers become invalid once CompileImpl returns.
-    ep->onnx_graph_io_names_.reset();
-    ep->tensor_name_overrides_.clear();
+    // GPU finalize phase.
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+    {
+      qnn::thread::QnnJobThreadPool tp(ep->num_graph_prepare_threads_);
+      tp.Start();
+      for (auto& model_info : gpu_model_infos) {
+        tp.SubmitJob([qnn_model = model_info.model.get(), &logger = ep->logger_, res = &model_info.result] {
+          *res = qnn_model->FinalizeGraphs(logger);
+        });
+      }
+      tp.WaitForQueuedJobsToFinish();
+      for (auto& model_info : gpu_model_infos) {
+        RETURN_IF_NOT_OK(std::move(model_info.result));
+      }
+    }
+#else
+    for (auto& model_info : gpu_model_infos) {
+      RETURN_IF_NOT_OK(model_info.model->FinalizeGraphs(ep->logger_));
+    }
+#endif
 
-    // Thread captures ep; joined in ~QnnEp so it never outlives ep's members.
-    ep->htp_prepare_thread_ = std::thread([ep]() {
-      for (auto& [node_name, htp_model] : ep->htp_models_) {
-        Ort::Status status = htp_model->FinalizeGraphs(ep->logger_);
+    // Per-model setup + slot registration (serial).
+    for (auto& model_info : gpu_model_infos) {
+      RETURN_IF_NOT_OK(model_info.model->SetupQnnInputOutput(ep->logger_));
+
+      auto slot = std::make_unique<QnnModelSlot>();
+      slot->active.store(model_info.model.get(), std::memory_order_relaxed);
+      ep->model_slots_.emplace(model_info.model_name, std::move(slot));
+
+      ep->qnn_models_.emplace(model_info.model_name, std::move(model_info.model));
+
+      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
+      node_compute_infos[model_info.graph_idx] = node_compute_info.release();
+    }
+
+    // OrtGraph* pointers become invalid after CompileImpl returns. The background thread reads
+    // only from EP-owned snapshots; name maps and I/O lists are moved into the lambda here.
+    ep->htp_prepare_thread_ = std::thread([ep,
+                                           onnx_input_names = std::move(ep->onnx_graph_io_names_->first),
+                                           onnx_output_names = std::move(ep->onnx_graph_io_names_->second),
+                                           tensor_name_overrides = std::move(ep->tensor_name_overrides_)]() mutable {
+      qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
+          QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+      if (ep->htp_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::HTP) {
+        ep->InitQnnHtpGraphConfigs(ep->htp_graph_configs_, htp_graph_configs_builder);
+      }
+      std::vector<const QnnGraph_Config_t*> htp_all_graph_configs;
+      if (const QnnGraph_Config_t** htp_configs = htp_graph_configs_builder.GetQnnConfigs()) {
+        htp_all_graph_configs.reserve(htp_graph_configs_builder.GetSize() + 1);
+        for (const QnnGraph_Config_t** cfg = htp_configs; *cfg; ++cfg) {
+          htp_all_graph_configs.push_back(*cfg);
+        }
+        htp_all_graph_configs.push_back(nullptr);
+      }
+      const QnnGraph_Config_t** htp_graph_configs_ptr =
+          htp_all_graph_configs.empty() ? nullptr : htp_all_graph_configs.data();
+
+      // Compose all HTP subgraphs serially, then finalize through the thread pool.
+      struct HtpModelInfo {
+        std::string node_name;
+        std::unique_ptr<qnn::SnapshotShim> shim;
+        std::unique_ptr<qnn::QnnModel> model;
+        Ort::Status result;
+      };
+      std::vector<HtpModelInfo> htp_model_infos;
+      htp_model_infos.reserve(ep->htp_snapshots_.size());
+
+      for (auto& [node_name, snapshot_ptr] : ep->htp_snapshots_) {
+        auto shim = std::make_unique<qnn::SnapshotShim>(ep->ort_api, ep->model_editor_api, *snapshot_ptr);
+        auto htp_model = std::make_unique<qnn::QnnModel>(
+            ep->htp_backend_manager_.get(),
+            ApiPtrs{shim->ShimmedApi(), ep->ep_api, ep->model_editor_api});
+
+        const OrtGraph* snap_graph = shim->GraphHandle();
+        const OrtNode* snap_fused_node = shim->FusedNodeHandle();
+
+        qnn::QnnModelContext htp_context{
+            *snap_graph, *snap_fused_node, ep->logger_,
+            &onnx_input_names, &onnx_output_names,
+            &ep->model_settings_,
+            htp_graph_configs_ptr,
+            &tensor_name_overrides,
+            /*json_qnn_graph_path=*/std::string{}};
+
+        qnn::ActiveShimGuard active_shim(shim.get());
+        Ort::Status status = htp_model->ComposeGraph(htp_context);
         if (!status.IsOK()) {
           ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR,
-                      ("QNN hot migration: HTP FinalizeGraphs failed for " + node_name +
+                      ("QNN hot migration: HTP ComposeGraph failed for " + node_name +
                        ": " + status.GetErrorMessage() + " Migration will not proceed.")
                           .c_str());
           ep->htp_compile_failed_.store(true, std::memory_order_release);
           return;
         }
-        status = htp_model->SetupQnnInputOutput(ep->logger_);
-        if (!status.IsOK()) {
+
+        auto& info = htp_model_infos.emplace_back();
+        info.node_name = node_name;
+        info.shim = std::move(shim);
+        info.model = std::move(htp_model);
+      }
+
+      // HTP finalize phase.
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+      {
+        qnn::thread::QnnJobThreadPool tp(ep->num_graph_prepare_threads_);
+        tp.Start();
+        for (auto& info : htp_model_infos) {
+          tp.SubmitJob([qnn_model = info.model.get(), &logger = ep->logger_, res = &info.result] {
+            *res = qnn_model->FinalizeGraphs(logger);
+          });
+        }
+        tp.WaitForQueuedJobsToFinish();
+      }
+#else
+      for (auto& info : htp_model_infos) {
+        info.result = info.model->FinalizeGraphs(ep->logger_);
+      }
+#endif
+
+      for (auto& info : htp_model_infos) {
+        if (!info.result.IsOK()) {
           ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR,
-                      ("QNN hot migration: HTP SetupQnnInputOutput failed for " + node_name +
-                       ": " + status.GetErrorMessage() + " Migration will not proceed.")
+                      ("QNN hot migration: HTP FinalizeGraphs failed for " + info.node_name +
+                       ": " + info.result.GetErrorMessage() + " Migration will not proceed.")
                           .c_str());
           ep->htp_compile_failed_.store(true, std::memory_order_release);
           return;
         }
       }
+
+      // Per-model setup + registration (serial). Emplace shim before model for destruction order.
+      for (auto& info : htp_model_infos) {
+        Ort::Status status = info.model->SetupQnnInputOutput(ep->logger_);
+        if (!status.IsOK()) {
+          ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR,
+                      ("QNN hot migration: HTP SetupQnnInputOutput failed for " + info.node_name +
+                       ": " + status.GetErrorMessage() + " Migration will not proceed.")
+                          .c_str());
+          ep->htp_compile_failed_.store(true, std::memory_order_release);
+          return;
+        }
+
+        ep->htp_shims_.emplace(info.node_name, std::move(info.shim));
+        ep->htp_models_.emplace(info.node_name, std::move(info.model));
+      }
+
+      // Release heavy snapshot payload (initializer bytes, attributes). The shim remains alive
+      // (QnnModel references shimmed_api_) but the data is no longer read after compile.
+      for (auto& [node_name, shim_ptr] : ep->htp_shims_) {
+        shim_ptr->ReleaseSynthesizedData();
+      }
+      for (auto& [node_name, snapshot_ptr] : ep->htp_snapshots_) {
+        snapshot_ptr->ReleasePayload();
+      }
+
       ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                   "QNN hot migration: HTP compilation complete. Migration will occur on next Run().");
       ep->htp_compile_complete_.store(true, std::memory_order_release);
     });
+
+    // Lambda captures already moved from these members above; reset/clear now to preserve
+    // the "consumed in Compile" invariant (has_value()==false, empty map) that the rest of
+    // the EP relies on. Safe: lambda captures were constructed before std::thread returned.
+    ep->onnx_graph_io_names_.reset();
+    ep->tensor_name_overrides_.clear();
 
     return nullptr;
   }
@@ -3545,6 +3677,8 @@ void QnnEp::TryMigrateIfReady() {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
                 "QNN hot migration: HTP compilation failed. Session will remain on GPU for its lifetime.");
     htp_models_.clear();
+    htp_shims_.clear();
+    htp_snapshots_.clear();
     htp_backend_manager_.reset();
     migration_done_.store(true, std::memory_order_release);
     return;
@@ -3654,6 +3788,7 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   }
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
+
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_));
 
   return nullptr;

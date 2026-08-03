@@ -838,6 +838,9 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const std::filesystem::path& model_path,
                                   std::vector<uint8_t>& unpacked_tensor);
 
+// Thread-local accumulator (microseconds) of time spent inside UnpackInitializerData.
+uint64_t& UnpackInitializerTimeUs();
+
 /*
    Converts a pointer into a string
    Intended for ORT logging

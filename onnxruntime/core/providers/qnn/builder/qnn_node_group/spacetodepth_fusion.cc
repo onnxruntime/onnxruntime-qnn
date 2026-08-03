@@ -19,12 +19,16 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/ort_graph_read_helpers.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+using namespace ort_read;
+
 namespace {
 
 constexpr char kAttrTransposePerm[] = "perm";
@@ -743,11 +747,12 @@ std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
     const MapNodeToNodeUnit& node_to_node_unit,
     const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  const Ort::ConstNode start_node(&reshape_node_unit.GetNode());
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  const OrtNode* start_node = &reshape_node_unit.GetNode();
 
   // 1. Skip fusion if the pattern Start Node is graph output.
-  const std::vector<Ort::ConstValueInfo> outputs = start_node.GetOutputs();
-  if (!outputs.empty() && outputs[0].IsGraphOutput()) {
+  const std::vector<const OrtValueInfo*> outputs = NodeOutputs(ort_api, start_node);
+  if (!outputs.empty() && IsGraphOutput(ort_api, outputs[0])) {
     return nullptr;
   }
 

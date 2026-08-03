@@ -1813,6 +1813,10 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
                                   std::vector<uint8_t>& unpacked_tensor) {
+  const uint64_t unpack_start_us = GetTimeStampInUs();
+  auto accumulate_on_exit = gsl::finally([unpack_start_us]() {
+    UnpackInitializerTimeUs() += GetTimeStampInUs() - unpack_start_us;
+  });
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
   if (external_initializer) {
@@ -1861,6 +1865,11 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
 
 std::string PtrToString(const void* const ptr) {
   return (std::ostringstream() << ptr).str();
+}
+
+uint64_t& UnpackInitializerTimeUs() {
+  thread_local uint64_t unpack_time_us = 0;
+  return unpack_time_us;
 }
 
 }  // namespace utils

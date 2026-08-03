@@ -229,7 +229,8 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
 
 }  // namespace
 
-OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api) : target_node_(node), type_(Type::SingleNode) {
+OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api)
+    : target_node_(node), type_(Type::SingleNode), ort_api_(ort_api) {
   OrtStatus* status = InitForSingleNode(ort_api);
   if (status != nullptr) {
     ort_api.ReleaseStatus(status);
@@ -246,7 +247,8 @@ OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& n
       q_nodes_(node_group.q_nodes),
       type_(Type::QDQGroup),
       inputs_(GetQDQIODefs(target_node_, node_group, true, ort_api)),
-      outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)) {
+      outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)),
+      ort_api_(ort_api) {
 }
 
 OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
@@ -450,92 +452,174 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
 
 #define NODE_ATTR_ITER_VAL(iter) (iter)->second()
 
-OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNode& node) : node_(node) {}
+OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNode& node) : node_(node), ort_api_(Ort::GetApi()) {}
 
-OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNodeUnit& node_unit) : node_(node_unit.GetNode()) {}
+OrtNodeAttrHelper::OrtNodeAttrHelper(const OrtNodeUnit& node_unit)
+    : node_(node_unit.GetNode()), ort_api_(node_unit.GetOrtApi()) {}
+
+namespace {
+const OrtOpAttr* LookupAttr(const OrtApi& api, const OrtNode& node, const std::string& key) {
+  const OrtOpAttr* attr = nullptr;
+  OrtStatus* status = api.Node_GetAttributeByName(&node, key.c_str(), &attr);
+  if (status != nullptr) {
+    api.ReleaseStatus(status);
+    return nullptr;
+  }
+  return attr;
+}
+
+bool AttrTypeIs(const OrtApi& api, const OrtOpAttr* attr, OrtOpAttrType want) {
+  OrtOpAttrType type;
+  OrtStatus* status = api.OpAttr_GetType(attr, &type);
+  if (status != nullptr) {
+    api.ReleaseStatus(status);
+    return false;
+  }
+  return type == want;
+}
+
+size_t AttrDataSize(const OrtApi& api, const OrtOpAttr* attr, OrtOpAttrType type) {
+  size_t size = 0;
+  OrtStatus* status = api.ReadOpAttr(attr, type, nullptr, 0, &size);
+  if (status != nullptr) {
+    api.ReleaseStatus(status);
+  }
+  return size;
+}
+
+template <typename T>
+bool ReadNumeric(const OrtApi& api, const OrtOpAttr* attr, OrtOpAttrType type, T& out) {
+  size_t size = 0;
+  OrtStatus* status = api.ReadOpAttr(attr, type, &out, sizeof(out), &size);
+  if (status != nullptr) {
+    api.ReleaseStatus(status);
+    return false;
+  }
+  return true;
+}
+
+template <typename T>
+bool ReadNumericArray(const OrtApi& api, const OrtOpAttr* attr, OrtOpAttrType type, std::vector<T>& out) {
+  if (!AttrTypeIs(api, attr, type)) {
+    return false;
+  }
+  size_t size = AttrDataSize(api, attr, type);
+  std::vector<T> result(size / sizeof(T));
+  if (size > 0) {
+    OrtStatus* status = api.ReadOpAttr(attr, type, result.data(), size, &size);
+    if (status != nullptr) {
+      api.ReleaseStatus(status);
+      return false;
+    }
+  }
+  out.swap(result);
+  return true;
+}
+
+bool ReadStringAttr(const OrtApi& api, const OrtOpAttr* attr, std::string& out) {
+  if (!AttrTypeIs(api, attr, ORT_OP_ATTR_STRING)) {
+    return false;
+  }
+  size_t size = AttrDataSize(api, attr, ORT_OP_ATTR_STRING);
+  std::string result;
+  if (size > 0) {
+    result.resize(size);
+    OrtStatus* status = api.ReadOpAttr(attr, ORT_OP_ATTR_STRING, &result[0], size, &size);
+    if (status != nullptr) {
+      api.ReleaseStatus(status);
+      return false;
+    }
+  }
+  out.swap(result);
+  return true;
+}
+
+bool ReadStringsAttr(const OrtApi& api, const OrtOpAttr* attr, std::vector<std::string>& out) {
+  if (!AttrTypeIs(api, attr, ORT_OP_ATTR_STRINGS)) {
+    return false;
+  }
+  size_t total = AttrDataSize(api, attr, ORT_OP_ATTR_STRINGS);
+  std::vector<std::string> result;
+  if (total > 0) {
+    std::vector<char> buffer(total);
+    OrtStatus* status = api.ReadOpAttr(attr, ORT_OP_ATTR_STRINGS, buffer.data(), total, &total);
+    if (status != nullptr) {
+      api.ReleaseStatus(status);
+      return false;
+    }
+    const char* data = buffer.data();
+    const char* end = data + total;
+    while (data < end) {
+      result.emplace_back(data);
+      data += result.back().size() + 1;
+    }
+  }
+  out.swap(result);
+  return true;
+}
+}  // namespace
 
 float OrtNodeAttrHelper::Get(const std::string& key, float def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   float val;
-  status = attr.GetValue<float>(val);
-  return status.IsOK() ? val : def_val;
+  return ReadNumeric(ort_api_, attr, ORT_OP_ATTR_FLOAT, val) ? val : def_val;
 }
 
 int32_t OrtNodeAttrHelper::Get(const std::string& key, int32_t def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   int64_t val;
-  status = attr.GetValue<int64_t>(val);
-  return status.IsOK() ? gsl::narrow<int32_t>(val) : def_val;
+  return ReadNumeric(ort_api_, attr, ORT_OP_ATTR_INT, val) ? gsl::narrow<int32_t>(val) : def_val;
 }
 
 uint32_t OrtNodeAttrHelper::Get(const std::string& key, uint32_t def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   int64_t val;
-  status = attr.GetValue<int64_t>(val);
-  return status.IsOK() ? gsl::narrow<uint32_t>(val) : def_val;
+  return ReadNumeric(ort_api_, attr, ORT_OP_ATTR_INT, val) ? gsl::narrow<uint32_t>(val) : def_val;
 }
 
 int64_t OrtNodeAttrHelper::Get(const std::string& key, int64_t def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   int64_t val;
-  status = attr.GetValue<int64_t>(val);
-  return status.IsOK() ? val : def_val;
+  return ReadNumeric(ort_api_, attr, ORT_OP_ATTR_INT, val) ? val : def_val;
 }
 
 std::string OrtNodeAttrHelper::Get(const std::string& key, std::string def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   std::string val;
-  status = attr.GetValue<std::string>(val);
-  return status.IsOK() ? val : def_val;
+  return ReadStringAttr(ort_api_, attr, val) ? val : def_val;
 }
 
 std::vector<std::string> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<std::string>& def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   std::vector<std::string> val;
-  status = attr.GetValueArray<std::string>(val);
-  return status.IsOK() ? val : def_val;
+  return ReadStringsAttr(ort_api_, attr, val) ? val : def_val;
 }
 
 std::vector<int32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<int32_t>& def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   std::vector<int64_t> val_int64;
-  status = attr.GetValueArray<int64_t>(val_int64);
-  if (!status.IsOK()) {
+  if (!ReadNumericArray(ort_api_, attr, ORT_OP_ATTR_INTS, val_int64)) {
     return def_val;
   }
 
@@ -549,15 +633,12 @@ std::vector<int32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::v
 }
 
 std::vector<uint32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<uint32_t>& def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   std::vector<int64_t> val_int64;
-  status = attr.GetValueArray<int64_t>(val_int64);
-  if (!status.IsOK()) {
+  if (!ReadNumericArray(ort_api_, attr, ORT_OP_ATTR_INTS, val_int64)) {
     return def_val;
   }
 
@@ -571,93 +652,70 @@ std::vector<uint32_t> OrtNodeAttrHelper::Get(const std::string& key, const std::
 }
 
 std::vector<int64_t> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<int64_t>& def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   std::vector<int64_t> val;
-  status = attr.GetValueArray<int64_t>(val);
-  return status.IsOK() ? val : def_val;
+  return ReadNumericArray(ort_api_, attr, ORT_OP_ATTR_INTS, val) ? val : def_val;
 }
 
 std::vector<float> OrtNodeAttrHelper::Get(const std::string& key, const std::vector<float>& def_val) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return def_val;
   }
-
   std::vector<float> val;
-  status = attr.GetValueArray<float>(val);
-  return status.IsOK() ? val : def_val;
+  return ReadNumericArray(ort_api_, attr, ORT_OP_ATTR_FLOATS, val) ? val : def_val;
 }
 
 std::optional<float> OrtNodeAttrHelper::GetFloat(const std::string& key) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return std::nullopt;
   }
-
   float val;
-  status = attr.GetValue<float>(val);
-  return status.IsOK() ? std::make_optional(val) : std::nullopt;
+  return ReadNumeric(ort_api_, attr, ORT_OP_ATTR_FLOAT, val) ? std::make_optional(val) : std::nullopt;
 }
 
 std::optional<int64_t> OrtNodeAttrHelper::GetInt64(const std::string& key) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return std::nullopt;
   }
-
   int64_t val;
-  status = attr.GetValue<int64_t>(val);
-  return status.IsOK() ? std::make_optional(val) : std::nullopt;
+  return ReadNumeric(ort_api_, attr, ORT_OP_ATTR_INT, val) ? std::make_optional(val) : std::nullopt;
 }
 
 std::optional<std::vector<float>> OrtNodeAttrHelper::GetFloats(const std::string& key) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return std::nullopt;
   }
-
   std::vector<float> val;
-  status = attr.GetValueArray<float>(val);
-  return status.IsOK() ? std::make_optional(val) : std::nullopt;
+  return ReadNumericArray(ort_api_, attr, ORT_OP_ATTR_FLOATS, val) ? std::make_optional(val) : std::nullopt;
 }
 
 std::optional<std::vector<int64_t>> OrtNodeAttrHelper::GetInt64s(const std::string& key) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return std::nullopt;
   }
-
   std::vector<int64_t> val;
-  status = attr.GetValueArray<int64_t>(val);
-  return status.IsOK() ? std::make_optional(val) : std::nullopt;
+  return ReadNumericArray(ort_api_, attr, ORT_OP_ATTR_INTS, val) ? std::make_optional(val) : std::nullopt;
 }
 
 std::optional<std::string> OrtNodeAttrHelper::GetString(const std::string& key) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  if (!status.IsOK() || attr == nullptr) {
+  const OrtOpAttr* attr = LookupAttr(ort_api_, node_, key);
+  if (attr == nullptr) {
     return std::nullopt;
   }
-
   std::string val;
-  status = attr.GetValue<std::string>(val);
-  return status.IsOK() ? std::make_optional(val) : std::nullopt;
+  return ReadStringAttr(ort_api_, attr, val) ? std::make_optional(val) : std::nullopt;
 }
 
 bool OrtNodeAttrHelper::HasAttr(const std::string& key) const {
-  Ort::ConstOpAttr attr;
-  Ort::Status status = Ort::ConstNode(&node_).GetAttributeByName(key, attr);
-  return status.IsOK() && attr != nullptr;
+  return LookupAttr(ort_api_, node_, key) != nullptr;
 }
 
 OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,

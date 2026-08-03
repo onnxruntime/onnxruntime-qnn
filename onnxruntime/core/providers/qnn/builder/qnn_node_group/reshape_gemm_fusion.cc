@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/ort_graph_read_helpers.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
@@ -20,6 +21,8 @@
 
 namespace onnxruntime {
 namespace qnn {
+
+using namespace ort_read;
 
 namespace {
 
@@ -126,9 +129,10 @@ bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape
 // duplicating the Reshape; for now we conservatively skip to keep correctness.
 static bool InputReshapeIsShared(const OrtNodeUnit* input_reshape) {
   if (input_reshape == nullptr) return false;
-  const Ort::ConstNode reshape_node(&input_reshape->GetNode());
-  auto reshape_outputs = reshape_node.GetOutputs();
-  return !reshape_outputs.empty() && reshape_outputs[0].GetConsumers().size() > 1;
+  const OrtApi& ort_api = input_reshape->GetOrtApi();
+  const OrtNode* reshape_node = &input_reshape->GetNode();
+  std::vector<const OrtValueInfo*> reshape_outputs = NodeOutputs(ort_api, reshape_node);
+  return !reshape_outputs.empty() && ConsumerNodes(ort_api, reshape_outputs[0]).size() > 1;
 }
 
 // Get the input Reshape node unit that feeds into the Gemm node

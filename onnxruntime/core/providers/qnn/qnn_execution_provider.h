@@ -34,10 +34,11 @@
 namespace onnxruntime {
 class QnnEpFactory;
 
-// Forward declaration for QnnBackendManager, GenieBackendManager
 namespace qnn {
 class QnnBackendManager;
 class GenieBackendManager;
+struct SnapshotGraph;
+class  SnapshotShim;
 }  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
@@ -341,8 +342,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool hot_migration_enabled_ = false;
   std::optional<qnn::QnnBackendManagerConfig> htp_backend_config_;
   std::shared_ptr<qnn::QnnBackendManager> htp_backend_manager_;
+  // Declared BEFORE htp_models_ so destruction order tears models down before their shims.
+  std::unordered_map<std::string, std::unique_ptr<qnn::SnapshotGraph>> htp_snapshots_;
+  std::unordered_map<std::string, std::unique_ptr<qnn::SnapshotShim>> htp_shims_;
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> htp_models_;
-  // compute_state points to entries here (instead of a raw QnnModel*) in the migration path.
+
   // unique_ptr keeps the slot at a stable address; std::atomic is not movable/copyable.
   std::unordered_map<std::string, std::unique_ptr<QnnModelSlot>> model_slots_;
   std::atomic<bool> htp_compile_complete_{false};
