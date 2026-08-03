@@ -536,8 +536,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
 
-  Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
-
   template <class T>
   inline T ResolveSymbol(void* lib_handle, const char* sym, const Ort::Logger& logger) {
     std::string error_msg = "";

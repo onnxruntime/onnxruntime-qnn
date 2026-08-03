@@ -2287,7 +2287,26 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     } else {
       finalize_start = std::chrono::steady_clock::now();
 #endif
-      RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
+      {
+        // Boost the HTP only around graphFinalize() -- the accelerator-side graph
+        // compilation. ComposeGraph above is host-side (graphAddNode), so the HTP is
+        // deliberately left relaxed during it. The perf config id is valid here in both
+        // the single-SoC path (created at GetCapability) and the multi-SoC path (created
+        // per-SoC by ScopedPerSocQnnBackendSetup::Init before CompileOnnxModel runs).
+        uint32_t htp_power_config_id = 0;
+        bool valid_power_config_id = GetHtpPowerConfigId(htp_power_config_id);
+        qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, default_htp_performance_mode_,
+                                                default_rpc_polling_time_, default_rpc_control_latency_};
+        qnn::HtpPowerStateGuard power_guard(
+            &qnn_backend_manager_->GetHtpPowerConfigManager(),
+            valid_power_config_id,
+            qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
+            perf_config,
+            logger_);
+        RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
+        RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
+        RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
+      }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
       end = std::chrono::steady_clock::now();
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
@@ -2313,12 +2332,30 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     qnn::thread::QnnJobThreadPool tp(num_graph_prepare_threads_);
     tp.Start();
     finalize_start = std::chrono::steady_clock::now();
+
+    // Boost the HTP once around the whole finalize batch. graphFinalize() is the
+    // accelerator-side work; the preceding ComposeGraph loop is host-side and runs
+    // relaxed. The boost is a single global vote on the perf config id, so one guard
+    // for the batch is correct -- do not vote from inside the per-thread jobs.
+    uint32_t htp_power_config_id = 0;
+    bool valid_power_config_id = GetHtpPowerConfigId(htp_power_config_id);
+    qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, default_htp_performance_mode_,
+                                            default_rpc_polling_time_, default_rpc_control_latency_};
+    qnn::HtpPowerStateGuard power_guard(
+        &qnn_backend_manager_->GetHtpPowerConfigManager(),
+        valid_power_config_id,
+        qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
+        perf_config,
+        logger_);
+    RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
+
     for (auto& model_info : model_infos) {
       tp.SubmitJob([qnn_model = model_info.model.get(), &logger = logger_, res = &model_info.result] {
         *res = qnn_model->FinalizeGraphs(logger);
       });
     }
     tp.WaitForQueuedJobsToFinish();
+    RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 
@@ -2799,17 +2836,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   auto compile_start = std::chrono::steady_clock::now();
 #endif
 
-  uint32_t htp_power_config_id = 0;
-  bool valid_power_config_id = ep->GetHtpPowerConfigId(htp_power_config_id);
-  qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-  qnn::HtpPowerStateGuard power_guard(
-      &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
-      valid_power_config_id,
-      qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
-      perf_config,
-      ep->logger_);
-  RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
-
+  // NOTE: the HTP perf boost is applied inside CompileOnnxModel, scoped tightly around
+  // graphFinalize() (the accelerator-side work) rather than the whole compile. This keeps
+  // the HTP relaxed during host-side graph composition, and -- unlike a guard here -- works
+  // for the multi-SoC path, where the valid perf config id only exists per-SoC (created by
+  // ScopedPerSocQnnBackendSetup::Init), not at this point.
   OrtStatus* compile_status = nullptr;
   if (!ep->enable_multi_soc_ep_context_) {
     compile_status = ep->CompileOnnxModel(graphs,
@@ -2821,8 +2852,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   } else {
     compile_status = ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos);
   }
-
-  RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
 
   RETURN_IF_NOT_NULL(compile_status);
 
@@ -3393,7 +3422,8 @@ QnnEp::ScopedPerSocQnnBackendSetup::~ScopedPerSocQnnBackendSetup() {
   // has_value(), and ReleaseDeviceAndContext() is idempotent (SetupDeviceAndContext() also self-cleans on failure).
   // Hence no separate "initialized" flag is needed here.
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType()) && ep_.htp_power_config_id_.has_value()) {
-    ep_.qnn_backend_manager_->DestroyHTPPowerConfigID(*ep_.htp_power_config_id_);
+    ep_.qnn_backend_manager_->DropBoostedPowerConfigId(*ep_.htp_power_config_id_);
+    ep_.qnn_backend_manager_->DestroyHtpPowerConfigId(*ep_.htp_power_config_id_);
     ep_.htp_power_config_id_.reset();
   }
   ep_.qnn_backend_manager_->ReleaseDeviceAndContext();

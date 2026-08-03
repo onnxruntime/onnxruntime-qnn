@@ -20,7 +20,16 @@ HtpPowerConfigManager::HtpPowerConfigManager() {
   power_configs_.reserve(kMaxNumConfigs);
 }
 
-HtpPowerConfigManager::~HtpPowerConfigManager() {}
+HtpPowerConfigManager::~HtpPowerConfigManager() {
+  // Defensive: join and tear down the timer here so correctness does not depend
+  // on an external caller (QnnBackendManager::ReleaseResources) invoking
+  // ReleaseTimerThread() first. Members destruct in reverse declaration order,
+  // which would destroy timer_callback_arg_ before timer_; a callback firing
+  // during ~Timer's join would then dereference freed args. ReleaseTimerThread()
+  // joins the timer thread before returning, so no callback is in flight past
+  // this point. Safe to call twice: the second call finds timer_ already null.
+  ReleaseTimerThread();
+}
 
 Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time, const Ort::Logger& logger) {
   RETURN_IF(rpc_polling_time > kMaxRpcPolling,
