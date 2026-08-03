@@ -677,8 +677,6 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 #endif
   auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
 
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "monumeen: on latest code 1");
-
   auto thread_id = std::this_thread::get_id();
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 

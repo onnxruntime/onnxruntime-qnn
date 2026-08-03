@@ -152,7 +152,14 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
     perf_power_configs_ptr.push_back(nullptr);
 
     status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
-    RETURN_IF(QNN_SUCCESS != status, "SetPowerConfig failed.");
+    if (QNN_SUCCESS != status) {
+      // Best-effort: on targets without a functioning on-chip HTP (e.g. HTP arch
+      // could not be resolved during SetupBackend) the DCVS perf-infrastructure
+      // vote is rejected. This is not a correctness gate for graph execution, so
+      // warn and continue rather than failing the run with an exception. The
+      // pending state below is still reset so the next request starts clean.
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SetPowerConfig failed; continuing without applying HTP power config.");
+    }
 
     rpc_polling_time_set_ = false;
     rpc_control_latency_set_ = false;
