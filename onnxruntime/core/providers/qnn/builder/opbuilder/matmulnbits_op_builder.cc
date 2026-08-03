@@ -9,76 +9,78 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
-/* Op Resolution
-  --> Incoming ONNX Node
-    1. MatMulNBits
-      Attributes : INT64
-        - bits            : 2(HTP), 4(GPU/HTP), 8(HTP)
-        - block_size      : 32(GPU), 16x(HTP if bits=2), 8x(HTP if bits=4), 4x(HTP if bits=8)
-        - K               :
-        - N               :
-      Inputs
-        - A           :                 : fp16/fp32 : [batch_size, sequence_len, K]
-        - B           : Init            : uint8     : [N, K / block_size, (block_size * bits) / 8]
-        - scales      : Init            : fp16/fp32 : [N, K / block_size]
-        - zero_points : (optional)Init  : uint8     : [N, (K / block_size) * bits / 8]
-      Outputs
-        -  Y          :                 : fp16/fp32 : [batch_size, sequence_len, N]
-  <-- Outgoing QNN Node (GPU)
-    1. FullyConnected
-      Attributes
-        -
-      Inputs
-        - Input           :        : fp16/fp32            : [batch_size, sequence_len, K]
-        - Weight          : Static : qint4(BlockEncoding) : [N, K]
-          - Scales        :        : fp32                 : [N * (K / block_size)]
-          - Offsets       :        : int32_t              : [N * (K / block_size)]
-      Outputs
-        - Output          :        : fp16/fp32            : [batch_size * sequence_len, N]
-    2. Reshape
-      Inputs
-        - Input           :        : fp16/fp32            : [batch_size * sequence_len, N]
-      Outputs
-        - Output          :        : fp16/fp32            : [batch_size, sequence_len, N]
-  <-- Outgoing QNN Node (HTP)
-    1. Reshape
-      Inputs
-        - Input           :        : fp16/fp32                    : [batch_size, sequence_len, K]
-      Outputs
-        - Output          :        : fp16/fp32                    : [batch_size, 1, sequence_len, K]
-    2. Cast (workaround for fp32)
-      Inputs
-        - Input           :        : fp32                         : [batch_size, 1, sequence_len, K]
-      Outputs
-        - Output          :        : fp16                         : [batch_size, 1, sequence_len, K]
-    3. Conv2d
-      Attributes : UINT32
-        - stride     : [1, 1]
-        - pad_amount : [[0, 0], [0, 0]]
-      Inputs
-        - Input           :        : fp16                         : [batch_size, 1, sequence_len, K]
-        - Weight          : Static : qint8(BwFloatBlockEncoding)  : [1, 1, K, N]
-          - Scales        :        : fp32                         : [N * (K / block_size)]
-          - Offsets       :        : fp32                         : [N * (K / block_size)]
-      Outputs
-        - Output          :        : fp16                         : [batch_size, 1, sequence_len, N]
-    4. Cast (workaround for fp32)
-      Inputs
-        - Input           :        : fp16                         : [batch_size, 1, sequence_len, N]
-      Outputs
-        - Output          :        : fp32                         : [batch_size, 1, sequence_len, N]
-    5. Reshape
-      Inputs
-        - Input           :        : fp16/fp32                    : [batch_size, 1, sequence_len, N]
-      Outputs
-        - Output          :        : fp16/fp32                    : [batch_size, sequence_len, N]
-*/
+/* Op resolution
+ *
+ * =============================================================================================
+ * Incoming ONNX node
+ * =============================================================================================
+ * MatMulNBits
+ *   Attributes (int64)
+ *     bits        : 2 (HTP), 4 (GPU/HTP), 8 (HTP)
+ *     block_size  : 32 (GPU); multiple of 16 / 8 / 4 (HTP, for bits = 2 / 4 / 8)
+ *     K           : contraction dim of input A
+ *     N           : output channels
+ *
+ *     Name           Kind        Data type                       Shape
+ *   Inputs
+ *     A              input       fp16/fp32 (GPU)                 [batch_size, sequence_len, K]
+ *                                fp16/fp32/uint16/int16 (HTP)
+ *     B              init        uint8 (packed)                  [N, K / block_size, (block_size * bits) / 8]
+ *     scales         init        fp16/fp32                       [N, K / block_size]
+ *     zero_points    init (opt)  uint8 (packed)                  [N, (K / block_size) * bits / 8]
+ *   Outputs
+ *     Y              output      same as A                       [batch_size, sequence_len, N]
+ *
+ * =============================================================================================
+ * Outgoing QNN nodes (GPU)
+ *   A -> FullyConnected -> Reshape -> Y
+ * =============================================================================================
+ * 1. FullyConnected
+ *      in   Input     fp16/fp32                [batch_size, sequence_len, K]
+ *      in   Weight    qint4 (BlockEncoding)    [N, K]
+ *                       scales   fp32          [N * (K / block_size)]
+ *                       offsets  int32_t       [N * (K / block_size)]
+ *      out  Output    fp16/fp32                [batch_size * sequence_len, N]
+ * 2. Reshape
+ *      in   Input     fp16/fp32                [batch_size * sequence_len, N]
+ *      out  Output    fp16/fp32                [batch_size, sequence_len, N]
+ *
+ * =============================================================================================
+ * Outgoing QNN nodes (HTP)
+ *   A -> Reshape -> [Cast | Dequantize] -> Conv2d -> [Cast | Quantize] -> Reshape -> Y
+ * =============================================================================================
+ * 1. Reshape
+ *      in   Input     fp16/fp32/uint16/int16   [batch_size, sequence_len, K]
+ *      out  Output    fp16/fp32/uint16/int16   [batch_size, 1, sequence_len, K]
+ * 2a. Cast
+ *      in   Input     fp32                     [batch_size, 1, sequence_len, K]
+ *      out  Output    fp16                     [batch_size, 1, sequence_len, K]
+ * 2b. Dequantize
+ *      in   Input     uint16/int16             [batch_size, 1, sequence_len, K]
+ *      out  Output    fp16                     [batch_size, 1, sequence_len, K]
+ * 3. Conv2d
+ *      in   Input     fp16                     [batch_size, 1, sequence_len, K]
+ *      in   Weight    qint8 (BwFloatBlock)     [1, 1, K, N]
+ *                       scales   fp32          [N * (K / block_size)]
+ *                       offsets  fp32          [N * (K / block_size)]
+ *      out  Output    fp16                     [batch_size, 1, sequence_len, N]
+ * 4a. Cast
+ *      in   Input     fp16                     [batch_size, 1, sequence_len, N]
+ *      out  Output    fp32                     [batch_size, 1, sequence_len, N]
+ * 4b. Quantize
+ *      in   Input     fp16                     [batch_size, 1, sequence_len, N]
+ *      out  Output    uint16/int16             [batch_size, 1, sequence_len, N]
+ * 5. Reshape
+ *      in   Input     fp16/fp32/uint16/int16   [batch_size, 1, sequence_len, N]
+ *      out  Output    fp16/fp32/uint16/int16   [batch_size, sequence_len, N]
+ */
 
 class MatMulNBitsOpBuilder : public BaseOpBuilder {
  public:
@@ -169,7 +171,9 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
   const int64_t num_zp_per_uint8 = K / block_size < num_elements_per_uint8 ? K / block_size : num_elements_per_uint8;
 
   const auto& inputs = node_unit.Inputs();
-  // 1. A: Input datatype should be float16 or float32.
+  // 1. A: Input datatype should be:
+  //   - GPU: float32, float16
+  //   - HTP: float32, float16, uint16, int16
   {
     const OrtNodeUnitIODef& input_tensor = inputs[0];
     TensorInfo input_info{};
@@ -180,12 +184,18 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
                                           input_tensor.type,
                                           input_datatype));
 
-    RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 && input_datatype != QNN_DATATYPE_FLOAT_16,
-              "Unsupported input A datatype, expecting float32 or float16.");
-
-    // Restrict to 3D input for HTP backend due to later inserted Reshape.
-    RETURN_IF(is_htp_backend && input_info.shape.size() != 3,
-              "Unsupported input A rank, expecting 3D for HTP backend.");
+    if (is_gpu_backend) {
+      RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 && input_datatype != QNN_DATATYPE_FLOAT_16,
+                "Unsupported input A datatype, expecting float32 or float16.");
+    } else {
+      RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 &&
+                    input_datatype != QNN_DATATYPE_FLOAT_16 &&
+                    input_datatype != QNN_DATATYPE_UFIXED_POINT_16 &&
+                    input_datatype != QNN_DATATYPE_SFIXED_POINT_16,
+                "Unsupported input A datatype, expecting float32, float16, uint16, or int16.");
+      // Restrict to 3D input due to later inserted Reshape.
+      RETURN_IF(input_info.shape.size() != 3, "Unsupported input A rank, expecting 3D shape.");
+    }
   }
 
   // 2. B: Weight is supported in packed uint8 format.
@@ -297,10 +307,11 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
   // 1. Add input A.
   {
+    // 1.1 Create QNN wrapper.
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
     if (is_htp_backend) {
-      // Add pre-Reshape to unsqueeze shape to 4D for HTP backend.
+      // 1.2 Add pre-Reshape to unsqueeze shape to 4D for HTP backend.
       TensorInfo input_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
 
@@ -330,7 +341,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       input_names[0] = reshape_output_name;
 
       if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
-        // Workaround: Add pre-Cast to cast float32 to float16 to pass HTP validation.
+        // 1.3 (Workaround) Add pre-Cast to cast float32 to float16 to pass HTP validation.
         // TODO: Remove the additional Cast once HTP supports float32.
         const std::string cast_output_name = utils::UniqueNameGenerator().New(input_names[0], "_cast_fp16");
         RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(node_unit, "_cast_fp16"),
@@ -344,6 +355,15 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
         // Reroute to pre-Cast output.
         input_names[0] = cast_output_name;
+      } else if (utils::IsQuant16bit(input_info.qnn_data_type)) {
+        // 1.3 Add Dequantize to UINT16/INT16 → FP16.
+        const std::string fp16_act_name = utils::UniqueNameGenerator().New(input_names[0], "_dq_fp16");
+        RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
+                                                               input_names[0],
+                                                               fp16_act_name,
+                                                               do_op_validation,
+                                                               "MatMulNBits"));
+        input_names[0] = fp16_act_name;
       }
     }
   }
@@ -594,6 +614,20 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                     do_op_validation));
 
       reshape_input_name = cast_output_name;
+    } else if (utils::IsQuant16bit(output_info.qnn_data_type)) {
+      // 2. Add Quantize to FP16 → UINT16/INT16.
+      const std::string q_suffix = output_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ? "_q_int16" : "_q_uint16";
+      const std::string q_output_name = utils::UniqueNameGenerator().New(output_tensor.name, q_suffix);
+      RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
+                                                       conv2d_output_name,
+                                                       q_output_name,
+                                                       QNN_TENSOR_TYPE_NATIVE,
+                                                       output_info.qnn_data_type,
+                                                       output_info.quant_param.Copy(),
+                                                       std::vector<uint32_t>(conv2d_output_shape),
+                                                       do_op_validation));
+
+      reshape_input_name = q_output_name;
     }
 
     // 3. Add post-Reshape to squeeze shape back.
