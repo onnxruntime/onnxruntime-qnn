@@ -1336,6 +1336,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
     const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
+    SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
     _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
 #else
     setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
@@ -1617,6 +1618,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
     const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
+    SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
     _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
 #else
     setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
@@ -2026,6 +2028,18 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   htp_share_resource_optimization_ = htp_share_resource_optimization;
+
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+  if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
+    const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
+#ifdef _WIN32
+    SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
+    _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+#else
+    setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+#endif
+  }
+#endif
 
   auto status = Ort::Status();
   if (!qnn_serializer_config_) {
