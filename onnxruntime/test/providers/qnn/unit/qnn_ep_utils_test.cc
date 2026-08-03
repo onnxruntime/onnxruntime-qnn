@@ -520,7 +520,7 @@ struct ConvProducerGuard {
 // OrtConvNodeGroupSelector::Check
 //
 // dq[0]=input, dq[1]=weight, dq[2]=bias (optional INT32).
-// int8_allowed controls whether INT8 data is accepted.
+// An INT8 input requires an INT8 weight; other quant types are unconstrained.
 // main_node.inputs.size() must equal dq_nodes.size() for CheckQDQNodes.
 // =============================================================================
 
@@ -551,25 +551,7 @@ TEST(QnnUnit_EpUtilsTest, Conv_Accepts2DqUint8) {
                         {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Conv_RejectsInt8WhenDisallowed) {
-  EpUtilsTestContext ctx;
-  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
-  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
-  FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
-  FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
-
-  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
-  FakeNode main_node{"conv", "Conv", "", 1, {&dummy, &dummy}, {&main_out}};
-
-  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
-  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
-
-  OrtConvNodeGroupSelector sel(/*int8_allowed=*/false);
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
-}
-
-TEST(QnnUnit_EpUtilsTest, Conv_AcceptsInt8WhenAllowed) {
+TEST(QnnUnit_EpUtilsTest, Conv_AcceptsInt8) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -591,7 +573,7 @@ TEST(QnnUnit_EpUtilsTest, Conv_AcceptsInt8WhenAllowed) {
   ctx.api.ValueInfo_GetValueProducer = &FakeConvProducerStub;
   OrtGlobalApiOverride global_guard(&ctx.api);
 
-  OrtConvNodeGroupSelector sel(/*int8_allowed=*/true);
+  OrtConvNodeGroupSelector sel;
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                         {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
 }
@@ -686,7 +668,7 @@ TEST(QnnUnit_EpUtilsTest, Conv_RejectsFloatInputWithQuantWeight) {
 // =============================================================================
 // OrtMatMulNodeGroupSelector::Check
 //
-// 2 DQ inputs required.  Q node optional (matmulintegertofloat path).
+// 2 DQ inputs and a trailing Q required.
 // =============================================================================
 
 TEST(QnnUnit_EpUtilsTest, MatMul_Accepts2DqWithQ) {
@@ -707,25 +689,14 @@ TEST(QnnUnit_EpUtilsTest, MatMul_Accepts2DqWithQ) {
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, MatMul_AcceptsNoQWhenMmIntToFloatAllowed) {
+TEST(QnnUnit_EpUtilsTest, MatMul_RejectsNoQ) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
-  OrtMatMulNodeGroupSelector sel(/*int8_allowed=*/true, /*matmulintegertofloat_allowed=*/true);
-  // qlinear=false → directly returns matmulintegertofloat_allowed_
-  EXPECT_TRUE(sel.Check(nullptr, ctx.api, nullptr, nullptr,
-                        {dq1.AsNode(), dq2.AsNode()}, {}));
-}
-
-TEST(QnnUnit_EpUtilsTest, MatMul_RejectsNoQWhenMmIntToFloatDisallowed) {
-  EpUtilsTestContext ctx;
-  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4, 4}};
-  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
-  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
-
-  OrtMatMulNodeGroupSelector sel(/*int8_allowed=*/true, /*matmulintegertofloat_allowed=*/false);
+  // A MatMul with no trailing Q would be a MatMulIntegerToFloat, which is not selected.
+  OrtMatMulNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr,
                          {dq1.AsNode(), dq2.AsNode()}, {}));
 }
@@ -897,7 +868,7 @@ TEST(QnnUnit_EpUtilsTest, Conv_RejectsInt8DataWithUint8Weight) {
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
-  OrtConvNodeGroupSelector sel(/*int8_allowed=*/true);
+  OrtConvNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                          {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
 }
@@ -913,20 +884,9 @@ TEST(QnnUnit_EpUtilsTest, MatMul_RejectsInt8DataWithUint8Weight) {
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_data_in}, {}};
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_wt_in}, {}};
 
-  OrtMatMulNodeGroupSelector sel(/*int8_allowed=*/true);
+  OrtMatMulNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr,
                          {dq1.AsNode(), dq2.AsNode()}, {}));
-}
-
-TEST(QnnUnit_EpUtilsTest, MatMul_AcceptsInt16WithMatMulIntegerToFloat) {
-  EpUtilsTestContext ctx;
-  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {}};
-  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
-  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
-
-  OrtMatMulNodeGroupSelector sel(/*int8_allowed=*/true, /*mmtof=*/true);
-  EXPECT_TRUE(sel.Check(nullptr, ctx.api, nullptr, nullptr,
-                        {dq1.AsNode(), dq2.AsNode()}, {}));
 }
 
 // =============================================================================
@@ -985,16 +945,16 @@ TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsUint8NoQ) {
                         {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Einsum_RejectsInt8WhenDisallowed) {
+TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt8) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode main_node{"einsum", "Einsum", "", 12, {&dummy}, {}};
 
-  OrtEinsumNodeGroupSelector sel(/*allow_int8=*/false);
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq.AsNode()}, {}));
+  OrtEinsumNodeGroupSelector sel;
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq.AsNode()}, {}));
 }
 
 TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt16) {
@@ -1040,16 +1000,16 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsUint8NoQ) {
                         {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Reciprocal_RejectsInt8WhenDisallowed) {
+TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt8) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode main_node{"recip", "Reciprocal", "", 13, {&dummy}, {}};
 
-  OrtReciprocalNodeGroupSelector sel(/*allow_int8=*/false);
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq.AsNode()}, {}));
+  OrtReciprocalNodeGroupSelector sel;
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq.AsNode()}, {}));
 }
 
 // =============================================================================
@@ -1133,7 +1093,7 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInt8WithMixedScale) {
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeNode main_node{"bn", "BatchNormalization", "", 15, {&dummy, &dummy}, {&main_out}};
 
-  OrtBatchNormalizationNodeGroupSelector sel(/*int8_allowed=*/true);
+  OrtBatchNormalizationNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                          {dq_data.AsNode(), dq_scale.AsNode()}, {}));
 }

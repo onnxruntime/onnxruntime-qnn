@@ -864,10 +864,9 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
-      return false;
-    }
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
+      dt_weight.value() != dt_input.value()) {
+    return false;
   }
 
   if (dq_nodes.size() == 3) {
@@ -894,11 +893,6 @@ bool OrtEinsumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     auto dt_input = GetNodeInputDataType(dq_nodes[i], ort_api, 0);
 
     if (!dt_input.has_value()) {
-      return false;
-    }
-
-    // Check if INT8 is allowed
-    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
       return false;
     }
   }
@@ -934,9 +928,6 @@ bool OrtReciprocalNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& 
     if (!dt_input.has_value()) {
       return false;
     }
-    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-      return false;
-    }
   }
   if (!q_nodes.empty()) {
     auto dt_input0 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
@@ -967,28 +958,22 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     return false;
   }
 
-  // Check if INT8 is allowed
-  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
-      return false;
-    }
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
+      dt_weight.value() != dt_input.value()) {
+    return false;
   }
 
-  // Potential match for QLinearMatMul or MatMulIntegerToFloat
-  bool qlinear = !q_nodes.empty();
-
-  if (qlinear) {
-    // QLinearMatMul
-    if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
-      return false;
-    }
-
-    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-    return dt_output.has_value() && dt_input.value() == dt_output.value();
-  } else {
-    // Can be converted to MatMulIntegerToFloat if EP supports that
-    return matmulintegertofloat_allowed_;
+  // Without a trailing Q this would be a MatMulIntegerToFloat, which QNN EP does not build.
+  if (q_nodes.empty()) {
+    return false;
   }
+
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
+    return false;
+  }
+
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+  return dt_output.has_value() && dt_input.value() == dt_output.value();
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1172,11 +1157,9 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
     }
   }
 
-  // INT8 is 3 in ONNX_NAMESPACE::TensorProto_DataType
-  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    if (!int8_allowed_ || dt_scale.value() != dt_input.value()) {
-      return false;
-    }
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
+      dt_scale.value() != dt_input.value()) {
+    return false;
   }
 
   return true;
