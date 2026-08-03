@@ -333,19 +333,18 @@ static void RunGQATest(
 //
 // HTP tests:
 //
-// NOTE: every TEST_F in this section is currently prefixed DISABLED_ on purpose. The QNN GQA op
-// builder is #if-compiled-out below QAIRT 2.48 / QNN opset 2.12 (see the
+// These run on arm64 (Windows on Snapdragon / Linux arm64) with a QAIRT SDK >= 2.48 (QNN opset
+// 2.12), which is the version that compiles the GQA op builder in (see the
 // QNN_OPSET_VERSION_MAJOR/MINOR guard at the top of
-// core/providers/qnn/builder/opbuilder/group_query_attention_op_builder.cc), and the SDK these
-// tests build against is older, so an enabled test could not even link the op. These are kept
-// compiled (not deleted) so the coverage lands with the feature.
+// core/providers/qnn/builder/opbuilder/group_query_attention_op_builder.cc). The inference tests
+// (RunHTPPackedGQATest / RunHTPUnpackedGQATest) execute GQA on device and compare against the CPU
+// EP; they need QNN host-accessible shared memory (RPCMEM), so on hosts without it (e.g. x86 Linux
+// HTP emulation) they GTEST_SKIP at the allocator step rather than fail. The op_affinity
+// EP-assignment tests do not run inference and run anywhere the builder is compiled in.
 //
-// RE-ENABLE TRIGGER: when the EP uplevels to QAIRT >= 2.48 (QNN opset 2.12) -- i.e. the same
-// condition that compiles the builder in -- drop the DISABLED_ prefixes. Tracked by the builder's
-// own "TODO: Remove this check once the EP uplevels to 2.48" note; keep this test file's version
-// token (2.48 / opset 2.12) in sync with that guard and the docs support table so all three agree.
-// Before re-enabling, also address DISABLED_GroupQueryAttention_PaddedCache_NoisePadding_FP32 (see
-// its EXPECTED-TO-FAIL note below).
+// The one still-DISABLED_ case is GroupQueryAttention_PaddedCache_NoisePadding_FP32: it is
+// designed to fail as written (see its EXPECTED-TO-FAIL note below) and must have its comparator
+// fixed before it can be enabled.
 //
 
 // Compact driver for HTP GQA tests over a packed-QKV model with a full-capacity past KV cache.
@@ -500,44 +499,44 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
 // Basic GQA on the HTP backend (FP32 model, FP16 precision on device).
 // Uses scale=0.0f, which both the ORT CPU EP and the QNN EP must interpret as the default
 // scale (1/sqrt(head_size)). This guards against the scale==0 sentinel-handling bug.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Explicit non-default scale. head_size=32 -> default would be 1/sqrt(32) ~= 0.1768; using a very
 // different value (0.5) ensures the explicit scale actually flows through to the op.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_ScaleExplicit_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_ScaleExplicit_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
 // Degenerate grouping: num_heads == kv_num_heads is standard multi-head attention (no grouping).
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
   RunHTPPackedGQATest<float>(8, 8, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Extreme grouping: kv_num_heads == 1 is multi-query attention (all query heads share one KV head).
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MQA_KvOne_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_MQA_KvOne_FP32) {
   RunHTPPackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Prefill: sequence_length > 1 (process a whole prompt chunk at once).
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Prefill_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Prefill_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Llama-3-like geometry: num_heads=32, kv_num_heads=8, head_size=64.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Llama3_AR1_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Llama3_AR1_FP32) {
   RunHTPPackedGQATest<float>(32, 8, 64, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Rotary embeddings enabled (do_rotary=1) with cos/sin caches.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Rotary_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
 // FP16 query/cache path.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP16) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
@@ -548,13 +547,13 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP16) {
 // GQA fp16 query/KV with in-place (buffer-shared) KV cache. scale=0 exercises the default path.
 
 // PhiVNext decode (AR1): sequence_length=1.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Decode_FP16) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_PhiVNext_Decode_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(32, 8, 128, /*seq*/ 1, /*total*/ 1024,
                                       /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
 // PhiVNext prefill (AR64): sequence_length=64.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Prefill_FP16) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_PhiVNext_Prefill_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(32, 8, 128, /*seq*/ 64, /*total*/ 1024,
                                       /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
@@ -566,10 +565,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Prefill_FP16) {
 // demonstrates the known padding mismatch between QNN HTP (sharing) and CPU EP (non-sharing).
 //
 // EXPECTED TO FAIL AS WRITTEN: RunHTPPackedGQATest compares the full present_key/present_value
-// tensors, so this case mismatches on the [16:128) padding region by design. Before re-enabling
-// (see the DISABLED_ note above), the comparator must be changed to compare only the valid
-// [0:total_seq_len) region (and, ideally, EXPECT the padding region to differ) so the test turns
-// into a real tripwire that goes green for the right reason instead of a landmine.
+// tensors, so this case mismatches on the [16:128) padding region by design. This is the one test
+// in this file kept DISABLED_ (all other HTP GQA tests are enabled); before enabling it, the
+// comparator must be changed to compare only the valid [0:total_seq_len) region (and, ideally,
+// EXPECT the padding region to differ) so the test turns into a real tripwire that goes green for
+// the right reason instead of a landmine.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PaddedCache_NoisePadding_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 1, /*total*/ 16, /*scale*/ 0.0f, /*do_rotary*/ 0,
                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128);
@@ -580,33 +580,33 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PaddedCache_NoisePadding
 //
 
 // Basic unpacked GQA (FP32 model, FP16 on device), decode geometry, scale=0 default.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Explicit non-default scale on the unpacked path.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
 // Extreme grouping: kv_num_heads == 1 (multi-query attention), unpacked inputs.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
   RunHTPUnpackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Prefill: sequence_length > 1, unpacked inputs.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Prefill_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Prefill_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
 // Rotary embeddings enabled, unpacked inputs.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Rotary_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Rotary_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
 // FP16 query/cache path, unpacked inputs.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP16) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
@@ -635,7 +635,7 @@ static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, 
 
 // Builds a minimal packed-QKV GQA model (decode geometry: num_heads=8, kv_num_heads=4, head_size=32,
 // sequence_length=1, total_seq_len=1024, scale=0 default, do_rotary=0 -- the same shape used by
-// DISABLED_GroupQueryAttention_Basic_FP32's RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, 0.0f, 0)
+// GroupQueryAttention_Basic_FP32's RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, 0.0f, 0)
 // call above), then creates a QNN session with the given backend and (optional) op_affinity config
 // path set as provider options. Does NOT run inference.
 //
@@ -729,14 +729,14 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
 
 // No op_affinity config: HTP is opt-in by default (see OpAffinityMap::Evaluate's per-backend
 // default), so GQA is NOT assigned to QNN.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", std::nullopt, ExpectedEPNodeAssignment::None, &session_failed);
   ASSERT_FALSE(session_failed);
 }
 
 // op_affinity pins GroupQueryAttention to HTP, session runs HTP -> assigned to QNN.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "htp_pin_htp");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::All, &session_failed);
@@ -746,7 +746,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Ass
 
 // op_affinity pins GroupQueryAttention to GPU, but the session runs HTP -> pin can never be
 // honored, so session creation must fail (ValidateForSessionBackend reports an error).
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
@@ -756,7 +756,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_Ses
 
 // op_affinity pins GroupQueryAttention to CPU: a legitimate silent-off intent, so GQA is NOT
 // assigned to QNN but session creation still succeeds (falls back to CPU EP for that node).
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "pin_cpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
@@ -766,7 +766,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAss
 
 // op_affinity points at a config file that does not exist -> FromConfigFile throws
 // std::runtime_error at EP construction time, so session creation must fail.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
   const std::filesystem::path missing =
       std::filesystem::temp_directory_path() / "gqa_op_affinity_does_not_exist_12345.json";
   bool session_failed = false;
