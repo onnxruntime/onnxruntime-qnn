@@ -1333,14 +1333,24 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(nullptr);
 
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
-    const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
+  if (enable_htp_graph_splitting) {
+    if (graph_splitting_kway_partitions > 0) {
+      const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
-    SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
-    _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
 #else
-    setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+      setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
 #endif
+    } else {
+      // kway_partitions=0: unset so a stale value from a prior session does not persist.
+#ifdef _WIN32
+      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", nullptr);
+      _putenv("GPE_KWAY_PARTITIONS=");
+#else
+      unsetenv("GPE_KWAY_PARTITIONS");
+#endif
+    }
   }
 #endif
 
@@ -1615,14 +1625,32 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   }
 
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
-    const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
+  if (enable_htp_graph_splitting) {
+    if (graph_splitting_kway_partitions > 0) {
+      const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
-    SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
-    _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before QnnContext_create.").c_str());
 #else
-    setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+      setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before QnnContext_create.").c_str());
 #endif
+    } else {
+      // kway_partitions=0: unset so a stale value from a prior session does not persist.
+#ifdef _WIN32
+      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", nullptr);
+      _putenv("GPE_KWAY_PARTITIONS=");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before QnnContext_create.");
+#else
+      unsetenv("GPE_KWAY_PARTITIONS");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before QnnContext_create.");
+#endif
+    }
   }
 #endif
 
@@ -2030,14 +2058,32 @@ Ort::Status QnnBackendManager::SetupBackend(
   htp_share_resource_optimization_ = htp_share_resource_optimization;
 
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting && graph_splitting_kway_partitions > 0) {
-    const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
+  if (enable_htp_graph_splitting) {
+    if (graph_splitting_kway_partitions > 0) {
+      const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
 #ifdef _WIN32
-    SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
-    _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before LoadBackend.").c_str());
 #else
-    setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+      setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before LoadBackend.").c_str());
 #endif
+    } else {
+      // kway_partitions=0: unset so a stale value from a prior session does not persist.
+#ifdef _WIN32
+      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", nullptr);
+      _putenv("GPE_KWAY_PARTITIONS=");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before LoadBackend.");
+#else
+      unsetenv("GPE_KWAY_PARTITIONS");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before LoadBackend.");
+#endif
+    }
   }
 #endif
 

@@ -3452,6 +3452,68 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_KwayPartitions_CompileSucceeds)
   CleanUpCtxFile(ctx_path);
 }
 
+// Test: GPE_KWAY_PARTITIONS stale value — session 1 sets kway=4, session 2 sets kway=0.
+// Verifies that session 2 clears the env var so the SDK does not inherit the stale 4.
+// Both sessions must complete without error.
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_KwayPartitions_StaleEnvVarCleared) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#endif
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  // Session 1: kway=4 — sets GPE_KWAY_PARTITIONS=4 in the process environment.
+  {
+    const std::string ctx_path1 = "./qnn_graph_splitting_kway_stale_session1.onnx";
+    std::remove(ctx_path1.c_str());
+    provider_options["htp_graph_splitting_kway_partitions"] = "4";
+
+    Ort::SessionOptions so1;
+    SetGraphSplittingOptions(so1, ctx_path1);
+
+    RegisteredEpDeviceUniquePtr registered_ep_device1;
+    RegisterQnnEpLibrary(registered_ep_device1, so1, kQnnExecutionProvider, provider_options);
+    ScopedOrtSession scoped1(std::move(registered_ep_device1), Ort::Session(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so1));
+    EXPECT_TRUE(std::filesystem::exists(ctx_path1));
+    CleanUpCtxFile(ctx_path1);
+
+#ifdef _WIN32
+    // Verify session 1 actually set GPE_KWAY_PARTITIONS=4 before proceeding.
+    char buf1[16] = {};
+    GetEnvironmentVariableA("GPE_KWAY_PARTITIONS", buf1, sizeof(buf1));
+    EXPECT_STREQ("4", buf1) << "Session 1 should have set GPE_KWAY_PARTITIONS=4";
+#endif
+  }
+
+  // Session 2: kway=0 — must unset GPE_KWAY_PARTITIONS so the stale "4" is gone.
+  {
+    const std::string ctx_path2 = "./qnn_graph_splitting_kway_stale_session2.onnx";
+    std::remove(ctx_path2.c_str());
+    provider_options["htp_graph_splitting_kway_partitions"] = "0";
+
+    Ort::SessionOptions so2;
+    SetGraphSplittingOptions(so2, ctx_path2);
+
+    RegisteredEpDeviceUniquePtr registered_ep_device2;
+    RegisterQnnEpLibrary(registered_ep_device2, so2, kQnnExecutionProvider, provider_options);
+    ScopedOrtSession scoped2(std::move(registered_ep_device2), Ort::Session(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so2));
+    EXPECT_TRUE(std::filesystem::exists(ctx_path2));
+    CleanUpCtxFile(ctx_path2);
+
+#ifdef _WIN32
+    // After session 2, verify GPE_KWAY_PARTITIONS is unset in the Win32 environment.
+    char buf[16] = {};
+    EXPECT_EQ(0u, GetEnvironmentVariableA("GPE_KWAY_PARTITIONS", buf, sizeof(buf)));
+#endif
+  }
+}
+
 // ==============================================================================
 // GPU weight-sharing tests
 // ==============================================================================
