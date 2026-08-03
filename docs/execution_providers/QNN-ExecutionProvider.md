@@ -634,7 +634,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
 |com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU backend only; requires QAIRT SDK ≥ 2.48 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
+|com.microsoft:GroupQueryAttention|GPU and HTP/NPU backends (float precision); requires QAIRT SDK ≥ 2.48 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
 |com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:QuickGelu||

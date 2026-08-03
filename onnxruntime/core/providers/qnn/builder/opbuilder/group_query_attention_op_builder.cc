@@ -46,8 +46,15 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
 
+  // IsNpuBackend() covers both HTP and DSP (see qnn_def.cc); GQA is validated on HTP only, but we
+  // follow the house predicate rather than a narrower bt == HTP check (there is no IsHtpBackend).
   RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
-                "GroupQueryAttention is only supported with the GPU backend and HTP backend");
+                "GroupQueryAttention is only supported with the GPU and HTP/DSP (NPU) backends");
+
+  // HTP-specific legality (fp16/head_size/max_seq_len/VTCM budget) is intentionally left to the
+  // backend's op-config validation at the CreateQnnNode(do_op_validation=true) call below, rather
+  // than duplicated here as early declines. This matches the pre-existing GPU path: enabling NPU
+  // bypasses no legality the GPU path already relied on.
 
   // op_affinity gate. On HTP, the EP seeds a default CPU pin for this op unless config overrides it
   if (const qnn::OpAffinityMap* affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
