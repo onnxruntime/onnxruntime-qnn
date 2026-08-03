@@ -176,6 +176,28 @@ class QnnEp : public OrtEp, public ApiPtrs {
     std::atomic<qnn::QnnModel*> active{nullptr};
   };
 
+  // Partial migration: post-swap execution plan for a fused node with mixed HTP/GPU segments.
+  struct SegmentInfo {
+    qnn::QnnModel* model = nullptr;
+    bool is_gpu = false;
+    // -1 means the tensor maps to external I/O (KernelContext).
+    std::vector<int> input_buffer_indices;
+    std::vector<int> output_buffer_indices;
+    std::vector<size_t> external_input_indices;
+    std::vector<size_t> external_output_indices;
+  };
+
+  struct IntermediateBuffer {
+    std::vector<uint8_t> data;
+    Qnn_Tensor_t tensor;  // pre-configured, clientBuf points into `data`
+  };
+
+  struct PartialMigrationPlan {
+    std::vector<SegmentInfo> segments;
+    std::vector<IntermediateBuffer> buffers;
+    std::vector<std::unique_ptr<qnn::QnnModel>> owned_models;
+  };
+
   struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
@@ -222,7 +244,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // DrainAndReleaseGpu: waits for any in-flight GPU graphExecute to finish, then frees GPU models.
   void DrainAndReleaseGpu();
 
-  void CreateHtpPowerConfigId() const;
+  void CreateHtpPowerConfigId(qnn::QnnBackendManager* backend_manager = nullptr) const;
   // Will return false if htp_power_config_id_ has no value
   bool GetHtpPowerConfigId(uint32_t& htp_power_config_id);
 
@@ -342,6 +364,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool hot_migration_enabled_ = false;
   std::optional<qnn::QnnBackendManagerConfig> htp_backend_config_;
   std::shared_ptr<qnn::QnnBackendManager> htp_backend_manager_;
+  std::unordered_set<std::string> gpu_only_node_names_;
   // Declared BEFORE htp_models_ so destruction order tears models down before their shims.
   std::unordered_map<std::string, std::unique_ptr<qnn::SnapshotGraph>> htp_snapshots_;
   std::unordered_map<std::string, std::unique_ptr<qnn::SnapshotShim>> htp_shims_;
@@ -349,9 +372,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // unique_ptr keeps the slot at a stable address; std::atomic is not movable/copyable.
   std::unordered_map<std::string, std::unique_ptr<QnnModelSlot>> model_slots_;
+  // Partial migration execution plans (one per fused node that has GPU-only nodes).
+  // Built by the background thread; installed at migration time.
+  std::unordered_map<std::string, std::unique_ptr<PartialMigrationPlan>> partial_migration_plans_;
   std::atomic<bool> htp_compile_complete_{false};
   std::atomic<bool> htp_compile_failed_{false};
   std::atomic<bool> migration_done_{false};
+  bool partial_migration_active_ = false;
   std::thread htp_prepare_thread_;
   std::mutex migration_mutex_;
 };

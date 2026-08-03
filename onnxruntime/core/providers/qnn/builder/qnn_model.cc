@@ -648,6 +648,36 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   return Ort::Status();
 }
 
+Ort::Status QnnModel::ExecuteGraphDirect(Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                         Qnn_Tensor_t* outputs, uint32_t num_outputs,
+                                         const Ort::Logger& logger) {
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+  std::lock_guard<std::mutex> lock(graph_exec_mutex_);
+
+  auto thread_id = std::this_thread::get_id();
+  RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
+
+  Qnn_ErrorHandle_t execute_status = qnn_interface.graphExecute(
+      graph_info_->Graph(), inputs, num_inputs, outputs, num_outputs, nullptr, nullptr);
+
+  RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
+
+  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+    std::ostringstream oss;
+    oss << "NPU crashed. SSR detected. Error code: " << execute_status;
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+    return MAKE_EP_FAIL(oss.str().c_str());
+  }
+
+  if (QNN_GRAPH_NO_ERROR != execute_status) {
+    return MAKE_EP_FAIL(("QNN graph execute error (direct). " +
+                         utils::FormatQnnError(qnn_interface, execute_status))
+                            .c_str());
+  }
+
+  return Ort::Status();
+}
+
 // Setup information for Qnn inputs/outputs used during execution.
 Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
                                    const std::vector<QnnTensorWrapper>& tensor_wrappers,

@@ -63,6 +63,12 @@ class QnnModel {
 
   Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
 
+  // Execute with pre-bound tensor arrays (no KernelContext). Used by partial migration to chain
+  // subgraph executions with intermediate buffers.
+  Ort::Status ExecuteGraphDirect(Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                 Qnn_Tensor_t* outputs, uint32_t num_outputs,
+                                 const Ort::Logger& logger);
+
   // Acquires and immediately releases graph_exec_mutex_ to guarantee no graphExecute()
   // is in progress. Used by the hot-migration drain sequence before GPU teardown.
   void WaitForInflightExecution() {
@@ -150,6 +156,9 @@ class QnnModel {
   }
 
   const std::string& Name() const { return graph_info_->Name(); }
+
+  const std::vector<QnnTensorInfo>& InputInfos() const { return qnn_input_infos_; }
+  const std::vector<QnnTensorInfo>& OutputInfos() const { return qnn_output_infos_; }
 
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,

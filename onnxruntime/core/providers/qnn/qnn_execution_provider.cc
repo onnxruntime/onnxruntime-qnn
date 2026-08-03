@@ -2220,32 +2220,27 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
     RETURN_IF_NOT_NULL(gpu_status);
     RETURN_IF_NOT_NULL(htp_status);
-    // Intersection: only claim nodes both backends can compile. Nodes supported by HTP but not
-    // GPU fall back to CPU EP for the entire session (partitioning is fixed at session creation).
+    // Claim the full GPU set - pre-migration inference is identical to standalone --backend gpu.
+    // Nodes unsupported by HTP stay on GPU post-migration (partial migration). Store their names
+    // so the background thread knows which nodes to split out into a residual GPU graph.
+    supported_nodes = std::move(gpu_supported_nodes);
+
     std::unordered_set<const OrtNode*> htp_set(htp_supported_nodes.begin(),
                                                htp_supported_nodes.end());
-    supported_nodes.reserve(gpu_supported_nodes.size());
-    for (const OrtNode* node : gpu_supported_nodes) {
-      if (htp_set.count(node)) {
-        supported_nodes.push_back(node);
-      }
-    }
-
-    size_t gpu_only_count = 0;
-    for (const OrtNode* node : gpu_supported_nodes) {
+    for (const OrtNode* node : supported_nodes) {
       if (!htp_set.count(node)) {
-        ++gpu_only_count;
         Ort::ConstNode const_node(node);
-        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+        ep->gpu_only_node_names_.insert(const_node.GetName());
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                     (std::string("QNN hot migration: node '") + const_node.GetName() +
                      "' (op=" + const_node.GetOperatorType() +
-                     ") supported by GPU but not HTP - falling back to CPU EP for this session.")
+                     ") supported by GPU but not HTP - will remain on GPU post-migration.")
                         .c_str());
       }
     }
 
-    std::unordered_set<const OrtNode*> gpu_set(gpu_supported_nodes.begin(),
-                                               gpu_supported_nodes.end());
+    std::unordered_set<const OrtNode*> gpu_set(supported_nodes.begin(),
+                                               supported_nodes.end());
     size_t htp_only_count = 0;
     for (const OrtNode* node : htp_supported_nodes) {
       if (!gpu_set.count(node)) {
@@ -2254,14 +2249,14 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
                     (std::string("QNN hot migration: node '") + const_node.GetName() +
                      "' (op=" + const_node.GetOperatorType() +
-                     ") supported by HTP but not GPU - falling back to CPU EP for this session.")
+                     ") supported by HTP but not GPU - not included in partition.")
                         .c_str());
       }
     }
     if (htp_only_count > 0) {
       ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                   ("QNN hot migration: " + std::to_string(htp_only_count) +
-                   " node(s) supported by HTP but not GPU; falling back to CPU EP for this session.")
+                   " node(s) supported by HTP but not GPU; not included in claimed partition.")
                       .c_str());
     }
   } else if (!ep->enable_multi_soc_ep_context_) {
@@ -3054,7 +3049,152 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       const QnnGraph_Config_t** htp_graph_configs_ptr =
           htp_all_graph_configs.empty() ? nullptr : htp_all_graph_configs.data();
 
-      // Compose all HTP subgraphs serially, then finalize through the thread pool.
+      if (!ep->gpu_only_node_names_.empty()) {
+        // Partial migration: split snapshot into segments, compile each independently.
+        for (auto& [node_name, snapshot_ptr] : ep->htp_snapshots_) {
+          auto segments = qnn::SplitSnapshotIntoSegments(*snapshot_ptr, ep->gpu_only_node_names_);
+
+          auto plan = std::make_unique<PartialMigrationPlan>();
+
+          for (size_t seg_idx = 0; seg_idx < segments.size(); ++seg_idx) {
+            auto& seg = segments[seg_idx];
+            qnn::SnapshotSegmentView& view = *seg.view;
+
+            auto* backend_mgr = seg.is_gpu ? ep->qnn_backend_manager_.get()
+                                           : ep->htp_backend_manager_.get();
+
+            auto shim = std::make_unique<qnn::SnapshotShim>(ep->ort_api, ep->model_editor_api, view);
+            auto model = std::make_unique<qnn::QnnModel>(
+                backend_mgr, ApiPtrs{shim->ShimmedApi(), ep->ep_api, ep->model_editor_api});
+
+            const OrtGraph* seg_graph = shim->GraphHandle();
+            const OrtNode* seg_fused = shim->FusedNodeHandle();
+
+            qnn::QnnModelContext seg_context{
+                *seg_graph, *seg_fused, ep->logger_,
+                &onnx_input_names, &onnx_output_names,
+                &ep->model_settings_,
+                seg.is_gpu ? nullptr : htp_graph_configs_ptr,
+                &tensor_name_overrides,
+                /*json_qnn_graph_path=*/std::string{}};
+
+            qnn::ActiveShimGuard active_shim(shim.get());
+            Ort::Status status = model->ComposeGraph(seg_context);
+
+            if (!status.IsOK()) {
+              ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR,
+                          ("QNN hot migration: segment " + std::to_string(seg_idx) +
+                           (seg.is_gpu ? " (GPU)" : " (HTP)") +
+                           " ComposeGraph failed: " + status.GetErrorMessage())
+                              .c_str());
+              ep->htp_compile_failed_.store(true, std::memory_order_release);
+              return;
+            }
+
+            status = model->FinalizeGraphs(ep->logger_);
+
+            if (!status.IsOK()) {
+              ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR,
+                          ("QNN hot migration: segment " + std::to_string(seg_idx) +
+                           (seg.is_gpu ? " (GPU)" : " (HTP)") +
+                           " FinalizeGraphs failed: " + status.GetErrorMessage())
+                              .c_str());
+              ep->htp_compile_failed_.store(true, std::memory_order_release);
+              return;
+            }
+
+            status = model->SetupQnnInputOutput(ep->logger_);
+            if (!status.IsOK()) {
+              ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR,
+                          ("QNN hot migration: segment " + std::to_string(seg_idx) +
+                           " SetupQnnInputOutput failed: " + status.GetErrorMessage())
+                              .c_str());
+              ep->htp_compile_failed_.store(true, std::memory_order_release);
+              return;
+            }
+
+            SegmentInfo seg_info;
+            seg_info.model = model.get();
+            seg_info.is_gpu = seg.is_gpu;
+            plan->segments.push_back(std::move(seg_info));
+
+            ep->htp_shims_.emplace(view.name, std::move(shim));
+            plan->owned_models.push_back(std::move(model));
+          }
+
+          std::unordered_set<std::string> parent_input_names;
+          std::unordered_set<std::string> parent_output_names_set;
+          for (auto* vi : snapshot_ptr->graph_inputs) parent_input_names.insert(vi->name);
+          for (auto* vi : snapshot_ptr->graph_outputs) parent_output_names_set.insert(vi->name);
+
+          auto slot_it = ep->model_slots_.find(node_name);
+          qnn::QnnModel* full_gpu_model = slot_it->second->active.load(std::memory_order_acquire);
+
+          std::unordered_map<std::string, int> intermediate_name_to_buffer_idx;
+
+          for (auto& seg_info : plan->segments) {
+            const auto& output_infos = seg_info.model->OutputInfos();
+            for (const auto& out_info : output_infos) {
+              const std::string& name = out_info.tensor_wrapper->GetName();
+              if (parent_output_names_set.count(name)) continue;
+              if (intermediate_name_to_buffer_idx.count(name)) continue;
+              int buf_idx = static_cast<int>(plan->buffers.size());
+              intermediate_name_to_buffer_idx[name] = buf_idx;
+              IntermediateBuffer buf;
+              buf.data.resize(out_info.tensor_byte_size);
+              buf.tensor = out_info.tensor_wrapper->GetQnnTensor();
+              qnn::SetQnnTensorMemType(buf.tensor, QNN_TENSORMEMTYPE_RAW);
+              qnn::SetQnnTensorClientBuf(buf.tensor, buf.data.data(),
+                                         static_cast<uint32_t>(buf.data.size()));
+              plan->buffers.push_back(std::move(buf));
+            }
+          }
+
+          for (auto& seg_info : plan->segments) {
+            const auto& input_infos = seg_info.model->InputInfos();
+            seg_info.input_buffer_indices.resize(input_infos.size(), -1);
+            seg_info.external_input_indices.resize(input_infos.size(), SIZE_MAX);
+            for (size_t i = 0; i < input_infos.size(); ++i) {
+              const std::string& name = input_infos[i].tensor_wrapper->GetName();
+              auto inter_it = intermediate_name_to_buffer_idx.find(name);
+              if (inter_it != intermediate_name_to_buffer_idx.end()) {
+                seg_info.input_buffer_indices[i] = inter_it->second;
+              } else if (parent_input_names.count(name)) {
+                seg_info.external_input_indices[i] = full_gpu_model->GetOrtInputIndex(name);
+              }
+            }
+
+            const auto& output_infos = seg_info.model->OutputInfos();
+            seg_info.output_buffer_indices.resize(output_infos.size(), -1);
+            seg_info.external_output_indices.resize(output_infos.size(), SIZE_MAX);
+            for (size_t i = 0; i < output_infos.size(); ++i) {
+              const std::string& name = output_infos[i].tensor_wrapper->GetName();
+              auto inter_it = intermediate_name_to_buffer_idx.find(name);
+              if (inter_it != intermediate_name_to_buffer_idx.end()) {
+                seg_info.output_buffer_indices[i] = inter_it->second;
+              } else if (parent_output_names_set.count(name)) {
+                seg_info.external_output_indices[i] = full_gpu_model->GetOutputIndex(name);
+              }
+            }
+          }
+
+          ep->partial_migration_plans_.emplace(node_name, std::move(plan));
+        }
+
+        for (auto& [name, shim_ptr] : ep->htp_shims_) {
+          shim_ptr->ReleaseSynthesizedData();
+        }
+        for (auto& [name, snapshot_ptr] : ep->htp_snapshots_) {
+          snapshot_ptr->ReleasePayload();
+        }
+
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                    "QNN hot migration: partial migration compilation complete.");
+        ep->htp_compile_complete_.store(true, std::memory_order_release);
+        return;
+      }
+
+      // Full migration path (all nodes supported by both backends).
       struct HtpModelInfo {
         std::string node_name;
         std::unique_ptr<qnn::SnapshotShim> shim;
@@ -3331,7 +3471,12 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
   }
 
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
-  if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
+  // In partial migration the active manager is GPU, but HTP segments run on htp_backend_manager_
+  // and need their per-thread power config installed there.
+  qnn::QnnBackendManager* htp_mgr =
+      ep->partial_migration_active_ ? ep->htp_backend_manager_.get() : ep->qnn_backend_manager_.get();
+  if (!ep->partial_migration_active_ &&
+      qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
     return nullptr;
   }
 
@@ -3341,8 +3486,8 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
     qnn::PerThreadHtpPowerConfigs_t per_thread_htp_power_configs;
     if (ep->GetPerThreadHtpPowerConfigs(per_thread_htp_power_configs, run_options)) {
       per_thread_htp_power_configs.power_config_id = htp_power_config_id;
-      RETURN_IF_ERROR(ep->qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
-                                                                                  per_thread_htp_power_configs));
+      RETURN_IF_ERROR(htp_mgr->AddPerThreadHtpPowerConfigMapping(thread_id,
+                                                                 per_thread_htp_power_configs));
     }
   }
 
@@ -3368,14 +3513,17 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
   }
 
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
-  if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
+  qnn::QnnBackendManager* htp_mgr =
+      ep->partial_migration_active_ ? ep->htp_backend_manager_.get() : ep->qnn_backend_manager_.get();
+  if (!ep->partial_migration_active_ &&
+      qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
     return nullptr;
   }
 
   uint32_t htp_power_config_id;
   if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
     auto thread_id = std::this_thread::get_id();
-    ep->qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
+    htp_mgr->RemovePerThreadHtpPowerConfigMapping(thread_id);
   }
 
   return nullptr;
@@ -3605,24 +3753,26 @@ bool QnnEp::GetHtpPowerConfigId(uint32_t& htp_power_config_id) {
   return true;
 }
 
-void QnnEp::CreateHtpPowerConfigId() const {
+void QnnEp::CreateHtpPowerConfigId(qnn::QnnBackendManager* backend_manager) const {
   std::lock_guard<std::mutex> lock(config_id_mutex_);
   if (htp_power_config_id_.has_value()) {
     return;
   }
 
+  qnn::QnnBackendManager* mgr = backend_manager ? backend_manager : qnn_backend_manager_.get();
+
   constexpr uint32_t core_id = 0;
   uint32_t htp_power_config_id;
 
-  Ort::Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
+  Ort::Status rt = mgr->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
 
   if (rt.IsOK()) {
     htp_power_config_id_ = htp_power_config_id;
 
-    rt = qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
-                                                  default_htp_performance_mode_,
-                                                  default_rpc_polling_time_,
-                                                  default_rpc_control_latency_);
+    rt = mgr->SetHtpPowerConfigs(htp_power_config_id,
+                                 default_htp_performance_mode_,
+                                 default_rpc_polling_time_,
+                                 default_rpc_control_latency_);
 
     if (!rt.IsOK()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Unable to set HTP power configurations.");
@@ -3699,12 +3849,15 @@ void QnnEp::TryMigrateIfReady() {
     }
   }
 
-  DrainAndReleaseGpu();
-
-  qnn_backend_manager_ = htp_backend_manager_;
-  htp_backend_manager_.reset();
-
-  CreateHtpPowerConfigId();
+  if (!partial_migration_plans_.empty()) {
+    partial_migration_active_ = true;
+    CreateHtpPowerConfigId(htp_backend_manager_.get());
+  } else {
+    DrainAndReleaseGpu();
+    qnn_backend_manager_ = htp_backend_manager_;
+    htp_backend_manager_.reset();
+    CreateHtpPowerConfigId();
+  }
 
   migration_done_.store(true, std::memory_order_release);
 
@@ -3781,6 +3934,83 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   // Hot migration: polled per-call so the swap lands on a Run() boundary.
   if (!ep.model_slots_.empty()) {
     ep.TryMigrateIfReady();
+
+    if (ep.partial_migration_active_) {
+      // Find the plan for this fused node.
+      std::string fused_node_name;
+      // compute_state is QnnModelSlot* - find matching plan by checking model_slots_ keys.
+      for (auto& [name, slot_ptr] : ep.model_slots_) {
+        if (slot_ptr.get() == reinterpret_cast<QnnModelSlot*>(compute_state)) {
+          fused_node_name = name;
+          break;
+        }
+      }
+      auto plan_it = ep.partial_migration_plans_.find(fused_node_name);
+      if (plan_it != ep.partial_migration_plans_.end()) {
+        auto& plan = *plan_it->second;
+
+        for (auto& seg : plan.segments) {
+          const auto& input_infos = seg.model->InputInfos();
+          const auto& output_infos = seg.model->OutputInfos();
+
+          std::vector<Qnn_Tensor_t> qnn_inputs(input_infos.size());
+          for (size_t i = 0; i < input_infos.size(); ++i) {
+            qnn_inputs[i] = input_infos[i].tensor_wrapper->GetQnnTensor();
+            qnn::SetQnnTensorMemType(qnn_inputs[i], QNN_TENSORMEMTYPE_RAW);
+
+            if (seg.input_buffer_indices[i] >= 0) {
+              auto& buf = plan.buffers[seg.input_buffer_indices[i]];
+              qnn::SetQnnTensorClientBuf(qnn_inputs[i], buf.data.data(),
+                                         static_cast<uint32_t>(buf.data.size()));
+            } else if (seg.external_input_indices[i] != SIZE_MAX) {
+              const OrtValue* ort_input = nullptr;
+              if (auto* s = ep.ort_api.KernelContext_GetInput(
+                      kernel_context, seg.external_input_indices[i], &ort_input))
+                return s;
+              const void* raw_data;
+              if (auto* s = ep.ort_api.GetTensorData(ort_input, &raw_data))
+                return s;
+              qnn::SetQnnTensorClientBuf(qnn_inputs[i],
+                                         const_cast<void*>(raw_data),
+                                         input_infos[i].tensor_byte_size);
+            }
+          }
+
+          std::vector<Qnn_Tensor_t> qnn_outputs(output_infos.size());
+          for (size_t i = 0; i < output_infos.size(); ++i) {
+            qnn_outputs[i] = output_infos[i].tensor_wrapper->GetQnnTensor();
+            qnn::SetQnnTensorMemType(qnn_outputs[i], QNN_TENSORMEMTYPE_RAW);
+
+            if (seg.output_buffer_indices[i] >= 0) {
+              auto& buf = plan.buffers[seg.output_buffer_indices[i]];
+              qnn::SetQnnTensorClientBuf(qnn_outputs[i], buf.data.data(),
+                                         static_cast<uint32_t>(buf.data.size()));
+            } else if (seg.external_output_indices[i] != SIZE_MAX) {
+              const auto* out_info = seg.model->GetOutputInfo(
+                  output_infos[i].tensor_wrapper->GetName());
+              OrtValue* ort_output = nullptr;
+              if (auto* s = ep.ort_api.KernelContext_GetOutput(
+                      kernel_context, seg.external_output_indices[i],
+                      out_info->shape_.data(), out_info->shape_.size(), &ort_output))
+                return s;
+              void* mutable_data;
+              if (auto* s = ep.ort_api.GetTensorMutableData(ort_output, &mutable_data))
+                return s;
+              qnn::SetQnnTensorClientBuf(qnn_outputs[i], mutable_data,
+                                         output_infos[i].tensor_byte_size);
+            }
+          }
+
+          RETURN_IF_NOT_OK(seg.model->ExecuteGraphDirect(
+              qnn_inputs.data(), static_cast<uint32_t>(qnn_inputs.size()),
+              qnn_outputs.data(), static_cast<uint32_t>(qnn_outputs.size()),
+              ep.logger_));
+        }
+
+        return nullptr;
+      }
+    }
+
     auto* slot = reinterpret_cast<QnnModelSlot*>(compute_state);
     qnn::QnnModel* model = slot->active.load(std::memory_order_acquire);
     RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_));
