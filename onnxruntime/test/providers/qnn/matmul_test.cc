@@ -845,6 +845,180 @@ TEST_F(QnnGPUBackendTests, MatMulOp_rank1) {
 
 #endif  // defined(_M_ARM64) GPU tests
 
+// -----------------------------------------------------------------------------
+// MatMul + Add(static int32 bias) + Relu/Clip QDQ fusion tests.
+// Pattern: DQ(input),DQ(weight) -> MatMul -> Add(DQ(int32 bias)) -> Relu/Clip -> Q
+// The EP folds the trailing Add + Relu/Clip into a single QNN FullyConnected when
+// the post-activation Q's encoding lies within the activation's [min,max]. Otherwise
+// the Add and Relu/Clip fall through to standalone quantized QNN ops.
+// -----------------------------------------------------------------------------
+namespace {
+
+// Builds a QDQ MatMul + Add(DQ'd int32 bias) + Relu/Clip model. Uses rank-3 activation(relu) to
+// avoid ORT's MatMulAddFusion folding into Gemm.
+template <typename ActivationQType, typename WeightQType>
+static GetTestQDQModelFn<ActivationQType> BuildQDQMatMulAddActivationTestCase(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weight_def,
+    const TestInputDef<float>& bias_def,
+    const std::string& activation_type,
+    float forced_output_scale,
+    ActivationQType forced_output_zp,
+    float clip_min = 0.0f,
+    float clip_max = 6.0f) {
+  return [input_def, weight_def, bias_def, activation_type, forced_output_scale, forced_output_zp,
+          clip_min, clip_max](ModelTestBuilder& builder,
+                              std::vector<QuantParams<ActivationQType>>& output_qparams) {
+    (void)output_qparams;
+
+    // input -> Q -> DQ
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<ActivationQType> input_qp = GetTestInputQuantParams<ActivationQType>(input_def);
+    const std::string input_dq = AddQDQNodePair<ActivationQType>(
+        builder, "input_qdq", "input", input_qp.scale, input_qp.zero_point, true);
+
+    // weight -> Q -> DQ (per-tensor)
+    QuantParams<WeightQType> weight_qp = GetTestInputQuantParams<WeightQType>(weight_def);
+    std::vector<WeightQType> quantized_weight(SizeOfShape(weight_def.GetShape()));
+    const std::vector<float> weight_scales_vec = {weight_qp.scale};
+    const std::vector<WeightQType> weight_zps_vec = {weight_qp.zero_point};
+    QuantizeValues<float, WeightQType>(weight_def.GetRawData(), quantized_weight, weight_def.GetShape(),
+                                       weight_scales_vec, weight_zps_vec, std::nullopt);
+    builder.MakeInitializer<WeightQType>("weight_q", weight_def.GetShape(), quantized_weight);
+    builder.AddDequantizeLinearNode<WeightQType>("weight_dq", "weight_q", weight_qp.scale,
+                                                 weight_qp.zero_point, "weight_dq", true);
+
+    // MatMul
+    builder.AddNode("MatMul", "MatMul", {input_dq, "weight_dq"}, {"mm_out"}, kOnnxDomain);
+
+    // DQ'd int32 bias (bias_scale = input_scale * weight_scale, zp = 0).
+    const float bias_scale = input_qp.scale * weight_qp.scale;
+    const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale, true);
+
+    // Add(mm_out, bias_dq)
+    builder.AddNode("Add", "Add", {"mm_out", bias_dq}, {"add_out"}, kOnnxDomain);
+
+    // Relu/Clip
+    if (activation_type == "Relu") {
+      builder.AddNode("Relu", "Relu", {"add_out"}, {"act_out"});
+    } else {
+      builder.MakeScalarInitializer<float>("clip_min", clip_min);
+      builder.MakeScalarInitializer<float>("clip_max", clip_max);
+      builder.AddNode("Clip", "Clip", {"add_out", "clip_min", "clip_max"}, {"act_out"});
+    }
+
+    // Forced output encoding -> Q -> DQ (graph output)
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
+        builder, "output_qdq", "act_out", forced_output_scale, forced_output_zp, true);
+  };
+}
+
+}  // namespace
+
+// Test 1: DQ,DQ -> MatMul -> Add -> Relu -> Q with encoding_min == 0 (fusion safe).
+// The whole tail lowers to a single quantized FullyConnected + Reshape.
+TEST_F(QnnHTPBackendTests, MatMulAddReluFusion_EncodingSafe) {
+  const std::vector<int64_t> input_shape = {1, 4, 8};  // [batch, M, K]
+  const std::vector<int64_t> weight_shape = {8, 6};    // [K, N]
+  const std::vector<int64_t> bias_shape = {6};         // [N]
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-0.2f, 0.2f, SizeOfShape(bias_shape)));
+
+  auto build_f32 = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weight", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("MatMul", "MatMul", {"input", "weight"}, {"mm_out"});
+    builder.AddNode("Add", "Add", {"mm_out", "bias"}, {"add_out"});
+    builder.AddNode("Relu", "Relu", {"add_out"}, {"relu_out"});
+    builder.MakeOutput("relu_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // scale=0.001, zp=0 for uint16 -> encoding_min = 0, encoding_max = ~65.5 (safe for Relu).
+  auto qdq_fn = BuildQDQMatMulAddActivationTestCase<uint16_t, uint8_t>(
+      input_def, weight_def, bias_def, "Relu", 0.001f, static_cast<uint16_t>(0));
+  TestQDQModelAccuracy(build_f32, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, "", {},
+                       // Disable graph optimizations to keep MatMul+Add from folding into Gemm.
+                       ORT_DISABLE_ALL);
+}
+
+// Test 2: DQ,DQ -> MatMul -> Add -> Relu -> Q where encoding_min < 0 (fusion suppressed).
+// Add and Relu are emitted as standalone quantized QNN ops; the graph still runs on HTP.
+TEST_F(QnnHTPBackendTests, MatMulAddReluFusion_EncodingMinBelowZero) {
+  const std::vector<int64_t> input_shape = {1, 4, 8};
+  const std::vector<int64_t> weight_shape = {8, 6};
+  const std::vector<int64_t> bias_shape = {6};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 2.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(bias_shape)));
+
+  auto build_f32 = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weight", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("MatMul", "MatMul", {"input", "weight"}, {"mm_out"});
+    builder.AddNode("Add", "Add", {"mm_out", "bias"}, {"add_out"});
+    builder.AddNode("Relu", "Relu", {"add_out"}, {"relu_out"});
+    builder.MakeOutput("relu_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // scale=0.0002, zp=14601 for uint16 -> encoding_min = 0.0002*(0-14601) = -2.92 < 0 -> unsafe.
+  auto qdq_fn = BuildQDQMatMulAddActivationTestCase<uint16_t, uint8_t>(
+      input_def, weight_def, bias_def, "Relu", 0.0002f, static_cast<uint16_t>(14601));
+  TestQDQModelAccuracy(build_f32, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, "", {},
+                       ORT_DISABLE_ALL);
+}
+
+// Test 3: DQ,DQ -> MatMul -> Add -> Clip -> Q where encoding_max > clip_max (fusion suppressed).
+TEST_F(QnnHTPBackendTests, MatMulAddClipFusion_EncodingOutsideClipRange) {
+  const std::vector<int64_t> input_shape = {1, 4, 8};
+  const std::vector<int64_t> weight_shape = {8, 6};
+  const std::vector<int64_t> bias_shape = {6};
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 2.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.3f, 0.3f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(0.0f, 0.5f, SizeOfShape(bias_shape)));
+
+  auto build_f32 = [input_def, weight_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weight", weight_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+    builder.AddNode("MatMul", "MatMul", {"input", "weight"}, {"mm_out"});
+    builder.AddNode("Add", "Add", {"mm_out", "bias"}, {"add_out"});
+    builder.MakeScalarInitializer<float>("clip_min_val", 0.0f);
+    builder.MakeScalarInitializer<float>("clip_max_val", 6.0f);
+    builder.AddNode("Clip", "Clip", {"add_out", "clip_min_val", "clip_max_val"}, {"clip_out"});
+    builder.MakeOutput("clip_out");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // scale=0.0002, zp=0 -> encoding_max = 0.0002 * 65535 ~ 13.1 > clip_max=6 -> unsafe.
+  auto qdq_fn = BuildQDQMatMulAddActivationTestCase<uint16_t, uint8_t>(
+      input_def, weight_def, bias_def, "Clip", 0.0002f, static_cast<uint16_t>(0), 0.0f, 6.0f);
+  TestQDQModelAccuracy(build_f32, qdq_fn, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance(0.02f),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, "", {},
+                       ORT_DISABLE_ALL);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

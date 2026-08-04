@@ -259,7 +259,6 @@ Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
   RETURN_IF_ERROR(
       CheckInputs(qnn_model_wrapper, inputs[0], inputs[1], input_info_0, input_info_1,
                   use_fully_connected, use_conv2d));
-
   // Block-quantized weight: translate to a QNN MatMul with a BW_FLOAT_BLOCK weight.
   if (IsBQWeight(qnn_model_wrapper, inputs[1]) && !input_info_1.quant_param.IsLPBQ()) {
     return ProcessInputsForBQMatMul(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
@@ -514,6 +513,14 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
                                            do_op_validation));
     input_names.push_back(convert_output_name);
   }
+
+  // MatMul + Add(DQ'd int32 bias) + Relu/Clip fusion: append the DQ'd bias as QNN FC's third input.
+  // bias_def carries the DQ's scale/zp so ProcessInput registers a quantized STATIC tensor.
+  if (node_unit.GetBiasAddNode() != nullptr && node_unit.Inputs().size() >= 3) {
+    const auto& bias_def = node_unit.Inputs()[2];
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, bias_def, logger, input_names));
+  }
+
   return Ort::Status();
 }
 
@@ -750,6 +757,11 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
     use_fully_connected = false;
   }
+
+  // MatMul+Add+Relu/Clip fusion feeds the bias into QNN FullyConnected. Only FC accepts a native
+  // bias input; guard against LPBQ (Conv2D) or BQ (MatMul) landing here with a bias.
+  RETURN_IF_NOT(node_unit.GetBiasAddNode() == nullptr || use_fully_connected,
+                "QNN EP: MatMul+Add+Relu/Clip fusion requires the FullyConnected lowering path.");
 
   bool reshape_input_0 = input_info_0.shape.size() == 1;
   bool reshape_input_1 = input_info_1.shape.size() == 1;
