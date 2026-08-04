@@ -216,6 +216,26 @@ static void AliasPresentToPastAndRun(Ort::Session& qnn_session,
   }
 }
 
+// Runs the model on the CPU EP and compares each QNN output against it. Verbatim
+// extraction of RunGQATest's final compare block.
+static void CompareQnnVsCpuOutputs(Ort::Session& cpu_session,
+                                   const std::unordered_map<std::string, Ort::Value>& cpu_feeds,
+                                   const std::vector<std::string>& output_names,
+                                   const std::vector<const Ort::Value*>& qnn_outputs,
+                                   float fp32_abs_err) {
+  Ort::RunOptions cpu_run_options;
+  std::vector<Ort::Value> cpu_outputs;
+  // The CPU EP can do GQA without buffer sharing, so we can just use RunWithEP
+  RunWithEP(cpu_session, cpu_run_options, cpu_feeds, cpu_outputs);
+
+  // Check QNN outputs against CPU
+  ASSERT_EQ(cpu_outputs.size(), output_names.size());
+  ASSERT_EQ(qnn_outputs.size(), output_names.size());
+  for (size_t i = 0; i < output_names.size(); i++) {
+    VerifyOutput(output_names[i], cpu_outputs[i], *qnn_outputs[i], ElementwiseAbsoluteVerifier{fp32_abs_err});
+  }
+}
+
 // Runs a model with a GQA operator through QNN EP. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename T>
@@ -341,17 +361,8 @@ static void RunGQATest(
                                                    output_names_cstr, qnn_feeds, input_name_to_index,
                                                    owned_qnn_outputs, qnn_outputs));
 
-  Ort::RunOptions cpu_run_options;
-  std::vector<Ort::Value> cpu_outputs;
-  // The CPU EP can do GQA without buffer sharing, so we can just use RunWithEP
-  RunWithEP(cpu_session, cpu_run_options, helper.feeds_, cpu_outputs);
-
-  // Check QNN outputs against CPU
-  ASSERT_EQ(cpu_outputs.size(), output_names.size());
-  ASSERT_EQ(qnn_outputs.size(), output_names.size());
-  for (size_t i = 0; i < output_names.size(); i++) {
-    VerifyOutput(output_names[i], cpu_outputs[i], *qnn_outputs[i], ElementwiseAbsoluteVerifier{fp32_abs_err});
-  }
+  ASSERT_NO_FATAL_FAILURE(CompareQnnVsCpuOutputs(cpu_session, helper.feeds_, output_names,
+                                                 qnn_outputs, fp32_abs_err));
 }
 
 // BuildGQATestCase and RunGQATest above are backend-agnostic and stay unguarded so they can be
