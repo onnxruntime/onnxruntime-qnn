@@ -1302,6 +1302,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                   "htp_graph_splitting_kway_partitions is set but enable_htp_graph_splitting=0. Value will be ignored.");
     }
   }
+#if defined(QNN_HTP_GRAPH_SPLITTING_AVAILABLE) && !defined(QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS)
+  if (enable_htp_graph_splitting_ && user_set_graph_splitting_threads) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "htp_graphsplitter_num_prepare_threads is set but numPrepareThreads is not supported "
+                "by this SDK build. Value will be ignored; SDK will use its default thread count.");
+  }
+#endif
 
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
