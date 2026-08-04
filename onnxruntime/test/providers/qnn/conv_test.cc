@@ -1195,9 +1195,7 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
 // Smoke test for the enable_htp_fp16_clamp_overflow HTP option
 #ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
-#if defined(_WIN32)
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
-#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
