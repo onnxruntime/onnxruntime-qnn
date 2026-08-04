@@ -17,7 +17,7 @@
 # Usage:
 #   bash run_snapshot_accuracy.sh \
 #       --build-dir=/path/to/build/linux-x86_64 \
-#       [--update-goldens] \
+#       [--generate-goldens] \
 #       [--force-accuracy] \
 #       [--filter=Clip,Conv]
 
@@ -33,7 +33,7 @@ set_strict_mode
 build_dir=""
 filter_groups=""
 force_accuracy=false
-update_goldens=false
+generate_goldens=false
 
 for arg in "$@"; do
     case "${arg}" in
@@ -46,8 +46,8 @@ for arg in "$@"; do
         --force-accuracy)
             force_accuracy=true
             ;;
-        --update-goldens)
-            update_goldens=true
+        --generate-goldens)
+            generate_goldens=true
             ;;
         -h|--help)
             cat <<EOF
@@ -58,7 +58,7 @@ fail (golden mismatch), runs accuracy tests for the affected ops only.
 
 Options:
   --build-dir=<path>        Required. Build root (e.g. build/linux-x86_64).
-  --update-goldens          Update golden files to match current output, then run accuracy
+  --generate-goldens          Generate golden files from current output, then run accuracy
                             tests to verify the new graph structure is numerically correct.
   --force-accuracy          Always run accuracy tests regardless of snapshot outcome.
   --filter=<group1,group2,...>
@@ -114,8 +114,8 @@ fi
 
 log_info "=== QNN EP Two-Pass Snapshot+Accuracy Runner ==="
 log_info "binary : ${binary}"
-if [ "${update_goldens}" = true ]; then
-    log_info "mode   : update-goldens"
+if [ "${generate_goldens}" = true ]; then
+    log_info "mode   : generate-goldens"
 fi
 if [ "${force_accuracy}" = true ]; then
     log_info "mode   : force-accuracy"
@@ -155,7 +155,7 @@ accuracy_json="${results_dir}/accuracy_results.json"
 # ---------------------------------------------------------------------------
 log_info "--- Pass 1: Running snapshot tests ---"
 
-if [ "${update_goldens}" = true ]; then
+if [ "${generate_goldens}" = true ]; then
     export QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1
     log_info "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 (writing new golden files)"
 fi
@@ -170,7 +170,7 @@ snapshot_exit=0
 ) || snapshot_exit=$?
 
 # In update mode, unset so Pass 2 accuracy tests run normally (compare, don't write).
-if [ "${update_goldens}" = true ]; then
+if [ "${generate_goldens}" = true ]; then
     unset QNN_UT_SNAPSHOT_GOLDEN_UPDATE
 fi
 
@@ -181,7 +181,7 @@ fi
 # Determine which groups need accuracy testing.
 target_ops=""
 
-if [ "${update_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
+if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
     # In update/force mode: run accuracy for all groups that were in scope.
     if [ -n "${filter_groups}" ]; then
         target_ops="${filter_groups}"
@@ -203,7 +203,7 @@ for suite in data.get('testsuites', []):
 print(','.join(sorted(ops)))
 " "${snapshot_json}" 2>/dev/null) || true
     fi
-    if [ "${update_goldens}" = true ]; then
+    if [ "${generate_goldens}" = true ]; then
         log_info "Goldens updated. Verifying accuracy for: ${target_ops}"
     else
         log_info "Force-accuracy mode. Running accuracy for: ${target_ops}"
@@ -291,11 +291,11 @@ accuracy_exit=0
 # Final verdict
 # ---------------------------------------------------------------------------
 if [ ${accuracy_exit} -eq 0 ]; then
-    if [ "${update_goldens}" = true ]; then
+    if [ "${generate_goldens}" = true ]; then
         log_info "=== PASS: Goldens updated and accuracy verified ==="
     else
         log_info "=== PASS: Snapshot drift verified numerically correct ==="
-        log_info "Action: Run with --update-goldens to accept the new graph structure."
+        log_info "Action: Run with --generate-goldens to accept the new graph structure."
     fi
     exit 0
 else
