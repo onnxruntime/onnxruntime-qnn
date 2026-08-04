@@ -5,7 +5,7 @@
 # Publish QNN EP unit-test golden files to Artifactory.
 #
 # Thin orchestrator over run_snapshot_accuracy.sh:
-#   1. Regenerate goldens into the golden store (--update-goldens writes them,
+#   1. Regenerate goldens into the golden store (--generate-goldens writes them,
 #      then runs the accuracy tier to verify numerical correctness).
 #   2. Read the accuracy JSON report to find which op GROUPS actually PASSED.
 #   3. Package ONLY the passing groups' goldens + a version-stamped manifest.json.
@@ -158,7 +158,7 @@ else
     [ -x "${runner}" ] || die "run_snapshot_accuracy.sh not found or not executable: ${runner}"
 
     regen_exit=0
-    regen_args=(--build-dir="${build_dir}" --update-goldens)
+    regen_args=(--build-dir="${build_dir}" --generate-goldens)
     if [ -n "${filter_groups}" ]; then
         regen_args+=(--filter="${filter_groups}")
     fi
