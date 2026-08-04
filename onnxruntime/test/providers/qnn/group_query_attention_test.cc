@@ -120,6 +120,8 @@ static GetTestModelFn BuildGQATestCase(
   };
 }
 
+// === Shared model builder + backend-agnostic driver (used by HTP now, GPU after rebase) ===
+
 // Holds a shared-memory allocation plus the Ort::Value view over it, so GQA feeds
 // (and in-place present/past KV buffers) live on the QNN host-accessible allocator.
 struct GQAFeedCopy {
@@ -391,6 +393,8 @@ static void RunGQATest(
 // fixed before it can be enabled.
 //
 
+// === HTP compact drivers (packed / unpacked QKV) ===
+
 // Compact driver for HTP GQA tests over a packed-QKV model with a full-capacity past KV cache.
 // Only the knobs that matter for edge-case coverage are exposed; everything else mirrors the
 // common LLM decode/prefill setup. The harness aliases present->past (in-place KV cache), so the
@@ -539,6 +543,8 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
       fp32_abs_err,
       /*use_shared_memory_allocator*/ true);
 }
+
+// === HTP inference tests (QNN vs CPU) ===
 
 // Basic GQA on the HTP backend (FP32 model, FP16 precision on device).
 // Uses scale=0.0f, which both the ORT CPU EP and the QNN EP must interpret as the default
