@@ -1,10 +1,32 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+// NOTE: <windows.h> must precede the C++ standard headers below, and NOMINMAX must be set
+// before it, otherwise the windows.h min/max macros break std::min/std::max in this TU.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>  // PROCESS_MEMORY_COUNTERS (the API itself is resolved dynamically)
+#endif
+
 #include <stdlib.h>
 
+#if defined(__linux__) || defined(__ANDROID__)
+#include <sys/resource.h>  // getrusage(RUSAGE_SELF) for the peak-RSS query
+#endif
+
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -2573,6 +2595,830 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
     ASSERT_EQ(std::remove(ctx_model_path.c_str()), 0);
   }
   ASSERT_EQ(std::remove(qnn_ctx_binary_file_name1.c_str()), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Peak memory measurement helpers for the weight-sharing memory tests below.
+//
+// Peak is read from the OS high-water counter (PROCESS_MEMORY_COUNTERS.PeakWorkingSetSize on
+// Windows, ru_maxrss on POSIX). That counter is monotonic for the whole process lifetime and
+// cannot be reset, so each scenario lives in its OWN test case and is expected to be run in its
+// own process (--gtest_filter=<one test>) when the numbers are to be compared. Within a single
+// process the later test's reading is censored upward by earlier tests, which is why each test
+// reports its number rather than asserting against another scenario's.
+//
+// The OS counter is used in preference to sampling on a timer: it cannot miss a short-lived
+// allocation spike, which matters when the quantity of interest is precisely the peak.
+// ---------------------------------------------------------------------------
+
+// Returns the process's peak working set in bytes since process start, or 0 if unsupported.
+static size_t GetPeakWorkingSetBytes() {
+#if defined(_WIN32)
+  // Resolve K32GetProcessMemoryInfo dynamically from kernel32 so that this test does not
+  // add a psapi.lib link dependency to the unit test target.
+  using GetProcessMemoryInfoFn = BOOL(WINAPI*)(HANDLE, PROCESS_MEMORY_COUNTERS*, DWORD);
+  static const GetProcessMemoryInfoFn get_memory_info = []() -> GetProcessMemoryInfoFn {
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    if (kernel32 == nullptr) {
+      return nullptr;
+    }
+    return reinterpret_cast<GetProcessMemoryInfoFn>(
+        reinterpret_cast<void*>(GetProcAddress(kernel32, "K32GetProcessMemoryInfo")));
+  }();
+
+  if (get_memory_info == nullptr) {
+    return 0;
+  }
+
+  PROCESS_MEMORY_COUNTERS counters{};
+  counters.cb = sizeof(counters);
+  if (!get_memory_info(GetCurrentProcess(), &counters, sizeof(counters))) {
+    return 0;
+  }
+  return static_cast<size_t>(counters.PeakWorkingSetSize);
+#elif defined(__linux__) || defined(__ANDROID__)
+  // ru_maxrss is in kilobytes on Linux/Android.
+  struct rusage usage{};
+  if (getrusage(RUSAGE_SELF, &usage) != 0 || usage.ru_maxrss <= 0) {
+    return 0;
+  }
+  return static_cast<size_t>(usage.ru_maxrss) * 1024u;
+#else
+  return 0;
+#endif
+}
+
+static std::string FormatMiB(size_t bytes) {
+  std::ostringstream oss;
+  oss.precision(2);
+  oss << std::fixed << (static_cast<double>(bytes) / (1024.0 * 1024.0)) << " MiB";
+  return oss.str();
+}
+
+// Emits the peak working set for one scenario in a grep-friendly single line.
+// `scenario` identifies the test so results from separate processes can be collated.
+static void ReportPeakWorkingSet(const std::string& scenario, const std::string& phase) {
+  const size_t peak = GetPeakWorkingSetBytes();
+  if (peak == 0) {
+    std::cout << "[ MEMORY   ] " << scenario << " | " << phase
+              << " | peak_working_set=UNSUPPORTED" << std::endl;
+    return;
+  }
+  std::cout << "[ MEMORY   ] " << scenario << " | " << phase
+            << " | peak_working_set=" << FormatMiB(peak)
+            << " (" << peak << " bytes)" << std::endl;
+}
+
+// Builds a weight-heavy QDQ model so that the difference between holding the ONNX model in
+// memory and streaming it from disk is large enough to be measurable:
+//
+// input -> Q -> DQ -> Conv(weights, bias) -> Q -> DQ -> output
+//
+// The Conv weight tensor is [out_channels, in_channels, k, k], so the weight data is
+// out_channels * in_channels * k * k elements. At the default shape used by the weight-sharing
+// memory tests (4096 x 2048 x 3 x 3 = 75.5M elements) that is ~288 MiB of float32 weights, or
+// ~72 MiB once quantized to uint8 — large enough that the weights genuinely dominate the QNN
+// context binary, which a small elementwise graph does not (a chain of Adds is constant-folded
+// away and leaves almost nothing in the .bin).
+//
+// `name_prefix` makes every tensor name in the graph unique per model. This matters for weight
+// sharing: the QNN graph name is derived from the ORT fused node name, which for a model loaded
+// from a *buffer* has no file path to disambiguate it. Two byte-identical models loaded from
+// buffers therefore collapse onto the same QNN graph, and the second session fails to register
+// its graph inputs with QNN_TENSOR_ERROR_ALREADY_EXISTS (7003). Distinct tensor names keep the
+// graphs distinct regardless of how the model was loaded, which also matches how weight sharing
+// is used in practice (different graphs sharing the same weight data).
+//
+// NOTE: the weight *data* is identical across models on purpose, so the weights are still
+// shareable inside the single QNN context.
+//
+// NOTE: this test only checks memory usage and that inference runs, never numerics.
+static GetTestModelFn BuildWeightHeavyQdqTestCase(int64_t out_channels, int64_t in_channels,
+                                                  int64_t kernel_size, int64_t spatial_size,
+                                                  const std::string& name_prefix) {
+  return [out_channels, in_channels, kernel_size, spatial_size, name_prefix](ModelTestBuilder& builder) {
+    // Deterministic data so the weight bytes are identical across models and can be shared.
+    // A small repeating pattern keeps generation cheap for a tensor of this size.
+    const size_t weight_elems = static_cast<size_t>(out_channels) * static_cast<size_t>(in_channels) *
+                                static_cast<size_t>(kernel_size) * static_cast<size_t>(kernel_size);
+    std::vector<float> weight_data(weight_elems);
+    for (size_t i = 0; i < weight_data.size(); ++i) {
+      weight_data[i] = static_cast<float>(i % 256) / 255.0f;
+    }
+
+    const size_t input_elems = static_cast<size_t>(in_channels) * static_cast<size_t>(spatial_size) *
+                               static_cast<size_t>(spatial_size);
+    std::vector<float> input_data(input_elems);
+    for (size_t i = 0; i < input_data.size(); ++i) {
+      input_data[i] = static_cast<float>(i % 256) / 255.0f;
+    }
+
+    std::vector<float> bias_data(static_cast<size_t>(out_channels));
+    for (size_t i = 0; i < bias_data.size(); ++i) {
+      bias_data[i] = static_cast<float>(i % 16) / 16.0f;
+    }
+
+    // Activation and weight quantization parameters, derived from the actual data ranges.
+    QuantParams<uint8_t> act_qparams = GetDataQuantParams<uint8_t>(gsl::make_span(input_data));
+    QuantParams<uint8_t> weight_qparams = GetDataQuantParams<uint8_t>(gsl::make_span(weight_data));
+
+    // input -> Q -> DQ ->
+    const std::string input_name = name_prefix + "input";
+    MakeTestInput(builder, input_name,
+                  TestInputDef<float>({1, in_channels, spatial_size, spatial_size}, false, input_data));
+    const std::string input_qdq = AddQDQNodePair<uint8_t>(builder, name_prefix + "input_qdq", input_name,
+                                                          act_qparams.scale, act_qparams.zero_point);
+
+    // weights (initializer) -> Q -> DQ ->
+    const std::string weight_name = name_prefix + "weights";
+    MakeTestInput(builder, weight_name,
+                  TestInputDef<float>({out_channels, in_channels, kernel_size, kernel_size}, true, weight_data));
+    const std::string weight_qdq = AddQDQNodePair<uint8_t>(builder, weight_name + "_qdq", weight_name,
+                                                           weight_qparams.scale, weight_qparams.zero_point);
+
+    // bias is quantized with scale = input_scale * weight_scale, as QDQ Conv requires.
+    const std::string bias_name = name_prefix + "bias";
+    const float bias_scale = act_qparams.scale * weight_qparams.scale;
+    std::vector<int32_t> quantized_bias(bias_data.size());
+    for (size_t i = 0; i < bias_data.size(); ++i) {
+      quantized_bias[i] = static_cast<int32_t>(std::lround(bias_data[i] / bias_scale));
+    }
+    builder.MakeInitializer<int32_t>(bias_name, {out_channels}, quantized_bias);
+    const std::string bias_dq = name_prefix + "bias_dq_out";
+    builder.AddDequantizeLinearNode<int32_t>(name_prefix + "bias_dq", bias_name, bias_scale,
+                                             static_cast<int32_t>(0), bias_dq);
+
+    // Conv -> conv_out
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {1, 1, 1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
+
+    const std::string conv_out = name_prefix + "conv_out";
+    builder.AddNode(name_prefix + "Conv", "Conv", {input_qdq, weight_qdq, bias_dq}, {conv_out}, kOnnxDomain,
+                    conv_attrs);
+
+    // conv_out -> Q -> DQ -> graph output
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, name_prefix + "output_qdq", conv_out,
+                                                   act_qparams.scale, act_qparams.zero_point);
+  };
+}
+
+// Serializes a weight-heavy QDQ model into `model_bytes`.
+static void CreateWeightHeavyQdqModelBytes(int64_t out_channels, int64_t in_channels,
+                                           int64_t kernel_size, int64_t spatial_size,
+                                           const std::string& name_prefix, std::string& model_bytes) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildWeightHeavyQdqTestCase(out_channels, in_channels, kernel_size, spatial_size, name_prefix)(helper);
+
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  model_bytes.clear();
+  ASSERT_TRUE(helper.model_.SerializeToString(&model_bytes));
+}
+
+static void WriteBytesToFile(const std::string& file_path, const std::string& bytes) {
+#if defined(_WIN32)
+  const std::wstring file_path_w(file_path.begin(), file_path.end());
+  std::ofstream ofs(file_path_w, std::ios::binary);
+#else
+  std::ofstream ofs(file_path, std::ios::binary);
+#endif
+  ASSERT_TRUE(ofs.good());
+  ofs.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  ASSERT_TRUE(ofs.good());
+  ofs.close();
+}
+
+static void ReadFileToBytes(const std::string& file_path, std::string& bytes) {
+  bytes.resize(std::filesystem::file_size(file_path));
+#if defined(_WIN32)
+  const std::wstring file_path_w(file_path.begin(), file_path.end());
+  std::ifstream ifs(file_path_w, std::ios::binary);
+#else
+  std::ifstream ifs(file_path, std::ios::binary);
+#endif
+  ASSERT_TRUE(ifs.good());
+  ASSERT_TRUE(ifs.read(bytes.data(), static_cast<std::streamsize>(bytes.size())));
+}
+
+// Generates two EPContext models with weight sharing enabled (ep.share_ep_contexts), so both
+// models' graphs end up in a single shared QNN context binary.
+//
+// `model_sources` holds either two file paths (from_memory == false) or two serialized ONNX
+// models (from_memory == true).
+// Generates two EPContext models, either with weight sharing enabled (ep.share_ep_contexts, so both
+// models' graphs end up in a single shared QNN context binary) or without it (each session produces
+// its own independent context binary) — the latter is the no-sharing baseline.
+//
+// `model_sources` holds either two file paths (from_memory == false) or two serialized ONNX
+// models (from_memory == true).
+static void GenerateSharedCtxModels(ProviderOptions provider_options,
+                                    const std::vector<std::string>& model_sources,
+                                    const std::vector<std::string>& ctx_model_paths,
+                                    bool from_memory,
+                                    bool share_contexts = true) {
+  ASSERT_EQ(model_sources.size(), static_cast<size_t>(2));
+  ASSERT_EQ(ctx_model_paths.size(), static_cast<size_t>(2));
+
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  // Weight sharing is only available for v73 and higher.
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SC8380XP);
+#endif
+
+  // ep.context_file_path is set explicitly for both sessions: it is required when the input model
+  // comes from a buffer, and it keeps the generated file names identical across both scenarios.
+  Ort::SessionOptions so1;
+  so1.SetLogId("weight_share_ctx_gen1");
+  so1.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so1.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  so1.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_paths[0].c_str());
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("weight_share_ctx_gen2");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_paths[1].c_str());
+
+  if (share_contexts) {
+    // Sessions share the QnnBackendManager, so graphs from both models compile into one context.
+    so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+    so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+    // Last session in the weight-sharing group: flush the shared context binary to disk.
+    so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+  }
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  if (from_memory) {
+    // session2 borrows the EP device from scoped1; must be declared after scoped1.
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, model_sources[0].data(), model_sources[0].size(), so1));
+    Ort::Session session2(*ort_env, model_sources[1].data(), model_sources[1].size(), so2);
+  } else {
+#if defined(_WIN32)
+    const std::wstring model_path1_w(model_sources[0].begin(), model_sources[0].end());
+    const std::wstring model_path2_w(model_sources[1].begin(), model_sources[1].end());
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, model_path1_w.c_str(), so1));
+    Ort::Session session2(*ort_env, model_path2_w.c_str(), so2);
+#else
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, model_sources[0].c_str(), so1));
+    Ort::Session session2(*ort_env, model_sources[1].c_str(), so2);
+#endif
+  }
+}
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+// Loads both generated EPContext models back and runs inference on both.
+//
+// With `share_contexts` true, session 2 reuses the QNN graphs that session 1 deserialized from the
+// shared context binary (SharedContext::shared_qnn_models_, enabled by ep.share_ep_contexts), so the
+// context binary is only deserialized once. Note this shares *graphs*, not the QnnBackendManager
+// itself — sharing the manager additionally requires ep.context_enable or
+// htp_share_resource_optimization. With `share_contexts` false each session loads its own context
+// binary independently, which is the no-sharing baseline.
+//
+// When `from_memory` is true the EPContext models themselves are loaded from buffers rather than
+// from disk; ep.context_file_path is then required so the external .bin can still be located
+// (see GetContextOnnxModelFilePath: a buffer has no model path to resolve the .bin against).
+//
+// The two models use different tensor names, so input/output names are read per model.
+static void LoadCtxModelsAndRun(ProviderOptions provider_options,
+                                const std::vector<std::string>& ctx_model_paths,
+                                bool from_memory,
+                                const std::vector<int64_t>& input_shape,
+                                bool share_contexts = true) {
+  ASSERT_EQ(ctx_model_paths.size(), static_cast<size_t>(2));
+
+  Ort::SessionOptions so1;
+  so1.SetLogId("weight_share_run1");
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("weight_share_run2");
+
+  if (share_contexts) {
+    so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+    so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+  }
+
+  if (from_memory) {
+    so1.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_paths[0].c_str());
+    so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_paths[1].c_str());
+  }
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  // Each model has its own tensor names; read them per model rather than sharing one set.
+  std::vector<std::vector<std::string>> input_names(2);
+  std::vector<std::vector<std::string>> output_names(2);
+  for (size_t i = 0; i < ctx_model_paths.size(); ++i) {
+    GetModelInputNames(ctx_model_paths[i], input_names[i], output_names[i]);
+    ASSERT_FALSE(input_names[i].empty());
+    ASSERT_FALSE(output_names[i].empty());
+  }
+
+  // Prepare a zero-filled input of shape `input_shape` per session.
+  size_t input_elems = 1;
+  for (const int64_t dim : input_shape) {
+    input_elems *= static_cast<size_t>(dim);
+  }
+  const std::vector<int64_t>& input_dim = input_shape;
+  std::vector<float> input_value(input_elems, 0.0f);
+  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+
+  std::vector<std::vector<Ort::Value>> ort_inputs(2);
+  std::vector<std::vector<const char*>> input_names_c(2);
+  std::vector<std::vector<const char*>> output_names_c(2);
+  for (size_t i = 0; i < 2; ++i) {
+    for (const auto& name : input_names[i]) {
+      ort_inputs[i].push_back(Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                       input_dim.data(), input_dim.size()));
+      input_names_c[i].push_back(name.c_str());
+    }
+    for (const auto& name : output_names[i]) {
+      output_names_c[i].push_back(name.c_str());
+    }
+  }
+
+  auto run_both = [&](Ort::Session& session1, Ort::Session& session2) {
+    auto ort_outputs1 = session1.Run(Ort::RunOptions{}, input_names_c[0].data(), ort_inputs[0].data(),
+                                     ort_inputs[0].size(), output_names_c[0].data(), output_names_c[0].size());
+    auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c[1].data(), ort_inputs[1].data(),
+                                     ort_inputs[1].size(), output_names_c[1].data(), output_names_c[1].size());
+    ASSERT_EQ(ort_outputs1.size(), output_names_c[0].size());
+    ASSERT_EQ(ort_outputs2.size(), output_names_c[1].size());
+  };
+
+  if (from_memory) {
+    std::string ctx_model_bytes1;
+    std::string ctx_model_bytes2;
+    ReadFileToBytes(ctx_model_paths[0], ctx_model_bytes1);
+    ReadFileToBytes(ctx_model_paths[1], ctx_model_bytes2);
+
+    // session2 borrows the EP device from scoped1; must be declared after scoped1.
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, ctx_model_bytes1.data(), ctx_model_bytes1.size(), so1));
+    Ort::Session session2(*ort_env, ctx_model_bytes2.data(), ctx_model_bytes2.size(), so2);
+    run_both(scoped1.session(), session2);
+  } else {
+#if defined(_WIN32)
+    const std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+    const std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+#else
+    const std::string ctx_model_file1(ctx_model_paths[0]);
+    const std::string ctx_model_file2(ctx_model_paths[1]);
+#endif
+    ScopedOrtSession scoped1(std::move(registered_ep_device),
+                             Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
+    Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+    run_both(scoped1.session(), session2);
+  }
+}
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
+
+// ---------------------------------------------------------------------------
+// EP context weight-sharing peak memory scenarios.
+//
+// Peak working set is read from the OS high-water counter
+// (PROCESS_MEMORY_COUNTERS.PeakWorkingSetSize / ru_maxrss). That counter is monotonic for the
+// lifetime of the process and cannot be reset, so each (scenario, phase) pair is its own test case
+// and MUST be run in its own process for its number to mean anything:
+//
+//   # generation phase (one process each)
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Gen_OnDiskModel
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Gen_InMemoryModel
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Gen_NoSharingBaseline
+//   # inference phase (one process each, AFTER the matching Gen_* test)
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Infer_OnDiskModel
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Infer_InMemoryModel
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Infer_InMemoryModel_LoadFromDisk
+//   onnxruntime_provider_test --gtest_filter=*WeightSharingPeakMemory_Infer_NoSharingBaseline
+//
+// Splitting generation from inference matters for measurement, not just tidiness: EPContext
+// generation peaks at a few hundred MiB, so running it in the same process as inference would
+// censor the inference reading upward and make it meaningless. Running any two of these tests in
+// one process has the same effect.
+//
+// ARTIFACT LIFETIME: each Gen_* test leaves its generated EPContext models and .bin on disk; the
+// matching Infer_* test consumes them and only then deletes them. An Infer_* test therefore
+// requires its Gen_* counterpart to have run first (in this process or an earlier one) and skips
+// with a diagnostic if the artifacts are missing.
+//
+// Each test asserts its own functional invariants (shared vs unshared .bin identity, sizes,
+// inference success) and prints
+//   "[ MEMORY   ] <scenario> | <phase> | peak_working_set=..."
+// lines for the caller to collate across processes.
+// ---------------------------------------------------------------------------
+
+// Model shape shared by all scenarios: a single QDQ Conv with a 4096x2048x3x3 weight tensor.
+// That is 75,497,472 weight elements — ~288 MiB as float32 in the ONNX model, ~72 MiB once
+// quantized to uint8 — so the weights dominate the QNN context binary and the shared-vs-unshared
+// comparison actually measures shared weight residency.
+static constexpr int64_t kWsMemConvOutChannels = 4096;
+static constexpr int64_t kWsMemConvInChannels = 2048;
+static constexpr int64_t kWsMemConvKernelSize = 3;
+// Spatial size is kept small: it drives activation size and Conv cost, not weight size.
+static constexpr int64_t kWsMemConvSpatialSize = 3;
+
+// Graph input shape implied by the Conv above: NCHW.
+static std::vector<int64_t> WsMemConvInputShape() {
+  return {1, kWsMemConvInChannels, kWsMemConvSpatialSize, kWsMemConvSpatialSize};
+}
+
+// Artifact paths per scenario. Generation writes these; inference reads and then removes them.
+static const std::vector<std::string>& WsMemDiskModelPaths() {
+  static const std::vector<std::string> paths{"./ws_mem_disk1.onnx", "./ws_mem_disk2.onnx"};
+  return paths;
+}
+static const std::vector<std::string>& WsMemDiskCtxPaths() {
+  static const std::vector<std::string> paths{"./ws_mem_disk1_ctx.onnx", "./ws_mem_disk2_ctx.onnx"};
+  return paths;
+}
+static const std::vector<std::string>& WsMemInMemCtxPaths() {
+  static const std::vector<std::string> paths{"./ws_mem_inmem1_ctx.onnx", "./ws_mem_inmem2_ctx.onnx"};
+  return paths;
+}
+static const std::vector<std::string>& WsMemNoShareModelPaths() {
+  static const std::vector<std::string> paths{"./ws_mem_nos1.onnx", "./ws_mem_nos2.onnx"};
+  return paths;
+}
+static const std::vector<std::string>& WsMemNoShareCtxPaths() {
+  static const std::vector<std::string> paths{"./ws_mem_nos1_ctx.onnx", "./ws_mem_nos2_ctx.onnx"};
+  return paths;
+}
+
+// Common provider options for the weight-sharing memory scenarios.
+static ProviderOptions MakeWsMemProviderOptions() {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+  return provider_options;
+}
+
+// Builds the two models used by every scenario. They share identical weight *data* (so the weights
+// are shareable inside one QNN context) but use distinct tensor names, so they remain two distinct
+// QNN graphs even when loaded from buffers, where there is no file path to disambiguate the graph
+// name (see BuildWeightHeavyQdqTestCase).
+static void CreateWsMemModelPair(std::vector<std::string>& model_bytes) {
+  model_bytes.assign(2, std::string());
+  CreateWeightHeavyQdqModelBytes(kWsMemConvOutChannels, kWsMemConvInChannels, kWsMemConvKernelSize,
+                                 kWsMemConvSpatialSize, "m0_", model_bytes[0]);
+  CreateWeightHeavyQdqModelBytes(kWsMemConvOutChannels, kWsMemConvInChannels, kWsMemConvKernelSize,
+                                 kWsMemConvSpatialSize, "m1_", model_bytes[1]);
+  ASSERT_FALSE(model_bytes[0].empty());
+  ASSERT_FALSE(model_bytes[1].empty());
+}
+
+// Removes any artifacts left over from an earlier (possibly failed) run, so generation starts clean.
+static void RemoveWsMemArtifacts(const std::vector<std::string>& model_paths,
+                                 const std::vector<std::string>& ctx_paths) {
+  for (const auto& path : ctx_paths) {
+    // Remove the referenced .bin first, while the EPContext model that names it still exists.
+    if (std::filesystem::exists(path)) {
+      std::string ctx_bin;
+      GetContextBinaryFileName(path, ctx_bin);
+      if (!ctx_bin.empty()) {
+        std::filesystem::remove(ctx_bin);
+      }
+    }
+    std::filesystem::remove(path);
+  }
+  for (const auto& path : model_paths) {
+    std::filesystem::remove(path);
+  }
+}
+
+// True if every EPContext model a scenario's inference phase needs is present on disk.
+static bool WsMemCtxArtifactsExist(const std::vector<std::string>& ctx_paths) {
+  for (const auto& path : ctx_paths) {
+    if (!std::filesystem::exists(path)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Emits the standard "run the generation test first" skip diagnostic.
+static std::string WsMemMissingArtifactsMessage(const std::string& gen_test_name,
+                                                const std::vector<std::string>& ctx_paths) {
+  std::string message = "EPContext artifacts not found (expected ";
+  for (size_t i = 0; i < ctx_paths.size(); ++i) {
+    message += (i == 0 ? "" : ", ") + ctx_paths[i];
+  }
+  message += "). Run --gtest_filter=*" + gen_test_name + " first; that test generates them and ";
+  message += "leaves them on disk for this one to consume.";
+  return message;
+}
+
+// ===========================================================================
+// Scenario A: ONNX models on disk, EPContext models generated to / loaded from disk.
+// ===========================================================================
+
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Gen_OnDiskModel) {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#endif
+
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "on-disk model, weight sharing";
+  const auto& model_paths = WsMemDiskModelPaths();
+  const auto& ctx_paths = WsMemDiskCtxPaths();
+
+  RemoveWsMemArtifacts(model_paths, ctx_paths);
+  ReportPeakWorkingSet(scenario, "generation: before");
+
+  std::vector<std::string> model_bytes;
+  CreateWsMemModelPair(model_bytes);
+  const size_t total_model_bytes = model_bytes[0].size() + model_bytes[1].size();
+
+  for (size_t i = 0; i < model_paths.size(); ++i) {
+    WriteBytesToFile(model_paths[i], model_bytes[i]);
+    ASSERT_TRUE(std::filesystem::exists(model_paths[i]));
+  }
+
+  GenerateSharedCtxModels(provider_options, model_paths, ctx_paths, /*from_memory=*/false);
+  ReportPeakWorkingSet(scenario, "generation: after");
+
+  // Weight sharing must have produced one shared context binary for both EPContext models.
+  std::string ctx_bin1;
+  std::string ctx_bin2;
+  GetContextBinaryFileName(ctx_paths[0], ctx_bin1);
+  GetContextBinaryFileName(ctx_paths[1], ctx_bin2);
+  ASSERT_FALSE(ctx_bin1.empty());
+  ASSERT_EQ(ctx_bin1, ctx_bin2) << "both EPContext models must reference the same shared .bin";
+  const auto ctx_bin_size = std::filesystem::file_size(ctx_bin1);
+  ASSERT_GT(ctx_bin_size, 0u);
+
+  std::cout << "[ MEMORY   ] " << scenario << " | onnx model bytes=" << FormatMiB(total_model_bytes)
+            << " | shared ctx bin=" << FormatMiB(ctx_bin_size) << std::endl;
+
+  // Artifacts are intentionally left on disk for Infer_OnDiskModel to consume.
+}
+
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Infer_OnDiskModel) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "Loading and running an EPContext model requires an ARM64 device.";
+#elif !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "on-disk model, weight sharing";
+  const auto& model_paths = WsMemDiskModelPaths();
+  const auto& ctx_paths = WsMemDiskCtxPaths();
+
+  if (!WsMemCtxArtifactsExist(ctx_paths)) {
+    GTEST_SKIP() << WsMemMissingArtifactsMessage(
+        "QnnContextWeightSharingPeakMemory_Gen_OnDiskModel", ctx_paths);
+  }
+
+  // Resolve the shared .bin before inference so it can be cleaned up afterwards.
+  std::string ctx_bin;
+  GetContextBinaryFileName(ctx_paths[0], ctx_bin);
+  ASSERT_FALSE(ctx_bin.empty());
+
+  ReportPeakWorkingSet(scenario, "inference: before");
+  LoadCtxModelsAndRun(provider_options, ctx_paths, /*from_memory=*/false, WsMemConvInputShape());
+  ReportPeakWorkingSet(scenario, "inference: after");
+
+  // Cleanup: the inference phase is the last consumer of these artifacts.
+  RemoveWsMemArtifacts(model_paths, ctx_paths);
+#endif
+}
+
+// ===========================================================================
+// Scenario B: ONNX models held in memory by the caller; EPContext models generated from those
+// buffers and loaded back from buffers for inference.
+// ===========================================================================
+
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Gen_InMemoryModel) {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#endif
+
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "in-memory model, weight sharing";
+  const auto& ctx_paths = WsMemInMemCtxPaths();
+
+  RemoveWsMemArtifacts({}, ctx_paths);
+  ReportPeakWorkingSet(scenario, "generation: before");
+
+  // The caller holds both model buffers for the whole generation phase — this is the memory
+  // cost that distinguishes this scenario from the on-disk one.
+  std::vector<std::string> model_bytes;
+  CreateWsMemModelPair(model_bytes);
+  const size_t total_model_bytes = model_bytes[0].size() + model_bytes[1].size();
+
+  GenerateSharedCtxModels(provider_options, model_bytes, ctx_paths, /*from_memory=*/true);
+  ReportPeakWorkingSet(scenario, "generation: after");
+
+  std::string ctx_bin1;
+  std::string ctx_bin2;
+  GetContextBinaryFileName(ctx_paths[0], ctx_bin1);
+  GetContextBinaryFileName(ctx_paths[1], ctx_bin2);
+  ASSERT_FALSE(ctx_bin1.empty());
+  ASSERT_EQ(ctx_bin1, ctx_bin2) << "both EPContext models must reference the same shared .bin";
+  const auto ctx_bin_size = std::filesystem::file_size(ctx_bin1);
+  ASSERT_GT(ctx_bin_size, 0u);
+
+  std::cout << "[ MEMORY   ] " << scenario << " | onnx model bytes=" << FormatMiB(total_model_bytes)
+            << " | shared ctx bin=" << FormatMiB(ctx_bin_size) << std::endl;
+
+  // Artifacts are intentionally left on disk for Infer_InMemoryModel to consume.
+}
+
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Infer_InMemoryModel) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "Loading and running an EPContext model requires an ARM64 device.";
+#elif !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "in-memory model, weight sharing";
+  const auto& ctx_paths = WsMemInMemCtxPaths();
+
+  if (!WsMemCtxArtifactsExist(ctx_paths)) {
+    GTEST_SKIP() << WsMemMissingArtifactsMessage(
+        "QnnContextWeightSharingPeakMemory_Gen_InMemoryModel", ctx_paths);
+  }
+
+  std::string ctx_bin;
+  GetContextBinaryFileName(ctx_paths[0], ctx_bin);
+  ASSERT_FALSE(ctx_bin.empty());
+
+  ReportPeakWorkingSet(scenario, "inference: before");
+  LoadCtxModelsAndRun(provider_options, ctx_paths, /*from_memory=*/true, WsMemConvInputShape());
+  ReportPeakWorkingSet(scenario, "inference: after");
+
+  RemoveWsMemArtifacts({}, ctx_paths);
+#endif
+}
+
+// Same generated artifacts as Infer_InMemoryModel (produced by Gen_InMemoryModel from in-memory
+// ONNX models), but the EPContext models are loaded back from DISK rather than from buffers.
+//
+// Pairing this with Infer_InMemoryModel isolates the inference-time loading mode from the
+// generation-time one: both consume a context binary generated from in-memory ONNX, so any
+// difference between the two is attributable purely to how the EPContext model was loaded.
+// Note ep.context_file_path is not needed here — a disk-loaded model resolves its external .bin
+// against its own path (see GetContextOnnxModelFilePath).
+//
+// IMPORTANT: this test and Infer_InMemoryModel are mutually exclusive consumers of the same
+// artifacts — whichever runs first deletes them, so the other will skip. Re-run
+// Gen_InMemoryModel between them:
+//
+//   --gtest_filter=*Gen_InMemoryModel   then --gtest_filter=*Infer_InMemoryModel
+//   --gtest_filter=*Gen_InMemoryModel   then --gtest_filter=*Infer_InMemoryModel_LoadFromDisk
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Infer_InMemoryModel_LoadFromDisk) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "Loading and running an EPContext model requires an ARM64 device.";
+#elif !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "in-memory model, weight sharing, ctx loaded from disk";
+  const auto& ctx_paths = WsMemInMemCtxPaths();
+
+  if (!WsMemCtxArtifactsExist(ctx_paths)) {
+    GTEST_SKIP() << WsMemMissingArtifactsMessage(
+        "QnnContextWeightSharingPeakMemory_Gen_InMemoryModel", ctx_paths);
+  }
+
+  std::string ctx_bin;
+  GetContextBinaryFileName(ctx_paths[0], ctx_bin);
+  ASSERT_FALSE(ctx_bin.empty());
+
+  ReportPeakWorkingSet(scenario, "inference: before");
+  LoadCtxModelsAndRun(provider_options, ctx_paths, /*from_memory=*/false, WsMemConvInputShape());
+  ReportPeakWorkingSet(scenario, "inference: after");
+
+  RemoveWsMemArtifacts({}, ctx_paths);
+#endif
+}
+
+// ===========================================================================
+// Scenario C: no-sharing baseline. Same two models read from disk, but ep.share_ep_contexts is NOT
+// set, so each session produces and later loads its own independent context binary. This is the
+// control that shows what weight sharing actually buys.
+// ===========================================================================
+
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Gen_NoSharingBaseline) {
+#if defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#endif
+
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "on-disk model, NO sharing";
+  const auto& model_paths = WsMemNoShareModelPaths();
+  const auto& ctx_paths = WsMemNoShareCtxPaths();
+
+  RemoveWsMemArtifacts(model_paths, ctx_paths);
+  ReportPeakWorkingSet(scenario, "generation: before");
+
+  std::vector<std::string> model_bytes;
+  CreateWsMemModelPair(model_bytes);
+  const size_t total_model_bytes = model_bytes[0].size() + model_bytes[1].size();
+
+  for (size_t i = 0; i < model_paths.size(); ++i) {
+    WriteBytesToFile(model_paths[i], model_bytes[i]);
+    ASSERT_TRUE(std::filesystem::exists(model_paths[i]));
+  }
+
+  GenerateSharedCtxModels(provider_options, model_paths, ctx_paths,
+                          /*from_memory=*/false, /*share_contexts=*/false);
+  ReportPeakWorkingSet(scenario, "generation: after");
+
+  // Without sharing, each EPContext model must reference its OWN distinct context binary.
+  std::string ctx_bin1;
+  std::string ctx_bin2;
+  GetContextBinaryFileName(ctx_paths[0], ctx_bin1);
+  GetContextBinaryFileName(ctx_paths[1], ctx_bin2);
+  ASSERT_FALSE(ctx_bin1.empty());
+  ASSERT_FALSE(ctx_bin2.empty());
+  EXPECT_NE(ctx_bin1, ctx_bin2)
+      << "without ep.share_ep_contexts each model should get its own context binary; "
+      << "identical names mean the sessions shared a context after all, which would invalidate "
+      << "this baseline";
+  const auto ctx_bin_size1 = std::filesystem::file_size(ctx_bin1);
+  const auto ctx_bin_size2 = std::filesystem::file_size(ctx_bin2);
+  ASSERT_GT(ctx_bin_size1, 0u);
+  ASSERT_GT(ctx_bin_size2, 0u);
+
+  std::cout << "[ MEMORY   ] " << scenario << " | onnx model bytes=" << FormatMiB(total_model_bytes)
+            << " | unshared ctx bins=" << FormatMiB(ctx_bin_size1) << " + " << FormatMiB(ctx_bin_size2)
+            << " = " << FormatMiB(ctx_bin_size1 + ctx_bin_size2) << std::endl;
+
+  // Artifacts are intentionally left on disk for Infer_NoSharingBaseline to consume.
+}
+
+TEST_F(QnnHTPBackendTests, QnnContextWeightSharingPeakMemory_Infer_NoSharingBaseline) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "Loading and running an EPContext model requires an ARM64 device.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  ProviderOptions provider_options = MakeWsMemProviderOptions();
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string scenario = "on-disk model, NO sharing";
+  const auto& model_paths = WsMemNoShareModelPaths();
+  const auto& ctx_paths = WsMemNoShareCtxPaths();
+
+  if (!WsMemCtxArtifactsExist(ctx_paths)) {
+    GTEST_SKIP() << WsMemMissingArtifactsMessage(
+        "QnnContextWeightSharingPeakMemory_Gen_NoSharingBaseline", ctx_paths);
+  }
+
+  ReportPeakWorkingSet(scenario, "inference: before");
+  LoadCtxModelsAndRun(provider_options, ctx_paths, /*from_memory=*/false, WsMemConvInputShape(),
+                      /*share_contexts=*/false);
+  ReportPeakWorkingSet(scenario, "inference: after");
+
+  RemoveWsMemArtifacts(model_paths, ctx_paths);
+#endif
 }
 
 // Session created from array wth ep.context_enable enabled without ep.context_file_path
