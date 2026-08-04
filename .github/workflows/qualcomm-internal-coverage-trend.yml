@@ -44,7 +44,7 @@ jobs:
       - name: Generate coverage trend report
         run: |
           python scripts/gen_coverage_trend.py \
-            --days "${{ inputs.days }}" \
+            --days "${{ inputs.days || '30' }}" \
             --output coverage_trend_${{ github.run_id }}.html
 
       - name: Upload trend report
