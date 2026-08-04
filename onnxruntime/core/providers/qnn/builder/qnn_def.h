@@ -137,7 +137,7 @@ typedef struct HtpGraphConfigs {
   HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
   bool enable_htp_fp16_precision = false;
   bool enable_htp_monolithic_lstm = false;
-  bool fp16_clamp_overflow = false;
+  bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {

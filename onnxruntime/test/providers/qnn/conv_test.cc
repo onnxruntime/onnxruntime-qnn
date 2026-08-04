@@ -1192,7 +1192,7 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
-// Smoke test for the fp16_clamp_overflow HTP option
+// Smoke test for the enable_htp_fp16_clamp_overflow HTP option
 #ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
 #if defined(_WIN32)
@@ -1202,7 +1202,7 @@ TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["enable_htp_fp16_precision"] = "1";
-  provider_options["fp16_clamp_overflow"] = "1";
+  provider_options["enable_htp_fp16_clamp_overflow"] = "1";
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
