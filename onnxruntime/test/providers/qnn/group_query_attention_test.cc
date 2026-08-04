@@ -120,6 +120,46 @@ static GetTestModelFn BuildGQATestCase(
   };
 }
 
+// Holds a shared-memory allocation plus the Ort::Value view over it, so GQA feeds
+// (and in-place present/past KV buffers) live on the QNN host-accessible allocator.
+struct GQAFeedCopy {
+  Ort::MemoryAllocation allocation;
+  Ort::Value value{nullptr};
+};
+
+// Copies each graph input from source_feeds into a tensor backed by `allocator` /
+// `memory_info`, returning the feed copies (index-aligned with input_names) and a
+// name->index map. Verbatim extraction of the per-input copy loop from RunGQATest.
+static void MakeSharedMemoryFeeds(const std::vector<std::string>& input_names,
+                                  const std::unordered_map<std::string, Ort::Value>& source_feeds,
+                                  Ort::Allocator& allocator,
+                                  const Ort::MemoryInfo& memory_info,
+                                  std::vector<GQAFeedCopy>& qnn_feeds,
+                                  std::unordered_map<std::string, size_t>& input_name_to_index) {
+  qnn_feeds.reserve(input_names.size());
+  for (const auto& input_name : input_names) {
+    const Ort::Value& source_value = source_feeds.at(input_name);
+    const auto tensor_info = source_value.GetTensorTypeAndShapeInfo();
+    const auto shape = tensor_info.GetShape();
+    const size_t num_bytes = source_value.GetTensorSizeInBytes();
+    const auto* source_data = reinterpret_cast<const std::byte*>(source_value.GetTensorRawData());
+
+    GQAFeedCopy feed_copy{allocator.GetAllocation(num_bytes)};
+    ASSERT_NE(feed_copy.allocation.get(), nullptr);
+    memcpy(feed_copy.allocation.get(), source_data, num_bytes);
+
+    feed_copy.value = Ort::Value::CreateTensor(memory_info,
+                                               feed_copy.allocation.get(),
+                                               feed_copy.allocation.size(),
+                                               shape.data(),
+                                               shape.size(),
+                                               tensor_info.GetElementType());
+
+    input_name_to_index.emplace(input_name, qnn_feeds.size());
+    qnn_feeds.push_back(std::move(feed_copy));
+  }
+}
+
 // Runs a model with a GQA operator through QNN EP. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename T>
@@ -217,11 +257,6 @@ static void RunGQATest(
     output_names_cstr.push_back(output_name.c_str());
   }
 
-  struct FeedCopy {
-    Ort::MemoryAllocation allocation;
-    Ort::Value value{nullptr};
-  };
-
   Ort::MemoryInfo memory_info(nullptr);
   Ort::Allocator allocator(nullptr);
   if (use_shared_memory_allocator && (backend_name == "gpu" || backend_name == "htp")) {
@@ -239,31 +274,10 @@ static void RunGQATest(
     allocator = Ort::Allocator(cpu_session, memory_info);
   }
 
-  std::vector<FeedCopy> qnn_feeds;
-  qnn_feeds.reserve(input_names.size());
+  std::vector<GQAFeedCopy> qnn_feeds;
   std::unordered_map<std::string, size_t> input_name_to_index;
-
-  for (const auto& input_name : input_names) {
-    const Ort::Value& source_value = helper.feeds_.at(input_name);
-    const auto tensor_info = source_value.GetTensorTypeAndShapeInfo();
-    const auto shape = tensor_info.GetShape();
-    const size_t num_bytes = source_value.GetTensorSizeInBytes();
-    const auto* source_data = reinterpret_cast<const std::byte*>(source_value.GetTensorRawData());
-
-    FeedCopy feed_copy{allocator.GetAllocation(num_bytes)};
-    ASSERT_NE(feed_copy.allocation.get(), nullptr);
-    memcpy(feed_copy.allocation.get(), source_data, num_bytes);
-
-    feed_copy.value = Ort::Value::CreateTensor(memory_info,
-                                               feed_copy.allocation.get(),
-                                               feed_copy.allocation.size(),
-                                               shape.data(),
-                                               shape.size(),
-                                               tensor_info.GetElementType());
-
-    input_name_to_index.emplace(input_name, qnn_feeds.size());
-    qnn_feeds.push_back(std::move(feed_copy));
-  }
+  ASSERT_NO_FATAL_FAILURE(MakeSharedMemoryFeeds(input_names, helper.feeds_, allocator, memory_info,
+                                                qnn_feeds, input_name_to_index));
 
   std::vector<const OrtValue*> qnn_input_values;
   qnn_input_values.reserve(qnn_feeds.size());
