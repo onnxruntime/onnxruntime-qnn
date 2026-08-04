@@ -52,4 +52,4 @@ jobs:
         with:
           name: coverage-trend-${{ github.run_id }}
           path: coverage_trend_${{ github.run_id }}.html
-          retention-days: 90
+          retention-days: 7
