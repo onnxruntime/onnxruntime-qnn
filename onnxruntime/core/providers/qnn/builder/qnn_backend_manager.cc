@@ -1305,13 +1305,21 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   QnnContext_Config_t context_config_graph_splitting_vtcm = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t graph_splitting_custom_config_vtcm;
+  ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
   if (enable_htp_graph_splitting) {
     graph_splitting_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
     graph_splitting_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
+#ifdef QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS
     graph_splitting_custom_config_vtcm.graphSplittingConfigs.numPrepareThreads = graphsplitter_num_prepare_threads;
+#endif
     context_config_graph_splitting_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_graph_splitting_vtcm.customConfig = &graph_splitting_custom_config_vtcm;
   }
+#ifndef QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS
+  else {
+    ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
+  }
+#endif
 #else
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
   ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
@@ -1574,10 +1582,13 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   QnnContext_Config_t context_config_graph_splitting = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t graph_splitting_custom_config;
+  ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
   if (enable_htp_graph_splitting) {
     graph_splitting_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
     graph_splitting_custom_config.graphSplittingConfigs.graphSplittingEnabled = true;
+#ifdef QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS
     graph_splitting_custom_config.graphSplittingConfigs.numPrepareThreads = graphsplitter_num_prepare_threads;
+#endif
     context_config_graph_splitting.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_graph_splitting.customConfig = &graph_splitting_custom_config;
   }

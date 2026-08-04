@@ -90,6 +90,21 @@
       QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR})
   endif()
 
+  # Detect whether QnnHtpContext_GraphSplit_t contains numPrepareThreads.
+  include(CheckStructHasMember)
+  set(CMAKE_REQUIRED_INCLUDES "${onnxruntime_QNN_HOME}/include/QNN")
+  check_struct_has_member("QnnHtpContext_GraphSplit_t" "numPrepareThreads"
+                          "HTP/QnnHtpContext.h"
+                          QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS
+                          LANGUAGE CXX)
+  unset(CMAKE_REQUIRED_INCLUDES)
+  if(QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS)
+    target_compile_definitions(onnxruntime_providers_qnn PRIVATE QNN_HTP_GRAPH_SPLIT_HAS_NUM_PREPARE_THREADS)
+    message(STATUS "QNN: QnnHtpContext_GraphSplit_t.numPrepareThreads detected — graph splitting thread count will be wired in.")
+  else()
+    message(STATUS "QNN: QnnHtpContext_GraphSplit_t.numPrepareThreads not found — graph splitting thread count will be ignored.")
+  endif()
+
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
     if(ENABLE_COVERAGE AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
