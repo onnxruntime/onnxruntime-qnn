@@ -17,14 +17,20 @@
 //   - GetHardwareDeviceIncompatibilityDetailsImpl / ValidateCompiledModel-
 //     CompatibilityInfoImpl error paths that stop before std::make_unique<QnnEp>.
 //
-// Test paths that would need a real QnnEp instance (successful CreateEpImpl,
-// the "backend is set up" branches of Validate/Incompatibility) belong under
-// integration/qnn_provider_factory_test.cc and are not covered here.
+// Real-QnnEp paths (autoep CreateEpImpl clone + AddSessionConfigEntry, and
+// Validate / Incompatibility temp-EP construction) are covered by the
+// QnnUnit_ProviderFactoryHtpTest fixture at the end of this file; those
+// tests GTEST_SKIP() when libQnnHtp.so is unavailable. This mirrors
+// QnnUnit_BackendManagerHtpTest — component-level tests with a real backend
+// load but no ORT session.
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <cstdint>
+#include <cstring>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -123,6 +129,24 @@ class FactoryStubContext {
   // Count of DeviceEpIncompatibilityDetails_SetDetails invocations.
   int set_details_calls = 0;
 
+  // Session-config plumbing (used by Group 6 HTP tests):
+  //   session_config          — populated per test to pre-set entries that
+  //                             HasSessionConfigEntry / GetSessionConfigEntry
+  //                             report to the factory (e.g., pre-loading a
+  //                             backend_path to skip the autoep branch).
+  //   added_config_entries    — records the (key, value) pairs written by
+  //                             the factory via AddSessionConfigEntry (used to
+  //                             verify the autoep + Validate/Incompatibility
+  //                             temp-EP paths wired the expected keys).
+  //   clone_session_options_calls — counts CloneSessionOptions calls (verifies
+  //                             the autoep branch cloned before mutating).
+  //
+  // Groups 1–5 never populate these (empty maps mean autoep is unreachable
+  // without an NPU/GPU device), so behaviour is backwards-compatible.
+  std::unordered_map<std::string, std::string> session_config;
+  std::vector<std::pair<std::string, std::string>> added_config_entries;
+  int clone_session_options_calls = 0;
+
   FactoryStubContext() {
     InstallOrtApiStubs();
     InstallOrtEpApiStubs();
@@ -183,12 +207,50 @@ class FactoryStubContext {
     };
 
     stub_ort_api.HasSessionConfigEntry =
-        [](const OrtSessionOptions*, const char*, int* out) noexcept -> OrtStatus* {
-      // No unit test configures backend_type/backend_path at the session-options
-      // level: setting either would make CreateEp skip the autoep block and reach
-      // std::make_unique<QnnEp>, which needs a real QnnEp (integration territory).
-      // Always reporting "not present" keeps CreateEp on the autoep branch.
+        [](const OrtSessionOptions*, const char* key, int* out) noexcept -> OrtStatus* {
+      auto* self = current_;
       *out = 0;
+      if (self == nullptr || key == nullptr) return nullptr;
+      if (self->session_config.count(key)) {
+        *out = 1;
+        return nullptr;
+      }
+      for (const auto& kv : self->added_config_entries) {
+        if (kv.first == key) {
+          *out = 1;
+          return nullptr;
+        }
+      }
+      return nullptr;
+    };
+    // Reads back an entry previously added via AddSessionConfigEntry or
+    // pre-populated in session_config. Missing keys report size==1 with an
+    // empty NUL-terminated buffer, mirroring ORT's public API contract.
+    stub_ort_api.GetSessionConfigEntry =
+        [](const OrtSessionOptions*, const char* key, char* buf, size_t* sz) noexcept -> OrtStatus* {
+      auto* self = current_;
+      const std::string* val = nullptr;
+      if (self != nullptr && key != nullptr) {
+        auto it = self->session_config.find(key);
+        if (it != self->session_config.end()) {
+          val = &it->second;
+        } else {
+          for (const auto& kv : self->added_config_entries) {
+            if (kv.first == key) {
+              val = &kv.second;
+              break;
+            }
+          }
+        }
+      }
+      if (val != nullptr) {
+        const size_t needed = val->size() + 1;
+        if (buf != nullptr) std::memcpy(buf, val->c_str(), needed);
+        *sz = needed;
+      } else {
+        if (buf != nullptr) buf[0] = '\0';
+        *sz = 1;
+      }
       return nullptr;
     };
     stub_ort_api.CreateSessionOptions = [](OrtSessionOptions** out) noexcept -> OrtStatus* {
@@ -197,17 +259,30 @@ class FactoryStubContext {
     };
     stub_ort_api.CloneSessionOptions =
         [](const OrtSessionOptions*, OrtSessionOptions** out) noexcept -> OrtStatus* {
+      if (auto* self = current_) ++self->clone_session_options_calls;
       *out = reinterpret_cast<OrtSessionOptions*>(kFakeToken);
       return nullptr;
     };
     stub_ort_api.ReleaseSessionOptions = [](OrtSessionOptions*) noexcept {};
     stub_ort_api.AddSessionConfigEntry =
-        [](OrtSessionOptions*, const char*, const char*) noexcept -> OrtStatus* {
+        [](OrtSessionOptions*, const char* key, const char* value) noexcept -> OrtStatus* {
+      if (auto* self = current_) {
+        self->added_config_entries.emplace_back(key ? key : "", value ? value : "");
+      }
       return nullptr;
     };
     stub_ort_api.Logger_LogMessage =
         [](const OrtLogger*, OrtLoggingLevel, const char*, const ORTCHAR_T*, int,
            const char*) noexcept -> OrtStatus* { return nullptr; };
+    // Returns FATAL so Ort::Logger(OrtLogger*)'s C++ ctor short-circuits on
+    // the cached-severity check — required for QnnEp construction under
+    // OrtGlobalApiOverride (Group 6 tests) so that logger dispatch never
+    // dereferences the fake OrtLogger* token.
+    stub_ort_api.Logger_GetLoggingSeverityLevel =
+        [](const OrtLogger*, OrtLoggingLevel* out) noexcept -> OrtStatus* {
+      *out = ORT_LOGGING_LEVEL_FATAL;
+      return nullptr;
+    };
   }
 
   void InstallOrtEpApiStubs() {
@@ -264,6 +339,27 @@ class UseFactoryStubs {
 
  private:
   FactoryStubContext* prev_;
+};
+
+// Combines UseFactoryStubs with OrtGlobalApiOverride so that Ort::Logger's
+// C++ ctor (invoked during QnnEp's member-initialiser list when the factory
+// calls std::make_unique<QnnEp>) routes through the stubbed
+// Logger_GetLoggingSeverityLevel and short-circuits at FATAL. Without the
+// global override, the Ort::Logger ctor would call the real
+// Logger_GetLoggingSeverityLevel on our fake OrtLogger* token and SIGSEGV.
+// Used exclusively by Group 6 (QnnUnit_ProviderFactoryHtpTest) tests that
+// reach QnnEp construction; other groups keep their existing stub scopes.
+class UseGlobalFactoryStubs {
+ public:
+  explicit UseGlobalFactoryStubs(FactoryStubContext& ctx)
+      : use_stubs_(ctx), global_override_(&ctx.stub_ort_api) {}
+
+  UseGlobalFactoryStubs(const UseGlobalFactoryStubs&) = delete;
+  UseGlobalFactoryStubs& operator=(const UseGlobalFactoryStubs&) = delete;
+
+ private:
+  UseFactoryStubs use_stubs_;
+  OrtGlobalApiOverride global_override_;
 };
 
 // Builds a fake OrtApiBase whose GetVersionString / GetApi route through the
@@ -880,6 +976,206 @@ TEST_F(QnnUnit_ProviderFactoryTest, ReleaseAllocator_UnknownType_NoCrash) {
 
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEpFactory_NullPointer_ReturnsNull) {
   EXPECT_EQ(ReleaseEpFactory(nullptr), nullptr);
+}
+
+// ===========================================================================
+// Group 6: Real-HTP-backend paths (QnnUnit_ProviderFactoryHtpTest)
+//
+// These tests exercise factory code paths that need a real QnnEp instance:
+//   - CreateEpImpl autoep branch (clone session options, add backend_path).
+//   - ValidateCompiledModelCompatibilityInfoImpl temp-EP construction path.
+//   - GetHardwareDeviceIncompatibilityDetailsImpl temp-EP construction path.
+//
+// QnnEp construction dlopens libQnnHtp.so via QnnBackendManager; the fixture
+// GTEST_SKIP()s when the backend is unavailable, mirroring
+// QnnUnit_BackendManagerHtpTest / QnnUnit_ExecutionProviderHtpTest.
+//
+// Strategy: stubbed OrtApi (Groups 1–5 infra, extended with session-config
+// read-back and Logger_GetLoggingSeverityLevel=FATAL) + OrtGlobalApiOverride
+// (so Ort::Logger's C++ ctor short-circuits) + real dlopen inside
+// QnnBackendManager. The tests verify factory *behaviour* — the recorded
+// added_config_entries / clone_session_options_calls — which is what actually
+// changes coverage: the target lines are hit before make_unique<QnnEp>
+// completes, so status inspection is best-effort (both OK and QnnEp
+// construction failures are tolerated with a diagnostic).
+// ===========================================================================
+
+class QnnUnit_ProviderFactoryHtpTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    OrtLoggingManager::SetDefaultLogger(nullptr);
+    QnnRealHtpBackendContext htp_check;
+    if (!htp_check.IsValid()) {
+      GTEST_SKIP() << "libQnnHtp.so not available";
+    }
+  }
+
+  void TearDown() override { OrtLoggingManager::SetDefaultLogger(nullptr); }
+};
+
+// Verifies that CreateEpImpl enters the autoep branch when neither
+// backend_type nor backend_path is set: it must CloneSessionOptions once and
+// AddSessionConfigEntry a "backend_path" entry whose value ends in
+// libQnnHtp.so (derived from kDefaultBackends[NPU]). QnnEp construction may
+// or may not succeed depending on whether the auto-computed path is
+// resolvable at runtime; either outcome is acceptable — the autoep
+// side-effects are what this test locks in.
+TEST_F(QnnUnit_ProviderFactoryHtpTest,
+       CreateEp_AutoepNpuQualcomm_ClonesAndAddsBackendPath) {
+  FactoryStubContext ctx;  // empty session_config → autoep branch
+  UseGlobalFactoryStubs use(ctx);
+  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(20);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  auto* fake_session_opts = reinterpret_cast<OrtSessionOptions*>(kFakeToken);
+  auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
+  OrtEp* ep = nullptr;
+  const OrtHardwareDevice* devices[] = {npu};
+  const OrtKeyValuePairs* metadata[] = {nullptr};
+
+  OrtStatus* status = factory.CreateEp(&factory, devices, metadata, 1,
+                                       fake_session_opts, fake_logger, &ep);
+
+  // Autoep side-effects — the coverage target — must have happened regardless
+  // of whether make_unique<QnnEp> succeeded.
+  EXPECT_EQ(ctx.clone_session_options_calls, 1)
+      << "autoep should have cloned session options exactly once";
+  bool added_backend_path = false;
+  for (const auto& kv : ctx.added_config_entries) {
+    if (kv.first.find("backend_path") != std::string::npos &&
+        kv.second.find("libQnnHtp.so") != std::string::npos) {
+      added_backend_path = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(added_backend_path)
+      << "autoep should have added a backend_path entry ending in libQnnHtp.so";
+
+  if (status == nullptr) {
+    EXPECT_NE(ep, nullptr);
+    factory.ReleaseEp(&factory, ep);
+  } else {
+    ctx.stub_ort_api.ReleaseStatus(status);
+  }
+}
+
+// Multi-device autoep: NPU + GPU present, no backend_type/backend_path — the
+// factory should pick the NPU (and log a warning). Covers the multi-device
+// std::find_if(is_npu) branch of CreateEpImpl.
+TEST_F(QnnUnit_ProviderFactoryHtpTest,
+       CreateEp_AutoepMultiDeviceNpuAndGpu_PicksNpu) {
+  FactoryStubContext ctx;
+  UseGlobalFactoryStubs use(ctx);
+  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(21);
+  OrtHardwareDevice* gpu = MakeFakeHwDevice(22);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_type_map[gpu] = OrtHardwareDeviceType_GPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+  ctx.device_vendor_map[gpu] = kQualcommVendorId;
+
+  auto* fake_session_opts = reinterpret_cast<OrtSessionOptions*>(kFakeToken);
+  auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
+  OrtEp* ep = nullptr;
+  const OrtHardwareDevice* devices[] = {gpu, npu};  // GPU listed first
+  const OrtKeyValuePairs* metadata[] = {nullptr, nullptr};
+
+  OrtStatus* status = factory.CreateEp(&factory, devices, metadata, 2,
+                                       fake_session_opts, fake_logger, &ep);
+
+  // Autoep must clone + add backend_path for HTP (NPU wins over GPU).
+  EXPECT_EQ(ctx.clone_session_options_calls, 1);
+  bool added_htp_path = false;
+  for (const auto& kv : ctx.added_config_entries) {
+    if (kv.first.find("backend_path") != std::string::npos &&
+        kv.second.find("libQnnHtp.so") != std::string::npos) {
+      added_htp_path = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(added_htp_path);
+
+  if (status == nullptr) {
+    EXPECT_NE(ep, nullptr);
+    factory.ReleaseEp(&factory, ep);
+  } else {
+    ctx.stub_ort_api.ReleaseStatus(status);
+  }
+}
+
+// ValidateCompiledModelCompatibilityInfoImpl temp-EP path:
+// factory->qnn_ep_ is nullptr initially; passing an NPU device causes
+// backend_type="htp" to be determined and CreateSessionOptions +
+// AddSessionConfigEntry to fire before std::make_unique<QnnEp> for the temp
+// EP. Covers lines 393-421 of qnn_provider_factory.cc.
+TEST_F(QnnUnit_ProviderFactoryHtpTest,
+       ValidateCompatibilityInfo_NpuNoQnnEp_WiresHtpBackendType) {
+  FactoryStubContext ctx;
+  UseGlobalFactoryStubs use(ctx);
+  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
+
+  // ValidateCompiledModelCompatibilityInfoImpl requires HasDefaultLogger().
+  auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
+  OrtLoggingManager::SetDefaultLogger(fake_logger);
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(23);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtCompiledModelCompatibility compat = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+  OrtStatus* status = factory.ValidateCompiledModelCompatibilityInfo(
+      &factory, devices, 1, "1:2.0.0:1.22.0:3.0.0:73:0", &compat);
+
+  bool added_htp_backend_type = false;
+  for (const auto& kv : ctx.added_config_entries) {
+    if (kv.first.find("backend_type") != std::string::npos && kv.second == "htp") {
+      added_htp_backend_type = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(added_htp_backend_type)
+      << "Validate should have added backend_type=htp before temp-EP construction";
+
+  if (status != nullptr) ctx.stub_ort_api.ReleaseStatus(status);
+}
+
+// GetHardwareDeviceIncompatibilityDetailsImpl temp-EP path: NPU/Qualcomm
+// device passes the type/vendor gate, then CreateSessionOptions +
+// AddSessionConfigEntry("backend_type","htp") fire, then temp-EP
+// construction is attempted. Covers lines 473-500.
+TEST_F(QnnUnit_ProviderFactoryHtpTest,
+       GetHardwareDeviceIncompatibilityDetails_NpuQualcomm_WiresHtpBackendType) {
+  FactoryStubContext ctx;
+  UseGlobalFactoryStubs use(ctx);
+  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
+
+  auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
+  OrtLoggingManager::SetDefaultLogger(fake_logger);
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(24);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  auto* fake_details = reinterpret_cast<OrtDeviceEpIncompatibilityDetails*>(kFakeToken);
+  OrtStatus* status = factory.GetHardwareDeviceIncompatibilityDetails(
+      &factory, npu, fake_details);
+
+  bool added_htp_backend_type = false;
+  for (const auto& kv : ctx.added_config_entries) {
+    if (kv.first.find("backend_type") != std::string::npos && kv.second == "htp") {
+      added_htp_backend_type = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(added_htp_backend_type)
+      << "Incompatibility should have added backend_type=htp before temp-EP construction";
+
+  if (status != nullptr) ctx.stub_ort_api.ReleaseStatus(status);
 }
 
 }  // namespace test
