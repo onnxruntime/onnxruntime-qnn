@@ -38,8 +38,8 @@ except ImportError:
 
 NIGHTLY_PREFIX = "qa/nightly-"
 REPORT_FILENAME = "per_file_coverage.xlsx"
-# Number of most-volatile files to display in the per-file chart by default.
-TOP_N_VOLATILE = 12
+# Number of most-changed files shown by default in the per-file chart and summary tables.
+TOP_N = 10
 
 
 # ── JFrog CLI helpers ─────────────────────────────────────────────────────────
@@ -428,17 +428,96 @@ def _make_latest_table(
     return fig
 
 
+def _make_top_changes_table(
+    snapshots: list[tuple[datetime.date, str, dict]],
+    top_n: int,
+) -> go.Figure:
+    """Side-by-side tables: top N improved and top N regressed files (first → last snapshot)."""
+    if len(snapshots) < 2:
+        return go.Figure()
+
+    first_data = snapshots[0][2]
+    last_data = snapshots[-1][2]
+    first_date = snapshots[0][0]
+    last_date = snapshots[-1][0]
+
+    deltas: list[tuple[str, float, float, float]] = []  # (file, delta, first_val, last_val)
+    for fname in set(first_data) & set(last_data):
+        delta = last_data[fname][0] - first_data[fname][0]
+        deltas.append((fname, delta, first_data[fname][0], last_data[fname][0]))
+
+    improved = sorted([d for d in deltas if d[1] > 0], key=lambda x: -x[1])[:top_n]
+    regressed = sorted([d for d in deltas if d[1] < 0], key=lambda x: x[1])[:top_n]
+
+    def _pad(lst: list, n: int) -> list:
+        return lst + [("", 0.0, 0.0, 0.0)] * (n - len(lst))
+
+    imp = _pad(improved, top_n)
+    reg = _pad(regressed, top_n)
+
+    fig = go.Figure(
+        go.Table(
+            columnwidth=[3, 1, 1, 0.3, 3, 1, 1],
+            header=dict(
+                values=[
+                    f"<b>improved file (top {top_n})</b>",
+                    f"<b>{first_date}</b>",
+                    f"<b>{last_date}</b>",
+                    "",
+                    f"<b>regressed file (top {top_n})</b>",
+                    f"<b>{first_date}</b>",
+                    f"<b>{last_date}</b>",
+                ],
+                fill_color=["#C6EFCE", "#C6EFCE", "#C6EFCE", "white", "#FFC7CE", "#FFC7CE", "#FFC7CE"],
+                align="left",
+                font=dict(size=12),
+            ),
+            cells=dict(
+                values=[
+                    [r[0] for r in imp],
+                    [f"{r[2]:.1f}%" if r[0] else "" for r in imp],
+                    [f"{r[3]:.1f}%  (+{r[1]:.1f}%)" if r[0] else "" for r in imp],
+                    [""] * top_n,
+                    [r[0] for r in reg],
+                    [f"{r[2]:.1f}%" if r[0] else "" for r in reg],
+                    [f"{r[3]:.1f}%  ({r[1]:.1f}%)" if r[0] else "" for r in reg],
+                ],
+                fill_color=[
+                    "white",
+                    "white",
+                    "#C6EFCE",
+                    "white",
+                    "white",
+                    "white",
+                    "#FFC7CE",
+                ],
+                align=["left", "right", "right", "left", "left", "right", "right"],
+                font=dict(size=11),
+                height=24,
+            ),
+        )
+    )
+    fig.update_layout(
+        title=f"Top {top_n} Most Improved / Regressed Files ({first_date} → {last_date})",
+        height=top_n * 28 + 120,
+        margin=dict(l=20, r=20, t=60, b=20),
+    )
+    return fig
+
+
 def generate_html(
     snapshots: list[tuple[datetime.date, str, dict]],
     output_path: str,
     days: int,
 ) -> None:
     agg_fig = _make_aggregate_chart(snapshots)
-    perfile_fig = _make_perfile_chart(snapshots, TOP_N_VOLATILE)
+    perfile_fig = _make_perfile_chart(snapshots, TOP_N)
+    top_changes_fig = _make_top_changes_table(snapshots, TOP_N)
     table_fig = _make_latest_table(snapshots)
 
     agg_html = agg_fig.to_html(full_html=False, include_plotlyjs="cdn")
     perfile_html = perfile_fig.to_html(full_html=False, include_plotlyjs=False)
+    top_changes_html = top_changes_fig.to_html(full_html=False, include_plotlyjs=False)
     table_html = table_fig.to_html(full_html=False, include_plotlyjs=False)
 
     earliest = snapshots[0][0] if snapshots else "—"
@@ -466,6 +545,7 @@ def generate_html(
   </div>
 
   <div class="section">{agg_html}</div>
+  <div class="section">{top_changes_html}</div>
   <div class="section">{perfile_html}</div>
   <div class="section">{table_html}</div>
 </body>
