@@ -1,7 +1,6 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#include "qnn_test_utils.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <algorithm>
@@ -101,7 +100,10 @@ static GetTestModelFn BuildQLinearConvTestCase(const std::vector<int64_t>& x_sha
       std::vector<float> w_scales(static_cast<size_t>(M));
       std::vector<WType> w_zps(static_cast<size_t>(M));
       for (int64_t oc = 0; oc < M; ++oc) {
-        const auto qp_w = ComputeQuantParams<WType>(-0.3f, 0.3f);
+        // Use distinct per-channel ranges so each scale/zp differs — this exercises
+        // the per-channel quantization math rather than using uniform scales.
+        const float range = 0.1f * static_cast<float>(oc + 1);
+        const auto qp_w = ComputeQuantParams<WType>(-range, range);
         w_scales[oc] = qp_w.scale;
         w_zps[oc] = qp_w.zero_point;
         for (size_t i = 0; i < per_oc; ++i) {

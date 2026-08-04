@@ -234,49 +234,6 @@ Ort::Status QLinearConvOpBuilder::BuildBiasQuantParam(const QnnModelWrapper& qnn
 }
 
 // ---------------------------------------------------------------------------
-// Layout helpers
-// ---------------------------------------------------------------------------
-
-namespace {
-
-// Channel-first -> channel-last permutation for the given rank.
-//   rank 4 (2D conv): NCHW -> NHWC          = {0, 2, 3, 1}
-//   rank 5 (3D conv): NCDHW -> NDHWC        = {0, 2, 3, 4, 1}
-std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
-  std::vector<uint32_t> perm(rank);
-  perm[0] = 0;
-  for (size_t i = 2; i < rank; ++i) {
-    perm[i - 1] = static_cast<uint32_t>(i);
-  }
-  perm[rank - 1] = 1;
-  return perm;
-}
-
-// Channel-last -> channel-first permutation for the given rank (inverse of the above).
-//   rank 4: NHWC -> NCHW   = {0, 3, 1, 2}
-//   rank 5: NDHWC -> NCDHW = {0, 4, 1, 2, 3}
-std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
-  std::vector<uint32_t> perm(rank);
-  perm[0] = 0;
-  perm[1] = static_cast<uint32_t>(rank - 1);
-  for (size_t i = 2; i < rank; ++i) {
-    perm[i] = static_cast<uint32_t>(i - 1);
-  }
-  return perm;
-}
-
-// Applies a permutation to a shape vector.
-std::vector<uint32_t> PermuteShape(const std::vector<uint32_t>& shape, const std::vector<uint32_t>& perm) {
-  std::vector<uint32_t> out(shape.size());
-  for (size_t i = 0; i < perm.size(); ++i) {
-    out[i] = shape[perm[i]];
-  }
-  return out;
-}
-
-}  // namespace
-
-// ---------------------------------------------------------------------------
 // IsOpSupported
 // ---------------------------------------------------------------------------
 
@@ -446,8 +403,8 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
   }
 
   // Transpose NCHW->NHWC (or NCDHW->NDHWC). Quant params attached on both ends.
-  const std::vector<uint32_t> cf_to_cl = ChannelFirstToLastPerm(conv_rank);
-  const std::vector<uint32_t> x_cl_shape = PermuteShape(x_cf_shape, cf_to_cl);
+  const std::vector<uint32_t> cf_to_cl = utils::ChannelFirstToLastPerm(conv_rank);
+  const std::vector<uint32_t> x_cl_shape = utils::ApplyPermToShape(x_cf_shape, cf_to_cl);
   const std::string x_cl_name = node_base + "_x_nhwc";
   RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), x_cf_name, x_cl_name,
                                                      x_cf_shape, cf_to_cl, x_cl_shape,
@@ -488,15 +445,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(w_info.initializer_tensor, orig_bytes));
     w_bytes.resize(orig_bytes.size());
 
-    const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-    const OrtTypeInfo* type_info = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(
-        static_cast<const OrtValueInfo*>(w_info.initializer_tensor), &type_info));
-    const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
-    ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(type_shape, &elem_type));
-    const size_t elem_byte_size = utils::GetElementSizeByType(elem_type);
+    const size_t elem_byte_size = utils::GetElementSizeByType(inputs[kIdxW].type);
     RETURN_IF(elem_byte_size == 0, "QLinearConv 1D: cannot get weight element byte size.");
     RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(std::move(w_work_i64), elem_byte_size,
                                                    orig_bytes, w_bytes, /*is_3d=*/false));
@@ -517,12 +466,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
   {
     QnnTensorWrapper w_tensor(w_hwcn_name, QNN_TENSOR_TYPE_STATIC, qnn_dtype_w, quant_w.Copy(),
                               std::vector<uint32_t>(hwcn_shape), std::vector<uint8_t>(w_bytes));
-    if (do_op_validation) {
-      // For validation we still register the tensor so QNN can type-check the Conv node.
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
-    } else {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
-    }
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(w_tensor)), "Failed to add weight tensor.");
   }
 
   // -------------------------------------------------------------------------
@@ -610,7 +554,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
         std::vector<uint32_t> y_cf = is_1d
                                          ? std::vector<uint32_t>{y_shape_nchw[0], y_shape_nchw[1], 1, y_shape_nchw[2]}
                                          : y_shape_nchw;
-        y_cl_shape = PermuteShape(y_cf, ChannelFirstToLastPerm(conv_rank));
+        y_cl_shape = utils::ApplyPermToShape(y_cf, utils::ChannelFirstToLastPerm(conv_rank));
       }
       std::vector<uint32_t> out_spatial(y_cl_shape.begin() + 1, y_cl_shape.end() - 1);
       for (size_t dim = 0; dim < spatial_rank; ++dim) {
@@ -660,7 +604,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
   std::vector<uint32_t> y_cf_shape = is_1d
                                          ? std::vector<uint32_t>{y_shape_nchw[0], y_shape_nchw[1], 1, y_shape_nchw[2]}
                                          : y_shape_nchw;
-  const std::vector<uint32_t> y_cl_shape = PermuteShape(y_cf_shape, ChannelFirstToLastPerm(conv_rank));
+  const std::vector<uint32_t> y_cl_shape = utils::ApplyPermToShape(y_cf_shape, utils::ChannelFirstToLastPerm(conv_rank));
 
   const std::string y_cl_name = node_base + "_y_nhwc";
   {
@@ -679,7 +623,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
                 "Failed to create QLinearConv node.");
 
   // Transpose channel-last Conv output back to channel-first.
-  const std::vector<uint32_t> cl_to_cf = ChannelLastToFirstPerm(conv_rank);
+  const std::vector<uint32_t> cl_to_cf = utils::ChannelLastToFirstPerm(conv_rank);
   const std::string& y_name = outputs[0].name;
   const bool y_is_graph_output = qnn_model_wrapper.IsGraphOutput(y_name);
 

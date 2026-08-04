@@ -526,6 +526,40 @@ Ort::Status NchwShapeToNhwc(gsl::span<const T> nchw_shape, gsl::span<T> nhwc_sha
   return Ort::Status();
 }
 
+// Returns the channel-first (NCHW/NCDHW) -> channel-last (NHWC/NDHWC) permutation for the
+// given tensor rank. Works for any rank >= 2: e.g. rank 4 -> {0,2,3,1}, rank 5 -> {0,2,3,4,1}.
+inline std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i - 1] = static_cast<uint32_t>(i);
+  }
+  perm[rank - 1] = 1;
+  return perm;
+}
+
+// Returns the channel-last (NHWC/NDHWC) -> channel-first (NCHW/NCDHW) permutation for the
+// given tensor rank (inverse of ChannelFirstToLastPerm).
+inline std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  perm[1] = static_cast<uint32_t>(rank - 1);
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i] = static_cast<uint32_t>(i - 1);
+  }
+  return perm;
+}
+
+// Applies a permutation to a shape vector and returns the permuted shape.
+inline std::vector<uint32_t> ApplyPermToShape(const std::vector<uint32_t>& shape,
+                                              const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out(shape.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    out[i] = shape[perm[i]];
+  }
+  return out;
+}
+
 // NCHW shape to HWCN shape, required for Conv weight
 template <typename T>
 Ort::Status NchwShapeToHwcn(gsl::span<const T> nchw_shape, gsl::span<T> hwcn_shape) {
