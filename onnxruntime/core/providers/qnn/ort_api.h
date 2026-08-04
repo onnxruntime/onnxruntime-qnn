@@ -254,10 +254,6 @@ struct OrtNodeGroup {
   std::vector<const OrtNode*> q_nodes;
   const OrtNode* target_node;
   const OrtNode* redundant_clip_node{nullptr};
-  // Optional Add node fused between a MatMul target and its Relu/Clip activation
-  // (pattern: DQ,DQ -> MatMul -> Add(with DQ'd static bias) -> Relu/Clip -> Q).
-  // When set, the bias input flows into the QDQ node unit as an additional quantized input.
-  const OrtNode* bias_add_node{nullptr};
 };
 
 }  // namespace QDQ
@@ -304,15 +300,11 @@ class OrtNodeUnit {
 
   const OrtNode& GetNode() const noexcept { return *target_node_; }
   const OrtNode* GetRedundantClipNode() const noexcept { return redundant_clip_node_; }
-  const OrtNode* GetBiasAddNode() const noexcept { return bias_add_node_; }
   const std::vector<const OrtNode*>& GetDQNodes() const noexcept { return dq_nodes_; }
   const std::vector<const OrtNode*>& GetQNodes() const noexcept { return q_nodes_; }
   std::vector<const OrtNode*> GetAllNodesInGroup() const noexcept {
     std::vector<const OrtNode*> all_nodes = dq_nodes_;
     all_nodes.push_back(target_node_);
-    if (bias_add_node_) {
-      all_nodes.push_back(bias_add_node_);
-    }
     if (redundant_clip_node_) {
       all_nodes.push_back(redundant_clip_node_);
     }
@@ -332,7 +324,6 @@ class OrtNodeUnit {
   const std::vector<const OrtNode*> dq_nodes_;  // dq nodes for this NodeUnit, not necessarily all inputs
   const OrtNode* target_node_;
   const OrtNode* redundant_clip_node_ = nullptr;  // Optional redundant clip node for the QDQ group, nullptr if not present.
-  const OrtNode* bias_add_node_ = nullptr;        // Optional Add node fused between the target and the redundant clip.
   const std::vector<const OrtNode*> q_nodes_;     // q-nodes for this NodeUnit. not necessarily all outputs
   const Type type_;
 

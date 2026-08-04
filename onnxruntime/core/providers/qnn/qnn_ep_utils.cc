@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/qnn_ep_utils.h"
 
+#include <iostream>
 #include <string>
 
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -1347,9 +1348,6 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // For redundant clip node, currently only support node with only one output, which is consumed by Clip/Relu->Q.
   const OrtNode* clip_node = nullptr;
-  // For MatMul -> DQ'd static Bias Add -> Relu/Clip fusion, we also track the intermediate Add node.
-  const OrtNode* bias_add_node = nullptr;
-  const OrtNode* bias_dq_node = nullptr;
 
   // Get the outputs to check count
   size_t output_count = 0;
@@ -1373,113 +1371,8 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
       int64_t input_index = 0;  // This value is not used, but necessary for the API call
       RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(value_info, &next_node, &input_index, 1), ort_api, std::nullopt);
 
-      std::string next_node_op_type = Ort::ConstNode(next_node).GetOperatorType();
-
-      // Two-hop walk: DQ,DQ -> MatMul -> Add(DQ'd static bias) -> Relu/Clip -> Q.
-      // Gated to MatMul with a static rank-2 weight: only the QNN FullyConnected lowering
-      // accepts a native bias input, so LPBQ/BQ MatMuls (Conv2D/plain-MatMul paths) must skip.
-      const std::string target_op_type = Ort::ConstNode(node).GetOperatorType();
-      bool fc_eligible_weight = false;
-      if (target_op_type == "MatMul" && dq_nodes.size() >= 2) {
-        const OrtNode* weight_dq = dq_nodes[1];
-        size_t weight_dq_num_inputs = 0;
-        RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(weight_dq, &weight_dq_num_inputs), ort_api, std::nullopt);
-        if (weight_dq_num_inputs >= 1) {
-          std::vector<const OrtValueInfo*> weight_dq_inputs(weight_dq_num_inputs);
-          RETURN_DEFAULT_IF_API_FAIL(
-              ort_api.Node_GetInputs(weight_dq, weight_dq_inputs.data(), weight_dq_inputs.size()),
-              ort_api, std::nullopt);
-          if (weight_dq_inputs[0] != nullptr) {
-            bool is_const = false;
-            // 1.1 Check if the weight is a static initializer (constant)
-            ORT_CONTINUE_ON_ERROR(
-                ort_api.ValueInfo_IsConstantInitializer(weight_dq_inputs[0], &is_const), ort_api);
-            if (is_const) {
-              // 1.2 Check if the weight rank-2 (fully-connected eligible)
-              const OrtTypeInfo* type_info = nullptr;
-              ORT_CONTINUE_ON_ERROR(ort_api.GetValueInfoTypeInfo(weight_dq_inputs[0], &type_info), ort_api);
-              const OrtTensorTypeAndShapeInfo* shape_info = nullptr;
-              if (type_info != nullptr) {
-                ORT_CONTINUE_ON_ERROR(ort_api.CastTypeInfoToTensorInfo(type_info, &shape_info), ort_api);
-              }
-              if (shape_info != nullptr) {
-                size_t num_dims = 0;
-                ORT_CONTINUE_ON_ERROR(ort_api.GetDimensionsCount(shape_info, &num_dims), ort_api);
-                fc_eligible_weight = (num_dims == 2);
-              }
-            }
-          }
-        }
-      }
-      // 2. Check DQ -> FC(Matmul+Add) -> Relu/Clip -> Q topology.
-      if (target_op_type == "MatMul" && next_node_op_type == "Add" && fc_eligible_weight) {
-        const OrtNode* candidate_add = next_node;
-
-        // 2.1 Check if Add has exactly one consumer.
-        std::vector<const OrtValueInfo*> add_outputs(1);
-        RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(candidate_add, add_outputs.data(), add_outputs.size()),
-                                   ort_api, std::nullopt);
-        size_t add_output_consumers = 0;
-        RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(add_outputs[0], &add_output_consumers),
-                                   ort_api, std::nullopt);
-
-        // 2.2 Find Add's bias input: the input that isn't the MatMul's output (value_info).
-        size_t add_input_count = 0;
-        RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(candidate_add, &add_input_count), ort_api, std::nullopt);
-        if (add_input_count == 2 && add_output_consumers == 1) {
-          std::vector<const OrtValueInfo*> add_inputs(add_input_count);
-          RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(candidate_add, add_inputs.data(), add_inputs.size()),
-                                     ort_api, std::nullopt);
-          const OrtValueInfo* bias_value = nullptr;
-          for (const OrtValueInfo* in : add_inputs) {
-            if (in != value_info) {
-              bias_value = in;
-              break;
-            }
-          }
-
-          // 2.3 Bias must be produced by a DequantizeLinear whose input[0] is a static initializer
-          // (DQ'd int32 bias). Raw float bias is not yet supported.
-          const OrtNode* candidate_bias_dq = nullptr;
-          if (bias_value != nullptr) {
-            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(bias_value, &candidate_bias_dq, nullptr), ort_api);
-          }
-          bool bias_is_static = false;
-          if (candidate_bias_dq != nullptr &&
-              Ort::ConstNode(candidate_bias_dq).GetOperatorType() == "DequantizeLinear") {
-            size_t bias_dq_num_inputs = 0;
-            RETURN_DEFAULT_IF_API_FAIL(
-                ort_api.Node_GetNumInputs(candidate_bias_dq, &bias_dq_num_inputs), ort_api, std::nullopt);
-            if (bias_dq_num_inputs >= 1) {
-              std::vector<const OrtValueInfo*> bias_dq_inputs(bias_dq_num_inputs);
-              RETURN_DEFAULT_IF_API_FAIL(
-                  ort_api.Node_GetInputs(candidate_bias_dq, bias_dq_inputs.data(), bias_dq_inputs.size()),
-                  ort_api, std::nullopt);
-              if (bias_dq_inputs[0] != nullptr) {
-                ORT_CONTINUE_ON_ERROR(
-                    ort_api.ValueInfo_IsConstantInitializer(bias_dq_inputs[0], &bias_is_static), ort_api);
-              }
-            }
-          }
-          // 2.4 Add's consumer must be Relu or Clip for the pattern to match.
-          if (bias_is_static) {
-            const OrtNode* relu_or_clip = nullptr;
-            int64_t unused_add_idx = 0;
-            ORT_CONTINUE_ON_ERROR(
-                ort_api.ValueInfo_GetValueConsumers(add_outputs[0], &relu_or_clip, &unused_add_idx, 1), ort_api);
-            if (relu_or_clip != nullptr) {
-              const std::string relu_or_clip_op = Ort::ConstNode(relu_or_clip).GetOperatorType();
-              if (relu_or_clip_op == "Relu" || relu_or_clip_op == "Clip") {
-                bias_add_node = candidate_add;
-                bias_dq_node = candidate_bias_dq;
-                next_node = relu_or_clip;
-                next_node_op_type = relu_or_clip_op;
-              }
-            }
-          }
-        }
-      }
-
+      // Check if it's a Relu or Clip node
+      const std::string next_node_op_type = Ort::ConstNode(next_node).GetOperatorType();
       if (next_node_op_type == "Relu" || next_node_op_type == "Clip") {
         // Get the outputs of the next node to check count
         size_t next_output_count = 0;
@@ -1566,10 +1459,6 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
             if (should_fuse) {
               clip_node = next_node;
-            } else {
-              // Encoding admits values outside the activation range: leave every fused node external.
-              bias_add_node = nullptr;
-              bias_dq_node = nullptr;
             }
           }
         }
@@ -1630,18 +1519,9 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
     }
 
     // Add DQ node indices
-    node_group.dq_nodes.reserve(dq_nodes.size() + (bias_dq_node ? 1 : 0));
+    node_group.dq_nodes.reserve(dq_nodes.size());
     for (const OrtNode* dq_node : dq_nodes) {
       node_group.dq_nodes.push_back(dq_node);
-    }
-
-    // Attach the fused Add and (optional) bias DQ. Done after the selector's check to leave
-    // its dq_nodes.size() gate on (act, weight) alone.
-    if (bias_add_node) {
-      node_group.bias_add_node = bias_add_node;
-      if (bias_dq_node) {
-        node_group.dq_nodes.push_back(bias_dq_node);
-      }
     }
 
     // Add Q node indices
@@ -2031,11 +1911,6 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
         }
 
         supported_group.push_back(node);
-        const OrtNode* bias_add_node = node_unit->GetBiasAddNode();
-        if (bias_add_node) {
-          supported_group.push_back(bias_add_node);
-          supported_group_border.erase(bias_add_node);
-        }
         const OrtNode* redundent_clip_node = node_unit->GetRedundantClipNode();
         if (redundent_clip_node) {
           supported_group.push_back(redundent_clip_node);
@@ -2127,9 +2002,6 @@ GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& log
     add_node_unit_to_map({qdq_selection.target_node}, qdq_unit.get());
     if (qdq_selection.redundant_clip_node) {
       add_node_unit_to_map({qdq_selection.redundant_clip_node}, qdq_unit.get());
-    }
-    if (qdq_selection.bias_add_node) {
-      add_node_unit_to_map({qdq_selection.bias_add_node}, qdq_unit.get());
     }
 
     node_unit_holder.push_back(std::move(qdq_unit));

@@ -227,84 +227,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
   return io_defs;
 }
 
-// Builds an IODef for the DQ'd int32 bias input of the Add node fused into a MatMul QDQ group.
-// Extracts scale/zp from the DQ so op builders see the bias as a quantized input.
-std::optional<OrtNodeUnitIODef> GetBiasIODef(const OrtNode* target_node,
-                                             const OrtNode* bias_add_node,
-                                             const OrtApi& ort_api) {
-  if (target_node == nullptr || bias_add_node == nullptr) {
-    return std::nullopt;
-  }
-
-  // Get target's outputs to identify which Add input is NOT the target's output.
-  size_t num_target_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(target_node, &num_target_outputs), ort_api, std::nullopt);
-  if (num_target_outputs != 1) {
-    return std::nullopt;
-  }
-  std::vector<const OrtValueInfo*> target_outputs(num_target_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(target_node, target_outputs.data(), target_outputs.size()),
-                             ort_api, std::nullopt);
-
-  // Get Add's inputs; find the one that is not target's output.
-  size_t num_add_inputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(bias_add_node, &num_add_inputs), ort_api, std::nullopt);
-  if (num_add_inputs != 2) {
-    return std::nullopt;
-  }
-  std::vector<const OrtValueInfo*> add_inputs(num_add_inputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(bias_add_node, add_inputs.data(), add_inputs.size()),
-                             ort_api, std::nullopt);
-
-  const OrtValueInfo* bias_value = nullptr;
-  for (const OrtValueInfo* in : add_inputs) {
-    if (in != target_outputs[0]) {
-      bias_value = in;
-      break;
-    }
-  }
-  if (bias_value == nullptr) {
-    return std::nullopt;
-  }
-
-  // Bias must be produced by a DequantizeLinear whose input[0] is a static int32 initializer.
-  // Extract the DQ's scale/zp so op builders see a quantized IODef (like GetQDQIODefs).
-  const OrtNode* bias_dq = nullptr;
-  auto producer_status = ort_api.ValueInfo_GetValueProducer(bias_value, &bias_dq, nullptr);
-  if (producer_status != nullptr) {
-    ort_api.ReleaseStatus(producer_status);
-    return std::nullopt;
-  }
-  if (bias_dq == nullptr || Ort::ConstNode(bias_dq).GetOperatorType() != "DequantizeLinear") {
-    return std::nullopt;
-  }
-
-  size_t num_dq_inputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(bias_dq, &num_dq_inputs), ort_api, std::nullopt);
-  std::vector<const OrtValueInfo*> dq_inputs(num_dq_inputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(bias_dq, dq_inputs.data(), dq_inputs.size()),
-                             ort_api, std::nullopt);
-  if (num_dq_inputs < 2) {
-    return std::nullopt;
-  }
-
-  std::optional<int64_t> axis = OrtNodeAttrHelper(*bias_dq).GetInt64("axis");
-  std::optional<int64_t> block_size = OrtNodeAttrHelper(*bias_dq).GetInt64("block_size");
-  OrtNodeUnitIODef::QuantParam quant_param{
-      dq_inputs[1],
-      num_dq_inputs == 3 ? dq_inputs[2] : nullptr,
-      axis,
-      block_size};
-
-  OrtNodeUnitIODef io_def;
-  auto parse_status = ParseOrtValueInfo(dq_inputs[0], quant_param, ort_api, io_def);
-  if (parse_status != nullptr) {
-    ort_api.ReleaseStatus(parse_status);
-    return std::nullopt;
-  }
-  return io_def;
-}
-
 }  // namespace
 
 OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api) : target_node_(node), type_(Type::SingleNode) {
@@ -321,18 +243,10 @@ OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& n
     : dq_nodes_(node_group.dq_nodes),
       target_node_(node_group.target_node),
       redundant_clip_node_(node_group.redundant_clip_node ? node_group.redundant_clip_node : nullptr),
-      bias_add_node_(node_group.bias_add_node ? node_group.bias_add_node : nullptr),
       q_nodes_(node_group.q_nodes),
       type_(Type::QDQGroup),
       inputs_(GetQDQIODefs(target_node_, node_group, true, ort_api)),
       outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)) {
-  // Append the DQ'd bias input from the fused Add so the op builder sees it as Inputs()[2].
-  if (bias_add_node_ != nullptr) {
-    auto bias_def = GetBiasIODef(target_node_, bias_add_node_, ort_api);
-    if (bias_def.has_value()) {
-      inputs_.push_back(std::move(*bias_def));
-    }
-  }
 }
 
 OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
