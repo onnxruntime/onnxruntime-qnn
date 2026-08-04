@@ -205,42 +205,13 @@ log_info "Accuracy report: ${accuracy_json}"
 
 # ---------------------------------------------------------------------------
 # Select PASSING groups from the accuracy report.
-#
-# A group passes iff every QnnUnit_Accuracy_<Group>Test case is PASSED
-# (result COMPLETED, no failures). Mirrors accuracy_gate.py's classify_testcase;
-# implemented inline here so this PR does not import the not-yet-merged gate.
 # ---------------------------------------------------------------------------
-mapfile -t pass_groups < <(python3 - "${accuracy_json}" <<'PYEOF'
-import json, re, sys
-
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-
-pattern = re.compile(r'^QnnUnit_Accuracy_(\w+)Test')
-# group -> all cases PASSED so far (True until a non-PASSED case flips it False)
-group_all_pass = {}
-
-for suite in data.get('testsuites', []):
-    m = pattern.match(suite.get('name', ''))
-    if not m:
-        continue
-    group = m.group(1)
-    for case in suite.get('testsuite', []):
-        result = case.get('result')      # COMPLETED / SKIPPED
-        status = case.get('status')      # RUN / NOTRUN
-        has_failures = bool(case.get('failures'))
-        passed = (result == 'COMPLETED') and (not has_failures)
-        # SKIPPED / NOTRUN / DRIFT all count as "not passed".
-        if result == 'SKIPPED' or status == 'NOTRUN':
-            passed = False
-        group_all_pass[group] = group_all_pass.get(group, True) and passed
-    # A suite with zero cases contributes no evidence of passing.
-    group_all_pass.setdefault(group, False)
-
-for group in sorted(g for g, ok in group_all_pass.items() if ok):
-    print(group)
-PYEOF
-) || die "Failed to parse accuracy report ${accuracy_json}."
+filter_script="${REPO_ROOT}/qcom/scripts/linux/filter_accuracy_pass_groups.py"
+mapfile -t pass_groups < <(python3 "${filter_script}" "${accuracy_json}")
+filter_exit=$?
+if [ "${filter_exit}" -eq 2 ]; then
+    die "Failed to parse accuracy report ${accuracy_json}."
+fi
 
 if [ "${#pass_groups[@]}" -eq 0 ]; then
     die "No group passed accuracy. Nothing to publish."
