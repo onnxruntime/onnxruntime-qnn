@@ -19,7 +19,7 @@ import datetime
 import io
 import json
 import os
-import shutil
+import random
 import subprocess
 import sys
 import tempfile
@@ -32,7 +32,6 @@ except ImportError:
 
 try:
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 except ImportError:
     sys.exit("plotly not found — run: pip install plotly")
 
@@ -45,6 +44,7 @@ TOP_N_VOLATILE = 12
 
 # ── JFrog CLI helpers ─────────────────────────────────────────────────────────
 
+
 def _get_repo() -> str:
     repo = os.environ.get("BUILD_ARTIFACTORY_REPO", "")
     if not repo:
@@ -55,7 +55,7 @@ def _get_repo() -> str:
 def _jf(*args: str) -> str:
     """Run a jf CLI command and return stdout. Raises on non-zero exit."""
     cmd = ["jf", *args]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         sys.exit(f"jf command failed: {' '.join(cmd)}\n{result.stderr.strip()}")
     return result.stdout
@@ -77,7 +77,7 @@ def list_nightly_reports(repo: str, days: int) -> list[tuple[datetime.date, str]
         # item["path"] = "repo/qa/nightly-2026-08-02-63420a834b/per_file_coverage.xlsx"
         parts = item["path"].split("/")
         folder = parts[-2]  # "nightly-2026-08-02-63420a834b"
-        date_part = folder[len("nightly-"):len("nightly-") + 10]
+        date_part = folder[len("nightly-") : len("nightly-") + 10]
         try:
             d = datetime.date.fromisoformat(date_part)
         except ValueError:
@@ -88,9 +88,7 @@ def list_nightly_reports(repo: str, days: int) -> list[tuple[datetime.date, str]
     return sorted(results)
 
 
-def fetch_reports(
-    repo: str, entries: list[tuple[datetime.date, str]]
-) -> list[tuple[datetime.date, str, dict]]:
+def fetch_reports(repo: str, entries: list[tuple[datetime.date, str]]) -> list[tuple[datetime.date, str, dict]]:
     """Download all nightly xlsx files in one 'jf rt download' call and parse them.
 
     jf rt download preserves the folder hierarchy under tmpdir, mirroring the
@@ -126,6 +124,7 @@ def fetch_reports(
 
 
 # ── xlsx parsing ──────────────────────────────────────────────────────────────
+
 
 def parse_xlsx(content: bytes) -> dict[str, tuple[float, float]] | None:
     """Return {short_filename: (line_pct, branch_pct)} excluding .h files.
@@ -189,37 +188,36 @@ def make_mock_snapshots(days: int = 30) -> list[tuple[datetime.date, str, dict]]
     - New file: appears halfway through the period
     - Removed file: disappears halfway through the period
     """
-    import math
-    import random
+
     random.seed(42)
 
     # Representative QNN EP filenames with starting baselines
     file_baselines: dict[str, float] = {
-        "qnn_execution_provider.cc":     75.0,
-        "qnn_backend_manager.cc":        68.0,
-        "qnn_model.cc":                  85.0,
-        "qnn_model_wrapper.cc":          92.0,
-        "onnx_ctx_model_helper.cc":      87.0,
-        "qnn_ep_utils.cc":               78.0,  # will improve
-        "qnn_utils.cc":                  79.0,  # will improve
-        "ort_api.cc":                    74.0,  # will improve
-        "conv_op_builder.cc":            90.0,
-        "simple_op_builder.cc":          85.0,
-        "resize_op_builder.cc":          96.0,
-        "lstm_op_builder.cc":             2.0,  # will improve (dramatic)
-        "qnn_htp_power_config_manager.cc": 95.0, # will regress
-        "qnn_quant_params_wrapper.cc":   96.0,
-        "qnn_profile_serializer.cc":     59.0,
-        "gelu_fusion.cc":                83.0,
-        "qnn_node_group.cc":            100.0,
-        "scale_softmax_fusion.cc":       94.0,
+        "qnn_execution_provider.cc": 75.0,
+        "qnn_backend_manager.cc": 68.0,
+        "qnn_model.cc": 85.0,
+        "qnn_model_wrapper.cc": 92.0,
+        "onnx_ctx_model_helper.cc": 87.0,
+        "qnn_ep_utils.cc": 78.0,  # will improve
+        "qnn_utils.cc": 79.0,  # will improve
+        "ort_api.cc": 74.0,  # will improve
+        "conv_op_builder.cc": 90.0,
+        "simple_op_builder.cc": 85.0,
+        "resize_op_builder.cc": 96.0,
+        "lstm_op_builder.cc": 2.0,  # will improve (dramatic)
+        "qnn_htp_power_config_manager.cc": 95.0,  # will regress
+        "qnn_quant_params_wrapper.cc": 96.0,
+        "qnn_profile_serializer.cc": 59.0,
+        "gelu_fusion.cc": 83.0,
+        "qnn_node_group.cc": 100.0,
+        "scale_softmax_fusion.cc": 94.0,
     }
     # Files with a clear upward trend over the period (target gain over 30 days)
     improving: dict[str, float] = {
         "lstm_op_builder.cc": 77.0,
-        "ort_api.cc":         14.8,
-        "qnn_utils.cc":       12.9,
-        "qnn_ep_utils.cc":    12.0,
+        "ort_api.cc": 14.8,
+        "qnn_utils.cc": 12.9,
+        "qnn_ep_utils.cc": 12.0,
     }
 
     today = datetime.date.today()
@@ -257,14 +255,12 @@ def make_mock_snapshots(days: int = 30) -> list[tuple[datetime.date, str, dict]]
     return snapshots
 
 
-
-
 def _make_aggregate_chart(
     snapshots: list[tuple[datetime.date, str, dict]],
 ) -> go.Figure:
     """Line chart: avg line_pct and avg branch_pct over time."""
     dates, avg_lines, avg_branches, n_files = [], [], [], []
-    for d, label, data in snapshots:
+    for d, _, data in snapshots:
         if not data:
             continue
         dates.append(d)
@@ -273,33 +269,35 @@ def _make_aggregate_chart(
         n_files.append(len(data))
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=dates, y=avg_lines,
-        name="avg line coverage",
-        mode="lines+markers",
-        line=dict(color="#2196F3", width=2),
-        marker=dict(size=6),
-        customdata=list(zip(avg_branches, n_files)),
-        hovertemplate=(
-            "<b>%{x}</b><br>"
-            "avg line: <b>%{y:.1f}%</b><br>"
-            "avg branch: %{customdata[0]:.1f}%<br>"
-            "files tracked: %{customdata[1]}"
-            "<extra></extra>"
-        ),
-    ))
-    fig.add_trace(go.Scatter(
-        x=dates, y=avg_branches,
-        name="avg branch coverage",
-        mode="lines+markers",
-        line=dict(color="#FF9800", width=2, dash="dot"),
-        marker=dict(size=6),
-        hovertemplate=(
-            "<b>%{x}</b><br>"
-            "avg branch: <b>%{y:.1f}%</b>"
-            "<extra></extra>"
-        ),
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=avg_lines,
+            name="avg line coverage",
+            mode="lines+markers",
+            line=dict(color="#2196F3", width=2),
+            marker=dict(size=6),
+            customdata=list(zip(avg_branches, n_files, strict=False)),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                "avg line: <b>%{y:.1f}%</b><br>"
+                "avg branch: %{customdata[0]:.1f}%<br>"
+                "files tracked: %{customdata[1]}"
+                "<extra></extra>"
+            ),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=avg_branches,
+            name="avg branch coverage",
+            mode="lines+markers",
+            line=dict(color="#FF9800", width=2, dash="dot"),
+            marker=dict(size=6),
+            hovertemplate=("<b>%{x}</b><br>avg branch: <b>%{y:.1f}%</b><extra></extra>"),
+        )
+    )
     fig.update_layout(
         title="Aggregate Coverage Trend (avg across all .cc files)",
         xaxis_title="Date",
@@ -340,33 +338,28 @@ def _make_perfile_chart(
     fig = go.Figure()
     for f in sorted(all_files):
         vals = file_series[f]
-        fig.add_trace(go.Scatter(
-            x=dates,
-            y=vals,
-            name=f,
-            mode="lines+markers",
-            visible=True if f in top_set else "legendonly",
-            marker=dict(size=5),
-            hovertemplate=(
-                f"<b>{f}</b><br>"
-                "%{x}<br>"
-                "line: <b>%{y:.1f}%</b>"
-                "<extra></extra>"
-            ),
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=vals,
+                name=f,
+                mode="lines+markers",
+                visible=True if f in top_set else "legendonly",
+                marker=dict(size=5),
+                hovertemplate=(f"<b>{f}</b><br>%{{x}}<br>line: <b>%{{y:.1f}}%</b><extra></extra>"),
+            )
+        )
 
     fig.update_layout(
-        title=(
-            f"Per-file Line Coverage Trend "
-            f"(top {top_n} most volatile shown — click legend to show/hide others)"
-        ),
+        title=(f"Per-file Line Coverage Trend (top {top_n} most volatile shown — click legend to show/hide others)"),
         xaxis_title="Date",
         yaxis_title="Line Coverage (%)",
         yaxis=dict(range=[0, 105]),
         height=500,
         legend=dict(
             orientation="v",
-            x=1.01, y=1,
+            x=1.01,
+            y=1,
             font=dict(size=10),
         ),
         margin=dict(l=60, r=220, t=60, b=60),
@@ -390,16 +383,15 @@ def _make_latest_table(
         prev_data = prev_data_raw
 
     rows = []
-    for fname, (l, b) in sorted(latest_data.items(), key=lambda x: x[1][0]):
+    for fname, (line_val, branch_val) in sorted(latest_data.items(), key=lambda x: x[1][0]):
         prev_l = prev_data.get(fname, (None,))[0]
         if prev_l is not None:
-            delta = f"{l - prev_l:+.1f}%"
+            delta = f"{line_val - prev_l:+.1f}%"
         else:
             delta = "new"
-        rows.append((fname, f"{l:.1f}%", f"{b:.1f}%", delta))
+        rows.append((fname, f"{line_val:.1f}%", f"{branch_val:.1f}%", delta))
 
-    files, lines, branches, deltas = zip(*rows) if rows else ([], [], [], [])
-    cell_colors = []
+    files, lines, branches, deltas = zip(*rows, strict=False) if rows else ([], [], [], [])
     delta_colors = []
     for d in deltas:
         if d == "new":
@@ -411,21 +403,23 @@ def _make_latest_table(
         else:
             delta_colors.append("white")
 
-    fig = go.Figure(go.Table(
-        header=dict(
-            values=["<b>file</b>", "<b>line_pct</b>", "<b>branch_pct</b>", f"<b>Δ vs {prev_date or 'prev'}</b>"],
-            fill_color="#D9D9D9",
-            align="left",
-            font=dict(size=12),
-        ),
-        cells=dict(
-            values=[list(files), list(lines), list(branches), list(deltas)],
-            fill_color=["white", "white", "white", delta_colors],
-            align=["left", "right", "right", "right"],
-            font=dict(size=11),
-            height=24,
-        ),
-    ))
+    fig = go.Figure(
+        go.Table(
+            header=dict(
+                values=["<b>file</b>", "<b>line_pct</b>", "<b>branch_pct</b>", f"<b>Δ vs {prev_date or 'prev'}</b>"],
+                fill_color="#D9D9D9",
+                align="left",
+                font=dict(size=12),
+            ),
+            cells=dict(
+                values=[list(files), list(lines), list(branches), list(deltas)],
+                fill_color=["white", "white", "white", delta_colors],
+                align=["left", "right", "right", "right"],
+                font=dict(size=11),
+                height=24,
+            ),
+        )
+    )
     fig.update_layout(
         title=f"Latest Snapshot ({latest_date}) — all .cc files, sorted by line_pct ↑",
         height=max(400, min(len(rows) * 26 + 100, 900)),
@@ -482,6 +476,7 @@ def generate_html(
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
