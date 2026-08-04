@@ -7,6 +7,11 @@ on:
         description: "How many days back to include (default: 30)"
         required: false
         default: "30"
+  # Temporary: allows testing from feature branch before merge to main.
+  # Remove this push trigger after the workflow is verified.
+  push:
+    branches:
+      - dev/yuhuchua/coverage-trend-report
 
 env:
   BUILD_ARTIFACTORY_REPO: ${{ secrets.BUILD_ARTIFACTORY_REPO }}
