@@ -160,6 +160,62 @@ static void MakeSharedMemoryFeeds(const std::vector<std::string>& input_names,
   }
 }
 
+// Aliases present_key/present_value outputs onto the past_key/past_value shared-memory
+// buffers (in-place KV cache), runs the QNN session, then collects output views. Outputs
+// that are not aliased are owned by owned_qnn_outputs. Verbatim extraction from RunGQATest.
+static void AliasPresentToPastAndRun(Ort::Session& qnn_session,
+                                     const std::vector<std::string>& output_names,
+                                     const std::vector<const char*>& input_names_cstr,
+                                     const std::vector<const char*>& output_names_cstr,
+                                     std::vector<GQAFeedCopy>& qnn_feeds,
+                                     const std::unordered_map<std::string, size_t>& input_name_to_index,
+                                     std::vector<Ort::Value>& owned_qnn_outputs,
+                                     std::vector<const Ort::Value*>& qnn_outputs) {
+  std::vector<const OrtValue*> qnn_input_values;
+  qnn_input_values.reserve(qnn_feeds.size());
+  for (const auto& qnn_feed : qnn_feeds) {
+    qnn_input_values.push_back(qnn_feed.value);
+  }
+
+  std::vector<OrtValue*> qnn_output_values(output_names.size(), nullptr);
+  const auto past_key_input = input_name_to_index.find("past_key");
+  const auto past_value_input = input_name_to_index.find("past_value");
+  for (size_t i = 0; i < output_names.size(); i++) {
+    // Make present_key and present_value use the same buffer as past_key and past_value.
+    if (output_names[i] == "present_key" && past_key_input != input_name_to_index.end()) {
+      qnn_output_values[i] = qnn_feeds[past_key_input->second].value;
+    } else if (output_names[i] == "present_value" && past_value_input != input_name_to_index.end()) {
+      qnn_output_values[i] = qnn_feeds[past_value_input->second].value;
+    }
+  }
+
+  Ort::RunOptions qnn_run_options;
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().Run(qnn_session,
+                                        qnn_run_options,
+                                        input_names_cstr.data(),
+                                        qnn_input_values.data(),
+                                        qnn_input_values.size(),
+                                        output_names_cstr.data(),
+                                        output_names_cstr.size(),
+                                        qnn_output_values.data()));
+
+  owned_qnn_outputs.reserve(output_names.size());
+  qnn_outputs.reserve(output_names.size());
+  for (size_t i = 0; i < output_names.size(); i++) {
+    if (output_names[i] == "present_key" && past_key_input != input_name_to_index.end()) {
+      ASSERT_EQ(qnn_output_values[i], static_cast<OrtValue*>(qnn_feeds[past_key_input->second].value));
+      qnn_outputs.push_back(&qnn_feeds[past_key_input->second].value);
+    } else if (output_names[i] == "present_value" && past_value_input != input_name_to_index.end()) {
+      ASSERT_EQ(qnn_output_values[i], static_cast<OrtValue*>(qnn_feeds[past_value_input->second].value));
+      qnn_outputs.push_back(&qnn_feeds[past_value_input->second].value);
+    } else {
+      ASSERT_NE(qnn_output_values[i], nullptr);
+      owned_qnn_outputs.emplace_back(qnn_output_values[i]);
+      qnn_outputs.push_back(&owned_qnn_outputs.back());
+    }
+  }
+}
+
 // Runs a model with a GQA operator through QNN EP. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename T>
@@ -279,51 +335,11 @@ static void RunGQATest(
   ASSERT_NO_FATAL_FAILURE(MakeSharedMemoryFeeds(input_names, helper.feeds_, allocator, memory_info,
                                                 qnn_feeds, input_name_to_index));
 
-  std::vector<const OrtValue*> qnn_input_values;
-  qnn_input_values.reserve(qnn_feeds.size());
-  for (const auto& qnn_feed : qnn_feeds) {
-    qnn_input_values.push_back(qnn_feed.value);
-  }
-
-  std::vector<OrtValue*> qnn_output_values(output_names.size(), nullptr);
-  const auto past_key_input = input_name_to_index.find("past_key");
-  const auto past_value_input = input_name_to_index.find("past_value");
-  for (size_t i = 0; i < output_names.size(); i++) {
-    // Make present_key and present_value use the same buffer as past_key and past_value.
-    if (output_names[i] == "present_key" && past_key_input != input_name_to_index.end()) {
-      qnn_output_values[i] = qnn_feeds[past_key_input->second].value;
-    } else if (output_names[i] == "present_value" && past_value_input != input_name_to_index.end()) {
-      qnn_output_values[i] = qnn_feeds[past_value_input->second].value;
-    }
-  }
-
-  Ort::RunOptions qnn_run_options;
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().Run(qnn_session,
-                                        qnn_run_options,
-                                        input_names_cstr.data(),
-                                        qnn_input_values.data(),
-                                        qnn_input_values.size(),
-                                        output_names_cstr.data(),
-                                        output_names_cstr.size(),
-                                        qnn_output_values.data()));
-
   std::vector<Ort::Value> owned_qnn_outputs;
-  owned_qnn_outputs.reserve(output_names.size());
   std::vector<const Ort::Value*> qnn_outputs;
-  qnn_outputs.reserve(output_names.size());
-  for (size_t i = 0; i < output_names.size(); i++) {
-    if (output_names[i] == "present_key" && past_key_input != input_name_to_index.end()) {
-      ASSERT_EQ(qnn_output_values[i], static_cast<OrtValue*>(qnn_feeds[past_key_input->second].value));
-      qnn_outputs.push_back(&qnn_feeds[past_key_input->second].value);
-    } else if (output_names[i] == "present_value" && past_value_input != input_name_to_index.end()) {
-      ASSERT_EQ(qnn_output_values[i], static_cast<OrtValue*>(qnn_feeds[past_value_input->second].value));
-      qnn_outputs.push_back(&qnn_feeds[past_value_input->second].value);
-    } else {
-      ASSERT_NE(qnn_output_values[i], nullptr);
-      owned_qnn_outputs.emplace_back(qnn_output_values[i]);
-      qnn_outputs.push_back(&owned_qnn_outputs.back());
-    }
-  }
+  ASSERT_NO_FATAL_FAILURE(AliasPresentToPastAndRun(qnn_session, output_names, input_names_cstr,
+                                                   output_names_cstr, qnn_feeds, input_name_to_index,
+                                                   owned_qnn_outputs, qnn_outputs));
 
   Ort::RunOptions cpu_run_options;
   std::vector<Ort::Value> cpu_outputs;
