@@ -70,6 +70,24 @@ Ort::Status ReadRegistryStringValue(HKEY key, const wchar_t* value_name, std::ws
              std::filesystem::path(value_name).string() + "'.")
                 .c_str());
 
+  // RegQueryValueExW never auto-expands, so a REG_EXPAND_SZ value comes back with its %VAR%
+  // tokens intact. Expand them here. Note this does not touch the NT-namespace "\SystemRoot"
+  // prefix (not a %VAR% form), which the caller resolves separately.
+  if (value_type == REG_EXPAND_SZ) {
+    const DWORD expanded_size = ::ExpandEnvironmentStringsW(buffer.data(), nullptr, 0);
+    RETURN_IF(expanded_size == 0,
+              ("Failed to expand registry value '" + std::filesystem::path(value_name).string() +
+               "'. ExpandEnvironmentStringsW error: " + std::to_string(::GetLastError()))
+                  .c_str());
+    std::vector<wchar_t> expanded(expanded_size, L'\0');
+    RETURN_IF(::ExpandEnvironmentStringsW(buffer.data(), expanded.data(), expanded_size) == 0,
+              ("Failed to expand registry value '" + std::filesystem::path(value_name).string() +
+               "'. ExpandEnvironmentStringsW error: " + std::to_string(::GetLastError()))
+                  .c_str());
+    value_out = std::wstring{expanded.data()};
+    return Ort::Status();
+  }
+
   value_out = std::wstring{buffer.data()};
   return Ort::Status();
 }
