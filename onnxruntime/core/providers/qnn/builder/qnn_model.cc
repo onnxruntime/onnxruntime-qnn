@@ -789,7 +789,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
       if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
-        return Ort::Status("NPU crashed again after SSR recovery.", ORT_ENGINE_ERROR);
+        return Ort::Status("NPU crashed again after SSR recovery.", QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }
       if (QNN_GRAPH_NO_ERROR == execute_status) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
@@ -802,7 +802,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
              " (no context binary on disk — JIT or embed_mode=1). Error code: "
           << execute_status;
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-      return Ort::Status(oss.str().c_str(), ORT_ENGINE_ERROR);
+      return Ort::Status(oss.str().c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
     }
   } else if (QNN_GRAPH_NO_ERROR != execute_status) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +

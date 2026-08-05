@@ -51,6 +51,14 @@ namespace onnxruntime {
 #define MAKE_FAIL(msg) Ort::Status(msg, ORT_FAIL)
 #define MAKE_EP_FAIL(msg) Ort::Status(msg, ORT_EP_FAIL)
 
+// ORT_DEVICE_RESET (added in ORT 1.28 / API 28) lets callers distinguish an unrecoverable
+// SSR from other EP errors; fall back to ORT_ENGINE_ERROR for older prebuilt ORT headers.
+#if ORT_API_VERSION >= 28
+#define QNN_SSR_UNRECOVERABLE_ERROR_CODE ORT_DEVICE_RESET
+#else
+#define QNN_SSR_UNRECOVERABLE_ERROR_CODE ORT_ENGINE_ERROR
+#endif
+
 #define RETURN_IF(cond, msg)      \
   do {                            \
     if ((cond)) {                 \

@@ -7,12 +7,28 @@
 #include <filesystem>
 #include <string>
 
+#include <gsl/gsl>
+
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+// Must match QNN_SSR_UNRECOVERABLE_ERROR_CODE in core/providers/qnn/ort_api.h; duplicated
+// to avoid pulling that EP-private header into a public-API-only test.
+#if ORT_API_VERSION >= 28
+#define QNN_SSR_UNRECOVERABLE_ERROR_CODE ORT_DEVICE_RESET
+#define QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR "ORT_DEVICE_RESET"
+#else
+#define QNN_SSR_UNRECOVERABLE_ERROR_CODE ORT_ENGINE_ERROR
+#define QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR "ORT_ENGINE_ERROR"
+#endif
 
 // in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
@@ -23,6 +39,14 @@ namespace onnxruntime {
 namespace test {
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+
+static void SetMockSSRAlwaysCrash(bool always_crash) {
+  HMODULE mod = GetModuleHandleW(L"QnnMockSSR.dll");
+  ASSERT_NE(mod, nullptr) << "QnnMockSSR.dll is not loaded in this process.";
+  auto set_fn = reinterpret_cast<void (*)(bool)>(GetProcAddress(mod, "SetMockSSRAlwaysCrash"));
+  ASSERT_NE(set_fn, nullptr) << "SetMockSSRAlwaysCrash not exported by QnnMockSSR.dll.";
+  set_fn(always_crash);
+}
 
 // Reads the EPContext ONNX skeleton file and extracts the relative path of the
 // QNN context binary from the EPContext node with main_context=1.
@@ -268,11 +292,12 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextNonEmbedModeCpuF
   CleanUpCtxFile(context_model_file);
 }
 
-// Test that SSR in JIT flow (no EPContext, no .bin file) returns ORT_ENGINE_ERROR to the user.
-// In JIT mode, the graph is compiled at runtime with no external binary to reload from,
-// so SSR recovery is impossible. The error should be ORT_ENGINE_ERROR (not ORT_EP_FAIL)
-// to allow the application to distinguish NPU crashes from other EP failures.
-TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsEngineError) {
+// Test that SSR in JIT flow (no EPContext, no .bin file) returns the unrecoverable-SSR
+// error code (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user. In JIT mode, the graph is compiled
+// at runtime with no external binary to reload from, so SSR recovery is impossible. The
+// error must not be ORT_EP_FAIL, so the application can distinguish NPU crashes from other
+// EP failures.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::string op_type = "Atan";
@@ -345,7 +370,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsEngineError) {
   ScopedOrtSession scoped(std::move(registered_ep_device),
                           Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
 
-  // Step 4: Run inference — SSR fires, recovery is impossible, expect ORT_ENGINE_ERROR.
+  // Step 4: Run inference — SSR fires, recovery is impossible, expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
   auto qnn_in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
   auto qnn_out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
 
@@ -357,18 +382,18 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsEngineError) {
 
   try {
     scoped.session().Run(Ort::RunOptions{}, run_input_names, &run_input_tensor, 1, run_output_names, 1);
-    FAIL() << "Expected ORT_ENGINE_ERROR exception but Run() succeeded.";
+    FAIL() << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " exception but Run() succeeded.";
   } catch (const Ort::Exception& e) {
-    EXPECT_EQ(e.GetOrtErrorCode(), ORT_ENGINE_ERROR)
-        << "Expected ORT_ENGINE_ERROR for SSR in JIT flow, got error code: " << e.GetOrtErrorCode()
+    EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
+        << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for SSR in JIT flow, got error code: " << e.GetOrtErrorCode()
         << ", message: " << e.what();
   }
 }
 
-// Test that SSR in AOT flow with embed_mode=1 returns ORT_ENGINE_ERROR to the user.
-// In embed_mode=1, the context binary is stored inside the ONNX model (no external .bin file),
-// so SSR recovery is impossible. The error should be ORT_ENGINE_ERROR.
-TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsEngineError) {
+// Test that SSR in AOT flow with embed_mode=1 returns the unrecoverable-SSR error code
+// (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user. In embed_mode=1, the context binary is stored
+// inside the ONNX model (no external .bin file), so SSR recovery is impossible.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsUnrecoverableError) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::string context_model_file = "./ssr_ep_ctx_embed_mode_test.onnx";
@@ -405,7 +430,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsEngineErr
   // -----------------------------------------------------------------------
   // Step 2: Load the embed_mode=1 context model via QnnMockSSR.dll.
   //         SSR fires on graphExecute, recovery is impossible (no external .bin),
-  //         expect ORT_ENGINE_ERROR.
+  //         expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
   // -----------------------------------------------------------------------
   {
     onnx::ModelProto ctx_model_proto;
@@ -425,7 +450,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsEngineErr
     ScopedOrtSession scoped(std::move(registered_ep_device),
                             Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so));
 
-    // Run inference — SSR fires, no .bin file to reload from, expect ORT_ENGINE_ERROR.
+    // Run inference — SSR fires, no .bin file to reload from, expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
     auto in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
     auto out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
 
@@ -440,10 +465,10 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextEmbedModeReturnsEngineErr
 
     try {
       scoped.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1, output_names, 1);
-      FAIL() << "Expected ORT_ENGINE_ERROR exception but Run() succeeded.";
+      FAIL() << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " exception but Run() succeeded.";
     } catch (const Ort::Exception& e) {
-      EXPECT_EQ(e.GetOrtErrorCode(), ORT_ENGINE_ERROR)
-          << "Expected ORT_ENGINE_ERROR for SSR in embed_mode=1, got error code: " << e.GetOrtErrorCode()
+      EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
+          << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for SSR in embed_mode=1, got error code: " << e.GetOrtErrorCode()
           << ", message: " << e.what();
     }
   }
@@ -666,6 +691,91 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextWeightSharing) {
   std::remove(ctx_path2.c_str());
   std::remove(bin_name1.c_str());
 #endif
+}
+
+// Test that a double crash returns the unrecoverable-SSR error code
+// (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user. An embed_mode=0 context is recoverable in
+// principle, but always-crash mode makes the post-recovery retry fail too.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableError) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string context_model_file = "./ssr_double_crash_test.onnx";
+  std::remove(context_model_file.c_str());
+
+  const std::string op_type = "Atan";
+  const TestInputDef<float> input_def_qdq({1, 2, 3}, false, -10.0f, 10.0f);
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate an embed_mode=0 context binary with the real HTP backend.
+  // -----------------------------------------------------------------------
+  ProviderOptions htp_options;
+  htp_options["backend_type"] = "htp";
+  htp_options["offload_graph_io_quantization"] = "0";
+
+  std::unordered_map<std::string, std::string> gen_session_opts;
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEnable, "1");
+  gen_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEmbedMode, "0");
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       htp_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       gen_session_opts);
+
+  ASSERT_TRUE(std::filesystem::exists(context_model_file))
+      << "Context model file was not generated: " << context_model_file;
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load the context model via QnnMockSSR.dll with always-crash mode.
+  //         SSR fires, recovery reloads from the .bin file and retries, but the
+  //         retried graphExecute crashes again -> expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
+  // -----------------------------------------------------------------------
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+#if defined(_WIN32)
+  std::wstring context_model_file_w(context_model_file.begin(), context_model_file.end());
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, context_model_file_w.c_str(), so));
+#else
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, context_model_file.c_str(), so));
+#endif
+
+  // Arm only now — session construction loads the DLL but doesn't execute the graph yet.
+  SetMockSSRAlwaysCrash(true);
+  auto disarm_always_crash = gsl::finally([]() { SetMockSSRAlwaysCrash(false); });
+
+  auto in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+  auto out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
+
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<int64_t> input_shape{1, 2, 3};
+  std::vector<float> input_data(6, 1.0f);
+  auto input_tensor = Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                               input_shape.data(), input_shape.size());
+
+  const char* input_names[] = {in_name.get()};
+  const char* output_names[] = {out_name.get()};
+
+  try {
+    scoped.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1, output_names, 1);
+    FAIL() << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " exception but Run() succeeded.";
+  } catch (const Ort::Exception& e) {
+    EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
+        << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for a double crash, got error code: " << e.GetOrtErrorCode()
+        << ", message: " << e.what();
+  }
+
+  CleanUpCtxFile(context_model_file);
 }
 
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
