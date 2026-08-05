@@ -222,8 +222,8 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
                 "Unsupported input A datatype, expecting float32 or float16.");
     } else {
       RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 &&
-                input_datatype != QNN_DATATYPE_FLOAT_16 &&
-                !utils::IsQuant16bit(input_datatype),
+                    input_datatype != QNN_DATATYPE_FLOAT_16 &&
+                    !utils::IsQuant16bit(input_datatype),
                 "Unsupported input A datatype, expecting float32, float16, uint16, or int16.");
       // Restrict to 3D input due to later inserted Reshape.
       RETURN_IF(input_info.shape.size() != 3, "Unsupported input A rank, expecting 3D shape.");
@@ -538,14 +538,14 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
                                                                per_block_float_zp,
                                                                gsl::narrow_cast<uint32_t>(bits),
                                                                block_sizes);
-          if (utils::IsQuant16bit(input_info.qnn_data_type)) {
+          if (is_act_16bitquant) {
             // 2.6 Add Dequantize to UINT16/INT16 → FP16.
             const std::string fp16_act_name = utils::UniqueNameGenerator().New(input_names[0], "_dq_fp16");
             RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
-                                                                  input_names[0],
-                                                                  fp16_act_name,
-                                                                  do_op_validation,
-                                                                  "MatMulNBits"));
+                                                                   input_names[0],
+                                                                   fp16_act_name,
+                                                                   do_op_validation,
+                                                                   "MatMulNBits"));
             input_names[0] = fp16_act_name;
           }
         }

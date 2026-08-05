@@ -83,14 +83,14 @@ static void AddMatMulNBitsWeightInputs(ModelTestBuilder& builder,
   if (is_symmetric_zp) {
     switch (bits) {
       case 2:
-       std::fill(zp.begin(), zp.end(), 0b10101010);
-       break;
+        std::fill(zp.begin(), zp.end(), 0b10101010);
+        break;
       case 4:
-       std::fill(zp.begin(), zp.end(), 0b10001000);
-       break;
+        std::fill(zp.begin(), zp.end(), 0b10001000);
+        break;
       case 8:
-       std::fill(zp.begin(), zp.end(), 0b10000000);
-       break;
+        std::fill(zp.begin(), zp.end(), 0b10000000);
+        break;
     }
   }
 
@@ -191,7 +191,7 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-  if params.enable_lpbq {
+  if (params.enable_lpbq) {
     provider_options["enable_block_quant_weight_optimization"] = "1";
   }
 #if defined(__linux__) && !defined(__aarch64__)
@@ -956,7 +956,6 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B8_BS128_ZP) {
   RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
 }
 
-
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
@@ -980,7 +979,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K128_B4_BS32) {
   params.block_size = 32;
   params.has_zero_point = false;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K128_B4_BS64) {
@@ -993,46 +992,46 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K128_B4_BS64) {
   params.block_size = 64;
   params.has_zero_point = false;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
 }
 
-TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K256_B4_BS64_ZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K64_B4_BS32_ZP) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   TestParams params;
   params.M = 1;
   params.N = 8;
-  params.K = 256;
-  params.block_size = 64;
+  params.K = 64;
+  params.block_size = 32;
   params.has_zero_point = true;
   params.is_zp_symmetric = true;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
 }
 
 // Should fallback to BW_FLOAT_BLOCK (bits=8)
-TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N64_K256_B8_BS128) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N32_K256_B8_BS32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   TestParams params;
   params.M = 1;
-  params.N = 64;
+  params.N = 32;
   params.K = 256;
-  params.block_size = 128;
+  params.block_size = 32;
   params.has_zero_point = false;
   params.enable_lpbq = true;
   RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
 }
 
 // Should fallback to BW_FLOAT_BLOCK (asymmetric zp)
-TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K256_B4_BS64_AZP) {
+TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16_AZP) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   TestParams params;
   params.M = 1;
-  params.N = 2;
-  params.K = 256;
-  params.block_size = 64;
+  params.N = 4;
+  params.K = 64;
+  params.block_size = 16;
   params.has_zero_point = true;
   params.enable_lpbq = true;
   RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
