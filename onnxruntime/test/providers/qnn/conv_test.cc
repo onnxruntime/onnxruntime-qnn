@@ -1192,8 +1192,10 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
-// Smoke test for the enable_htp_fp16_clamp_overflow HTP option
-#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+// Smoke test for the enable_htp_fp16_clamp_overflow HTP option.
+// The option is compiled unconditionally: on QAIRT < 2.49 the EP logs a warning
+// and ignores it (see qnn_execution_provider.cc), so this degrades to a plain
+// fp16 Conv smoke test; on QAIRT >= 2.49 it exercises the clamp-overflow path.
 TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   ProviderOptions provider_options;
@@ -1218,7 +1220,6 @@ TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
-#endif  // QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
 // Tests bias as a dynamic input.

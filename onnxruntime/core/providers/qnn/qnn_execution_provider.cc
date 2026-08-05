@@ -941,6 +941,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                       FormatEPConfigKey(kEnableHtpFp16ClampOverflow),
                                                                       false,
                                                                       logger_);
+#ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  // Warn once at parse time (not per graph) if the option was requested but the SDK lacks support.
+  if (htp_graph_configs_.enable_htp_fp16_clamp_overflow) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_fp16_clamp_overflow was requested but the QNN HTP SDK in use does "
+                "not support it (requires QAIRT >= 2.49). Ignoring.");
+  }
+#endif
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
@@ -1760,10 +1768,6 @@ void QnnEp::InitQnnHtpGraphConfigs(
       gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
       graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_config->customConfig = htp_fp16_clamp_config;
-#else
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "enable_htp_fp16_clamp_overflow was requested but the QNN HTP SDK in use does "
-                  "not support it (requires QAIRT >= 2.49). Ignoring.");
 #endif
     }
   }
