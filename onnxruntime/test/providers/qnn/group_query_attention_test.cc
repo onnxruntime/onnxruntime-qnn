@@ -8,6 +8,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -272,7 +273,8 @@ static void RunGQATest(
     const std::string& backend_name,
     int opset = 13,
     float fp32_abs_err = 1e-5f,
-    bool use_shared_memory_allocator = false) {
+    bool use_shared_memory_allocator = false,
+    const std::optional<std::string>& op_affinity_path = std::nullopt) {
   const GetTestModelFn build_test_case = BuildGQATestCase<T>(query_def, key_def, value_def,
                                                              past_key_def, past_value_def,
                                                              seqlens_k_def, total_sequence_length_def,
@@ -299,6 +301,11 @@ static void RunGQATest(
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
+  // On HTP the EP seeds a default CPU pin for GQA (HTP is opt-in); callers targeting HTP pass a
+  // config pinning GQA -> HTP, else the op is filtered off QNN and the assignment check below fails.
+  if (op_affinity_path.has_value()) {
+    provider_options["op_affinity"] = *op_affinity_path;
+  }
   if (use_shared_memory_allocator) {
     // GPU and HTP use different shared-memory allocators. Both expose the same "QnnHtpShared"
     // host-accessible MemoryInfo, but they are enabled via different provider options.
@@ -395,6 +402,39 @@ static void RunGQATest(
 
 // === HTP compact drivers (packed / unpacked QKV) ===
 
+// Writes `contents` to a uniquely-named temp file (tagged so parallel tests don't collide) and
+// returns its path. Caller deletes it. Mirrors WriteTempConfig in
+// test/providers/qnn/unit/qnn_op_affinity_map_test.cc.
+static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, const std::string& tag) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / ("gqa_op_affinity_" + tag + ".json");
+  std::ofstream ofs(path);
+  ofs << contents;
+  ofs.close();
+  return path;
+}
+
+// RAII wrapper writing an op_affinity config that pins GroupQueryAttention to HTP: the HTP inference
+// drivers need this because the EP seeds a default CPU pin for GQA (HTP is opt-in). The tag defaults
+// to the running gtest test name so sharded test processes don't collide on the temp file.
+struct ScopedGQAHtpAffinityConfig {
+  explicit ScopedGQAHtpAffinityConfig(const std::string& tag = CurrentTestTag())
+      : path(WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", tag)) {}
+  ~ScopedGQAHtpAffinityConfig() {
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+  }
+  ScopedGQAHtpAffinityConfig(const ScopedGQAHtpAffinityConfig&) = delete;
+  ScopedGQAHtpAffinityConfig& operator=(const ScopedGQAHtpAffinityConfig&) = delete;
+  std::filesystem::path path;
+
+ private:
+  static std::string CurrentTestTag() {
+    const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    return info == nullptr ? "gqa" : std::string(info->test_suite_name()) + "_" + info->name();
+  }
+};
+
 // Compact driver for HTP GQA tests over a packed-QKV model with a full-capacity past KV cache.
 // Only the knobs that matter for edge-case coverage are exposed; everything else mirrors the
 // common LLM decode/prefill setup. The harness aliases present->past (in-place KV cache), so the
@@ -449,6 +489,9 @@ static void RunHTPPackedGQATest(int32_t num_heads,
   std::optional<std::reference_wrapper<TestInputDef<T>>> attention_bias_def = std::nullopt;
   std::optional<std::reference_wrapper<TestInputDef<T>>> head_sink_def = std::nullopt;
 
+  // Pin GQA -> HTP (see ScopedGQAHtpAffinityConfig).
+  const ScopedGQAHtpAffinityConfig affinity_config;
+
   RunGQATest<T>(
       query_def, key_def, value_def, past_key_def, past_value_def,
       seqlens_k_def, total_sequence_length_def,
@@ -468,7 +511,8 @@ static void RunHTPPackedGQATest(int32_t num_heads,
       "htp",
       /*opset*/ 13,
       fp32_abs_err,
-      /*use_shared_memory_allocator*/ true);
+      /*use_shared_memory_allocator*/ true,
+      /*op_affinity_path*/ affinity_config.path.string());
 }
 
 // Compact driver for HTP GQA tests over an unpacked (separate Q / K / V) model with a full-capacity
@@ -522,6 +566,9 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
   std::optional<std::reference_wrapper<TestInputDef<T>>> attention_bias_def = std::nullopt;
   std::optional<std::reference_wrapper<TestInputDef<T>>> head_sink_def = std::nullopt;
 
+  // Pin GQA -> HTP (see ScopedGQAHtpAffinityConfig).
+  const ScopedGQAHtpAffinityConfig affinity_config;
+
   RunGQATest<T>(
       query_def, key_def, value_def, past_key_def, past_value_def,
       seqlens_k_def, total_sequence_length_def,
@@ -541,7 +588,8 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
       "htp",
       /*opset*/ 13,
       fp32_abs_err,
-      /*use_shared_memory_allocator*/ true);
+      /*use_shared_memory_allocator*/ true,
+      /*op_affinity_path*/ affinity_config.path.string());
 }
 
 // === HTP inference tests (QNN vs CPU) ===
@@ -616,7 +664,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Prefill_FP16) {
 //
 // EXPECTED TO FAIL AS WRITTEN: RunHTPPackedGQATest compares the full present_key/present_value
 // tensors, so this case mismatches on the [16:128) padding region by design. This is the one test
-// in this file kept DISABLED_ (all other HTP GQA tests are enabled); before enabling it, the
+// in this file kept  (all other HTP GQA tests are enabled); before enabling it, the
 // comparator must be changed to compare only the valid [0:total_seq_len) region (and, ideally,
 // EXPECT the padding region to differ) so the test turns into a real tripwire that goes green for
 // the right reason instead of a landmine.
@@ -670,18 +718,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP16) {
 // BuildGQATestCase and drive session creation the same way RunGQATest does (see the ProviderOptions /
 // RegisterQnnEpLibrary / ScopedOrtSession / VerifyEPNodeAssignment usage at lines ~188-208 above),
 // with one addition: an "op_affinity" provider option pointing at a temp JSON config file.
-
-// Writes `contents` to a uniquely-named temp file (tagged so parallel tests don't collide) and
-// returns its path. Caller deletes it. Mirrors WriteTempConfig in
-// test/providers/qnn/unit/qnn_op_affinity_map_test.cc.
-static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, const std::string& tag) {
-  const std::filesystem::path path =
-      std::filesystem::temp_directory_path() / ("gqa_op_affinity_" + tag + ".json");
-  std::ofstream ofs(path);
-  ofs << contents;
-  ofs.close();
-  return path;
-}
+// (WriteOpAffinityConfig is defined above, shared with the HTP inference drivers.)
 
 // Builds a minimal packed-QKV GQA model (decode geometry: num_heads=8, kv_num_heads=4, head_size=32,
 // sequence_length=1, total_seq_len=1024, scale=0 default, do_rotary=0 -- the same shape used by
@@ -794,13 +831,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Ass
   std::filesystem::remove(path);
 }
 
-// op_affinity pins GroupQueryAttention to GPU, but the session runs HTP -> pin can never be
-// honored, so session creation must fail (ValidateForSessionBackend reports an error).
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
+// op_affinity pins GQA to GPU but the session runs HTP: the QNN EP's GetCapability returns EP_FAIL,
+// but the ORT plugin-EP framework swallows it (logs + empty capability list), so GQA falls back to
+// CPU and session creation still succeeds -- same end state as PinCpu, not assigned to QNN.
+TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_NotAssigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
-  ASSERT_TRUE(session_failed);
+  ASSERT_FALSE(session_failed);
   std::filesystem::remove(path);
 }
 
