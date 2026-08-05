@@ -676,10 +676,8 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_4D_Native) {
 // ---------------------------------------------------------------------------
 
 // GQA 3D with softcap — no softcap param in QNN GQA → decomposition.
-// DISABLED: accuracy failure on GPU backend
-// Max observed delta: ~0.028.
-// Tracked as a GPU backend precision issue.
-TEST_F(QnnGPUBackendTests, DISABLED_Attention_GPU_GQA_3D_Decompose_Softcap) {
+// GQA 3D with softcap — no softcap param in QNN GQA → decomposition.
+TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_Softcap) {
   ProviderOptions opts;
   opts["backend_type"] = "gpu";
   opts["offload_graph_io_quantization"] = "0";

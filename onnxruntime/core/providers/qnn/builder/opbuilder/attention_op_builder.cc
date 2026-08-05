@@ -1302,10 +1302,24 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     qk_captured = scores_cur;
   }
 
-  // ---- Masks applied BEFORE softcap (per ONNX spec) ----
-  // Applying mask after softcap would be wrong: softcap saturates large negatives
-  // to -softcap (not -inf), so the mask must set large negatives first so softcap
-  // can compress the full range uniformly.
+  // ---- Softcap BEFORE masks (per ONNX spec) ----
+  // From the ONNX spec function body: MatMul → softcap → attn_mask+Add → Softmax.
+  // Softcap must come first: applying the mask (-1e9) before softcap would clamp
+  // it to -softcap (e.g. -5.0), making masked positions visible to softmax.
+  if (softcap != 0.0f) {
+    const std::string sc_out = utils::UniqueNameGenerator().New(node_unit, "_scores_softcap");
+    RETURN_IF_ERROR(AddSoftcapNode(qnn_model_wrapper, node_unit,
+                                   scores_cur, sc_out,
+                                   qk_shape, dtype, q_quant,
+                                   softcap,
+                                   do_op_validation));
+    scores_cur = sc_out;
+  }
+
+  // ---- qk_matmul_output mode 1: post-softcap, pre-mask ----
+  if (has_qk_output && qk_mode == 1) {
+    qk_captured = scores_cur;
+  }
 
   // ---- Causal mask (is_causal=1): ADD static lower-triangular mask ----
   // With KV cache: offset = S_past so that row i attends to positions <= i+S_past.
@@ -1380,23 +1394,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     scores_cur = attn_masked_out;
   }
 
-  // ---- qk_matmul_output mode 1: post-mask, pre-softcap ----
-  if (has_qk_output && qk_mode == 1) {
-    qk_captured = scores_cur;
-  }
-
-  // ---- Softcap (applied AFTER masks per ONNX spec) ----
-  if (softcap != 0.0f) {
-    const std::string sc_out = utils::UniqueNameGenerator().New(node_unit, "_scores_softcap");
-    RETURN_IF_ERROR(AddSoftcapNode(qnn_model_wrapper, node_unit,
-                                   scores_cur, sc_out,
-                                   qk_shape, dtype, q_quant,
-                                   softcap,
-                                   do_op_validation));
-    scores_cur = sc_out;
-  }
-
-  // ---- qk_matmul_output mode 2: post-softcap ----
+  // ---- qk_matmul_output mode 2: post-softcap+mask ----
   if (has_qk_output && qk_mode == 2) {
     qk_captured = scores_cur;
   }
