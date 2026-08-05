@@ -956,10 +956,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t soc_model = QNN_SOC_MODEL_UNKNOWN;
   if (enable_multi_soc_ep_context_) {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
     // Only enable on x86 platforms.
     LOG_AND_THROW_ERROR(logger_, "Multi-SoC EP context is only supported on x86 platforms and offline preparation.");
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
     if (!context_cache_enabled_) {
       LOG_AND_THROW_ERROR(logger_, "Per-SoC configurations are only supported for EP context enabled.");
     }
@@ -3206,11 +3206,11 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Validating compatibility info: " + info_string).c_str());
   }
 
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation on x86 platforms.");
   *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   return nullptr;
-#endif
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 
   qnn::QnnCompatibilityInfo info;
   Ort::Status status = qnn_cache_compatibility_manager_->DeserializeCompatibilityInfo(info_string, info);

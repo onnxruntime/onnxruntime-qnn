@@ -3142,7 +3142,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
     return Ort::Status();
   }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
   RETURN_IF(qnn_interface_.deviceGetPlatformInfo == nullptr || qnn_interface_.deviceFreePlatformInfo == nullptr,
             "Failed to get valid QnnDevice function pointers.");
 
@@ -3187,7 +3187,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
   if (htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
     htp_arch_internal_ = htp_arch_;
   }
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
 
   return Ort::Status();
 }
