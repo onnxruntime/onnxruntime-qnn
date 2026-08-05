@@ -773,6 +773,116 @@ TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
+// MatMulAddFusion (Gemm sandwiched by Reshapes) supergroup tests. The QDQ selector absorbs
+// the trailing Reshape (and Relu when Q's encoding is bounded to [0, +inf)) into the Gemm
+// unit; the op-builder emits FC (rank-2, encoded) + QNN Reshape (rank-N, same encoding).
+namespace {
+
+//   input (rank-3, float) -> Q(ActQType) -> DQ ─┐
+//                                               ├─ MatMul -> Add(DQ'd int32 bias) -> [Relu] -> Q -> DQ -> output
+//   weight (rank-2, float, static) -> Q(WtQType) -> DQ ┘
+// The activation is rank-3 so MatMulAddFusion inserts the Reshape wrappers around
+// the resulting rank-2 Gemm. The output Q's zero_point is 0 (encoding_min == 0),
+// so the Relu fold is safe.
+template <typename ActQType, typename WtQType>
+GetTestModelFn BuildMatMulAddFusionQDQTestCase(int64_t M, int64_t K, int64_t N, bool include_relu) {
+  return [M, K, N, include_relu](ModelTestBuilder& builder) {
+    const std::vector<int64_t> act_shape{1, M, K};
+    const std::vector<int64_t> weight_shape{K, N};
+    const std::vector<int64_t> bias_shape{N};
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(act_shape, false, -1.0f, 1.0f));
+    QuantParams<ActQType> act_qp = QuantParams<ActQType>::Compute(-1.0f, 1.0f, /*symmetric=*/false);
+    const std::string act_qdq = AddQDQNodePair<ActQType>(builder, "act", "input", act_qp.scale,
+                                                         act_qp.zero_point, /*use_contrib_qdq=*/true);
+
+    // Static weight -> DQ.
+    QuantParams<WtQType> wt_qp = QuantParams<WtQType>::Compute(-0.5f, 0.5f, /*symmetric=*/true);
+    TestInputDef<float> wt_def(weight_shape, /*is_initializer=*/true,
+                               GetFloatDataInRange(-0.5f, 0.5f, static_cast<size_t>(K * N)));
+    std::vector<WtQType> wt_quantized(static_cast<size_t>(K * N));
+    const std::vector<float> wt_scales{wt_qp.scale};
+    const std::vector<WtQType> wt_zps{wt_qp.zero_point};
+    QuantizeValues<float, WtQType>(wt_def.GetRawData(), wt_quantized, weight_shape,
+                                   wt_scales, wt_zps, std::nullopt);
+    builder.MakeInitializer<WtQType>("weight_q", weight_shape, wt_quantized);
+    builder.AddDequantizeLinearNode<WtQType>("weight_dq", "weight_q", wt_qp.scale,
+                                             wt_qp.zero_point, "weight_dq", /*use_contrib_qdq=*/true);
+
+    // MatMul.
+    builder.AddNode("MatMul", "MatMul", {act_qdq, "weight_dq"}, {"mm_out"}, kOnnxDomain);
+
+    // DQ'd int32 bias with bias_scale = act_scale * weight_scale.
+    TestInputDef<float> bias_def(bias_shape, /*is_initializer=*/true,
+                                 GetFloatDataInRange(-0.2f, 0.2f, static_cast<size_t>(N)));
+    const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
+                                                     act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
+    builder.AddNode("Add", "Add", {"mm_out", bias_dq}, {"add_out"}, kOnnxDomain);
+
+    // Optional Relu.
+    const std::string post_activation = include_relu ? "relu_out" : "add_out";
+    if (include_relu) {
+      builder.AddNode("Relu", "Relu", {"add_out"}, {"relu_out"});
+    }
+
+    // Output Q(zp=0) makes the encoding safe for the Relu fold; ORT normally drops
+    // Relu itself in this case, but we assert that even if the Relu survives (e.g.,
+    // because L2 cleanup decides to keep it), the group forms and QNN accepts the FC.
+    QuantParams<ActQType> out_qp = QuantParams<ActQType>::Compute(0.0f, 8.0f, /*symmetric=*/false);
+    AddQDQNodePairWithOutputAsGraphOutput<ActQType>(builder, "out", post_activation,
+                                                    out_qp.scale, out_qp.zero_point,
+                                                    /*use_contrib_qdq=*/true);
+  };
+}
+
+ProviderOptions GetMatMulAddFusionProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On x86_64 Linux, the default HTP validator is v68 which lacks 16-bit-weight FC support.
+  // Pin to SM8550 (v73) to validate 16-bit-weight paths without a real device.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// U16 activation, U8 weight, no Relu: baseline shape validated by
+// the default v68 HTP validator, no soc_model override needed.
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_U16Act_U8Weight_NoRelu) {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint16_t, uint8_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/false),
+                  opts, /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// U16 activation, U8 weight, with Relu: baseline shape.
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_U16Act_U8Weight_WithRelu) {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint16_t, uint8_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/true),
+                  opts, /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// U16 activation, S16 weight, with Relu.
+// On x86 Linux the v68 default validator rejects 16-bit-weight FC (QNN error 3110); the
+// provider options above pin to SM8550 (v73) to validate.
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_U16Act_S16Weight_WithRelu) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint16_t, int16_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/true),
+                  GetMatMulAddFusionProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)

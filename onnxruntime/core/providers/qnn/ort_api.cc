@@ -243,10 +243,14 @@ OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& n
     : dq_nodes_(node_group.dq_nodes),
       target_node_(node_group.target_node),
       redundant_clip_node_(node_group.redundant_clip_node ? node_group.redundant_clip_node : nullptr),
+      output_reshape_node_(node_group.output_reshape_node ? node_group.output_reshape_node : nullptr),
       q_nodes_(node_group.q_nodes),
       type_(Type::QDQGroup),
       inputs_(GetQDQIODefs(target_node_, node_group, true, ort_api)),
-      outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)) {
+      outputs_(GetQDQIODefs(
+          (redundant_clip_node_ ? redundant_clip_node_
+                                : (output_reshape_node_ ? output_reshape_node_ : target_node_)),
+          node_group, false, ort_api)) {
 }
 
 OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {

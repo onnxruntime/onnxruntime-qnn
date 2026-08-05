@@ -1466,15 +1466,102 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
     }
   }
 
-  // Find Q nodes that consume from this node or the clip node
+  // Detect the MatMulAddFusion post-Gemm Reshape: for a rank-2 Gemm sandwiched by rank-adapter
+  // Reshapes, absorb the trailing Reshape so its downstream Q's encoding attaches to the group.
+  // Supported downstream chains:
+  //   Gemm -> Reshape -> Q                     (Relu already dropped by ORT because Q.zp==0)
+  //   Gemm -> Reshape -> Relu/Clip -> Q        (Relu survives, encoding-safe fold applies)
+  const OrtNode* output_reshape_node = nullptr;
+  if (clip_node == nullptr && Ort::ConstNode(node).GetOperatorType() == "Gemm" && output_count == 1) {
+    std::vector<const OrtValueInfo*> gemm_outs(1);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, gemm_outs.data(), gemm_outs.size()), ort_api, std::nullopt);
+    if (gemm_outs[0] != nullptr) {
+      size_t gemm_out_consumers = 0;
+      ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(gemm_outs[0], &gemm_out_consumers), ort_api);
+      if (gemm_out_consumers == 1) {
+        const OrtNode* candidate_reshape = nullptr;
+        int64_t unused_idx = 0;
+        ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(gemm_outs[0], &candidate_reshape, &unused_idx, 1), ort_api);
+        if (candidate_reshape != nullptr &&
+            Ort::ConstNode(candidate_reshape).GetOperatorType() == "Reshape") {
+          size_t reshape_out_count = 0;
+          RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(candidate_reshape, &reshape_out_count), ort_api, std::nullopt);
+          if (reshape_out_count == 1) {
+            std::vector<const OrtValueInfo*> reshape_outs(1);
+            RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(candidate_reshape, reshape_outs.data(), reshape_outs.size()), ort_api, std::nullopt);
+            bool reshape_out_graph_output = false;
+            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(reshape_outs[0], &reshape_out_graph_output), ort_api);
+            size_t reshape_out_consumers = 0;
+            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(reshape_outs[0], &reshape_out_consumers), ort_api);
+            if (reshape_out_consumers == 1 && !reshape_out_graph_output) {
+              const OrtNode* candidate_next = nullptr;
+              int64_t unused_next_idx = 0;
+              ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(reshape_outs[0], &candidate_next, &unused_next_idx, 1), ort_api);
+              if (candidate_next != nullptr) {
+                const std::string next_op = Ort::ConstNode(candidate_next).GetOperatorType();
+                if (next_op == "QuantizeLinear") {
+                  output_reshape_node = candidate_reshape;
+                } else if (next_op == "Relu" || next_op == "Clip") {
+                  // Reshape -> Relu/Clip -> Q. Run the same encoding-safe check that the
+                  // direct Relu/Clip fold uses, then fold both.
+                  size_t clip_out_count = 0;
+                  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(candidate_next, &clip_out_count), ort_api, std::nullopt);
+                  if (clip_out_count == 1) {
+                    std::vector<const OrtValueInfo*> clip_outs(1);
+                    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(candidate_next, clip_outs.data(), clip_outs.size()), ort_api, std::nullopt);
+                    bool clip_is_graph_output = false;
+                    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(clip_outs[0], &clip_is_graph_output), ort_api);
+                    size_t clip_out_consumers = 0;
+                    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(clip_outs[0], &clip_out_consumers), ort_api);
+                    if (clip_out_consumers == 1 && !clip_is_graph_output) {
+                      const OrtNode* candidate_q = nullptr;
+                      int64_t unused_q_idx = 0;
+                      ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(clip_outs[0], &candidate_q, &unused_q_idx, 1), ort_api);
+                      if (candidate_q != nullptr && Ort::ConstNode(candidate_q).GetOperatorType() == "QuantizeLinear") {
+                        float scale_val = 0.0f;
+                        int64_t zero_point = 0;
+                        Qnn_DataType_t qnn_dt = QNN_DATATYPE_UNDEFINED;
+                        bool safe = false;
+                        if (GetQNodeScaleAndZeroPoint(graph, ort_api, candidate_q, scale_val, zero_point, qnn_dt)) {
+                          int64_t qmin = 0, qmax = 0;
+                          if (qnn::utils::GetQminQmax(qnn_dt, qmin, qmax).IsOK()) {
+                            float encoding_min = scale_val * static_cast<float>(qmin - zero_point);
+                            float encoding_max = scale_val * static_cast<float>(qmax - zero_point);
+                            float activation_min = 0.0f;
+                            float activation_max = std::numeric_limits<float>::max();
+                            if (next_op == "Clip") {
+                              GetClipMinMax(graph, ort_api, candidate_next, activation_min, activation_max);
+                            }
+                            safe = (encoding_min >= activation_min && encoding_max <= activation_max);
+                          }
+                        }
+                        if (safe) {
+                          output_reshape_node = candidate_reshape;
+                          clip_node = candidate_next;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Find Q nodes that consume from this node or the clip node (or the absorbed output Reshape).
   std::vector<const OrtNode*> q_nodes;
+
+  const OrtNode* q_anchor = clip_node ? clip_node : (output_reshape_node ? output_reshape_node : node);
 
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(clip_node ? clip_node : node, &num_outputs), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(q_anchor, &num_outputs), ort_api, std::nullopt);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(clip_node ? clip_node : node, outputs.data(), outputs.size()), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(q_anchor, outputs.data(), outputs.size()), ort_api, std::nullopt);
 
   // For each output, get the consumer nodes
   for (size_t i = 0; i < num_outputs; ++i) {
@@ -1516,6 +1603,10 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
     if (clip_node) {
       node_group.redundant_clip_node = clip_node;
+    }
+
+    if (output_reshape_node) {
+      node_group.output_reshape_node = output_reshape_node;
     }
 
     // Add DQ node indices
@@ -1911,6 +2002,11 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
         }
 
         supported_group.push_back(node);
+        const OrtNode* output_reshape_node = node_unit->GetOutputReshapeNode();
+        if (output_reshape_node) {
+          supported_group.push_back(output_reshape_node);
+          supported_group_border.erase(output_reshape_node);
+        }
         const OrtNode* redundent_clip_node = node_unit->GetRedundantClipNode();
         if (redundent_clip_node) {
           supported_group.push_back(redundent_clip_node);
@@ -2002,6 +2098,9 @@ GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& log
     add_node_unit_to_map({qdq_selection.target_node}, qdq_unit.get());
     if (qdq_selection.redundant_clip_node) {
       add_node_unit_to_map({qdq_selection.redundant_clip_node}, qdq_unit.get());
+    }
+    if (qdq_selection.output_reshape_node) {
+      add_node_unit_to_map({qdq_selection.output_reshape_node}, qdq_unit.get());
     }
 
     node_unit_holder.push_back(std::move(qdq_unit));
