@@ -23,6 +23,7 @@ namespace qnn {
 // Forward declarations
 class BF16ConversionGuard;
 class OpTraceCollector;
+class OpAffinityMap;  // pointer only (avoids an include cycle)
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -33,8 +34,6 @@ struct TensorInfo {
   bool is_initializer;
   const OrtValueInfo* initializer_tensor;
 };
-
-class OpAffinityMap;  // forward-declared; pointer only (avoids an include cycle)
 
 struct ModelSettings {
   bool offload_graph_io_quantization = false;

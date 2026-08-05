@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#include "core/providers/qnn/qnn_op_affinity_map.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 
 #include <algorithm>
 #include <cctype>

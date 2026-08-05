@@ -35,7 +35,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/qnn_op_affinity_map.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 
 namespace onnxruntime {
 namespace qnn {
