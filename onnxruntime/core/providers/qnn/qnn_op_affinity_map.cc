@@ -25,10 +25,11 @@ std::string ToLower(std::string s) {
 }
 
 // Map a (case-insensitive) backend name to the enum via QnnBackendTypeToString (single source of
-// truth, so parsing and matching can't drift). nullopt for an unknown name.
+// truth, so parsing and matching can't drift). nullopt for an unknown name. Bounded at HTP_FP16,
+// not SERIALIZER: SERIALIZER is not a valid execution backend and must not be user-configurable.
 std::optional<QnnBackendType> BackendFromName(const std::string& raw_name) {
   const std::string name = ToLower(raw_name);
-  for (uint8_t i = 0; i <= static_cast<uint8_t>(QnnBackendType::SERIALIZER); ++i) {
+  for (int i = 0; i <= static_cast<int>(QnnBackendType::HTP_FP16); ++i) {
     const auto backend = static_cast<QnnBackendType>(i);
     if (name == QnnBackendTypeToString(backend)) {
       return backend;

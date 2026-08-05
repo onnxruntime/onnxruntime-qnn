@@ -9,7 +9,6 @@
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/qnn_op_affinity_map.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -46,25 +45,10 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
 
-  // IsNpuBackend() covers both HTP and DSP (see qnn_def.cc); GQA is validated on HTP only, but we
-  // follow the house predicate rather than a narrower bt == HTP check (there is no IsHtpBackend).
-  RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
-                "GroupQueryAttention is only supported with the GPU and HTP/DSP (NPU) backends");
-
-  // HTP-specific legality (fp16/head_size/max_seq_len/VTCM budget) is intentionally left to the
-  // backend's op-config validation at the CreateQnnNode(do_op_validation=true) call below, rather
-  // than duplicated here as early declines. This matches the pre-existing GPU path: enabling NPU
-  // bypasses no legality the GPU path already relied on.
-
-  // op_affinity gate. On HTP, the EP seeds a default CPU pin for this op unless config overrides it
-  if (const qnn::OpAffinityMap* affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
-      affinity != nullptr) {
-    const auto decision = affinity->Evaluate("GroupQueryAttention", backend_type);
-    RETURN_IF(decision == qnn::OpAffinityMap::Decision::kError,
-              "GroupQueryAttention op_affinity pins it to a backend this session is not running.");
-    RETURN_IF_NOT(decision == qnn::OpAffinityMap::Decision::kProceed,
-                  "GroupQueryAttention filtered off QNN by the op_affinity provider option.");
-  }
+  RETURN_IF_NOT(IsGpuBackend(backend_type) ||
+                    backend_type == QnnBackendType::HTP ||
+                    backend_type == QnnBackendType::HTP_FP16,
+                "GroupQueryAttention is only supported with the GPU and HTP/HTP_FP16 backends");
 
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();

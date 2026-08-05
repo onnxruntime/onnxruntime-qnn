@@ -246,7 +246,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
-  qnn::OpAffinityMap op_affinity_map_;
+  qnn::OpAffinityMap op_affinity_map_;  // Pointed to by model_settings_.op_affinity; must outlive model_settings_.
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 
   bool dump_json_qnn_graph_ = false;

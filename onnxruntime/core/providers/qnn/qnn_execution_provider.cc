@@ -1076,7 +1076,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                            op_affinity_path.end());
   }
   if (!op_affinity_path.empty()) {
-    op_affinity_map_ = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
+    try {
+      op_affinity_map_ = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
+    } catch (const std::exception& e) {
+      std::string message = "Failed to load op_affinity config file '" + op_affinity_path +
+                            "': " + e.what();
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+      throw std::runtime_error(message);
+    }
   }
   model_settings_.op_affinity = &op_affinity_map_;
   // Check BF16 compatibility early

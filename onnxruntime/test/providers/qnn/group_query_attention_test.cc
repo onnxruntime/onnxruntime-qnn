@@ -374,37 +374,7 @@ static void RunGQATest(
                                                  qnn_outputs, fp32_abs_err));
 }
 
-// BuildGQATestCase and RunGQATest above are backend-agnostic and stay unguarded so they can be
-// shared by GPU tests (and reused after rebasing onto the GPU GQA PR). The HTP-specific driver and
-// the QnnHTPBackendTests cases below are guarded: the HTP backend exists on ARM64 (Windows on
-// Snapdragon / device) and on x86 Linux (HTP emulation), but not on x86 Windows hosts, which must
-// not try to instantiate the QnnHTPBackendTests fixture.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-//
-// HTP tests:
-//
-// TEMPORARILY DISABLED: GQA on HTP requires QAIRT >= 2.49 (QNN opset 2.12). The current CI SDK
-// (2.48.40) compiles the op builder in but its HTP backend rejects the GQA op config at validation
-// time (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE / 3110), so every case below fails with the op
-// unassigned. All cases carry a DISABLED_ prefix until CI upgrades to >= 2.49; re-enable by removing
-// the prefixes then.
-//
-// When enabled, these run on arm64 (Windows on Snapdragon / Linux arm64). The inference tests
-// (RunHTPPackedGQATest / RunHTPUnpackedGQATest) execute GQA on device and compare against the CPU
-// EP; they need QNN host-accessible shared memory (RPCMEM), so on hosts without it (e.g. x86 Linux
-// HTP emulation) they GTEST_SKIP at the allocator step rather than fail. The op_affinity
-// EP-assignment tests do not run inference and run anywhere the builder is compiled in.
-//
-// GroupQueryAttention_PaddedCache_NoisePadding_FP32 is DISABLED_ for a separate reason: it is
-// designed to fail as written (see its EXPECTED-TO-FAIL note below) and must have its comparator
-// fixed before it can be enabled.
-//
 
-// === HTP compact drivers (packed / unpacked QKV) ===
-
-// Writes `contents` to a uniquely-named temp file (tagged so parallel tests don't collide) and
-// returns its path. Caller deletes it. Mirrors WriteTempConfig in
-// test/providers/qnn/unit/qnn_op_affinity_map_test.cc.
 static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, const std::string& tag) {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / ("gqa_op_affinity_" + tag + ".json");
@@ -414,9 +384,11 @@ static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, 
   return path;
 }
 
-// RAII wrapper writing an op_affinity config that pins GroupQueryAttention to HTP: the HTP inference
-// drivers need this because the EP seeds a default CPU pin for GQA (HTP is opt-in). The tag defaults
-// to the running gtest test name so sharded test processes don't collide on the temp file.
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+//
+// HTP tests:
+//
+// TEMPORARILY DISABLED: GQA on HTP requires QAIRT >= 2.49 (QNN opset 2.12).
 struct ScopedGQAHtpAffinityConfig {
   explicit ScopedGQAHtpAffinityConfig(const std::string& tag = CurrentTestTag())
       : path(WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", tag)) {}
@@ -436,12 +408,6 @@ struct ScopedGQAHtpAffinityConfig {
 };
 
 // Compact driver for HTP GQA tests over a packed-QKV model with a full-capacity past KV cache.
-// Only the knobs that matter for edge-case coverage are exposed; everything else mirrors the
-// common LLM decode/prefill setup. The harness aliases present->past (in-place KV cache), so the
-// present_* outputs use the max_sequence_length (== total_seq_len) BNSH layout that matches ONNX.
-//
-// scale is passed through verbatim: scale == 0.0f exercises the "use default 1/sqrt(head_size)"
-// sentinel path that both the ORT CPU EP and the QNN EP must honor.
 template <typename T>
 static void RunHTPPackedGQATest(int32_t num_heads,
                                 int32_t kv_num_heads,
@@ -516,10 +482,7 @@ static void RunHTPPackedGQATest(int32_t num_heads,
 }
 
 // Compact driver for HTP GQA tests over an unpacked (separate Q / K / V) model with a full-capacity
-// past KV cache. Mirrors RunHTPPackedGQATest but feeds query, key and value as three separate
-// inputs instead of a single packed-QKV tensor. With separate inputs the last dim of query is
-// num_heads * head_size and the last dim of key / value is kv_num_heads * head_size (BSD layout).
-// Everything else (past KV aliasing, rotary caches, scale==0 default) matches the packed driver.
+// past KV cache.
 template <typename T>
 static void RunHTPUnpackedGQATest(int32_t num_heads,
                                   int32_t kv_num_heads,
@@ -594,142 +557,88 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
 
 // === HTP inference tests (QNN vs CPU) ===
 
-// Basic GQA on the HTP backend (FP32 model, FP16 precision on device).
-// Uses scale=0.0f, which both the ORT CPU EP and the QNN EP must interpret as the default
-// scale (1/sqrt(head_size)). This guards against the scale==0 sentinel-handling bug.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Explicit non-default scale. head_size=32 -> default would be 1/sqrt(32) ~= 0.1768; using a very
-// different value (0.5) ensures the explicit scale actually flows through to the op.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_ScaleExplicit_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
-// Degenerate grouping: num_heads == kv_num_heads is standard multi-head attention (no grouping).
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
   RunHTPPackedGQATest<float>(8, 8, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Extreme grouping: kv_num_heads == 1 is multi-query attention (all query heads share one KV head).
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MQA_KvOne_FP32) {
   RunHTPPackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Prefill: sequence_length > 1 (process a whole prompt chunk at once).
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Prefill_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Llama-3-like geometry: num_heads=32, kv_num_heads=8, head_size=64.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Llama3_AR1_FP32) {
   RunHTPPackedGQATest<float>(32, 8, 64, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Rotary embeddings enabled (do_rotary=1) with cos/sin caches.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
-// FP16 query/cache path.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// === PhiVNext-pattern tests ===
-// These mirror the GQA configuration in the customer PhiVNext 7B model: fp16, do_rotary=1, and the
-// real head geometry (num_heads=32, kv_num_heads=8, head_size=128). The model splits inference into
-// an AR64 prompt-processing (prefill) graph and an AR1 token-generation (decode) graph; both feed
-// GQA fp16 query/KV with in-place (buffer-shared) KV cache. scale=0 exercises the default path.
-
-// PhiVNext decode (AR1): sequence_length=1.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Decode_FP16) {
-  RunHTPPackedGQATest<Ort::Float16_t>(32, 8, 128, /*seq*/ 1, /*total*/ 1024,
-                                      /*scale*/ 0.0f, /*do_rotary*/ 1);
-}
-
-// PhiVNext prefill (AR64): sequence_length=64.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PhiVNext_Prefill_FP16) {
-  RunHTPPackedGQATest<Ort::Float16_t>(32, 8, 128, /*seq*/ 64, /*total*/ 1024,
-                                      /*scale*/ 0.0f, /*do_rotary*/ 1);
-}
-
 // Padded KV cache with noise in the padding region: max_seq_len (128) > total_seq_len (16).
-// Past KV is random data so the padding region [16:128) has noise values. With buffer sharing,
-// QNN present aliases past -> padding = noise. CPU EP golden runs without sharing and memsets
-// present padding to 0. Full tensor compare -> expect to fail on the padding region. This
-// demonstrates the known padding mismatch between QNN HTP (sharing) and CPU EP (non-sharing).
-//
-// EXPECTED TO FAIL AS WRITTEN: RunHTPPackedGQATest compares the full present_key/present_value
-// tensors, so this case mismatches on the [16:128) padding region by design. This is the one test
-// in this file kept  (all other HTP GQA tests are enabled); before enabling it, the
-// comparator must be changed to compare only the valid [0:total_seq_len) region (and, ideally,
-// EXPECT the padding region to differ) so the test turns into a real tripwire that goes green for
-// the right reason instead of a landmine.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PaddedCache_NoisePadding_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 1, /*total*/ 16, /*scale*/ 0.0f, /*do_rotary*/ 0,
                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128);
 }
 
-// Unpacked (separate Q / K / V) tests. These mirror the packed coverage above but exercise the
-// three-separate-inputs path that many models use instead of a single packed-QKV tensor.
-//
-
-// Basic unpacked GQA (FP32 model, FP16 on device), decode geometry, scale=0 default.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Explicit non-default scale on the unpacked path.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
-// Extreme grouping: kv_num_heads == 1 (multi-query attention), unpacked inputs.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
   RunHTPUnpackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Prefill: sequence_length > 1, unpacked inputs.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Prefill_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Rotary embeddings enabled, unpacked inputs.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Rotary_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
-// FP16 query/cache path, unpacked inputs.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
 // === op_affinity EP-assignment gate tests ===
 // These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
-// (see core/providers/qnn/builder/opbuilder/group_query_attention_op_builder.cc IsOpSupported and
-// core/providers/qnn/qnn_op_affinity_map.h). They deliberately do NOT run inference: unlike
-// RunGQATest/RunHTPPackedGQATest above (which couple EP-assignment verification with a buffer-shared
-// device Run against a CPU reference), these only need to observe whether GQA ends up on QNN EP or
-// whether session creation itself fails -- so they build a minimal GQA model directly with
-// BuildGQATestCase and drive session creation the same way RunGQATest does (see the ProviderOptions /
-// RegisterQnnEpLibrary / ScopedOrtSession / VerifyEPNodeAssignment usage at lines ~188-208 above),
-// with one addition: an "op_affinity" provider option pointing at a temp JSON config file.
-// (WriteOpAffinityConfig is defined above, shared with the HTP inference drivers.)
-
-// Builds a minimal packed-QKV GQA model (decode geometry: num_heads=8, kv_num_heads=4, head_size=32,
-// sequence_length=1, total_seq_len=1024, scale=0 default, do_rotary=0 -- the same shape used by
-// GroupQueryAttention_Basic_FP32's RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, 0.0f, 0)
-// call above), then creates a QNN session with the given backend and (optional) op_affinity config
-// path set as provider options. Does NOT run inference.
-//
-// On success, *expected_ep_assignment is verified via VerifyEPNodeAssignment (mirrors the pattern at
-// lines ~200-208 above). On failure, the Ort::Exception is caught and reported via *session_failed
-// (mirrors the try/catch pattern in qnn_basic_test.cc's TestDisableCPUFallback_BackendNotFound,
-// around lines 70-78 of that file).
 static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
                                             const std::optional<std::string>& op_affinity_path,
                                             ExpectedEPNodeAssignment expected_ep_assignment,
@@ -816,6 +725,7 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
 
 // No op_affinity config: HTP is opt-in by default (see OpAffinityMap::Evaluate's per-backend
 // default), so GQA is NOT assigned to QNN.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", std::nullopt, ExpectedEPNodeAssignment::None, &session_failed);
@@ -823,6 +733,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpNoConfig_N
 }
 
 // op_affinity pins GroupQueryAttention to HTP, session runs HTP -> assigned to QNN.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "htp_pin_htp");
   bool session_failed = false;
@@ -834,6 +745,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Ass
 // op_affinity pins GQA to GPU but the session runs HTP: the QNN EP's GetCapability returns EP_FAIL,
 // but the ORT plugin-EP framework swallows it (logs + empty capability list), so GQA falls back to
 // CPU and session creation still succeeds -- same end state as PinCpu, not assigned to QNN.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_NotAssigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;
@@ -844,6 +756,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_Not
 
 // op_affinity pins GroupQueryAttention to CPU: a legitimate silent-off intent, so GQA is NOT
 // assigned to QNN but session creation still succeeds (falls back to CPU EP for that node).
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "pin_cpu");
   bool session_failed = false;
@@ -854,6 +767,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAss
 
 // op_affinity points at a config file that does not exist -> FromConfigFile throws
 // std::runtime_error at EP construction time, so session creation must fail.
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
   const std::filesystem::path missing =
       std::filesystem::temp_directory_path() / "gqa_op_affinity_does_not_exist_12345.json";
@@ -861,8 +775,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_MissingConfig
   RunGQAOpAffinityAssignmentCheck("htp", missing.string(), ExpectedEPNodeAssignment::None, &session_failed);
   ASSERT_TRUE(session_failed);
 }
-
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

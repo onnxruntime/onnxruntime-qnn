@@ -59,7 +59,7 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) 
+- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - A single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
 - Archives (`.zip` and `.tgz`)
   - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Windows and Linux hosts and targets.
@@ -339,9 +339,9 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 |`"op_affinity"`|Description|
 |---|---|
-|Path to a JSON config file (string)|Pins specific ONNX op types to a backend. Currently gates `GroupQueryAttention` only. See [OP Affinity](#op-affinity) below. Not set by default.|
+|Path to a JSON config file (string)|Pins specific ONNX op types to a backend. See [Op Affinity](#op-affinity) below. Not set by default.|
 
-#### OP Affinity
+#### Op Affinity
 
 The `op_affinity` option points at a JSON config file that pins ONNX op types to a single backend:
 
@@ -634,7 +634,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
 |com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU and HTP/NPU backends (float precision); requires QAIRT SDK ≥ 2.48 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
+|com.microsoft:GroupQueryAttention|GPU and HTP/NPU backends (float precision); requires QAIRT SDK ≥ 2.49 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
 |com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:QuickGelu||
