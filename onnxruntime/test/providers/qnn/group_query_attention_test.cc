@@ -374,7 +374,6 @@ static void RunGQATest(
                                                  qnn_outputs, fp32_abs_err));
 }
 
-
 static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, const std::string& tag) {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / ("gqa_op_affinity_" + tag + ".json");
