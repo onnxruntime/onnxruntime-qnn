@@ -305,30 +305,6 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
-// Parses a uint32 session config entry. Returns `default_value` if the key is
-// absent or unparseable (logs a WARNING in the latter case).
-// If `was_set` is non-null it is set to true when the key is explicitly present.
-static uint32_t ParseUint32ConfigEntry(const OrtApi& ort_api,
-                                       const OrtSessionOptions& session_options,
-                                       const std::string& key,
-                                       uint32_t default_value,
-                                       const Ort::Logger& logger,
-                                       bool* was_set = nullptr) {
-  std::string str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options, key, "", str);
-  if (was_set) *was_set = !str.empty();
-  if (str.empty()) return default_value;
-  try {
-    return static_cast<uint32_t>(std::stoul(str));
-  } catch (...) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                ("Invalid value for " + key + ": '" + str + "'. Using default " +
-                 std::to_string(default_value) + ".")
-                    .c_str());
-    return default_value;
-  }
-}
-
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
