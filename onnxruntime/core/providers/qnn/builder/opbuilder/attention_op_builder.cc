@@ -1294,7 +1294,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   std::string scores_cur = qk_out;
 
   // ---- qk_matmul_output mode 0: raw post-QK scores (pre-mask, pre-softcap) ----
-  // Per ONNX spec the pipeline is: QK → masks → softcap → softmax
+  // Per ONNX spec the pipeline is: QK → softcap → masks → softmax
   // mode 0 = raw QK, mode 1 = post-mask pre-softcap,
   // mode 2 = post-softcap,  mode 3 = post-softmax.
   std::string qk_captured;  // The intermediate captured for qk_matmul_output.
