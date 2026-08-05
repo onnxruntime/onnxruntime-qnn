@@ -441,7 +441,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
     qnn::HtpGraphConfigs_t config{vtcm_size_in_mb_per_soc[idx],
                                   htp_graph_finalization_opt_mode_,
                                   enable_HTP_FP16_precision_,
-                                  /*disable_htp_monolithic_lstm=*/true};
+                                  /*disable_htp_monolithic_lstm=*/true,
+                                  enable_htp_fp16_clamp_overflow_};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -894,6 +895,25 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                FormatEPConfigKey("enable_htp_fp16_precision"),
                                                false,
                                                logger_);
+
+  // HTP fp16 clamp overflow. Default false. On HTP Arch v79+ (e.g. Glymur/v81),
+  // fp16 Conv accumulator overflow becomes NaN and propagates to the output
+  // (pre-v79 kept it finite). When true, saturate such overflow to the fp16 max
+  // value instead of NaN. Requires QAIRT SDK >= 2.49.
+  static constexpr const char* kEnableHtpFp16ClampOverflow = "enable_htp_fp16_clamp_overflow";
+  enable_htp_fp16_clamp_overflow_ = ParseBoolOption(ort_api,
+                                                    session_options_,
+                                                    FormatEPConfigKey(kEnableHtpFp16ClampOverflow),
+                                                    false,
+                                                    logger_);
+#ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  // Warn once at parse time (not per graph) if the option was requested but the SDK lacks support.
+  if (enable_htp_fp16_clamp_overflow_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_fp16_clamp_overflow was requested but the QNN HTP SDK in use does "
+                "not support it (requires QAIRT >= 2.49). Ignoring.");
+  }
+#endif
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
@@ -1638,6 +1658,18 @@ void QnnEp::InitQnnHtpGraphConfigs(
       gsl::not_null<QnnGraph_Config_t*> graph_precision_config = configs_builder.PushConfig();
       graph_precision_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_precision_config->customConfig = htp_graph_precision_config;
+    }
+
+    if (configs.enable_htp_fp16_clamp_overflow) {
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_fp16_clamp_config = configs_builder.PushCustomConfig();
+      htp_fp16_clamp_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW;
+      htp_fp16_clamp_config->fp16ClampOverflow = true;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = htp_fp16_clamp_config;
+#endif
     }
   }
 }
@@ -2713,7 +2745,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     qnn::HtpGraphConfigs_t htp_graph_configs{ep->vtcm_size_in_mb_,
                                              ep->htp_graph_finalization_opt_mode_,
                                              ep->enable_HTP_FP16_precision_,
-                                             /*disable_htp_monolithic_lstm=*/true};
+                                             /*disable_htp_monolithic_lstm=*/true,
+                                             ep->enable_htp_fp16_clamp_overflow_};
     RETURN_IF_NOT_NULL(ep->CompileOnnxModel(graphs, fused_nodes, count, node_compute_infos, htp_graph_configs));
   } else {
     RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
