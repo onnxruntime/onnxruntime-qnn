@@ -56,7 +56,10 @@ bool HaveMatchingIntermediateEncoding(QnnModelWrapper& qnn_model_wrapper,
     // Encoding types differ (or an unsupported encoding) — treat as non-matching.
     return false;
   }
-  return scale_diff == 0.0f && offset_diff == 0;
+  // Match base_op_builder.cc's NEARLY_EQUAL_THRESHOLD: scales that differ only by float
+  // round-off should still be considered equal for fusion purposes.
+  constexpr float kNearlyEqualThreshold = 1e-9f;
+  return scale_diff <= kNearlyEqualThreshold && offset_diff == 0;
 }
 
 // Try to compose the Reshape-as-perm with the Transpose's perm. Returns true on success

@@ -12,6 +12,7 @@
 
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/unittest_util/qdq_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -42,6 +43,49 @@ GetTestModelFn BuildReshapeTransposeFloatCase(const std::vector<int64_t>& input_
 
     builder.MakeScalarInitializer<float>("add_const2", 0.0f);
     builder.AddNode("post_add", "Add", {"transpose_out", "add_const2"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Wraps Reshape and Transpose in a QDQ node unit each: Add -> Q -> DQ -> Reshape -> Q_r -> DQ ->
+// Transpose -> Q_t -> DQ -> Add. All Q/DQ pairs share the same scale/zero-point so the QNN
+// Reshape/Transpose builders (which require aligned input/output quant params) can lower the
+// graph, and the fusion's HaveMatchingIntermediateEncoding check passes.
+GetTestModelFn BuildReshapeTransposeQdqCase(const std::vector<int64_t>& input_shape,
+                                            const std::vector<int64_t>& reshape_shape,
+                                            const std::vector<int64_t>& transpose_perm) {
+  return [input_shape, reshape_shape, transpose_perm](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_transpose_fusion_qdq_graph");
+
+    constexpr float kScale = 1.0f / 128.0f;
+    constexpr uint8_t kZeroPoint = 128;
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(input_shape, false, -1.0f, 1.0f));
+
+    builder.MakeScalarInitializer<float>("add_const1", 0.0f);
+    builder.AddNode("pre_add", "Add", {"input", "add_const1"}, {"pre_add_out"}, kOnnxDomain);
+
+    // pre_add_out -> Q -> DQ -> reshape_in
+    const std::string reshape_in =
+        AddQDQNodePair<uint8_t>(builder, "qdq_reshape_in", "pre_add_out", kScale, kZeroPoint);
+
+    builder.Make1DInitializer<int64_t>("reshape_shape", reshape_shape);
+    builder.AddNode("reshape", "Reshape", {reshape_in, "reshape_shape"}, {"reshape_out"}, kOnnxDomain);
+
+    // reshape_out -> Q_r -> DQ -> transpose_in
+    const std::string transpose_in =
+        AddQDQNodePair<uint8_t>(builder, "qdq_reshape_out", "reshape_out", kScale, kZeroPoint);
+
+    builder.AddNode("transpose", "Transpose", {transpose_in}, {"transpose_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", transpose_perm)});
+
+    // transpose_out -> Q_t -> DQ -> post_add_in
+    const std::string post_add_in =
+        AddQDQNodePair<uint8_t>(builder, "qdq_transpose_out", "transpose_out", kScale, kZeroPoint);
+
+    builder.MakeScalarInitializer<float>("add_const2", 0.0f);
+    builder.AddNode("post_add", "Add", {post_add_in, "add_const2"}, {"output"}, kOnnxDomain);
 
     builder.MakeOutput("output");
   };
@@ -161,6 +205,29 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_EqualNonUnitDims_Identity) {
 
   AssertOpInQnnGraph(dir, "Transpose", 0);
   AssertOpInQnnGraph(dir, "Reshape", 1);
+}
+
+// QDQ Reshape -> QDQ Transpose with matching intermediate encoding.
+// Exercises HaveMatchingIntermediateEncoding on the quantized path: fusion should collapse
+// the pair to a single Transpose in the QNN graph, same as the float case.
+TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_Qdq_MatchingEncoding_SingleTranspose) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["offload_graph_io_quantization"] = "0";
+  const auto dir = MakeDumpDir(provider_options, "ReshapeTransposeFusion_Qdq_Match");
+  auto cleanup = gsl::finally([&dir]() { std::filesystem::remove_all(dir); });
+
+  RunQnnModelTest(BuildReshapeTransposeQdqCase(/*input_shape=*/{1, 4, 4, 1},
+                                               /*reshape_shape=*/{1, 1, 4, 4},
+                                               /*transpose_perm=*/{0, 1, 3, 2}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Fusion fired: exactly one Transpose and zero Reshapes remain in the QNN graph.
+  AssertOpInQnnGraph(dir, "Transpose", 1);
+  AssertOpInQnnGraph(dir, "Reshape", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
