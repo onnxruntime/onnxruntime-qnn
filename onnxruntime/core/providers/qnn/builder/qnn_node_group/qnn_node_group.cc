@@ -60,13 +60,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 
     // op_affinity gate, generic across all op types (not just GroupQueryAttention): if the config
     // pins this op type to a different backend, decline before reaching the op builder.
-    if (const OpAffinityMap* affinity = qmw.GetModelSettings().op_affinity; affinity != nullptr) {
-      const auto decision = affinity->Evaluate(op_type, qmw.GetQnnBackendType());
-      RETURN_IF(decision == OpAffinityMap::Decision::kError,
-                (op_type + " op_affinity pins it to a backend this session is not running.").c_str());
-      RETURN_IF_NOT(decision == OpAffinityMap::Decision::kProceed,
-                    (op_type + " filtered off QNN by the op_affinity provider option.").c_str());
-    }
+    RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
 
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
@@ -228,16 +222,13 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
 
     // op_affinity: a fusion must not smuggle an affinity-pinned-away op onto QNN as part of a
     // larger accepted group. Discard the fusion if any member's op type is rejected for this
-    // session's backend;
+    // session's backend.
     if (fused_node_group != nullptr) {
-      if (const OpAffinityMap* affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
-          affinity != nullptr) {
-        for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {
-          if (affinity->Evaluate(member->OpType(), qnn_model_wrapper.GetQnnBackendType()) !=
-              OpAffinityMap::Decision::kProceed) {
-            fused_node_group = nullptr;
-            break;
-          }
+      const OpAffinityMap& affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
+      for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {
+        if (!affinity.Evaluate(member->OpType(), qnn_model_wrapper.GetQnnBackendType()).IsOK()) {
+          fused_node_group = nullptr;
+          break;
         }
       }
     }

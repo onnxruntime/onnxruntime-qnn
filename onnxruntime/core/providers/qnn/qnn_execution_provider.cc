@@ -1070,7 +1070,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                  FormatEPConfigKey("op_affinity"), "", op_affinity_path);
   if (!op_affinity_path.empty()) {
     try {
-      op_affinity_map_ = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
+      model_settings_.op_affinity = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
     } catch (const std::exception& e) {
       std::string message = "Failed to load op_affinity config file '" + op_affinity_path +
                             "': " + e.what();
@@ -1078,7 +1078,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       throw std::runtime_error(message);
     }
   }
-  model_settings_.op_affinity = &op_affinity_map_;
   // Check BF16 compatibility early
   if (model_settings_.htp_bf16_enable) {
     // Check SoC model
@@ -2027,14 +2026,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // op_affinity: seed GQA's HTP-opt-in default (pin it to CPU unless the config overrides)
   const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
   if (resolved_backend == qnn::QnnBackendType::HTP || resolved_backend == qnn::QnnBackendType::HTP_FP16) {
-    ep->op_affinity_map_.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
   }
 
-  if (const std::optional<std::string> affinity_error =
-          ep->op_affinity_map_.ValidateForSessionBackend(resolved_backend);
-      affinity_error.has_value()) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, affinity_error->c_str());
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, affinity_error->c_str());
+  if (Ort::Status affinity_status = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
+      !affinity_status.IsOK()) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, affinity_status.GetErrorMessage().c_str());
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, affinity_status.GetErrorMessage().c_str());
   }
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {

@@ -104,37 +104,38 @@ OpAffinityMap OpAffinityMap::FromConfigFile(const std::filesystem::path& config_
   return result;
 }
 
-OpAffinityMap::Decision OpAffinityMap::Evaluate(const std::string& op_type,
-                                                QnnBackendType session_backend) const {
+Ort::Status OpAffinityMap::Evaluate(const std::string& op_type,
+                                    QnnBackendType session_backend) const {
   const auto it = op_to_backend_.find(op_type);
   if (it == op_to_backend_.end()) {
-    return Decision::kProceed;  // No pin (config or default): opt-out.
+    return Ort::Status();  // No pin (config or default): opt-out.
   }
   if (BackendMatches(it->second, session_backend)) {
-    return Decision::kProceed;
+    return Ort::Status();
   }
   if (it->second == QnnBackendType::CPU) {
-    return Decision::kReject;  // Pinned to CPU: silent fallback to the CPU EP.
+    return MAKE_EP_FAIL((op_type + " filtered off QNN by the op_affinity provider option.").c_str());
   }
-  return Decision::kError;  // Pinned to an accelerator this session isn't running.
+  return MAKE_EP_FAIL((op_type + " op_affinity pins it to a backend this session is not running.").c_str());
 }
 
 void OpAffinityMap::SeedDefaultIfAbsent(const std::string& op_type, QnnBackendType default_backend) {
   op_to_backend_.emplace(op_type, default_backend);  // no-op if a config pin already exists
 }
 
-std::optional<std::string> OpAffinityMap::ValidateForSessionBackend(QnnBackendType session_backend) const {
+Ort::Status OpAffinityMap::ValidateForSessionBackend(QnnBackendType session_backend) const {
   for (const auto& [op_type, pinned] : op_to_backend_) {
-    // CPU pin is a legitimate silent-off (Evaluate -> kReject). Any other non-matching backend can
-    // never be honored, so report it.
+    // CPU pin is a legitimate silent-off (Evaluate -> !IsOK() but a benign fallback). Any other
+    // non-matching backend can never be honored, so report it.
     if (pinned != QnnBackendType::CPU && !BackendMatches(pinned, session_backend)) {
-      return "op_affinity pins op type '" + op_type + "' to backend '" +
-             QnnBackendTypeToString(pinned) + "', but this session runs backend '" +
-             QnnBackendTypeToString(session_backend) +
-             "'. Heterogeneous execution is not supported; pin it to the running backend or to 'cpu'.";
+      const std::string message = "op_affinity pins op type '" + op_type + "' to backend '" +
+                                  QnnBackendTypeToString(pinned) + "', but this session runs backend '" +
+                                  QnnBackendTypeToString(session_backend) +
+                                  "'. Heterogeneous execution is not supported; pin it to the running backend or to 'cpu'.";
+      return MAKE_EP_FAIL(message.c_str());
     }
   }
-  return std::nullopt;
+  return Ort::Status();
 }
 
 }  // namespace qnn

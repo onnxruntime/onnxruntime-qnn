@@ -15,6 +15,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -23,7 +24,6 @@ namespace qnn {
 // Forward declarations
 class BF16ConversionGuard;
 class OpTraceCollector;
-class OpAffinityMap;  // pointer only (avoids an include cycle)
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -41,7 +41,7 @@ struct ModelSettings {
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
   bool enable_htp_monolithic_lstm = false;
-  const OpAffinityMap* op_affinity = nullptr;
+  OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 
 class QnnModelWrapper {

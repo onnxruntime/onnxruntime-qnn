@@ -20,7 +20,6 @@ namespace test {
 
 using qnn::OpAffinityMap;
 using qnn::QnnBackendType;
-using Decision = qnn::OpAffinityMap::Decision;
 
 namespace {
 
@@ -42,14 +41,14 @@ TEST(QnnUnit_OpAffinityMap, ParsesSingleString) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "single");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
   EXPECT_TRUE(map.IsConfigured());
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
 
 TEST(QnnUnit_OpAffinityMap, ParsesLengthOneArray) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": ["GPU"] } })", "arr1");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kProceed);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
   std::filesystem::remove(path);
 }
 
@@ -58,7 +57,7 @@ TEST(QnnUnit_OpAffinityMap, BackendNameIsCaseInsensitive) {
     const auto path = WriteTempConfig(
         std::string(R"({ "op_type": { "GroupQueryAttention": ")") + spelling + R"(" } })", "case");
     const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-    EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed) << spelling;
+    EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK()) << spelling;
     std::filesystem::remove(path);
   }
 }
@@ -67,7 +66,7 @@ TEST(QnnUnit_OpAffinityMap, HtpAndHtpFp16AreAliases) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "htp_fp16" } })", "alias");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
   // Pinned to htp_fp16, session running HTP -> still matches.
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
 
@@ -135,40 +134,40 @@ TEST(QnnUnit_OpAffinityMap, ThrowsOnNonStringArrayElement) {
 TEST(QnnUnit_OpAffinityMap, UnpinnedOpProceedsOnAnyBackend) {
   const OpAffinityMap map;  // default = unconfigured, nothing pinned
   EXPECT_FALSE(map.IsConfigured());
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kProceed);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::CPU), Decision::kProceed);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::CPU).IsOK());
 }
 
 TEST(QnnUnit_OpAffinityMap, ConfiguredButOpAbsentProceeds) {
   const auto path = WriteTempConfig(R"({ "op_type": { "SomeOtherOp": "HTP" } })", "absent");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kProceed);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
   std::filesystem::remove(path);
 }
 
 TEST(QnnUnit_OpAffinityMap, PinHtpEvaluations) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "pinhtp");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kError);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
   std::filesystem::remove(path);
 }
 
 TEST(QnnUnit_OpAffinityMap, PinGpuEvaluations) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "pingpu");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kProceed);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kError);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
 
 TEST(QnnUnit_OpAffinityMap, PinCpuRejectsOnAccelerators) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "pincpu");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kReject);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kReject);
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
   std::filesystem::remove(path);
 }
 
@@ -177,15 +176,15 @@ TEST(QnnUnit_OpAffinityMap, PinCpuRejectsOnAccelerators) {
 TEST(QnnUnit_OpAffinityMap, SeedAppliesWhenOpAbsent) {
   OpAffinityMap map;  // unconfigured, no pins
   map.SeedDefaultIfAbsent("GroupQueryAttention", QnnBackendType::CPU);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kReject);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU), Decision::kReject);
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
 }
 
 TEST(QnnUnit_OpAffinityMap, SeedDoesNotOverrideExistingConfigPin) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "seed_override");
   OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
   map.SeedDefaultIfAbsent("GroupQueryAttention", QnnBackendType::CPU);
-  EXPECT_EQ(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP), Decision::kProceed);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
 
@@ -194,16 +193,16 @@ TEST(QnnUnit_OpAffinityMap, SeedDoesNotOverrideExistingConfigPin) {
 TEST(QnnUnit_OpAffinityMap, ValidateReportsErrorWhenPinnedToOtherAccelerator) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "validate_gpu");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  // Session runs HTP, but GQA is pinned to GPU -> must report an error message.
-  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP).has_value());
+  // Session runs HTP, but GQA is pinned to GPU -> must report an error.
+  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
 
 TEST(QnnUnit_OpAffinityMap, ValidatePassesWhenPinnedToSessionBackend) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "validate_htp");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::HTP).has_value());
-  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::HTP_FP16).has_value());  // htp alias
+  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
+  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP_FP16).IsOK());  // htp alias
   std::filesystem::remove(path);
 }
 
@@ -211,14 +210,14 @@ TEST(QnnUnit_OpAffinityMap, ValidatePassesWhenPinnedToCpu) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "validate_cpu");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
   // CPU pin is a legitimate silent-off intent, never a validation error, regardless of session backend.
-  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::HTP).has_value());
-  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::GPU).has_value());
+  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
+  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::GPU).IsOK());
   std::filesystem::remove(path);
 }
 
 TEST(QnnUnit_OpAffinityMap, ValidateIsNoOpWhenUnconfigured) {
   const OpAffinityMap map;  // unconfigured
-  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::HTP).has_value());
+  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
 }
 
 }  // namespace test
