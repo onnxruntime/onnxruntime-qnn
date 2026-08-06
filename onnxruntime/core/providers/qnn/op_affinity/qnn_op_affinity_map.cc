@@ -27,6 +27,7 @@ std::string ToLower(std::string s) {
 // Map a (case-insensitive) backend name to the enum via QnnBackendTypeToString
 std::optional<QnnBackendType> BackendFromName(const std::string& raw_name) {
   const std::string name = ToLower(raw_name);
+  // Only real execution backends are valid op_affinity targets
   for (int i = 0; i <= static_cast<int>(QnnBackendType::HTP); ++i) {
     const auto backend = static_cast<QnnBackendType>(i);
     if (name == QnnBackendTypeToString(backend)) {
