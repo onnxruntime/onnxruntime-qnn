@@ -2029,11 +2029,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
   }
 
-  if (Ort::Status affinity_status = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
-      !affinity_status.IsOK()) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, affinity_status.GetErrorMessage().c_str());
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, affinity_status.GetErrorMessage().c_str());
-  }
+  RETURN_IF_NOT_OK(ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend));
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
     // Set the power config id and the default power mode from provider option for main thread,
