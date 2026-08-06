@@ -349,7 +349,7 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 { "op_type": { "GroupQueryAttention": "HTP" } }
 ```
 
-- Backend names are case-insensitive (`"HTP"` == `"htp"`); `htp` and `htp_fp16` are aliases for the same physical backend.
+- Backend names are case-insensitive (`"HTP"` == `"htp"`).
 - A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
 - On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`.
 
