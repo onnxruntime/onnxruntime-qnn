@@ -2023,9 +2023,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  // op_affinity: GQA's HTP op builder is new and untested in CI (the HTP GQA test suite is
-  // DISABLED_ pending a QAIRT >= 2.49 CI SDK upgrade), so default HTP sessions to keep running
-  // GQA on CPU -- users can opt into HTP via the op_affinity config once they've validated it.
+  // op_affinity: the GQA builder may trigger the known performance regression on HTP, 
+  // so HTP sessions default to keeping GQA on CPU
+  // -- users can opt into HTP via the op_affinity config once they've validated it.
   const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
   if (resolved_backend == qnn::QnnBackendType::HTP) {
     ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
