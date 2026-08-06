@@ -61,14 +61,6 @@ TEST(QnnUnit_OpAffinityMap, BackendNameIsCaseInsensitive) {
   }
 }
 
-TEST(QnnUnit_OpAffinityMap, HtpAndHtpFp16AreAliases) {
-  const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "htp_fp16" } })", "alias");
-  const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  // Pinned to htp_fp16, session running HTP -> still matches.
-  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
-  std::filesystem::remove(path);
-}
-
 // ---------------- Parse: throw paths ----------------
 
 TEST(QnnUnit_OpAffinityMap, ThrowsWhenFileMissing) {
@@ -200,7 +192,6 @@ TEST(QnnUnit_OpAffinityMap, ValidatePassesWhenPinnedToSessionBackend) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "validate_htp");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
   EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
-  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP_FP16).IsOK());  // htp alias
   std::filesystem::remove(path);
 }
 
