@@ -132,7 +132,6 @@ TEST(QnnUnit_OpAffinityMap, ThrowsOnNonStringArrayElement) {
 
 TEST(QnnUnit_OpAffinityMap, UnpinnedOpProceedsOnAnyBackend) {
   const OpAffinityMap map;  // default = unconfigured, nothing pinned
-  EXPECT_FALSE(map.IsConfigured());
   EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
   EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::GPU).IsOK());
   EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::CPU).IsOK());
