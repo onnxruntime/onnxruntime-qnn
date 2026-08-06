@@ -44,6 +44,7 @@
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/htp_usr_drv_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes

@@ -27,7 +27,6 @@
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/qnn_node_compute_info_base.h"
-#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
