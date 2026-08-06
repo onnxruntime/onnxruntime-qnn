@@ -482,6 +482,55 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityInvalid_SetsUndefined)
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeBalanced_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "balanced";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeDefault_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "default";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeHighPerformance_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "high_performance";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeHighPowerSaver_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "high_power_saver";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeLowBalanced_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "low_balanced";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeLowPowerSaver_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "low_power_saver";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModePowerSaver_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "power_saver";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
 // ===========================================================================
 // Group 6: Constructor — HTP graph finalization opt mode, HTP architecture
 // ===========================================================================
@@ -711,6 +760,37 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpEpInputGraphNoDir_FallbackToCwd) 
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmMbMalformed_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("vtcm_mb")] = "abc";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelMalformed_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("soc_model")] = "xyz";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+// Non-writable json_qnn_graph_dir exercises ProbeDumpDirectoryWritable's
+// failure branch; ctor recovers (disables dump internally) rather than throwing.
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpJsonGraphDirNonWritable_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("dump_json_qnn_graph")] = "1";
+  ctx.session_config[EPKey("json_qnn_graph_dir")] = "/proc/nonexistent/x";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_graphsplitter_num_prepare_threads")] = "4";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
 // ===========================================================================
 // Group 8: Constructor — early throws
 // ===========================================================================
@@ -756,6 +836,26 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_FP16EnabledWithoutSocModel_ThrowsOnLi
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
 }
 #endif
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithoutContextCache_Throws) {
+  EpStubContext ctx;
+  // Comma-separated soc_model triggers multi-SoC path.
+  ctx.session_config[EPKey("soc_model")] = "60,73";
+  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  // context_cache_enabled defaults to "0" → must throw.
+  auto factory = MakeFactory(ctx);
+  EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Throws) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("soc_model")] = "60,73";
+  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.session_config["ep.context_enable"] = "1";
+  ctx.session_config["ep.share_ep_contexts"] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+}
 
 // ===========================================================================
 // Group 9: GetCompiledModelCompatibilityInfoImpl
