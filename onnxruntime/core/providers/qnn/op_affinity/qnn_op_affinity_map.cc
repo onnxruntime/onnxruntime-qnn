@@ -98,7 +98,6 @@ OpAffinityMap OpAffinityMap::FromConfigFile(const std::filesystem::path& config_
     result.op_to_backend_[op_name] = *backend;
   }
 
-  result.configured_ = true;
   return result;
 }
 

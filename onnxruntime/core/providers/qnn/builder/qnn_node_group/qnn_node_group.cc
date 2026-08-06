@@ -34,8 +34,8 @@
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -223,6 +223,8 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
     // op_affinity: a fusion must not smuggle an affinity-pinned-away op onto QNN as part of a
     // larger accepted group. Discard the fusion if any member's op type is rejected for this
     // session's backend.
+    // TODO: discarding the whole fusion falls each member NodeUnit back to being wrapped
+    // individually; it does not try to re-fuse the remaining members into a smaller group.
     if (fused_node_group != nullptr) {
       const OpAffinityMap& affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
       for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {

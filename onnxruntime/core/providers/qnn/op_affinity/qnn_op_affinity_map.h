@@ -21,8 +21,6 @@ class OpAffinityMap {
 
   static OpAffinityMap FromConfigFile(const std::filesystem::path& config_file);
 
-  bool IsConfigured() const { return configured_; }
-
   Ort::Status Evaluate(const std::string& op_type, QnnBackendType session_backend) const;
 
   void SeedDefaultIfAbsent(const std::string& op_type, QnnBackendType default_backend);
@@ -31,7 +29,6 @@ class OpAffinityMap {
 
  private:
   std::unordered_map<std::string, QnnBackendType> op_to_backend_;  // op type -> its single backend
-  bool configured_ = false;
 };
 
 }  // namespace qnn

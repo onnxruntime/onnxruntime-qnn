@@ -40,7 +40,6 @@ std::filesystem::path WriteTempConfig(const std::string& contents, const std::st
 TEST(QnnUnit_OpAffinityMap, ParsesSingleString) {
   const auto path = WriteTempConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "single");
   const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
-  EXPECT_TRUE(map.IsConfigured());
   EXPECT_TRUE(map.Evaluate("GroupQueryAttention", QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
