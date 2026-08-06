@@ -305,6 +305,30 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
+// Parses a uint32 session config entry. Returns `default_value` if the key is
+// absent or unparseable (logs a WARNING in the latter case).
+// If `was_set` is non-null it is set to true when the key is explicitly present.
+static uint32_t ParseUint32ConfigEntry(const OrtApi& ort_api,
+                                       const OrtSessionOptions& session_options,
+                                       const std::string& key,
+                                       uint32_t default_value,
+                                       const Ort::Logger& logger,
+                                       bool* was_set = nullptr) {
+  std::string str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options, key, "", str);
+  if (was_set) *was_set = !str.empty();
+  if (str.empty()) return default_value;
+  try {
+    return static_cast<uint32_t>(std::stoul(str));
+  } catch (...) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                ("Invalid value for " + key + ": '" + str + "'. Using default " +
+                 std::to_string(default_value) + ".")
+                    .c_str());
+    return default_value;
+  }
+}
+
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -442,7 +466,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
     qnn::HtpGraphConfigs_t config{vtcm_size_in_mb_per_soc[idx],
                                   htp_graph_configs_.htp_graph_finalization_opt_mode,
                                   htp_graph_configs_.enable_htp_fp16_precision,
-                                  htp_graph_configs_.enable_htp_monolithic_lstm};
+                                  htp_graph_configs_.enable_htp_monolithic_lstm,
+                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -906,16 +931,35 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                   logger_);
   model_settings_.enable_htp_monolithic_lstm = htp_graph_configs_.enable_htp_monolithic_lstm;
 
+  // HTP fp16 clamp overflow. Default false. On HTP Arch v79+ (e.g. Glymur/v81),
+  // fp16 Conv accumulator overflow becomes NaN and propagates to the output
+  // (pre-v79 kept it finite). When true, saturate such overflow to the fp16 max
+  // value instead of NaN. Requires QAIRT SDK >= 2.49.
+  static constexpr const char* kEnableHtpFp16ClampOverflow = "enable_htp_fp16_clamp_overflow";
+  htp_graph_configs_.enable_htp_fp16_clamp_overflow = ParseBoolOption(ort_api,
+                                                                      session_options_,
+                                                                      FormatEPConfigKey(kEnableHtpFp16ClampOverflow),
+                                                                      false,
+                                                                      logger_);
+#ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  // Warn once at parse time (not per graph) if the option was requested but the SDK lacks support.
+  if (htp_graph_configs_.enable_htp_fp16_clamp_overflow) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_fp16_clamp_overflow was requested but the QNN HTP SDK in use does "
+                "not support it (requires QAIRT >= 2.49). Ignoring.");
+  }
+#endif
+
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
   // Declare outside the if scope since there are users later. They may be overwritten in the else branch.
   QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t soc_model = QNN_SOC_MODEL_UNKNOWN;
   if (enable_multi_soc_ep_context_) {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
     // Only enable on x86 platforms.
     LOG_AND_THROW_ERROR(logger_, "Multi-SoC EP context is only supported on x86 platforms and offline preparation.");
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
     if (!context_cache_enabled_) {
       LOG_AND_THROW_ERROR(logger_, "Per-SoC configurations are only supported for EP context enabled.");
     }
@@ -1239,6 +1283,45 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    FormatEPConfigKey(QNN_HTP_EXTENDED_UDMA_MODE),
                                                    false,
                                                    logger_);
+
+  // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
+  // Supported in both JIT and AOT workflows.
+  enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
+                                                session_options_,
+                                                FormatEPConfigKey("enable_htp_graph_splitting"),
+                                                false,
+                                                logger_);
+#ifndef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+  if (enable_htp_graph_splitting_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
+                "Graph splitting is not available and the option will be ignored.");
+    enable_htp_graph_splitting_ = false;
+  }
+#endif
+
+  bool user_set_graph_splitting_threads = false;
+  htp_graphsplitter_num_prepare_threads_ = ParseUint32ConfigEntry(
+      ort_api, session_options_,
+      FormatEPConfigKey("htp_graphsplitter_num_prepare_threads"),
+      8u, logger_, &user_set_graph_splitting_threads);
+
+  bool user_set_kway = false;
+  htp_graph_splitting_kway_partitions_ = ParseUint32ConfigEntry(
+      ort_api, session_options_,
+      FormatEPConfigKey("htp_graph_splitting_kway_partitions"),
+      4u, logger_, &user_set_kway);
+
+  if (!enable_htp_graph_splitting_) {
+    if (user_set_graph_splitting_threads) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "htp_graphsplitter_num_prepare_threads is set but enable_htp_graph_splitting=0. Value will be ignored.");
+    }
+    if (user_set_kway) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "htp_graph_splitting_kway_partitions is set but enable_htp_graph_splitting=0. Value will be ignored.");
+    }
+  }
 
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
@@ -1675,6 +1758,18 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_config->customConfig = htp_graph_monolithic_lstm_config;
     }
+
+    if (configs.enable_htp_fp16_clamp_overflow) {
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_fp16_clamp_config = configs_builder.PushCustomConfig();
+      htp_fp16_clamp_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW;
+      htp_fp16_clamp_config->fp16ClampOverflow = true;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = htp_fp16_clamp_config;
+#endif
+    }
   }
 }
 
@@ -1995,7 +2090,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 ep->rpcmem_library_,
                                                 context_bin_map,
                                                 ep->enable_htp_extended_udma_mode_,
-                                                ep->prepare_only_);
+                                                ep->prepare_only_,
+                                                ep->enable_htp_graph_splitting_,
+                                                ep->htp_graphsplitter_num_prepare_threads_,
+                                                ep->htp_graph_splitting_kway_partitions_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3108,11 +3206,11 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Validating compatibility info: " + info_string).c_str());
   }
 
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation on x86 platforms.");
   *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   return nullptr;
-#endif
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 
   qnn::QnnCompatibilityInfo info;
   Ort::Status status = qnn_cache_compatibility_manager_->DeserializeCompatibilityInfo(info_string, info);
@@ -3331,7 +3429,10 @@ Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
                                                                   ep_.soc_model_per_soc_[per_soc_idx],
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
-                                                                  ep_.enable_htp_ref_weight_sharing_));
+                                                                  ep_.enable_htp_ref_weight_sharing_,
+                                                                  ep_.enable_htp_graph_splitting_,
+                                                                  ep_.htp_graphsplitter_num_prepare_threads_,
+                                                                  ep_.htp_graph_splitting_kway_partitions_));
 
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
     ep_.CreateHtpPowerConfigId();
