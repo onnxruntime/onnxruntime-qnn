@@ -32,7 +32,8 @@
 #   --golden-dir=<path>   Golden store root. Default: $QNN_UT_SNAPSHOT_GOLDEN_DIR.
 #                         Die if neither is set.
 #   --filter=<g1,g2,...>  Scope regen to these op groups (passed through).
-#   --repo-subpath=<p>    Artifactory path prefix. Default: "qnn-ut-goldens".
+#   --repo-subpath=<p>    Artifactory path prefix. Default:
+#                         "qnn-ep-test-store/ut-snapshot".
 #   --dry-run             Do everything except the jf upload; print the exact
 #                         jf commands. (Default when neither flag is given.)
 #   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
@@ -54,7 +55,7 @@ set_strict_mode
 build_dir=""
 golden_dir=""
 filter_groups=""
-repo_subpath="qnn-ut-goldens"
+repo_subpath="qnn-ep-test-store/ut-snapshot"
 dry_run=false
 publish=false
 skip_regen=false
@@ -79,7 +80,7 @@ publish them (+ a version-stamped manifest.json) to Artifactory.
   --build-dir=<path>    Required. Build root (passthrough to run_snapshot_accuracy.sh).
   --golden-dir=<path>   Golden store root. Default: \$QNN_UT_SNAPSHOT_GOLDEN_DIR.
   --filter=<g1,g2,...>  Scope regen to these op groups (passthrough).
-  --repo-subpath=<p>    Artifactory path prefix. Default: qnn-ut-goldens.
+  --repo-subpath=<p>    Artifactory path prefix. Default: qnn-ep-test-store/ut-snapshot.
   --dry-run             Do everything except upload; print the jf commands.
   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
                         BUILD_ARTIFACTORY_REPO.

@@ -17,7 +17,7 @@ on:
       repo_subpath:
         description: "Artifactory path prefix under BUILD_ARTIFACTORY_REPO."
         type: string
-        default: 'qnn-ut-goldens'
+        default: 'qnn-ep-test-store/ut-snapshot'
       skip_regen:
         description: "Reuse existing goldens + accuracy results (re-publish only)"
         type: boolean
