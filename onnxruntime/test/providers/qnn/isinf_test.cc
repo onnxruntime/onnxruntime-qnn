@@ -36,8 +36,7 @@ static void RunIsInfTest(const std::vector<TestInputDef<DataType>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<DataType>("isinf_node", "IsInf", input_defs, {}, attrs, kOnnxDomain),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 TEST_F(QnnCPUBackendTests, IsInfScalarPosInf) {

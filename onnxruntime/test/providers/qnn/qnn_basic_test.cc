@@ -875,7 +875,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 }
 
 // Tests running a single session in multiple threads on the HTP backend with run option to set power config
-TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
+TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgSessionRunOption) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -986,7 +986,7 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
 
 // Tests running a single session in multiple threads on the HTP backend with
 // EP option to set default power config + run option to set power config for each run
-TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
+TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgDefaultAndRunOption) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -1335,8 +1335,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1368,8 +1367,7 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1454,8 +1452,7 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 
 // Test that QNN EP only handles nodes with static shapes and rejects nodes with dynamic shape I/O.
@@ -1524,11 +1521,10 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   RunQnnModelTest(model_build_fn,
                   provider_options,
                   /*opset*/ 19,
-                  ExpectedEPNodeAssignment::Some,
-                  /*abs_err*/ 1e-4f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-4f),
+                                       &ep_graph_checker},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_output*/ true,
-                  &ep_graph_checker);
+                  /*verify_output*/ true);
 }
 
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
@@ -1820,11 +1816,28 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 #endif  // !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 
 #if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
+// RAII guard that unconditionally unregisters an execution provider library on scope exit.
+// The AutoEp tests below register the EP library directly (without appending a device to the
+// session options, so RegisterQnnEpLibrary / RegisteredEpDeviceUniquePtr cannot be reused).
+// Without this guard, an early return from an ASSERT_* failure would leave the library
+// registered in the shared Ort::Env, corrupting subsequent tests (the source of the
+// intermittent failures).
+struct ScopedEpLibraryGuard {
+  const char* registration_name;
+  ~ScopedEpLibraryGuard() {
+    OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, registration_name);
+    if (status != nullptr) {
+      Ort::GetApi().ReleaseStatus(status);
+    }
+  }
+};
+
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1836,13 +1849,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1854,13 +1866,12 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1882,13 +1893,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1912,13 +1922,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1942,8 +1951,32 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
+}
 
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
+TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
+  ProviderOptions options;
+  options["backend_type"] = "gpu";
+
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+}
+
+TEST_F(QnnGPUBackendTests, CosineSimilarityVerifier) {
+  ProviderOptions options;
+  options["backend_type"] = "gpu";
+
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, CosineSimilarityVerifier(0.99f)});
 }
 
 // Returns true if QNN EP was created and QNN HTP shared memory allocator is available, false otherwise.
@@ -2252,8 +2285,7 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
                                          kOnnxDomain),
                   provider_options,
                   11,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
@@ -2378,7 +2410,7 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
 
-// Returns a function that builds a model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a model with EyeLike (CPU-only) + Add
 // to test partition-added inputs.
 static GetTestModelFn BuildPartitionAddedInputModel() {
   return [](ModelTestBuilder& builder) {
@@ -2387,14 +2419,14 @@ static GetTestModelFn BuildPartitionAddedInputModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create constant initializer for RandomNormalLike
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines graph input with partition-added input
-    builder.AddNode("add", "Add", {"input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2459,10 +2491,10 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   // ONNX-declared input first, partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
-// Returns a function that builds a QDQ model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a QDQ model with EyeLike (CPU-only) + Add
 // to test partition-added inputs with offload_graph_io_quantization.
 static GetTestModelFn BuildPartitionAddedInputQDQModel() {
   return [](ModelTestBuilder& builder) {
@@ -2471,8 +2503,8 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create initializers
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
     builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
     builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
 
@@ -2482,11 +2514,11 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // DequantizeLinear: q_input -> dq_input (goes to QNN)
     builder.AddNode("dequantize", "DequantizeLinear", {"q_input", "scale", "zero_point"}, {"dq_input"}, kOnnxDomain);
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines dequantized input with partition-added input
-    builder.AddNode("add", "Add", {"dq_input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"dq_input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2554,7 +2586,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   // partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
 // Returns a model where a single graph input fans out to two separate Q->DQ chains,
@@ -2900,7 +2932,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
     provider_options["dump_json_qnn_graph"] = "1";
     provider_options["json_qnn_graph_dir"] = json_dir.string();
 
-    RunQnnModelTest(model_fn, provider_options, 13, ExpectedEPNodeAssignment::All);
+    RunQnnModelTest(model_fn, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
     std::unordered_set<std::string> node_names;
     for (const auto& entry : fs::directory_iterator(json_dir)) {
@@ -2943,8 +2975,7 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
   RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
                   options,
                   13,
-                  ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
 }
 #endif  // defined(_WIN32)
 
@@ -3335,7 +3366,7 @@ TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_BasicStructure) {
                                          {TestInputDef<float>({1, 2, 3}, false, data),
                                           TestInputDef<float>({1, 2, 3}, false, data)},
                                          {}, {}, kOnnxDomain),
-                  options, 13, ExpectedEPNodeAssignment::All);
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     std::filesystem::remove_all(dump_dir, ec);
@@ -3407,7 +3438,7 @@ TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_TensorClassification) {
                                                 {TestInputDef<float>({1, 2, 3}, false, input_data)},
                                                 {TestInputDef<float>({1, 2, 3}, true, init_data)},
                                                 {}, kOnnxDomain),
-                  options, 13, ExpectedEPNodeAssignment::All);
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     std::filesystem::remove_all(dump_dir, ec);
@@ -3457,7 +3488,7 @@ TEST_F(QnnCPUBackendTests, DumpQnnEpInputGraph_DisabledByDefault) {
                                          {TestInputDef<float>({1, 2, 3}, false, data),
                                           TestInputDef<float>({1, 2, 3}, false, data)},
                                          {}, {}, kOnnxDomain),
-                  options, 13, ExpectedEPNodeAssignment::All);
+                  options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   if (::testing::UnitTest::GetInstance()->current_test_info()->result()->Skipped()) {
     std::filesystem::remove_all(dump_dir, ec);

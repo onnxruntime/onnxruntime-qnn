@@ -144,7 +144,7 @@ static void RunPadOpTest(const TestInputDef<T>& data_def,
   RunQnnModelTest(BuildPadTestCase<T>(data_def, pads_def, constant_value_def, attrs, has_constant_value, opset),
                   provider_options,
                   opset,
-                  expected_ep_assignment, f32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(f32_abs_err)});
 }
 
 // Runs a QDQ Pad model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -699,6 +699,28 @@ TEST_F(QnnHTPBackendTests, Pad_Noop_QDQ) {
                            {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
+}
+
+// Regression test: Pad's data input is float (no preceding DQ), but its output feeds a Q node
+// directly. OrtPadNodeGroupSelector::Check() must reject this zero-DQ node group instead of
+// indexing dq_nodes[0], which previously crashed with SIGSEGV.
+TEST_F(QnnHTPBackendTests, PadFloatInputDirectlyToQ_NoDq) {
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {3, 2}, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f});
+    builder.MakeInitializer<int64_t>("pads", {4}, {0, 2, 0, 0});
+    builder.AddNode("Pad", "Pad", {"data", "pads"}, {"pad_out"});
+    builder.AddQuantizeLinearNode<uint8_t>("q", "pad_out", 0.05f, 128, "Y");
+    builder.MakeOutput("Y");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  18,  // opset
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -56,7 +56,7 @@ static void RunPoolOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Runs a QDQ MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -259,11 +259,9 @@ TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
   RunQnnModelTest(build_test_case,
                   options,
                   18,
-                  ExpectedEPNodeAssignment::All,
-                  1e-5,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5), &check_num_nodes},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  true,
-                  &check_num_nodes);
+                  true);
 }
 
 // 1-D MaxPool HTP test for rank-3 without ceil with padding 1

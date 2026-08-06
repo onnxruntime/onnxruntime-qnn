@@ -250,16 +250,18 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     std::vector<int32_t> int32_offset(num_blocks, 0);
 
     // Create Quantization Parameter and create Weight Tensor.
-    // The packed UInt4x2 bytes (weight_shape[1] bytes/row, 2 int4 nibbles per
-    // byte) must expand to the unpacked element count implied by scales:
-    // scale_shape[1] * block_size.
-    RETURN_IF_NOT(static_cast<int64_t>(weight_shape[1]) * 2 ==
+    // When weights arrive packed as UInt4x2 (2 int4 nibbles per byte),
+    // weight_shape[1] is a byte count and must be doubled to match the
+    // unpacked element count implied by scales: scale_shape[1] * block_size.
+    // When weights already arrive as unpacked int4, weight_shape[1] is
+    // already the element count.
+    const int64_t weight_pack_factor = needs_uint4_to_int4 ? 2 : 1;
+    RETURN_IF_NOT(static_cast<int64_t>(weight_shape[1]) * weight_pack_factor ==
                       static_cast<int64_t>(scale_shape[1]) * block_size,
                   "GatherBlockQuantized: weight packed bytes mismatch with scales * block_size");
-    QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(float_scale,
-                                                                 int32_offset,
-                                                                 block_sizes,
-                                                                 QNN_DATATYPE_SFIXED_POINT_4);
+    QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::Block(float_scale,
+                                                                        int32_offset,
+                                                                        block_sizes);
     std::vector<uint32_t> weight_shape_ = {static_cast<uint32_t>(weight_shape[0]),
                                            static_cast<uint32_t>(scale_shape[1] * block_size)};
     QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
