@@ -27,7 +27,7 @@ std::string ToLower(std::string s) {
 // Map a (case-insensitive) backend name to the enum via QnnBackendTypeToString
 std::optional<QnnBackendType> BackendFromName(const std::string& raw_name) {
   const std::string name = ToLower(raw_name);
-  for (int i = 0; i <= static_cast<int>(QnnBackendType::HTP_FP16); ++i) {
+  for (int i = 0; i <= static_cast<int>(QnnBackendType::HTP); ++i) {
     const auto backend = static_cast<QnnBackendType>(i);
     if (name == QnnBackendTypeToString(backend)) {
       return backend;
@@ -36,13 +36,8 @@ std::optional<QnnBackendType> BackendFromName(const std::string& raw_name) {
   return std::nullopt;
 }
 
-// Treats HTP and HTP_FP16 as one physical backend. Deliberately not IsNpuBackend() (which is
-// HTP||DSP) -- op_affinity is scoped to GPU/HTP sessions.
 bool BackendMatches(QnnBackendType pinned, QnnBackendType session_backend) {
-  const bool pinned_is_htp = (pinned == QnnBackendType::HTP || pinned == QnnBackendType::HTP_FP16);
-  const bool session_is_htp = (session_backend == QnnBackendType::HTP ||
-                               session_backend == QnnBackendType::HTP_FP16);
-  if (pinned_is_htp && session_is_htp) {
+  if (IsNpuBackend(pinned) && IsNpuBackend(session_backend)) {
     return true;
   }
   return pinned == session_backend;

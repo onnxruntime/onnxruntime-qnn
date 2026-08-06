@@ -597,7 +597,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// Padded KV cache with noise in the padding region: max_seq_len (128) > total_seq_len (16).
+// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PaddedCache_NoisePadding_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 1, /*total*/ 16, /*scale*/ 0.0f, /*do_rotary*/ 0,
                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128);

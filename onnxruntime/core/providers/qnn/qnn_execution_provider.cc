@@ -2023,7 +2023,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  // op_affinity: the GQA builder may trigger the known performance regression on HTP, 
+  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
   // so HTP sessions default to keeping GQA on CPU
   // -- users can opt into HTP via the op_affinity config once they've validated it.
   const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
