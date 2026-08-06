@@ -664,7 +664,8 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, static_cast<int>(num_dq_nodes))) {
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                     static_cast<int>(num_dq_nodes), /*is_empty_q_nodes_allowed=*/true)) {
     return false;
   }
 
@@ -694,15 +695,13 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
-  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-
-  if (!dt_input.has_value() || !dt_output.has_value()) {
-    return false;
-  }
-
-  if (dt_input.value() != dt_output.value()) {
-    return false;
+  if (!q_nodes.empty()) {
+    auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+    if (!dt_input.has_value() || !dt_output.has_value() ||
+        dt_input.value() != dt_output.value()) {
+      return false;
+    }
   }
 
   return true;
@@ -1149,12 +1148,10 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
     return false;
   }
 
-  // The input/output dtype match only applies when the output is quantized.
-  if (!has_float_output) {
-    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-    if (!dt_output.has_value() || dt_input.value() != dt_output.value()) {
-      return false;
-    }
+  // A mismatch between the quantized input and output types is not disqualifying here:
+  // the BatchNorm builder runs those in float internally (see GetBatchNormFloatExecution).
+  if (!has_float_output && !GetNodeOutputDataType(q_nodes[0], ort_api, 0).has_value()) {
+    return false;
   }
 
   if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&

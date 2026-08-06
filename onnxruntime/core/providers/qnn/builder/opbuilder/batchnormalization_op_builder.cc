@@ -447,14 +447,7 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
 
 namespace {
 
-// Helper to check if a BatchNorm param is constant - either direct initializer or through a DQ node.
-//
-// node_unit.GetDQNodes() is only populated for a QDQGroup-type NodeUnit. When the surrounding QDQ
-// selector rejects the group (e.g. BatchNormalizationNodeGroupSelector requires the quantized input
-// and output element types to match; mixed-bitwidth BN like u8-in/u16-out does not), BatchNorm becomes
-// a SingleNode-type NodeUnit with an empty GetDQNodes(). In that case the param's standalone DQ node
-// is visited (and constant-folded via TryFoldConstantQDQ) as its own NodeUnit before BN, in topological
-// order, so IsEffectivelyConstantInput (which also checks IsFoldedConstant) still recognizes it.
+// Helper to check if a BatchNorm param is constant, either directly or through a DQ in its group.
 bool IsParamConstant(const QnnModelWrapper& qnn_model_wrapper,
                      const OrtNodeUnit& node_unit,
                      const std::string& name) {
@@ -500,9 +493,9 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
 // Single source of truth for float execution, shared by ProcessInputs (stores params) and
 // ProcessAttributesAndOutputs (emits the op).
 //   - has_float_output: quantized input, no output Q -> float island; BN emits float directly.
-//   - use_float_params: u8/u16 input where a BN param is per-channel quantized, or mean/var
-//     is raw float. QNN BN fuses them into per-tensor scale/bias, which drops per-channel
-//     range; the float path (Dequantize -> BN in F32 -> Quantize) keeps it.
+//   - use_float_params: mixed quantized input/output types, or a u8/u16 input where a BN
+//     param is per-channel quantized or mean/var is raw float. The float path
+//     (Dequantize -> BN in F32 -> Quantize) preserves those representations.
 struct BatchNormFloatExecution {
   bool has_float_output;
   bool use_float_params;
@@ -516,6 +509,9 @@ BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
                                                    const TensorInfo& output_info) {
   const bool is_input_quantized = input_info.quant_param.IsQuantized();
   const bool has_float_output = is_input_quantized && !output_info.quant_param.IsQuantized();
+  const bool has_mixed_quant_types = is_input_quantized &&
+                                     output_info.quant_param.IsQuantized() &&
+                                     input_info.qnn_data_type != output_info.qnn_data_type;
   const bool any_param_per_channel = scale_info.quant_param.IsPerChannel() ||
                                      bias_info.quant_param.IsPerChannel() ||
                                      mean_info.quant_param.IsPerChannel() ||
@@ -525,7 +521,7 @@ BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
                                       (!mean_info.quant_param.IsQuantized() ||
                                        !var_info.quant_param.IsQuantized());
   const bool use_float_params =
-      has_float_output ||
+      has_float_output || has_mixed_quant_types ||
       (is_input_quantized &&
        (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
         input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
@@ -650,9 +646,8 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                (bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
                                 bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_16);
 
-    // A param may be a real ONNX initializer (initializer_tensor set) or a standalone DQ-of-constant
-    // already folded to a STATIC tensor by TryFoldConstantQDQ (initializer_tensor is null in that
-    // case; see IsParamConstant above) -- read bytes from whichever the param actually is.
+    // Read through the effective-constant abstraction so initializer-backed and STATIC params use
+    // the same preprocessing path.
     std::vector<uint8_t> scale_unpacked_tensor;
     std::vector<uint8_t> bias_unpacked_tensor;
     std::vector<uint8_t> mean_unpacked_tensor;
@@ -894,6 +889,11 @@ Ort::Status BatchNormalizationOpBuilder::CheckHtpDataTypes(const std::vector<Qnn
   const bool x_is_quantized = (x_dtype == QNN_DATATYPE_UFIXED_POINT_8 || x_dtype == QNN_DATATYPE_SFIXED_POINT_8 ||
                                x_dtype == QNN_DATATYPE_UFIXED_POINT_16 || x_dtype == QNN_DATATYPE_SFIXED_POINT_16);
   if (x_is_quantized && (y_dtype == QNN_DATATYPE_FLOAT_32 || y_dtype == QNN_DATATYPE_FLOAT_16)) {
+    return Ort::Status();
+  }
+  const bool y_is_quantized = (y_dtype == QNN_DATATYPE_UFIXED_POINT_8 || y_dtype == QNN_DATATYPE_SFIXED_POINT_8 ||
+                               y_dtype == QNN_DATATYPE_UFIXED_POINT_16 || y_dtype == QNN_DATATYPE_SFIXED_POINT_16);
+  if (x_is_quantized && y_is_quantized && x_dtype != y_dtype) {
     return Ort::Status();
   }
 

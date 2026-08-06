@@ -514,6 +514,37 @@ static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
   return false;
 }
 
+// A per-tensor DQ that produces ordinary data should remain a QNN op. Folding it would retain
+// an expanded fp32 copy of the initializer until graph composition completes.
+TEST_F(QnnCPUBackendTests, ConstantPerTensorDequantizeStaysOp) {
+  const std::filesystem::path dump_dir = "ConstantPerTensorDequantizeStaysOp";
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("X", {1, 8}, GetFloatDataInRange(-1.0f, 1.0f, 8));
+    builder.MakeInitializer<uint8_t>("weight_q", {1, 8}, {118, 120, 122, 124, 126, 128, 130, 132});
+    builder.AddDequantizeLinearNode<uint8_t>("weight_dq", "weight_q", 0.1f, 128, "weight");
+    builder.AddNode("add", "Add", {"X", "weight"}, {"Y"});
+    builder.MakeOutput("Y");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = dump_dir.string();
+
+  RunQnnModelTest(model_fn, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  if (!HasQnnJsonGraph(dump_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(dump_dir, "Dequantize", /*count=*/1);
+}
+
 // Builds a uint8 QDQ model (Q -> <op_type> -> DQ), dumps the composed QNN graph, and asserts the
 // op is emitted as the unified "ElementWiseNeuron" op (and that the op's old dedicated QNN op name
 // is absent). Uses QDQ rather than a float model so the test runs on the x86 HTP emulator, where
