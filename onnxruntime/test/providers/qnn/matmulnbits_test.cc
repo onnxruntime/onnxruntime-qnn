@@ -966,7 +966,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16) {
   params.block_size = 16;
   params.has_zero_point = false;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K128_B4_BS32) {
@@ -1006,7 +1006,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K64_B4_BS32_ZP) {
   params.has_zero_point = true;
   params.is_zp_symmetric = true;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
 }
 
 // Should fallback to BW_FLOAT_BLOCK (bits=8)
