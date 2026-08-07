@@ -259,26 +259,24 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (p_value == 2) {
     std::string square_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
-    std::vector<std::string> square_param_names;
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       square_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_MULTIPLY,
                       {input_names[0], input_names[0]},
                       {preprocess_out_name},
-                      std::move(square_param_names),
+                      {},
                       do_op_validation),
                   "Failed to create square (Multiply) node.");
   } else {
     std::string abs_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ABS);
-    std::vector<std::string> abs_param_names;
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       abs_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_ABS,
                       {input_names[0]},
                       {preprocess_out_name},
-                      std::move(abs_param_names),
+                      {},
                       do_op_validation),
                   "Failed to create Abs node.");
   }
@@ -359,12 +357,11 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_out_tensor)),
                   "Failed to add sqrt output tensor.");
     std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT);
-    std::vector<std::string> sqrt_param_names;
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       sqrt_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
-                      {pool_out_name}, {sqrt_out_name}, std::move(sqrt_param_names), do_op_validation),
+                      {pool_out_name}, {sqrt_out_name}, {}, do_op_validation),
                   "Failed to create SquareRoot node.");
     sqrt_or_pool_out_name = sqrt_out_name;
   }
@@ -439,9 +436,8 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (!requires_rank3_reshape) {
     // Final Multiply produces the ONNX output tensor directly (handled by ProcessOutputs).
-    std::vector<std::string> mul_param_names;
     return ProcessOutputs(qnn_model_wrapper, node_unit,
-                          {sqrt_or_pool_out_name, scale_name}, std::move(mul_param_names),
+                          {sqrt_or_pool_out_name, scale_name}, {},
                           logger, do_op_validation, QNN_OP_ELEMENT_WISE_MULTIPLY);
   }
 
@@ -457,14 +453,13 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "Failed to add scaled intermediate tensor.");
   }
   std::string scale_mul_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
-  std::vector<std::string> scale_mul_param_names;
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                     scale_mul_node_name,
                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                     QNN_OP_ELEMENT_WISE_MULTIPLY,
                     {sqrt_or_pool_out_name, scale_name},
                     {scaled_out_name},
-                    std::move(scale_mul_param_names),
+                    {},
                     do_op_validation),
                 "Failed to create final scale (Multiply) node.");
 

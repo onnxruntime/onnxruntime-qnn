@@ -298,13 +298,12 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                              std::move(input_shape)),
                   "AddTensorWrapper failed");
     std::string pow2_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
-    std::vector<std::string> pow2_param_names;
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(pow2_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {input_name, input_name},
                                                   {pow2_output_name},
-                                                  std::move(pow2_param_names),
+                                                  {},
                                                   do_op_validation),
                   "CreateQnnNode failed");
 
@@ -333,13 +332,12 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                              is_quantized_input ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
                   "AddTensorWrapper failed");
     std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT);
-    std::vector<std::string> sqrt_param_names;
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sqrt_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
                                                   {reduce_output_name},
                                                   {sqrt_output_name},
-                                                  std::move(sqrt_param_names),
+                                                  {},
                                                   do_op_validation),
                   "CreateQnnNode failed");
 

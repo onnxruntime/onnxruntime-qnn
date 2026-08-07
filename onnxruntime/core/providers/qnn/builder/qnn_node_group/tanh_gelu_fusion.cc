@@ -254,6 +254,7 @@ std::unique_ptr<IQnnNodeGroup> TanhGeluFusion::TryFusion(
   if (!qmw.MakeTensorWrapper(root_input, input_tensor).IsOK()) return nullptr;
   if (!qmw.MakeTensorWrapper(final_output, output_tensor).IsOK()) return nullptr;
   const std::string node_name = utils::UniqueNameGenerator().New(tanh_node_unit);
+  // Validate QNN Gelu accepts these tensor types.
   if (!qmw.ValidateQnnNode(node_name,
                            QNN_OP_PACKAGE_NAME_QTI_AISW,
                            QNN_OP_GELU,

@@ -514,7 +514,7 @@ static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
   return false;
 }
 
-// Builds a QDQ model and asserts the op is emitted as its dedicated fine-grained QNN op.
+// Builds a QDQ model and asserts the op emits as its dedicated fine-grained QNN op name.
 static void RunDedicatedOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
                                    const std::string& op_type,
                                    const std::string& expected_qnn_op_name) {
@@ -545,7 +545,7 @@ static void RunDedicatedOpTypeTest(const std::filesystem::path& json_qnn_graph_d
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/0);
 }
 
-// Standalone Relu/Sigmoid/Tanh/Elu map to their dedicated QNN ops.
+// Relu/Sigmoid/Tanh/Elu each map to their dedicated fine-grained QNN op.
 TEST_F(QnnHTPBackendTests, DedicatedOpType_Relu) {
   RunDedicatedOpTypeTest("DedicatedOpType_Relu", "Relu", "Relu");
 }

@@ -114,13 +114,12 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                 "Selu: failed to add output tensor.");
 
   std::string gamma_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_gamma_mul");
-  std::vector<std::string> gamma_mul_param_names;
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(gamma_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                 {gamma_tensor_name, elu_output_name},
                                                 {output_name},
-                                                std::move(gamma_mul_param_names),
+                                                {},
                                                 do_op_validation),
                 "Selu: failed to create Multiply node.");
 

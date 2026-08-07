@@ -392,14 +392,13 @@ Ort::Status CreateReduceSumMulBroadcastX(
                 "CreateReduceSumMulBroadcastX: failed to AddTensorWrapper");
   const std::string mul_node_name =
       onnxruntime::qnn::utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
-  std::vector<std::string> mul_param_names;
   RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(
                     /*qnn_node_name=*/mul_node_name,
                     /*package_name=*/QNN_OP_PACKAGE_NAME_QTI_AISW,
                     /*qnn_node_type=*/QNN_OP_ELEMENT_WISE_MULTIPLY,
                     /*input_names=*/{reshape_out_name, input_names[1]},
                     /*output_names=*/{mul_out_name},
-                    /*param_tensor_names=*/std::move(mul_param_names),
+                    /*param_tensor_names=*/{},
                     /*do_op_validation=*/do_op_validation),
                 "CreateReduceSumMulBroadcastX: failed to create Mul node");
 

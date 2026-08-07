@@ -55,13 +55,12 @@ Ort::Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                 QnnQuantParamsWrapper(), std::move(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_tensor)), "Failed to add Add tensor wrapper.");
     std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD);
-    std::vector<std::string> add_param_names;
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_ADD,
                                                   {sum_output, input_names[i]},
                                                   {add_output},
-                                                  std::move(add_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Create Qnn Node for Add Op Failed");
 
@@ -94,13 +93,12 @@ Ort::Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor wrapper.");
   std::vector<std::string> div_inputs = {sum_output, divisor_name};
   std::string div_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_DIVIDE);
-  std::vector<std::string> div_param_names;
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_DIVIDE,
                                                 {sum_output, divisor_name},
                                                 {output_name},
-                                                std::move(div_param_names),
+                                                {},
                                                 do_op_validation),
                 "Failed to create Mean_Div node.");
 
