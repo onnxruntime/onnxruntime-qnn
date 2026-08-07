@@ -31,6 +31,8 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 | `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
 | `onnx_ctx_model_helper_test.cc` | `QnnUnit_OnnxCtxModelHelperTest` | `builder/onnx_ctx_model_helper.cc` |
+| `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderTest` | `qnn_execution_provider.cc` |
+| `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderHtpTest` | `qnn_execution_provider.cc` (real-`libQnnHtp.so` paths) |
 
 ## Benefits
 
