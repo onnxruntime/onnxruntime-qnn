@@ -31,6 +31,8 @@
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
 
+#include "QNN/QnnTypes.h"
+
 namespace onnxruntime {
 class QnnEpFactory;
 
@@ -101,6 +103,21 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                const size_t node_unit_size,
                                std::vector<const OrtNode*>& supported_nodes,
                                std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
+
+  OrtStatus* GetSupportedNodes(const OrtGraph* graph,
+                               const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                               const size_t node_unit_size,
+                               std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes,
+                               qnn::QnnBackendManager* backend_manager) const;
+
+  struct SegmentedExecutionSpec;
+
+  OrtStatus* CompileSegmentedSubgraph(const OrtGraph* graph,
+                                         const OrtNode* fused_node,
+                                         const std::string& fused_node_name,
+                                         const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                                         std::unique_ptr<SegmentedExecutionSpec>& spec_out);
 
   OrtStatus* GetMultiSocSupportedNodes(const OrtGraph* graph,
                                        const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
@@ -173,6 +190,27 @@ class QnnEp : public OrtEp, public ApiPtrs {
     static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, void* compute_state);
 
     QnnEp& ep;
+  };
+
+  // --- Segmented execution (GPU fallback) ---
+  struct SegmentInfo {
+    qnn::QnnModel* model = nullptr;
+    bool is_gpu = false;
+    std::vector<int> input_buffer_indices;   // index into buffers, or -1 for external
+    std::vector<int> output_buffer_indices;  // index into buffers, or -1 for external
+    std::vector<size_t> external_input_indices;
+    std::vector<size_t> external_output_indices;
+  };
+
+  struct IntermediateBuffer {
+    std::vector<uint8_t> data;
+    Qnn_Tensor_t tensor;
+  };
+
+  struct SegmentedExecutionSpec {
+    std::vector<SegmentInfo> segments;
+    std::vector<IntermediateBuffer> buffers;
+    std::vector<std::unique_ptr<qnn::QnnModel>> owned_models;
   };
 
   typedef struct GraphFinalizationInfo {
@@ -274,6 +312,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool enable_htp_graph_splitting_ = false;
   uint32_t htp_graphsplitter_num_prepare_threads_ = 8;
   uint32_t htp_graph_splitting_kway_partitions_ = 4;  // 0 = use SDK default (do not set GPE_KWAY_PARTITIONS env var)
+
+  // --- Segmented execution (GPU fallback) ---
+  bool enable_gpu_fallback_ = false;
+  std::shared_ptr<qnn::QnnBackendManager> gpu_backend_manager_;
+  std::unordered_set<std::string> gpu_only_node_names_;
+  std::unordered_map<std::string, std::unique_ptr<SegmentedExecutionSpec>> segmented_specs_;
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;

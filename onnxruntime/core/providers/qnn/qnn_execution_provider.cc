@@ -1303,6 +1303,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
+  enable_gpu_fallback_ = ParseBoolOption(ort_api,
+                                         session_options_,
+                                         FormatEPConfigKey("enable_gpu_fallback"),
+                                         false,
+                                         logger_);
+  if (enable_gpu_fallback_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                "GPU fallback enabled: ops unsupported by HTP will be compiled and executed on GPU.");
+  }
+
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(ort_api,
@@ -1531,6 +1541,16 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                     const size_t node_unit_size,
                                     std::vector<const OrtNode*>& supported_nodes,
                                     std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
+  return GetSupportedNodes(graph, node_unit_map, node_unit_size, supported_nodes, unsupported_nodes,
+                           qnn_backend_manager_.get());
+}
+
+OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
+                                    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                    const size_t node_unit_size,
+                                    std::vector<const OrtNode*>& supported_nodes,
+                                    std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes,
+                                    qnn::QnnBackendManager* backend_manager) const {
   size_t num_graph_inputs = 0;
   size_t num_graph_outputs = 0;
   RETURN_IF_NOT_NULL(ort_api.Graph_GetNumInputs(graph, &num_graph_inputs));
@@ -1570,13 +1590,13 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   auto qnn_model_wrapper = qnn::QnnModelWrapper(*graph,
                                                 ApiPtrs{ort_api, ep_api, model_editor_api},
                                                 logger_,
-                                                qnn_backend_manager_->GetQnnInterface(),
-                                                qnn_backend_manager_->GetQnnBackendHandle(),
-                                                qnn_backend_manager_->GetQnnValidatorInterface(),
-                                                qnn_backend_manager_->GetQnnValidatorBackendHandle(),
+                                                backend_manager->GetQnnInterface(),
+                                                backend_manager->GetQnnBackendHandle(),
+                                                backend_manager->GetQnnValidatorInterface(),
+                                                backend_manager->GetQnnValidatorBackendHandle(),
                                                 model_inputs,
                                                 model_outputs,
-                                                qnn_backend_manager_->GetQnnBackendType(),
+                                                backend_manager->GetQnnBackendType(),
                                                 model_settings_,
                                                 &tensor_name_overrides_,
                                                 /*op_trace_collector=*/nullptr,
@@ -1595,6 +1615,14 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
     const bool supported = support_status.IsOK();
 
     LogNodeSupport(logger_, *qnn_node_group, support_status);
+    if (!supported) {
+      ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                    "Node group REJECTED by %s: %s (%s) - %s",
+                    qnn::QnnBackendTypeToString(backend_manager->GetQnnBackendType()).c_str(),
+                    qnn_node_group->GetTargetNodeUnit()->Name().c_str(),
+                    qnn_node_group->GetTargetNodeUnit()->OpType().c_str(),
+                    support_status.GetErrorMessage());
+    }
     if (supported) {
       for (const OrtNodeUnit* node_unit : qnn_node_group->GetNodeUnits()) {
         for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
@@ -2148,6 +2176,83 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                      ep->op_trace_builder_.UnsupportedNodes()));
   }
 
+  if (ep->enable_gpu_fallback_ && !ep->enable_multi_soc_ep_context_ &&
+      ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::HTP) {
+    if (!ep->gpu_backend_manager_) {
+      ep->gpu_backend_manager_ = qnn::QnnBackendManager::Create(
+          qnn::QnnBackendManagerConfig{kDefaultGpuBackendPath,
+                                       qnn::ProfilingLevel::OFF,
+                                       qnn::ProfilingLevel::OFF,
+                                       /*profiling_file_path=*/"",
+                                       qnn::ContextPriority::NORMAL,
+                                       /*qnn_serializer_config=*/nullptr,
+                                       ep->device_id_,
+                                       /*htp_arch=*/QNN_HTP_DEVICE_ARCH_NONE,
+                                       /*soc_model=*/0,
+                                       /*op_packages=*/{},
+                                       /*skip_qnn_version_check=*/false,
+                                       /*enable_framework_op_trace=*/false,
+                                       /*skip_backend_op_validation=*/false},
+          ApiPtrs{ep->ort_api, ep->ep_api, ep->model_editor_api}, ep->logger_);
+      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> gpu_ctx_bin_map;
+      auto setup_status = ep->gpu_backend_manager_->SetupBackend(
+          /*load_from_cached_context=*/false,
+          /*need_load_system_lib=*/false,
+          /*share_ep_contexts=*/false,
+          /*htp_share_resource_optimization=*/false,
+          /*enable_file_mapped_weights=*/false,
+          /*rpcmem_library=*/nullptr,
+          gpu_ctx_bin_map);
+      if (!setup_status.IsOK()) {
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                    ("GPU fallback: failed to set up GPU backend, disabling. " +
+                     setup_status.GetErrorMessage())
+                        .c_str());
+        ep->gpu_backend_manager_.reset();
+        ep->enable_gpu_fallback_ = false;
+      }
+    }
+
+    if (ep->gpu_backend_manager_) {
+      std::unordered_set<const OrtNode*> htp_supported_set(supported_nodes.begin(), supported_nodes.end());
+
+      std::vector<const OrtNode*> gpu_supported_nodes;
+      std::vector<qnn::UnsupportedNodeInfo> gpu_unsupported;
+      auto gpu_status = ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(),
+                                              gpu_supported_nodes, gpu_unsupported,
+                                              ep->gpu_backend_manager_.get());
+      if (gpu_status != nullptr) {
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                    "GPU fallback: GetSupportedNodes for GPU failed, disabling GPU fallback.");
+        ep->ort_api.ReleaseStatus(gpu_status);
+        ep->gpu_backend_manager_.reset();
+        ep->enable_gpu_fallback_ = false;
+      } else {
+        for (const OrtNode* node : gpu_supported_nodes) {
+          if (htp_supported_set.find(node) == htp_supported_set.end()) {
+            const char* node_name = nullptr;
+            auto name_status = ep->ort_api.Node_GetName(node, &node_name);
+            if (name_status == nullptr && node_name) {
+              ep->gpu_only_node_names_.insert(node_name);
+            }
+            if (name_status) ep->ort_api.ReleaseStatus(name_status);
+            supported_nodes.push_back(node);
+          }
+        }
+
+        if (!ep->gpu_only_node_names_.empty()) {
+          ORT_CXX_LOGF(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                       "GPU fallback: %zu nodes will run on GPU (HTP-unsupported, GPU-supported).",
+                       ep->gpu_only_node_names_.size());
+        } else {
+          ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                      "GPU fallback: 0 GPU-only nodes found. HTP supports all nodes. "
+                      "Falling through to standard single-backend compile.");
+        }
+      }
+    }
+  }
+
   // Helper function that returns a string that lists all unsupported nodes.
   // Ex: { name: mul_123, type: Mul }, {}, ...
   auto get_unsupported_node_names = [&node_unit_holder, &supported_nodes]() -> std::string {
@@ -2232,6 +2337,30 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                 ("Unsupported nodes in QNN EP: " + get_unsupported_node_names()).c_str());
   }
 
+  size_t num_partitions = 0;
+  for (const auto& partition : partitions) {
+    if (partition.size() == 1 && !is_qnn_ctx_model) {
+      const char* op_type = nullptr;
+      auto s = ep->ort_api.Node_GetOperatorType(partition[0], &op_type);
+      if (s != nullptr) { ep->ort_api.ReleaseStatus(s); continue; }
+      if (std::string(op_type) == "QuantizeLinear" || std::string(op_type) == "DequantizeLinear") continue;
+    }
+    num_partitions++;
+  }
+
+  if (ep->enable_gpu_fallback_ && !ep->gpu_only_node_names_.empty()) {
+    ORT_CXX_LOGF(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                 "GetCapability result: %zu/%zu nodes claimed by EP across %zu subgraph(s). "
+                 "Multi-backend: %zu HTP + %zu GPU nodes.",
+                 num_of_supported_nodes, num_nodes_in_graph, num_partitions,
+                 num_of_supported_nodes - ep->gpu_only_node_names_.size(),
+                 ep->gpu_only_node_names_.size());
+  } else {
+    ORT_CXX_LOGF(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                 "GetCapability result: %zu/%zu nodes claimed by EP across %zu subgraph(s).",
+                 num_of_supported_nodes, num_nodes_in_graph, num_partitions);
+  }
+
   return nullptr;
 }
 
@@ -2264,6 +2393,17 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const OrtGraph* graph = graphs[graph_idx];
     const OrtNode* fused_node = fused_nodes[graph_idx];
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
+
+    if (enable_gpu_fallback_ && !gpu_only_node_names_.empty()) {
+      std::unique_ptr<SegmentedExecutionSpec> spec;
+      RETURN_IF_NOT_NULL(CompileSegmentedSubgraph(graph, fused_node, fused_node_name,
+                                                     htp_graph_configs, spec));
+      segmented_specs_.emplace(fused_node_name, std::move(spec));
+
+      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
+      node_compute_infos[graph_idx] = node_compute_info.release();
+      continue;
+    }
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
         qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
@@ -2398,6 +2538,326 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
               ("Total finalize time for all fused nodes: " + std::to_string(total_finalize_time.count()) + " ms").c_str());
 #endif  // _WIN32
 
+  return nullptr;
+}
+
+OrtStatus* QnnEp::CompileSegmentedSubgraph(const OrtGraph* graph,
+                                              const OrtNode* fused_node,
+                                              const std::string& fused_node_name,
+                                              const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                                              std::unique_ptr<SegmentedExecutionSpec>& spec_out) {
+  using TensorTypeShape = qnn::QnnModelContext::TensorTypeShape;
+
+  ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                "CompileSegmentedSubgraph starting for '%s'.",
+                fused_node_name.c_str());
+
+  Ort::ConstGraph ort_graph{graph};
+  auto nodes = ort_graph.GetNodes();
+
+  ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                "Multi-backend: graph has %zu nodes.", nodes.size());
+
+  // --- Phase 1: Walk nodes, classify, collect tensor info ---
+  struct SegmentDef {
+    std::unordered_set<std::string> node_names;
+    bool is_gpu;
+  };
+  std::vector<SegmentDef> segment_defs;
+
+  std::unordered_map<std::string, size_t> tensor_producer_segment;
+  std::unordered_map<std::string, TensorTypeShape> all_tensor_info;
+
+  std::unordered_set<std::string> graph_input_names;
+  for (const auto& input : ort_graph.GetInputs()) {
+    graph_input_names.insert(input.GetName());
+  }
+  std::unordered_set<std::string> graph_output_names;
+  for (const auto& output : ort_graph.GetOutputs()) {
+    graph_output_names.insert(output.GetName());
+  }
+
+  std::unordered_set<std::string> initializer_names;
+  for (const auto& init : ort_graph.GetInitializers()) {
+    initializer_names.insert(init.GetName());
+  }
+
+  size_t node_idx = 0;
+  for (const auto& node : nodes) {
+    std::string name = node.GetName();
+    std::string op_type = node.GetOperatorType();
+    ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                  "Multi-backend: node[%zu] name='%s' op='%s'",
+                  node_idx, name.c_str(), op_type.c_str());
+    ++node_idx;
+
+    bool is_gpu = gpu_only_node_names_.count(name) > 0;
+
+    if (segment_defs.empty() || segment_defs.back().is_gpu != is_gpu) {
+      segment_defs.push_back({{}, is_gpu});
+    }
+    size_t seg_idx = segment_defs.size() - 1;
+    segment_defs[seg_idx].node_names.insert(name);
+
+    for (const auto& output : node.GetOutputs()) {
+      if (static_cast<const OrtValueInfo*>(output) == nullptr) continue;
+      std::string out_name = output.GetName();
+      if (out_name.empty()) continue;
+      tensor_producer_segment[out_name] = seg_idx;
+      try {
+        auto type_info = output.TypeInfo();
+        if (type_info) {
+          auto shape_info = type_info.GetTensorTypeAndShapeInfo();
+          all_tensor_info[out_name] = {static_cast<int32_t>(shape_info.GetElementType()),
+                                       shape_info.GetShape()};
+        }
+      } catch (...) {
+      }
+    }
+
+    for (const auto& input : node.GetInputs()) {
+      if (static_cast<const OrtValueInfo*>(input) == nullptr) continue;
+      std::string in_name = input.GetName();
+      if (in_name.empty()) continue;
+      if (all_tensor_info.find(in_name) == all_tensor_info.end()) {
+        try {
+          auto type_info = input.TypeInfo();
+          if (type_info) {
+            auto shape_info = type_info.GetTensorTypeAndShapeInfo();
+            all_tensor_info[in_name] = {static_cast<int32_t>(shape_info.GetElementType()),
+                                        shape_info.GetShape()};
+          }
+        } catch (...) {
+        }
+      }
+    }
+  }
+
+  ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                "Multi-backend: Phase 1 done - %zu nodes, %zu segments.",
+                nodes.size(), segment_defs.size());
+
+  // --- Phase 2: Compute segment I/O ---
+  struct SegmentIO {
+    std::vector<std::string> inputs;
+    std::vector<std::string> outputs;
+  };
+  std::vector<SegmentIO> segment_ios(segment_defs.size());
+
+  for (size_t seg_idx = 0; seg_idx < segment_defs.size(); ++seg_idx) {
+    std::unordered_set<std::string> seg_inputs_set;
+    std::unordered_set<std::string> seg_outputs_set;
+
+    for (const auto& node : nodes) {
+      std::string node_name = node.GetName();
+      if (segment_defs[seg_idx].node_names.find(node_name) == segment_defs[seg_idx].node_names.end())
+        continue;
+
+      for (const auto& input : node.GetInputs()) {
+        if (static_cast<const OrtValueInfo*>(input) == nullptr) continue;
+        std::string in_name = input.GetName();
+        if (in_name.empty()) continue;
+        if (initializer_names.count(in_name)) continue;
+        auto prod_it = tensor_producer_segment.find(in_name);
+        if (prod_it == tensor_producer_segment.end() || prod_it->second != seg_idx) {
+          seg_inputs_set.insert(in_name);
+        }
+      }
+
+      for (const auto& output : node.GetOutputs()) {
+        if (static_cast<const OrtValueInfo*>(output) == nullptr) continue;
+        std::string out_name = output.GetName();
+        if (out_name.empty()) continue;
+        if (graph_output_names.count(out_name)) {
+          seg_outputs_set.insert(out_name);
+        }
+      }
+    }
+
+    // Tensors produced by this segment but consumed outside it are also segment outputs.
+    for (const auto& node : nodes) {
+      std::string node_name = node.GetName();
+      if (segment_defs[seg_idx].node_names.count(node_name)) continue;
+      for (const auto& input : node.GetInputs()) {
+        if (static_cast<const OrtValueInfo*>(input) == nullptr) continue;
+        std::string in_name = input.GetName();
+        if (in_name.empty()) continue;
+        auto prod_it = tensor_producer_segment.find(in_name);
+        if (prod_it != tensor_producer_segment.end() && prod_it->second == seg_idx) {
+          seg_outputs_set.insert(in_name);
+        }
+      }
+    }
+
+    segment_ios[seg_idx].inputs.assign(seg_inputs_set.begin(), seg_inputs_set.end());
+    segment_ios[seg_idx].outputs.assign(seg_outputs_set.begin(), seg_outputs_set.end());
+  }
+
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Multi-backend: Phase 2 (segment I/O) done.");
+
+  // --- Phase 3: Allocate intermediate buffers ---
+  std::unordered_map<std::string, int> tensor_to_buffer_idx;
+  std::vector<IntermediateBuffer> buffers;
+
+  for (size_t seg_idx = 0; seg_idx < segment_defs.size(); ++seg_idx) {
+    for (const auto& out_name : segment_ios[seg_idx].outputs) {
+      if (!graph_output_names.count(out_name) && tensor_to_buffer_idx.find(out_name) == tensor_to_buffer_idx.end()) {
+        auto it = all_tensor_info.find(out_name);
+        if (it == all_tensor_info.end()) continue;
+        const auto& info = it->second;
+
+        size_t byte_size = 1;
+        for (auto dim : info.shape) byte_size *= static_cast<size_t>(dim);
+        byte_size *= qnn::utils::GetElementSizeByType(static_cast<ONNXTensorElementDataType>(info.data_type));
+
+        int buf_idx = static_cast<int>(buffers.size());
+        tensor_to_buffer_idx[out_name] = buf_idx;
+
+        IntermediateBuffer buf;
+        buf.data.resize(byte_size, 0);
+        buf.tensor = QNN_TENSOR_INIT;
+        qnn::SetQnnTensorMemType(buf.tensor, QNN_TENSORMEMTYPE_RAW);
+        qnn::SetQnnTensorClientBuf(buf.tensor, buf.data.data(), static_cast<uint32_t>(byte_size));
+        buffers.push_back(std::move(buf));
+      }
+    }
+  }
+
+  ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                "Multi-backend: Phase 3 done - %zu intermediate buffers allocated.",
+                buffers.size());
+
+  // --- Phase 4: Compile each segment ---
+  auto spec = std::make_unique<SegmentedExecutionSpec>();
+  spec->buffers = std::move(buffers);
+
+  Ort::ConstNode fused_node_view{fused_node};
+  auto fused_inputs = fused_node_view.GetInputs();
+  auto fused_outputs = fused_node_view.GetOutputs();
+
+  std::unordered_map<std::string, size_t> fused_input_index;
+  for (size_t i = 0; i < fused_inputs.size(); ++i) {
+    fused_input_index[fused_inputs[i].GetName()] = i;
+  }
+  std::unordered_map<std::string, size_t> fused_output_index;
+  for (size_t i = 0; i < fused_outputs.size(); ++i) {
+    fused_output_index[fused_outputs[i].GetName()] = i;
+  }
+
+  for (size_t seg_idx = 0; seg_idx < segment_defs.size(); ++seg_idx) {
+    const auto& seg_def = segment_defs[seg_idx];
+    const auto& seg_io = segment_ios[seg_idx];
+
+    qnn::QnnBackendManager* backend = seg_def.is_gpu ? gpu_backend_manager_.get()
+                                                     : qnn_backend_manager_.get();
+
+    auto seg_model = std::make_unique<qnn::QnnModel>(backend, ApiPtrs{ort_api, ep_api, model_editor_api});
+
+    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_configs_builder(
+        QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+    if (!seg_def.is_gpu) {
+      InitQnnHtpGraphConfigs(htp_graph_configs, htp_configs_builder);
+    }
+    std::vector<const QnnGraph_Config_t*> all_graph_configs;
+    const QnnGraph_Config_t** htp_configs = htp_configs_builder.GetQnnConfigs();
+    if (htp_configs) {
+      for (const QnnGraph_Config_t** config = htp_configs; *config; ++config) {
+        all_graph_configs.push_back(*config);
+      }
+    }
+    const QnnGraph_Config_t** all_graph_configs_ptr = nullptr;
+    if (!all_graph_configs.empty()) {
+      all_graph_configs.push_back(nullptr);
+      all_graph_configs_ptr = all_graph_configs.data();
+    }
+
+    std::string seg_graph_name = fused_node_name + "_seg" + std::to_string(seg_idx) +
+                                 (seg_def.is_gpu ? "_gpu" : "_htp");
+
+    qnn::QnnModelContext context{
+        /*ort_graph=*/*graph,
+        /*fused_node=*/*fused_node,
+        /*logger=*/logger_,
+        /*onnx_input_names=*/nullptr,
+        /*onnx_output_names=*/nullptr,
+        /*model_settings=*/&model_settings_,
+        /*graph_configs=*/all_graph_configs_ptr,
+        /*tensor_name_overrides=*/nullptr,
+        /*json_qnn_graph_path=*/std::string{},
+        /*op_trace_output=*/nullptr,
+        /*node_filter=*/&seg_def.node_names,
+        /*segment_input_names=*/&seg_io.inputs,
+        /*segment_output_names=*/&seg_io.outputs,
+        /*segment_tensor_info=*/&all_tensor_info,
+        /*graph_name_override=*/seg_graph_name};
+
+    ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                  "Multi-backend: compiling segment %zu (%s, %zu nodes, %zu inputs, %zu outputs).",
+                  seg_idx, seg_def.is_gpu ? "GPU" : "HTP",
+                  seg_def.node_names.size(), seg_io.inputs.size(), seg_io.outputs.size());
+
+    RETURN_IF_NOT_OK(seg_model->ComposeGraph(context));
+
+    ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                  "Multi-backend: segment %zu ComposeGraph done, finalizing.", seg_idx);
+
+    RETURN_IF_NOT_OK(seg_model->FinalizeGraphs(logger_));
+
+    ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                  "Multi-backend: segment %zu FinalizeGraphs done.", seg_idx);
+
+    RETURN_IF_NOT_OK(seg_model->SetupQnnInputOutput(logger_));
+
+    SegmentInfo seg_info;
+    seg_info.model = seg_model.get();
+    seg_info.is_gpu = seg_def.is_gpu;
+
+    for (const auto& in_name : seg_io.inputs) {
+      auto buf_it = tensor_to_buffer_idx.find(in_name);
+      if (buf_it != tensor_to_buffer_idx.end()) {
+        seg_info.input_buffer_indices.push_back(buf_it->second);
+        seg_info.external_input_indices.push_back(SIZE_MAX);
+      } else {
+        seg_info.input_buffer_indices.push_back(-1);
+        auto ext_it = fused_input_index.find(in_name);
+        seg_info.external_input_indices.push_back(
+            ext_it != fused_input_index.end() ? ext_it->second : SIZE_MAX);
+      }
+    }
+
+    for (const auto& out_name : seg_io.outputs) {
+      auto buf_it = tensor_to_buffer_idx.find(out_name);
+      if (buf_it != tensor_to_buffer_idx.end() && !graph_output_names.count(out_name)) {
+        seg_info.output_buffer_indices.push_back(buf_it->second);
+        seg_info.external_output_indices.push_back(SIZE_MAX);
+      } else {
+        seg_info.output_buffer_indices.push_back(-1);
+        auto ext_it = fused_output_index.find(out_name);
+        seg_info.external_output_indices.push_back(
+            ext_it != fused_output_index.end() ? ext_it->second : SIZE_MAX);
+      }
+    }
+
+    spec->segments.push_back(std::move(seg_info));
+    spec->owned_models.push_back(std::move(seg_model));
+  }
+
+  size_t htp_segments = 0, gpu_segments = 0;
+  std::string seg_detail;
+  for (size_t i = 0; i < segment_defs.size(); ++i) {
+    const auto& def = segment_defs[i];
+    if (def.is_gpu) gpu_segments++; else htp_segments++;
+    seg_detail += "  seg " + std::to_string(i) + " [" + (def.is_gpu ? "GPU" : "HTP") + "]: " +
+                  std::to_string(def.node_names.size()) + " nodes\n";
+  }
+
+  ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_INFO,
+                "Segmented compilation done for '%s': %zu segments (%zu HTP, %zu GPU), "
+                "%zu intermediate buffers.\n%s",
+                fused_node_name.c_str(), segment_defs.size(), htp_segments, gpu_segments,
+                spec->buffers.size(), seg_detail.c_str());
+
+  spec_out = std::move(spec);
   return nullptr;
 }
 
@@ -3350,6 +3810,13 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_p
   }
 
   std::string fused_node_name = ep.ep_api.NodeComputeContext_NodeName(compute_context);
+
+  auto spec_it = ep.segmented_specs_.find(fused_node_name);
+  if (spec_it != ep.segmented_specs_.end()) {
+    *compute_state = spec_it->second.get();
+    return nullptr;
+  }
+
   auto qnn_model_it = ep.qnn_models_.find(fused_node_name);
 
   // If not found with the fused_node_name, try to find with any available key
@@ -3378,6 +3845,61 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
     return ep.ort_api.CreateStatus(ORT_EP_FAIL,
                                    "QNN EP is in prepare_only mode. Session.Run() is not supported. "
                                    "Load the generated context model for inference.");
+  }
+
+  if (ep.enable_gpu_fallback_ && !ep.segmented_specs_.empty()) {
+    auto* spec = reinterpret_cast<SegmentedExecutionSpec*>(compute_state);
+
+    for (auto& seg : spec->segments) {
+      const auto& input_infos = seg.model->InputInfos();
+      const auto& output_infos = seg.model->OutputInfos();
+
+      std::vector<Qnn_Tensor_t> qnn_inputs(input_infos.size());
+      for (size_t i = 0; i < input_infos.size(); ++i) {
+        qnn_inputs[i] = input_infos[i].tensor_wrapper->GetQnnTensor();
+        if (seg.input_buffer_indices[i] >= 0) {
+          auto& buf = spec->buffers[seg.input_buffer_indices[i]];
+          qnn::SetQnnTensorMemType(qnn_inputs[i], QNN_TENSORMEMTYPE_RAW);
+          qnn::SetQnnTensorClientBuf(qnn_inputs[i], buf.data.data(), static_cast<uint32_t>(buf.data.size()));
+        } else if (seg.external_input_indices[i] != SIZE_MAX) {
+          const OrtValue* ort_input = nullptr;
+          ORT_CXX_RETURN_ON_API_FAIL(ep.ort_api.KernelContext_GetInput(
+              kernel_context, seg.external_input_indices[i], &ort_input));
+          const void* raw_data = nullptr;
+          ORT_CXX_RETURN_ON_API_FAIL(ep.ort_api.GetTensorData(ort_input, &raw_data));
+          qnn::SetQnnTensorMemType(qnn_inputs[i], QNN_TENSORMEMTYPE_RAW);
+          qnn::SetQnnTensorClientBuf(qnn_inputs[i], const_cast<void*>(raw_data),
+                                     input_infos[i].tensor_byte_size);
+        }
+      }
+
+      std::vector<Qnn_Tensor_t> qnn_outputs(output_infos.size());
+      for (size_t i = 0; i < output_infos.size(); ++i) {
+        qnn_outputs[i] = output_infos[i].tensor_wrapper->GetQnnTensor();
+        if (seg.output_buffer_indices[i] >= 0) {
+          auto& buf = spec->buffers[seg.output_buffer_indices[i]];
+          qnn::SetQnnTensorMemType(qnn_outputs[i], QNN_TENSORMEMTYPE_RAW);
+          qnn::SetQnnTensorClientBuf(qnn_outputs[i], buf.data.data(), static_cast<uint32_t>(buf.data.size()));
+        } else if (seg.external_output_indices[i] != SIZE_MAX) {
+          const auto* out_info = seg.model->GetOutputInfo(output_infos[i].tensor_wrapper->GetName());
+          OrtValue* ort_output = nullptr;
+          ORT_CXX_RETURN_ON_API_FAIL(ep.ort_api.KernelContext_GetOutput(
+              kernel_context, seg.external_output_indices[i],
+              out_info->shape_.data(), out_info->shape_.size(), &ort_output));
+          void* mutable_data = nullptr;
+          ORT_CXX_RETURN_ON_API_FAIL(ep.ort_api.GetTensorMutableData(ort_output, &mutable_data));
+          qnn::SetQnnTensorMemType(qnn_outputs[i], QNN_TENSORMEMTYPE_RAW);
+          qnn::SetQnnTensorClientBuf(qnn_outputs[i], mutable_data, output_infos[i].tensor_byte_size);
+        }
+      }
+
+      RETURN_IF_NOT_OK(seg.model->ExecuteGraphDirect(
+          qnn_inputs.data(), static_cast<uint32_t>(qnn_inputs.size()),
+          qnn_outputs.data(), static_cast<uint32_t>(qnn_outputs.size()),
+          ep.logger_));
+    }
+
+    return nullptr;
   }
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
