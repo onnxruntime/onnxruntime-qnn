@@ -14,6 +14,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -38,6 +39,7 @@ struct ModelSettings {
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
+  OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 
 class QnnModelWrapper {
