@@ -8,7 +8,7 @@
 //     qnn_context_priority, htp_graph_finalization_optimization_mode, htp_arch, vtcm_mb,
 //     soc_model, device_id, file-mapped weights, share-resource-optimization, embed_mode,
 //     disable_cpu_ep_fallback / offload_graph_io_quantization conflict, fp16/bf16 validation,
-//     disable_htp_monolithic_lstm, json dump path warning, ep_input_graph dump,
+//     enable_htp_monolithic_lstm, json dump path warning, ep_input_graph dump,
 //     ir DLC dump warnings, rpc_control_latency.
 //   - Constructor early throws: prepare_only without context_cache, bf16 without soc_model,
 //     bf16 with soc_model<88, fp16 without soc_model (Linux x86_64), backend_type +
@@ -53,6 +53,11 @@ struct StatusRecord {
   std::string msg;
 };
 
+struct LogRecord {
+  OrtLoggingLevel severity;
+  std::string message;
+};
+
 // ---------------------------------------------------------------------------
 // EpStubContext
 //
@@ -62,10 +67,14 @@ struct StatusRecord {
 // values; HasSessionConfigEntry returns 1 for keys present in the map, 0
 // otherwise; GetSessionConfigEntry returns the stored value + NUL.
 //
-// Logger_GetLoggingSeverityLevel is stubbed to return FATAL so that the
-// Ort::Logger(OrtLogger*) constructor (used in QnnEp's member-initialiser
-// list) always produces a null logger with FATAL severity — identical to
-// MakeNullLogger() but without the memcpy trick.
+// Logger_GetLoggingSeverityLevel reports current_->log_severity, which the
+// Ort::Logger(OrtLogger*) constructor (used in QnnEp's member-initialiser list)
+// caches once. It defaults to FATAL so ORT_CXX_LOG calls short-circuit on the
+// severity gate and never dereference the fake logger token — the safe default
+// for EP methods invoked outside a stub scope. Tests that assert on ctor logging
+// set ctx.log_severity = VERBOSE before MakeEp; the ctor's log statements then
+// pass the gate and route through Logger_LogMessage, which records
+// (severity, message) into log_records for ExpectLogged() assertions.
 // ---------------------------------------------------------------------------
 class EpStubContext : public OrtApiStubContext {
  public:
@@ -74,6 +83,18 @@ class EpStubContext : public OrtApiStubContext {
   // Captures the most recent call to DeviceEpIncompatibilityDetails_SetDetails.
   OrtDeviceEpIncompatibilityReason last_incompatibility_reason = OrtDeviceEpIncompatibility_UNKNOWN;
   int32_t last_incompatibility_error_code = -1;
+
+  // Records every ORT_CXX_LOG emitted through this stub's Logger_LogMessage.
+  std::vector<LogRecord> log_records;
+
+  // Severity that Logger_GetLoggingSeverityLevel reports — cached once by the
+  // Ort::Logger(OrtLogger*) ctor. Defaults to FATAL so that ORT_CXX_LOG calls
+  // short-circuit on the severity gate and never reach Logger_LogMessage (the
+  // safe default: EP methods invoked outside a stub scope, e.g. under the real
+  // ORT API, then log nothing and cannot dereference the fake logger token).
+  // Tests that assert on ctor logging set this to VERBOSE *before* MakeEp so the
+  // ctor's log statements route through the recording sink.
+  OrtLoggingLevel log_severity = ORT_LOGGING_LEVEL_FATAL;
 
   static thread_local EpStubContext* current_;
 
@@ -121,10 +142,23 @@ class EpStubContext : public OrtApiStubContext {
       return nullptr;
     };
 
-    // Logger severity — returns FATAL so Ort::Logger(OrtLogger*) short-circuits.
+    // Logger severity — returns current_->log_severity (default FATAL). Tests
+    // that assert on ctor logging set ctx.log_severity = VERBOSE before MakeEp
+    // so the Ort::Logger ctor caches VERBOSE and ctor logs reach Logger_LogMessage.
     stub_ort_api.Logger_GetLoggingSeverityLevel =
         [](const OrtLogger*, OrtLoggingLevel* out) noexcept -> OrtStatus* {
-      *out = ORT_LOGGING_LEVEL_FATAL;
+      auto* self = EpStubContext::current_;
+      *out = self ? self->log_severity : ORT_LOGGING_LEVEL_FATAL;
+      return nullptr;
+    };
+
+    // Logger_LogMessage — records (severity, message) into current_->log_records.
+    stub_ort_api.Logger_LogMessage =
+        [](const OrtLogger*, OrtLoggingLevel severity, const char* message,
+           const ORTCHAR_T*, int, const char*) noexcept -> OrtStatus* {
+      if (auto* self = EpStubContext::current_) {
+        self->log_records.push_back({severity, message ? message : ""});
+      }
       return nullptr;
     };
 
@@ -203,6 +237,24 @@ static std::unique_ptr<QnnEp> MakeEp(QnnEpFactory& factory, EpStubContext& ctx) 
   auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
   return std::make_unique<QnnEp>(factory, "QNNExecutionProvider",
                                  *fake_session_opts, fake_logger);
+}
+
+// Asserts that ctx.log_records contains at least one entry at the given
+// severity whose message contains substr. On failure prints all captured
+// records to aid debugging.
+static void ExpectLogged(const EpStubContext& ctx, OrtLoggingLevel severity,
+                         const std::string& substr) {
+  for (const auto& rec : ctx.log_records) {
+    if (rec.severity == severity && rec.message.find(substr) != std::string::npos) {
+      return;
+    }
+  }
+  std::string dump;
+  for (const auto& rec : ctx.log_records) {
+    dump += "\n  [sev=" + std::to_string(rec.severity) + "] " + rec.message;
+  }
+  ADD_FAILURE() << "No log at severity " << severity << " containing \"" << substr
+                << "\". Captured records:" << dump;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,13 +401,15 @@ TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_UnknownOp_ReturnsN
 // ===========================================================================
 //
 // Assertion strength (Groups 4-7): QnnEp exposes no public getter for parsed
-// constructor options, so these ctor-option tests can only assert that
-// construction does not throw. They exercise each option-parsing branch for
-// coverage but cannot observe the parsed result; options whose only effect is a
-// log line have no other observable side effect to assert. Tests with an
-// observable result assert it directly (early throws in Group 8; error codes in
-// Groups 10-12). Adding a getter purely for tests would break EP encapsulation,
-// so the weak assertion here is a deliberate component-level plateau.
+// constructor options. Options whose only effect is a log line are asserted via
+// the EpStubContext log sink — `_Logs{Error,Warning,Info,Verbose}` tests call
+// ExpectLogged() to verify the exact severity + message. Early throws are
+// asserted with EXPECT_THROW (Group 8); error codes in Groups 10-12. The
+// remaining `_Succeeds` tests exercise a parse branch whose result is neither
+// logged nor otherwise observable through the public surface (parsing into a
+// private member with no log), so they can only assert that construction does
+// not throw — a deliberate component-level plateau, since adding a getter purely
+// for tests would break EP encapsulation.
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BackendTypeGenie_Succeeds) {
   EpStubContext ctx;
@@ -387,9 +441,11 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BackendTypeIr_Succeeds) {
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BackendTypeInvalid_LogsError) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("backend_type")] = "totally_invalid_backend";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Failed to parse 'backend_type' value.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BackendTypeAndPathBothSet_Throws) {
@@ -426,110 +482,69 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeInvalid_Succeeds) {
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityNormalLow_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "normal_low";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityNormal_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "normal";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityLow_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "low";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityNormalHigh_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "normal_high";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityHighPlus_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "high_plus";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityCritical_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "critical";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityCriticalPlus_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("qnn_context_priority")] = "critical_plus";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityInvalid_SetsUndefined) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextPriorityInvalid_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("qnn_context_priority")] = "not_a_priority";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeBalanced_Succeeds) {
+// ---------------------------------------------------------------------------
+// Parameterized: constructor accepts each valid enum value for an option
+// (htp_performance_mode, qnn_context_priority, htp_arch) without throwing.
+// Invalid values are covered by the dedicated TEST_F cases above / below.
+// ---------------------------------------------------------------------------
+class QnnUnit_EpCtorValidOptionTest
+    : public QnnUnit_ExecutionProviderTest,
+      public ::testing::WithParamInterface<std::pair<std::string, std::string>> {};
+
+TEST_P(QnnUnit_EpCtorValidOptionTest, Ctor_ValidOptionValue_Succeeds) {
+  const auto& [key, value] = GetParam();
   EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "balanced";
+  ctx.session_config[EPKey(key)] = value;
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeDefault_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "default";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+// Uses the option value as the test-name suffix (values are valid name fragments).
+static std::string OptionValueSuffix(
+    const ::testing::TestParamInfo<std::pair<std::string, std::string>>& info) {
+  return info.param.second;
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeHighPerformance_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "high_performance";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
+INSTANTIATE_TEST_SUITE_P(
+    HtpPerformanceMode, QnnUnit_EpCtorValidOptionTest,
+    ::testing::Values(
+        std::make_pair("htp_performance_mode", "balanced"),
+        std::make_pair("htp_performance_mode", "default"),
+        std::make_pair("htp_performance_mode", "high_performance"),
+        std::make_pair("htp_performance_mode", "high_power_saver"),
+        std::make_pair("htp_performance_mode", "low_balanced"),
+        std::make_pair("htp_performance_mode", "low_power_saver"),
+        std::make_pair("htp_performance_mode", "power_saver")),
+    OptionValueSuffix);
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeHighPowerSaver_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "high_power_saver";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
+INSTANTIATE_TEST_SUITE_P(
+    QnnContextPriority, QnnUnit_EpCtorValidOptionTest,
+    ::testing::Values(
+        std::make_pair("qnn_context_priority", "normal_low"),
+        std::make_pair("qnn_context_priority", "normal"),
+        std::make_pair("qnn_context_priority", "low"),
+        std::make_pair("qnn_context_priority", "normal_high"),
+        std::make_pair("qnn_context_priority", "high_plus"),
+        std::make_pair("qnn_context_priority", "critical"),
+        std::make_pair("qnn_context_priority", "critical_plus")),
+    OptionValueSuffix);
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeLowBalanced_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "low_balanced";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModeLowPowerSaver_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "low_power_saver";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPerformanceModePowerSaver_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_performance_mode")] = "power_saver";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
+INSTANTIATE_TEST_SUITE_P(
+    HtpArch, QnnUnit_EpCtorValidOptionTest,
+    ::testing::Values(
+        std::make_pair("htp_arch", "68"),
+        std::make_pair("htp_arch", "69"),
+        std::make_pair("htp_arch", "73"),
+        std::make_pair("htp_arch", "75"),
+        std::make_pair("htp_arch", "81")),
+    OptionValueSuffix);
 
 // ===========================================================================
 // Group 6: Constructor — HTP graph finalization opt mode, HTP architecture
@@ -549,46 +564,13 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFinalizationOptModeInvalid_Succeed
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArch68_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_arch")] = "68";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArch69_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_arch")] = "69";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArch73_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_arch")] = "73";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArch75_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_arch")] = "75";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArch81_Succeeds) {
-  EpStubContext ctx;
-  ctx.session_config[EPKey("htp_arch")] = "81";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-}
-
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArchInvalid_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("htp_arch")] = "999";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid HTP architecture: 999");
 }
 
 // ===========================================================================
@@ -597,12 +579,14 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpArchInvalid_LogsWarning) {
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmNegative_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("vtcm_mb")] = "-5";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid vtcm_mb: -5 will be skipped");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmPositive_SetsMb) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmPositive_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("vtcm_mb")] = "8";
   auto factory = MakeFactory(ctx);
@@ -618,9 +602,12 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_RpcControlLatencyNonZero_Succeeds) {
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("htp_share_resource_optimization")] = "2";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Invalid value entered for htp_share_resource_optimization: 2, only 1 is allowed.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableVtcmBackupBufferSharing_Succeeds) {
@@ -632,42 +619,52 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableVtcmBackupBufferSharing_Succeed
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DeviceIdNegative_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("device_id")] = "-1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid device ID '-1', only >= 0 allowed.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelNegative_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("soc_model")] = "-1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid soc_model: -1");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFP16PrecisionInvalid_LogsError) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFP16PrecisionInvalid_LogsVerbose) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("enable_htp_fp16_precision")] = "invalid";
   // Invalid value leaves enable_HTP_FP16_precision_ at its default true.
   // On Linux x86_64, FP16+no-soc_model throws; provide a soc_model so the
-  // constructor can proceed past the FP16 validation — the invalid-value
-  // log path on lines 787-792 is what this test covers.
+  // constructor can proceed past the FP16 validation. The invalid value is
+  // parsed by ParseBoolOption, which logs VERBOSE (not ERROR) at line 301.
   ctx.session_config[EPKey("soc_model")] = "60";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.enable_htp_fp16_precision");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableHtpMonolithicLstmTrue_Succeeds) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmTrue_Succeeds) {
   EpStubContext ctx;
-  ctx.session_config[EPKey("disable_htp_monolithic_lstm")] = "1";
+  ctx.session_config[EPKey("enable_htp_monolithic_lstm")] = "1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableHtpMonolithicLstmInvalid_LogsError) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmInvalid_LogsVerbose) {
   EpStubContext ctx;
-  ctx.session_config[EPKey("disable_htp_monolithic_lstm")] = "maybe";
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_monolithic_lstm")] = "maybe";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.enable_htp_monolithic_lstm");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeInvalidValue_Succeeds) {
@@ -679,78 +676,99 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeInvalidValue_Succeeds) {
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeConflictsWithShareContexts_LogsError) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config["ep.context_embed_mode"] = "1";
   ctx.session_config["ep.share_ep_contexts"] = "1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Weight sharing enabled conflict with EP context embed mode.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeConflictsWithHtpShareResourceOpt_LogsError) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config["ep.context_embed_mode"] = "1";
   ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "HTP share resource optimization enabled conflict with EP context embed mode.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableCpuFallbackWithOffloadConflict_LogsInfo) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config["session.disable_cpu_ep_fallback"] = "1";
   // offload_graph_io_quantization defaults to "1" (true), so this covers
   // the conflict-detection branch.
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_INFO, "Fallback to CPU EP is disabled");
 }
 
 // InitQnnSerializerConfig: dir set but dump not enabled → warning branch
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrDlcDirWithoutDumpEnabled_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("dump_qnn_ir_dlc")] = "0";
   ctx.session_config[EPKey("dump_qnn_ir_dlc_dir")] = "/tmp/qnn_dlc_out";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "Provided a directory for dumping QNN graphs to DLC, but did not set dump_qnn_ir_dlc to 1.");
 }
 
 // IrBackendPath set but dump not enabled → warning
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrBackendPathWithoutDumpEnabled_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("dump_qnn_ir_dlc")] = "0";
   ctx.session_config[EPKey("qnn_ir_backend_path")] = "/tmp/libQnnIr_custom.so";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Provided a path to the Ir backend");
 }
 
 // Json QNN graph dump: dir set but dump not enabled → warning
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_JsonGraphDirWithoutDumpEnabled_LogsWarning) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("dump_json_qnn_graph")] = "0";
   ctx.session_config[EPKey("json_qnn_graph_dir")] = "/tmp/qnn_json_graphs";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "Provided a directory for dumping QNN JSON graphs, but did not enable dumping of QNN JSON graphs.");
 }
 
 // ParseBoolOption: value is neither "0" nor "1" → logs VERBOSE "Invalid value"
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BoolOptionInvalidValue_LogsVerbose) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   // offload_graph_io_quantization uses ParseBoolOption with default true.
-  // "x" is neither 0 nor 1, so the else-branch at line 257 fires.
+  // "x" is neither 0 nor 1, so the else-branch at line 301 fires.
   ctx.session_config[EPKey("offload_graph_io_quantization")] = "x";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.offload_graph_io_quantization");
 }
 
-// IR backend path AND dump enabled → "IR backend path" info log (line 372)
+// IR backend path AND dump enabled → "IR  backend path" info log (line 547)
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrBackendPathWithDumpEnabled_LogsInfo) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("dump_qnn_ir_dlc")] = "1";
   ctx.session_config[EPKey("qnn_ir_backend_path")] = "/custom/libQnnIr.so";
   ctx.session_config[EPKey("soc_model")] = "60";  // avoids FP16+no-soc_model throw
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_INFO, "IR  backend path: /custom/libQnnIr.so");
 }
 
 // EP input graph dump enabled with no dir → falls back to cwd (line 1084)
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpEpInputGraphNoDir_FallbackToCwd) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpEpInputGraphNoDir_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("dump_qnn_ep_input_graph")] = "1";
   // No dump_qnn_ep_input_graph_dir → falls back to current_path() (line 1084).
