@@ -592,11 +592,13 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper&, const OrtNodeUnit&,
 #endif  // SDK version guard for QNN_OP_GROUP_QUERY_ATTENTION
 
 // ---------------------------------------------------------------------------
-// Helper: emit an ElementWiseBinary (MUL or ADD or DIV) node.
+// Helper: emit a dedicated element-wise binary node (ADD, DIVIDE, or MULTIPLY).
+// op_type must be one of QNN_OP_ELEMENT_WISE_ADD, QNN_OP_ELEMENT_WISE_DIVIDE,
+// or QNN_OP_ELEMENT_WISE_MULTIPLY — no extra params are required for these ops.
 // ---------------------------------------------------------------------------
 static Ort::Status AddBinaryOpNode(QnnModelWrapper& qnn_model_wrapper,
                                    const OrtNodeUnit& node_unit,
-                                   uint32_t operation,
+                                   const char* op_type,
                                    const std::string& lhs_name,
                                    const std::string& rhs_name,
                                    const std::string& out_name,
@@ -614,22 +616,14 @@ static Ort::Status AddBinaryOpNode(QnnModelWrapper& qnn_model_wrapper,
 
   const std::string node_name = utils::UniqueNameGenerator().New(node_unit, "_ewb");
 
-  std::vector<std::string> param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                                         node_unit.Index(),
-                                         node_name,
-                                         operation,
-                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION,
-                                         param_names));
-
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                op_type,
                                                 {lhs_name, rhs_name},
                                                 {out_name},
-                                                std::move(param_names),
+                                                {},
                                                 do_op_validation),
-                "Failed to create ElementWiseBinary node.");
+                (std::string("Failed to create element-wise binary node: ") + op_type).c_str());
   return Ort::Status();
 }
 
@@ -757,12 +751,12 @@ static Ort::Status AddSoftcapNode(QnnModelWrapper& qnn_model_wrapper,
   // Div(scores, softcap) -> x
   const std::string div_out = utils::UniqueNameGenerator().New(node_unit, "_softcap_div");
   RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                  QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE,
+                                  QNN_OP_ELEMENT_WISE_DIVIDE,
                                   in_name, sc_name, div_out,
                                   shape, dtype, quant_param,
                                   /*is_graph_output=*/false, do_op_validation));
 
-  // Tanh(x) -> t  [QNN_OP_ELEMENT_WISE_NEURON with TANH param]
+  // Tanh(x) -> t
   const std::string tanh_out = utils::UniqueNameGenerator().New(node_unit, "_softcap_tanh");
   {
     QnnTensorWrapper tanh_tensor(tanh_out, QNN_TENSOR_TYPE_NATIVE, dtype, quant_param.Copy(),
@@ -770,29 +764,19 @@ static Ort::Status AddSoftcapNode(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tanh_tensor)),
                   ("Failed to add softcap Tanh output: " + tanh_out).c_str());
     const std::string tanh_node = utils::UniqueNameGenerator().New(node_unit, "_tanh");
-
-    Qnn_Scalar_t tanh_op_scalar = QNN_SCALAR_INIT;
-    tanh_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    tanh_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_TANH;
-    QnnParamWrapper tanh_op_param(node_unit.Index(), tanh_node,
-                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION,
-                                  tanh_op_scalar);
-    std::vector<std::string> tanh_param_names = {tanh_op_param.GetParamTensorName()};
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(tanh_op_param)),
-                  "Failed to add softcap Tanh operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(tanh_node,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_NEURON,
+                                                  QNN_OP_TANH,
                                                   {div_out},
                                                   {tanh_out},
-                                                  std::move(tanh_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Failed to create softcap Tanh node.");
   }
 
   // Mul(t, softcap) -> out
   RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                  QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY,
+                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
                                   tanh_out, sc_name, out_name,
                                   shape, dtype, quant_param,
                                   /*is_graph_output=*/false, do_op_validation));
@@ -1106,7 +1090,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   // current keys are treated uniformly.  Without cache, scale K immediately.
   const std::string q_scaled = utils::UniqueNameGenerator().New(node_unit, "_q_scaled");
   RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                  QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY,
+                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
                                   q_cur, sqrt_scale_name, q_scaled,
                                   q_info.shape, dtype, q_quant,
                                   /*is_graph_output=*/false, do_op_validation));
@@ -1116,7 +1100,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     // No KV cache: scale K now (standard path).
     const std::string k_scaled = utils::UniqueNameGenerator().New(node_unit, "_k_scaled");
     RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                    QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY,
+                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
                                     k_cur, sqrt_scale_name, k_scaled,
                                     k_info.shape, dtype, k_quant,
                                     /*is_graph_output=*/false, do_op_validation));
@@ -1212,7 +1196,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     // This ensures past and current keys are treated uniformly.
     const std::string k_present_scaled = utils::UniqueNameGenerator().New(node_unit, "_k_present_scaled");
     RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                    QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY,
+                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
                                     k_cur, sqrt_scale_name, k_present_scaled,
                                     k_present_shape, dtype, k_quant,
                                     /*is_graph_output=*/false, do_op_validation));
@@ -1375,7 +1359,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 
     const std::string masked_out = utils::UniqueNameGenerator().New(node_unit, "_causal_masked");
     RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                    QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD,
+                                    QNN_OP_ELEMENT_WISE_ADD,
                                     scores_cur, causal_mask_name, masked_out,
                                     qk_shape, dtype, q_quant,
                                     /*is_graph_output=*/false, do_op_validation));
@@ -1387,7 +1371,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     const std::string attn_masked_out =
         utils::UniqueNameGenerator().New(node_unit, "_attn_masked");
     RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
-                                    QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD,
+                                    QNN_OP_ELEMENT_WISE_ADD,
                                     scores_cur, attn_mask_in, attn_masked_out,
                                     qk_shape, dtype, q_quant,
                                     /*is_graph_output=*/false, do_op_validation));

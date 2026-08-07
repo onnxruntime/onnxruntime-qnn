@@ -440,9 +440,7 @@ TEST_F(QnnHTPBackendTests, Attention_MQA_3D) {
 
 // ===========================================================================
 // Softcap: scores = softcap * tanh(scores / softcap)
-// Gated to real ARM64 hardware: the softcap chain (Div + ElementWiseNeuron
-// TANH + Mul) triggers QNN_COMMON_ERROR_MEM_ALLOC during HTP graph
-// finalization on the x86_64 HTP simulator.
+// Gated to real ARM64 hardware
 // ===========================================================================
 #if defined(__aarch64__) || defined(_M_ARM64)
 
