@@ -58,18 +58,13 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   std::vector<std::string> elu_param_names;
 
-  // operation param: ELU
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_NEURON_OPERATION_ELU),
-                                         QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, elu_param_names));
-
   // alpha param
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), alpha,
-                                      QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, elu_param_names));
+                                      QNN_OP_ELU_PARAM_ALPHA, elu_param_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_elu"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_NEURON,
+                                                QNN_OP_ELU,
                                                 {input_name},
                                                 {elu_output_name},
                                                 std::move(elu_param_names),
