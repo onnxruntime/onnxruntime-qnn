@@ -135,38 +135,6 @@ void UnpackDataToDatatype(const std::vector<uint8_t>& packed_data,
   }
 }
 
-// Returns true if all packed zero_points are symmetric (i.e., each element equals 2^(bits-1)).
-// MatMulNBits stores zero_points as packed sub-byte integers in uint8 bytes
-// (e.g., two 4-bit values per byte, four 2-bit values per byte).
-// The expected symmetric value per byte is computed by packing (kByteBits/bits) copies of 2^(bits-1).
-bool AreZeroPointsSymmetric(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
-                            int64_t bits) {
-  std::vector<uint8_t> per_block_uint8_zp;
-  const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
-  if (zp_tensor_proto == nullptr) {
-    return false;  // zero_points tensor exists but is not a constant initializer.
-  }
-  auto status = qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp);
-  if (!status.IsOK()) {
-    return false;
-  }
-  // Build the expected packed byte: pack (kByteBits/bits) copies of 2^(bits-1) into one byte.
-  // e.g., bits=4: sym_zp=8 (0b1000), elems_per_byte=2 -> expected=0b10001000
-  //       bits=2: sym_zp=2 (0b10),   elems_per_byte=4 -> expected=0b10101010
-  //       bits=8: sym_zp=128,        elems_per_byte=1 -> expected=0b10000000
-  const int64_t elems_per_byte = kByteBits / bits;
-  const uint8_t sym_zp = static_cast<uint8_t>(1u << (bits - 1));
-  uint8_t expected_packed = 0;
-  for (int64_t i = 0; i < elems_per_byte; ++i) {
-    expected_packed |= static_cast<uint8_t>(sym_zp << (bits * i));
-  }
-  for (uint8_t zp : per_block_uint8_zp) {
-    if (zp != expected_packed) {
-      return false;
-    }
-  }
-  return true;
-}
 }  // namespace
 
 Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
@@ -288,7 +256,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
 
     // QNN GPU expects symmetric quantization.
     if (is_gpu_backend) {
-      RETURN_IF_NOT(AreZeroPointsSymmetric(qnn_model_wrapper, zp_tensor.name, bits),
+      RETURN_IF_NOT(utils::AreZeroPointsSymmetric(qnn_model_wrapper, zp_tensor.name, bits),
                     ("Unsupported input zero_points value, expecting symmetric zero_points for bits=" + std::to_string(bits)).c_str());
     }
   }
@@ -460,7 +428,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         // 2.4 Compute quant params: try LPBQ (BLOCKWISE_EXPANSION) first, otherwise fall back to BwFloatBlock.
         bool used_lpbq = false;
         const bool zp_is_symmetric = !(inputs.size() > 3 && inputs[3].Exists()) ||
-                                     AreZeroPointsSymmetric(qnn_model_wrapper, inputs[3].name, bits);
+                                     utils::AreZeroPointsSymmetric(qnn_model_wrapper, inputs[3].name, bits);
 
         if (bits == 4 && is_act_16bitquant && zp_is_symmetric) {
           // Build a synthetic OrtNodeUnitIODef to drive QnnQuantParamsWrapper::Init's
