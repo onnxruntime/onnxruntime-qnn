@@ -244,6 +244,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
   int32_t vtcm_size_in_mb_ = 0;
   bool enable_HTP_FP16_precision_ = true;
+  bool enable_htp_fp16_clamp_overflow_ = false;  // Intentionally undocumented; for internal/diagnostic use only.
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
