@@ -641,13 +641,10 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
 
     std::string mul_cos_x1_name = utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x1");
     std::vector<std::string> mul_cos_x1_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), mul_cos_x1_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_cos_x1_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       mul_cos_x1_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_BINARY,
+                      QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
                       {cos_x1},
                       std::move(mul_cos_x1_param_names),
@@ -667,13 +664,10 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
 
     std::string mul_sin_x2_name = utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x2");
     std::vector<std::string> mul_sin_x2_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), mul_sin_x2_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_sin_x2_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       mul_sin_x2_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_BINARY,
+                      QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
                       {sin_x2},
                       std::move(mul_sin_x2_param_names),
@@ -693,13 +687,10 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
 
     std::string sub_real_name = utils::UniqueNameGenerator().New(node_unit, "_sub_real");
     std::vector<std::string> sub_real_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), sub_real_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, sub_real_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       sub_real_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_BINARY,
+                      QNN_OP_ELEMENT_WISE_SUBTRACT,
                       std::move(sub_input_names),
                       {real},
                       std::move(sub_real_param_names),
@@ -719,13 +710,10 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
 
     std::string mul_sin_x1_name = utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x1");
     std::vector<std::string> mul_sin_x1_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), mul_sin_x1_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_sin_x1_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       mul_sin_x1_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_BINARY,
+                      QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
                       {sin_x1},
                       std::move(mul_sin_x1_param_names),
@@ -745,13 +733,10 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
 
     std::string mul_cos_x2_name = utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x2");
     std::vector<std::string> mul_cos_x2_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), mul_cos_x2_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_cos_x2_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       mul_cos_x2_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_BINARY,
+                      QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
                       {cos_x2},
                       std::move(mul_cos_x2_param_names),
@@ -771,13 +756,10 @@ Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& 
 
     std::string add_imag_name = utils::UniqueNameGenerator().New(node_unit, "_add_imag");
     std::vector<std::string> add_imag_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), add_imag_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_imag_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       add_imag_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_ELEMENT_WISE_BINARY,
+                      QNN_OP_ELEMENT_WISE_ADD,
                       std::move(add_input_names),
                       {imag},
                       std::move(add_imag_param_names),
