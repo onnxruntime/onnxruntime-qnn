@@ -351,9 +351,12 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (op_type == "Softplus") {
     // ONNX Softplus has no attributes; set QNN defaults (beta=1, threshold=20).
     RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 1.0f,
-                                        QNN_OP_ELEMENT_WISE_SOFTPLUS_PARAM_BETA, param_tensor_names));
+                                        QNN_OP_ELEMENT_WISE_NEURON_PARAM_BETA, param_tensor_names));
     RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 20.0f,
-                                        QNN_OP_ELEMENT_WISE_SOFTPLUS_PARAM_THRESHOLD, param_tensor_names));
+                                        QNN_OP_ELEMENT_WISE_NEURON_PARAM_THRESHOLD, param_tensor_names));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SOFTPLUS),
+                                           QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, param_tensor_names));
   }
 
   if (op_type == "HardSwish") {

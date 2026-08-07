@@ -612,7 +612,7 @@ TEST_F(QnnHTPBackendTests, NeuronOpType_Softplus) {
     return;
   }
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseSoftplus", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", /*count=*/1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", /*count=*/1);
 }

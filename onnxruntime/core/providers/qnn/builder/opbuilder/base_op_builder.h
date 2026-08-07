@@ -212,7 +212,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Sin", QNN_OP_ELEMENT_WISE_SIN},
         {"Slice", QNN_OP_STRIDED_SLICE},
         {"Softmax", QNN_OP_SOFTMAX},
-        {"Softplus", QNN_OP_ELEMENT_WISE_SOFTPLUS},
+        {"Softplus", QNN_OP_ELEMENT_WISE_NEURON},
         {"SpaceToDepth", QNN_OP_SPACE_TO_DEPTH},
         {"Split", QNN_OP_SPLIT},
         {"Sqrt", QNN_OP_ELEMENT_WISE_SQUARE_ROOT},
