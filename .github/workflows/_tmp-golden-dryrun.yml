@@ -1,0 +1,28 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+#
+# TEMPORARY — DELETE BEFORE MERGE.
+#
+# Pre-merge sanity check for the golden pipeline. On every push to the PR2
+# branch, run golden-publish in DRY-RUN so nothing touches Artifactory, and
+# upload the packaged goldens.zip + manifest.json as a downloadable artifact.
+#
+# We pass dry_run + filter EXPLICITLY here. A push event has no `inputs`
+# context, so calling golden-publish.yml directly from a push trigger would
+# leave inputs.dry_run empty and fall through to --publish. This wrapper is the
+# safe way to force dry-run on push.
+
+name: TEMP Golden Dry-Run (PR2)
+
+on:
+  push:
+    branches:
+      - dev/yuhuchua/qnn-ut-golden-publish
+
+jobs:
+  dryrun:
+    uses: ./.github/workflows/qualcomm-internal-golden-publish.yml
+    secrets: inherit
+    with:
+      dry_run: true
+      filter: Clip
