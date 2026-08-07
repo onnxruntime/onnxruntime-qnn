@@ -1055,7 +1055,6 @@ TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
-
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
 // Tests bias as a dynamic input.
 TEST_F(QnnHTPBackendTests, ConvU8U8S32_bias_dynamic_input) {
