@@ -44,7 +44,7 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   // -----------------------------------------------------------------------
-  // Step 1: ElementwiseNeuron (ELU) — applies alpha*exp(x)-alpha for x<=0
+  // Step 1: ELU — applies alpha*exp(x)-alpha for x<=0
   // -----------------------------------------------------------------------
   const std::string elu_output_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_elu_out");
 

@@ -248,7 +248,7 @@ std::unique_ptr<IQnnNodeGroup> TanhGeluFusion::TryFusion(
   }
   OrtNodeUnitIODef final_output = mul_half_outputs[0];
 
-  // Validate QNN ElementWiseNeuron(Gelu) accepts these tensor types.
+  // Validate QNN Gelu accepts these tensor types.
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;
   if (!qmw.MakeTensorWrapper(root_input, input_tensor).IsOK()) return nullptr;
