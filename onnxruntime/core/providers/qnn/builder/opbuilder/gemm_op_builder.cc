@@ -467,8 +467,8 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // MatMulAddFusion post-Gemm Reshape absorbed by the QDQ selector: FC (rank-2, encoded) followed
   // by a QNN Reshape (rank-N, same encoding). node_unit.Outputs()[0] already reflects the Reshape's
   // rank-N shape and the terminal Q's encoding.
-  const OrtNode* absorbed_output_reshape = node_unit.GetOutputReshapeNode();
-  if (absorbed_output_reshape != nullptr) {
+  const OrtNode* absorbed_reshape = node_unit.GetOutputReshapeNode();
+  if (absorbed_reshape != nullptr) {
     const std::string& final_output_name = node_unit.Outputs()[0].name;
     TensorInfo final_output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], final_output_info));
@@ -483,6 +483,9 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     RETURN_IF_NOT(weight_info.shape.size() == 2, "QNN EP: absorbed-Reshape Gemm weight must be rank-2 [K, N].");
     const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
     RETURN_IF_NOT(trans_b == 0, "QNN EP: absorbed-Reshape Gemm only supports transB=0.");
+    const int64_t trans_a = node_helper.Get("transA", static_cast<int64_t>(0));
+    RETURN_IF_NOT(trans_a == 0, "QNN EP: absorbed-Reshape Gemm only supports transA=0.");
+    // fc_output_shape = [M, N]: with transA=0 the activation is [M, K] so act_info.shape[0] == M.
     std::vector<uint32_t> fc_output_shape{act_info.shape[0], weight_info.shape[1]};
 
     const bool final_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
