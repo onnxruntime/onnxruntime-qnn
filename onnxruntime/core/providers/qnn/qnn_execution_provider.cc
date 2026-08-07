@@ -2032,7 +2032,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
   }
 
-  RETURN_IF_NOT_OK(ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend));
+  rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
+
+  if (!rt.IsOK()) {
+    const std::string message = "Op Affinity validation failed " + rt.GetErrorMessage();
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
+  }
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
     // Set the power config id and the default power mode from provider option for main thread,

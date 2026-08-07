@@ -722,16 +722,13 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
   }
 }
 
-// No op_affinity config: HTP is opt-in by default (see OpAffinityMap::Evaluate's per-backend
-// default), so GQA is NOT assigned to QNN.
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", std::nullopt, ExpectedEPNodeAssignment::None, &session_failed);
   ASSERT_FALSE(session_failed);
 }
 
-// op_affinity pins GroupQueryAttention to HTP, session runs HTP -> assigned to QNN.
 // TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "htp_pin_htp");
@@ -741,11 +738,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Ass
   std::filesystem::remove(path);
 }
 
-// op_affinity pins GQA to GPU but the session runs HTP: the QNN EP's GetCapability returns EP_FAIL,
-// but the ORT plugin-EP framework swallows it (logs + empty capability list), so GQA falls back to
-// CPU and session creation still succeeds -- same end state as PinCpu, not assigned to QNN.
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_NotAssigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_NotAssigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
@@ -753,10 +746,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinGpu_Not
   std::filesystem::remove(path);
 }
 
-// op_affinity pins GroupQueryAttention to CPU: a legitimate silent-off intent, so GQA is NOT
-// assigned to QNN but session creation still succeeds (falls back to CPU EP for that node).
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "pin_cpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
@@ -764,9 +754,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_PinCpu_NotAss
   std::filesystem::remove(path);
 }
 
-// op_affinity points at a config file that does not exist -> FromConfigFile throws
-// std::runtime_error at EP construction time, so session creation must fail.
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
 TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
   const std::filesystem::path missing =
       std::filesystem::temp_directory_path() / "gqa_op_affinity_does_not_exist_12345.json";
