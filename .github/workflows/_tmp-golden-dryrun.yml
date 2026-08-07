@@ -14,6 +14,12 @@
 
 name: TEMP Golden Dry-Run (PR2)
 
+# Must match/exceed what the reusable golden-publish.yml requests, else the
+# reusable call fails at startup (callee permissions can't exceed caller's).
+permissions:
+  contents: read
+  checks: write
+
 on:
   push:
     branches:
