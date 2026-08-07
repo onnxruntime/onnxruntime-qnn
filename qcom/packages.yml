@@ -148,7 +148,7 @@ nuget_windows_x86_64:
   md5: c51179f8b404bbf7f7b8e457240cc09d
   is_installer: false
 onnx_models:
-  version: 2026-10-02
+  version: 2025-10-02
   url: http://ort-ep-win-01.na.qualcomm.com:8000/onnx-models/onnx-models-{version}.tar.gz
   sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
