@@ -41,6 +41,7 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - **QNN API error diagnostics** — `graphFinalize`, `graphExecute`, `graphCreate`, and `contextApplyBinarySection` failures now include the QNN symbolic error string, not just a bare integer code. ([#532](https://github.com/onnxruntime/onnxruntime-qnn/pull/532))
 - **RMSNorm (HTP)** — Removed the dummy all-zeros beta tensor on QAIRT SDK 2.49+, which now accepts beta as a truly optional input. ([#581](https://github.com/onnxruntime/onnxruntime-qnn/pull/581))
 - **4-bit block-quantized (BQ) weights on HTP** — New `enable_block_quant_weight_optimization` session option converts int4 BQ weight encodings to LPBQ when supported, falling back to the standard BQ compatibility path otherwise. See [Configuration Options](execution_providers/QNN-ExecutionProvider.md#configuration-options) for details and trade-offs. ([#307](https://github.com/onnxruntime/onnxruntime-qnn/pull/307))
+- **HTP fp16 overflow clamping** — New `fp16_clamp_overflow` HTP session option (default OFF, requires QNN API >= 2.38 / QAIRT 2.49) clamps fp16 Conv overflow instead of producing NaN/Inf. Intentionally undocumented as it changes HTP numerical behavior. ([#686](https://github.com/onnxruntime/onnxruntime-qnn/pull/686))
 
 ## Op Translation Fixes
 
@@ -55,6 +56,7 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 ## Bug Fixes
 
 - **Utils** — Fixed undefined behavior from calling `std::vector::assign` with a reference into the same vector, which crashed MSVC debug builds. ([#511](https://github.com/onnxruntime/onnxruntime-qnn/pull/511))
+- **Android NPU discovery** — Standalone QNN EP now detects Qualcomm devices via the `ro.soc.manufacturer` system property instead of scanning `/dev/fastrpc-cdsp*`, which Android's SELinux policy blocks for untrusted apps. Fixes `getEpDevices()` returning no NPU device (and QNN EP being unusable) on Android even on supported devices. Linux ARM64 behavior is unchanged. ([#683](https://github.com/onnxruntime/onnxruntime-qnn/pull/683))
 
 **Full Changelog:** [rel-2.4.0...rel-2.5.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.4.0...rel-2.5.0)
 
