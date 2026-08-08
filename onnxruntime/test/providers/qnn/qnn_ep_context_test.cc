@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <string>
+#include <thread>
 
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -2265,6 +2266,172 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
     std::remove(ctx_model_path.c_str());
   }
   std::remove(qnn_ctx_binary_file_name1.c_str());
+}
+
+TEST_F(QnnHTPBackendTests, mem_alloc_test_no_compile) {
+  // Disable the test on test-android job in Qualcomm CI here while we investigate
+  // but do not upstream this change.
+  ProviderOptions provider_options;
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["backend_type"] = "htp";
+  provider_options["disable_file_mapped_weights"] = "1";
+
+  // Pakala
+  provider_options["htp_arch"] = "79";
+  provider_options["soc"] = "69";
+
+  // Kaanpali
+  //provider_options["htp_arch"] = "81";
+  //provider_options["soc"] = "87";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  // Create QDQ models
+  std::vector<std::string> ctx_onnx_model_paths{"./qwen3_4b_2bit_1_ctx.onnx", "./qwen3_4b_2bit_64_ctx.onnx"};
+
+  std::vector<std::string> ctx_model_paths;
+  for (auto model_path : ctx_onnx_model_paths) {
+    ctx_model_paths.push_back(model_path);
+  }
+
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+
+  Ort::SessionOptions so1;
+  so1.SetLogId("so1");
+  so1.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+#ifdef _WIN32
+  std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+#else
+  std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+#endif
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
+
+  Ort::Session* session1 = &scoped1.session();
+  std::vector<Ort::Session*> sessions;
+  sessions.push_back(session1);
+  sessions.push_back(&session2);
+
+  if (sessions.size() == 2) {
+    std::cerr << "if this prints then everything is working :)\n";
+  }
+
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+
+  std::cerr << "destructing.\n";
+  sessions.clear();
+#endif
+}
+
+
+TEST_F(QnnHTPBackendTests, mem_alloc_test) {
+  // Disable the test on test-android job in Qualcomm CI here while we investigate
+  // but do not upstream this change.
+  ProviderOptions provider_options;
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["backend_type"] = "htp";
+  provider_options["disable_file_mapped_weights"] = "1";
+
+  // Pakala
+  provider_options["htp_arch"] = "79";
+  provider_options["soc"] = "69";
+
+  // Kaanpali
+  //provider_options["htp_arch"] = "81";
+  //provider_options["soc"] = "87";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  // Create QDQ models
+  std::vector<std::string> ctx_onnx_model_paths{"./qwen3_4b_2bit_1_ctx.onnx", "./qwen3_4b_2bit_64_ctx.onnx"};
+  std::vector<std::string> onnx_model_paths{"./qwen3_4b_2bit_1.onnx", "./qwen3_4b_2bit_64.onnx"};
+  // cleanup in case some failure test doesn't remove them
+
+  std::vector<std::string> ctx_model_paths;
+  for (auto model_path : ctx_onnx_model_paths) {
+    ctx_model_paths.push_back(model_path);
+    std::remove(model_path.c_str());
+  }
+
+  for (auto model_path : onnx_model_paths) {
+    Ort::SessionOptions so_compile;
+    so_compile.SetLogId("so_compile");
+    so_compile.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+    so_compile.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so_compile.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+
+
+    provider_options["ep.context_enable"] = "1";
+    provider_options["ep.context_embed_mode"] = "0";
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so_compile, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped_compile(std::move(registered_ep_device), Ort::Session(*ort_env, model_path.c_str(), so_compile));
+  }
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+
+  provider_options["ep.context_enable"] = "0";
+
+  Ort::SessionOptions so1;
+  so1.SetLogId("so1");
+  so1.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+#ifdef _WIN32
+  std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+#else
+  std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+#endif
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
+
+  Ort::Session* session1 = &scoped1.session();
+  std::vector<Ort::Session*> sessions;
+  sessions.push_back(session1);
+  sessions.push_back(&session2);
+
+  if (sessions.size() == 2) {
+    std::cerr << "if this prints then everything is working :)\n";
+  }
+
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+
+  std::cerr << "destructing.\n";
+  sessions.clear();
+#endif
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
