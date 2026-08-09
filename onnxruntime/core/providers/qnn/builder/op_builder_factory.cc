@@ -14,6 +14,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
+  CreateBernoulliOpBuilder("Bernoulli", *this);
   CreateCastOpBuilder("Cast", *this);
   CreateClipOpBuilder("Clip", *this);
   CreateConcatOpBuilder("Concat", *this);
