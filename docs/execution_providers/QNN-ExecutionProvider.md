@@ -624,6 +624,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Upsample||
 |ai.onnx:Where||
 |ai.onnx:Xor||
+|ai.onnx.ml:ArrayFeatureExtractor|Decomposed to `QNN_OP_GATHER` at axis=rank(X)-1. Supported X dtypes: float32, int32, int64. Scalar Y (rank-0 indices) not supported (CPU fallback).|
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
