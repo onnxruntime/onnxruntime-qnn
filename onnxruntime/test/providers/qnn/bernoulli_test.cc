@@ -24,8 +24,7 @@ TEST_F(QnnHTPBackendTests, Bernoulli_Float32_HTP) {
   auto build_test_case = [](ModelTestBuilder& builder) {
     builder.graph_->set_name("bernoulli_float32_htp");
 
-    MakeTestInput<float>(builder, "prob", TestInputDef<float>({2, 4}, false, {0.1f, 0.5f, 0.9f, 0.3f,
-                                                                              0.2f, 0.6f, 0.8f, 0.4f}));
+    MakeTestInput<float>(builder, "prob", TestInputDef<float>({2, 4}, false, {0.1f, 0.5f, 0.9f, 0.3f, 0.2f, 0.6f, 0.8f, 0.4f}));
 
     builder.AddNode("Bernoulli", "Bernoulli", {"prob"}, {"out"}, kOnnxDomain, {});
     builder.MakeOutput("out");
@@ -58,9 +57,7 @@ TEST_F(QnnHTPBackendTests, Bernoulli_Int32Output_HTP) {
   auto build_test_case = [](ModelTestBuilder& builder) {
     builder.graph_->set_name("bernoulli_int32_output_htp");
 
-    MakeTestInput<float>(builder, "prob", TestInputDef<float>({3, 4}, false, {0.1f, 0.2f, 0.3f, 0.4f,
-                                                                              0.5f, 0.6f, 0.7f, 0.8f,
-                                                                              0.1f, 0.3f, 0.5f, 0.9f}));
+    MakeTestInput<float>(builder, "prob", TestInputDef<float>({3, 4}, false, {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.1f, 0.3f, 0.5f, 0.9f}));
 
     std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
     attrs.push_back(MakeAttribute("dtype", static_cast<int64_t>(6)));  // TensorProto::INT32
