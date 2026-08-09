@@ -57,8 +57,9 @@ static void RunArrayFeatureExtractorTest(
 }
 
 // ---------------------------------------------------------------------------
-// Float32 tests
+// Float32 tests gated on real HTP hardware.
 // ---------------------------------------------------------------------------
+#if !defined(__linux__) || defined(__aarch64__)
 
 // 2D float32: X[3, 4], Y = [0, 2] selects columns 0 and 2.
 TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Float32_2D_Basic) {
@@ -83,6 +84,17 @@ TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Float32_3D) {
       TestInputDef<int64_t>({2}, true, {1, 3}),
       ExpectedEPNodeAssignment::All);
 }
+
+// Dynamic int64 indices: values are graph inputs, requiring a Cast int64→int32 node.
+TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Float32_DynamicInt64Indices) {
+  RunArrayFeatureExtractorTest<float, int64_t>(
+      TestInputDef<float>({4, 6}, false,
+                          GetSequentialFloatData({4, 6}, 1.0f, 1.0f)),
+      TestInputDef<int64_t>({3}, false, {0, 2, 5}),
+      ExpectedEPNodeAssignment::All);
+}
+
+#endif  // !defined(__linux__) || defined(__aarch64__)
 
 // ---------------------------------------------------------------------------
 // Integer data tests
@@ -119,19 +131,6 @@ TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Float32_ScalarIndex) {
                            11.f, 12.f, 13.f, 14.f, 15.f}),
       TestInputDef<int64_t>({}, true, {2}),
       ExpectedEPNodeAssignment::None);
-}
-
-// ---------------------------------------------------------------------------
-// Dynamic indices test
-// ---------------------------------------------------------------------------
-
-// Dynamic int64 indices: values are graph inputs, requiring a Cast int64→int32 node.
-TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Float32_DynamicInt64Indices) {
-  RunArrayFeatureExtractorTest<float, int64_t>(
-      TestInputDef<float>({4, 6}, false,
-                          GetSequentialFloatData({4, 6}, 1.0f, 1.0f)),
-      TestInputDef<int64_t>({3}, false, {0, 2, 5}),
-      ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
