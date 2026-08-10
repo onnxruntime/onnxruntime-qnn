@@ -256,6 +256,40 @@ class GenerateDiffCoverageTask(CompositeTask):
         )
 
 
+class GenerateFileCoverageExcelTask(RunExecutablesWithVenvTask):
+    """Generate a per-day per-file coverage Excel snapshot from a Cobertura XML report.
+
+    Calls update_coverage_excel.py with the coverage.xml produced by
+    GenerateCoverageTask and writes a fresh Excel file containing today's
+    line% and branch% for every QNN EP source file.
+
+    # TODO: enable the aggregate CI workflow to merge daily snapshots into
+    # a 30-day history report.
+
+    Prerequisite: coverage.xml must already exist under
+    <build_dir>/<config>/coverage/ (enforced via @depends in build_and_test.py).
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        excel_file: Path,
+        commit_sha: str,
+        config: str = "RelWithDebInfo",
+    ) -> None:
+        coverage_xml = build_dir / config / "coverage" / "coverage.xml"
+        cmd = [
+            "python3",
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "update_coverage_excel.py"),
+            f"--coverage-xml={coverage_xml}",
+            f"--excel={excel_file}",
+            f"--commit-sha={commit_sha}",
+        ]
+        super().__init__(group_name, venv, [cmd])
+
+
 class AdbTestsTask(RunInTempDirectoryTask):
     def __init__(
         self,

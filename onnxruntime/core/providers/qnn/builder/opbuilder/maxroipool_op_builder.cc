@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -36,7 +37,7 @@ Ort::Status ReadRoisAsFloat(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(rois_def, rois_info));
 
   std::vector<uint8_t> rois_bytes;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackEffectiveConstantBytes(rois_def.name, rois_bytes));
+  RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, rois_def.name, rois_bytes));
 
   const size_t num_elems = static_cast<size_t>(num_rois) * 5;
   rois_flat.resize(num_elems);

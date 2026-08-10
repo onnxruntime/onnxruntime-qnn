@@ -6,6 +6,13 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#if !defined(_WIN32) && defined(__aarch64__)
+#include <cstring>
+#include <dirent.h>
+#endif
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
 
 #include "core/providers/qnn/soc_utils.h"
 
@@ -178,6 +185,31 @@ int getSocId() {
 int GetSocId() {
   static int cached_soc_id = getSocId();
   return cached_soc_id;
+}
+
+bool HasFastRpcCdspDevice() {
+#if !defined(_WIN32) && defined(__aarch64__)
+#if defined(__ANDROID__)
+  char manufacturer[PROP_VALUE_MAX] = {};
+  __system_property_get("ro.soc.manufacturer", manufacturer);
+  return strncasecmp(manufacturer, "QTI", 3) == 0;
+#endif
+  DIR* d = opendir("/dev");
+  if (!d) {
+    return false;
+  }
+  bool found = false;
+  while (dirent* e = readdir(d)) {
+    if (std::strncmp(e->d_name, "fastrpc-cdsp", 12) == 0) {
+      found = true;
+      break;
+    }
+  }
+  closedir(d);
+  return found;
+#else
+  return false;
+#endif
 }
 
 }  // namespace soc

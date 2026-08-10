@@ -56,7 +56,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexDefaultAxis) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexNonDefaultAxis) {
@@ -83,7 +83,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexNonDefaultAxis) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Negative axis attribute (count-from-end) must resolve before bounds check.
@@ -112,7 +112,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexNegativeAxis) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // ScatterElements(-1) embedded between producer/consumer ops must compile
@@ -150,7 +150,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsEndToEndNegativeIndexInGraph) {
 
   // HTP fp16 path -- loosen tolerance vs. CPU fp32 reference.
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All, 1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Same axis bound -- rewritten bytes are identical; both nodes land on QNN.
@@ -186,7 +186,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesInitializer) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Different axis bounds -- indices `[-1]` resolves to `kRows-1` for scatterA
@@ -227,7 +227,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesDifferentAxes) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 }  // namespace test

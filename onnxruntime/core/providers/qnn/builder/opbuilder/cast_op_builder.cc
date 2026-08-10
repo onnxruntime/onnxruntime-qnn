@@ -14,6 +14,9 @@
 namespace onnxruntime {
 namespace qnn {
 
+// Handles both ONNX Cast and CastLike. CastLike's second input only conveys the target dtype
+// (already resolved into node_unit.Outputs()[0].type by ONNX type inference), so it is never
+// added to the QNN graph.
 class CastOpBuilder : public BaseOpBuilder {
  public:
   CastOpBuilder() : BaseOpBuilder("CastOpBuilder") {}
@@ -33,8 +36,8 @@ class CastOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  // QNN HTP currently does not support casting FP16/FP32 to Bool, and thus such Cast will be replaced by NotEqual with
-  // an additional static input 0.f to achieve the idential functional.
+  // QNN HTP currently does not support casting FP16/FP32 to Bool, and thus such Cast/CastLike will be replaced by
+  // NotEqual with an additional static input 0.f to achieve the idential functional.
   bool IsFpToBoolCast(const OrtNodeUnit& node_unit) const;
   Ort::Status ProcessExtraInputForNotEqual(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
@@ -98,7 +101,8 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   ORT_UNUSED_PARAMETER(do_op_validation);
 
   const auto& inputs = node_unit.Inputs();
-  RETURN_IF_NOT(inputs.size() == 1, "QNN Cast node must have a single input.");
+  RETURN_IF_NOT(inputs.size() == 1 || inputs.size() == 2,
+                "QNN Cast node must have 1 input (Cast) or 2 inputs (CastLike).");
   const auto& input = inputs[0];
 
   const auto& input_name = input.name;
@@ -191,14 +195,9 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   std::vector<std::string> param_tensor_names;
   const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
   if (is_fp_to_bool_cast) {
-    Qnn_Scalar_t op_scalar = QNN_SCALAR_INIT;
-    op_scalar.dataType = QNN_DATATYPE_UINT_32;
-    op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL;
-    QnnParamWrapper op_param(node_unit.Index(), cast_node_name,
-                             QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, op_scalar);
-    param_tensor_names.push_back(op_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(op_param)),
-                  "Failed to add NotEqual operation param for FP-to-bool Cast.");
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), cast_node_name,
+                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL),
+                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, param_tensor_names));
   }
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,

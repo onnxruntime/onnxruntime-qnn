@@ -140,8 +140,9 @@ class BaseOpBuilder : public IOpBuilder {
         {"AveragePool", QNN_OP_POOL_AVG_2D},
         {"BatchNormalization", QNN_OP_BATCHNORM},
         {"Cast", QNN_OP_CAST},
+        {"CastLike", QNN_OP_CAST},
         {"Ceil", QNN_OP_ELEMENT_WISE_UNARY},
-        {"Clip", QNN_OP_RELU_MIN_MAX},
+        {"Clip", QNN_OP_ELEMENT_WISE_NEURON},
         {"Concat", QNN_OP_CONCAT},
         {"Conv", QNN_OP_CONV_2D},
         {"ConvTranspose", QNN_OP_TRANSPOSE_CONV_2D},
@@ -150,7 +151,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"DepthToSpace", QNN_OP_DEPTH_TO_SPACE},
         {"DequantizeLinear", QNN_OP_DEQUANTIZE},
         {"Div", QNN_OP_ELEMENT_WISE_BINARY},
-        {"Elu", QNN_OP_ELU},
+        {"Elu", QNN_OP_ELEMENT_WISE_NEURON},
         {"Equal", QNN_OP_ELEMENT_WISE_BINARY},
         {"Exp", QNN_OP_ELEMENT_WISE_UNARY},
         {"Expand", QNN_OP_ELEMENT_WISE_BINARY},
@@ -158,7 +159,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Floor", QNN_OP_ELEMENT_WISE_UNARY},
         {"Gather", QNN_OP_GATHER},
         {"GatherElements", QNN_OP_GATHER_ELEMENTS},
-        {"Gelu", QNN_OP_GELU},
+        {"Gelu", QNN_OP_ELEMENT_WISE_NEURON},
         {"Gemm", QNN_OP_FULLY_CONNECTED},
         {"GlobalAveragePool", QNN_OP_POOL_AVG_2D},
         {"GlobalMaxPool", QNN_OP_POOL_MAX_2D},
@@ -198,13 +199,14 @@ class BaseOpBuilder : public IOpBuilder {
         {"ReduceMin", QNN_OP_REDUCE_MIN},
         {"ReduceProd", QNN_OP_REDUCE_PROD},
         {"ReduceSum", QNN_OP_REDUCE_SUM},
-        {"Relu", QNN_OP_RELU},
+        {"Relu", QNN_OP_ELEMENT_WISE_NEURON},
         {"Reshape", QNN_OP_RESHAPE},
         {"Resize", QNN_OP_RESIZE},
         {"Round", QNN_OP_ELEMENT_WISE_UNARY},
         {"ScatterElements", QNN_OP_SCATTER_ELEMENTS},
         {"ScatterND", QNN_OP_SCATTER_ND},
-        {"Sigmoid", QNN_OP_SIGMOID},
+        {"Shape", QNN_OP_SHAPE},
+        {"Sigmoid", QNN_OP_ELEMENT_WISE_NEURON},
         {"Sign", QNN_OP_ELEMENT_WISE_UNARY},
         {"SimplifiedLayerNormalization", QNN_OP_RMS_NORM},
         {"Sin", QNN_OP_ELEMENT_WISE_UNARY},
@@ -217,7 +219,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Squeeze", QNN_OP_RESHAPE},
         {"Sub", QNN_OP_ELEMENT_WISE_BINARY},
         {"Sum", QNN_OP_ELEMENT_WISE_BINARY},
-        {"Tanh", QNN_OP_TANH},
+        {"Tanh", QNN_OP_ELEMENT_WISE_NEURON},
         {"Tile", QNN_OP_TILE},
         {"TopK", QNN_OP_TOP_K},
         {"Transpose", QNN_OP_TRANSPOSE},
@@ -243,10 +245,14 @@ class BaseOpBuilder : public IOpBuilder {
     }
   }
 
-  Ort::Status ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                   const OrtNodeUnit& node_unit,
-                                   Qnn_Scalar_t& axis_qnn_scalar,
-                                   int32_t& default_axis_value) const;
+  // Reads the named axis attribute, normalizes negative values against the input rank,
+  // and range-checks. Call this before AddQnnScalar<T> — T and the QNN param name are
+  // the caller's responsibility since they depend on the QNN op definition.
+  Ort::Status GetCanonicalizedAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            const std::string& attr_name,
+                                            int32_t default_axis,
+                                            int32_t& axis_out) const;
 
   size_t GetInputCountQnnRequired(const OrtNodeUnit& node_unit) const {
     auto input_output_cout = GetInputOutputCountQnnRequired(node_unit.OpType());

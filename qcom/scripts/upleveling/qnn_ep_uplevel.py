@@ -35,6 +35,10 @@ from requests.auth import HTTPBasicAuth
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Repo root, computed once so a future move of this script touches a single line
+# rather than every '../../..' walk-up scattered through the file.
+_REPO_ROOT = Path(SCRIPT_DIR).resolve().parents[2]
+
 ARTIFACTORY_CERTS_FILE = os.path.join(SCRIPT_DIR, "certs", "artifactory-ca.pem")
 PYPI_RC_FILE = os.path.join(SCRIPT_DIR, ".pypirc")
 INI_FILE = os.path.join(SCRIPT_DIR, "config.ini")
@@ -55,6 +59,8 @@ _SIGNED_LIBS_INDEX = f"{ARTIFACTORY_PREFIXES['zip']}-project"
 
 _QNN_PROVIDER_DLL = "onnxruntime_providers_qnn.dll"
 _QNN_MANAGED_DLL = "Qualcomm.ML.OnnxRuntime.QNN.dll"
+_QNN_NATIVE_ARM64_RID = "win-arm64"
+_QNN_NATIVE_X64_RID = "win-x64"
 
 
 def _clean_dir(path: str) -> None:
@@ -192,6 +198,14 @@ class ArtifactUpleveler(ABC):
             return ssl.get_default_verify_paths().cafile
         return ARTIFACTORY_CERTS_FILE
 
+    def _is_excluded_artifact(self, filename: str) -> bool:
+        """Whether an artifact file should be skipped entirely (never downloaded/uploaded).
+
+        Base implementation excludes nothing; subclasses override to drop artifacts
+        that should never be touched by upleveling (e.g. test packages).
+        """
+        return False
+
     def download_artifacts(self, url: str, download_dir: str) -> list[str]:
         """Download artifacts from the specified URL."""
         logging.info(f"Downloading {self.artifact_format}s from: {url}")
@@ -215,6 +229,11 @@ class ArtifactUpleveler(ABC):
             )
             if m
         ]
+
+        excluded = [f for f in artifact_list if self._is_excluded_artifact(f)]
+        for f in excluded:
+            logging.info(f"Skipping excluded artifact: {f}")
+        artifact_list = [f for f in artifact_list if f not in excluded]
 
         if not artifact_list:
             raise RuntimeError(
@@ -318,9 +337,10 @@ class ArtifactUpleveler(ABC):
 
     def _download_signed_libs(self, target_dir: str) -> str:
         """Download <format>.zip from artifactory into target_dir; return its path."""
-        api_key = os.environ.get("JFROG_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
+        artifactory_user = os.environ.get("ARTIFACTORY_USERNAME", "")
+        artifactory_password = os.environ.get("ARTIFACTORY_PASSWORD", "")
+        if not artifactory_password:
+            raise RuntimeError("ARTIFACTORY_PASSWORD environment variable is required when --sign_artifact true")
 
         version_url = self.config_manager.get_repository_url(
             _SIGNED_LIBS_INDEX, self.args.product_name, self._signed_libs_version
@@ -330,7 +350,9 @@ class ArtifactUpleveler(ABC):
         target_path = os.path.join(target_dir, zip_filename)
 
         logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
-        response = requests.get(url, auth=("", api_key), verify=ARTIFACTORY_CERTS_FILE, timeout=60)
+        response = requests.get(
+            url, auth=(artifactory_user, artifactory_password), verify=ARTIFACTORY_CERTS_FILE, timeout=60
+        )
         if response.status_code != 200:
             raise RuntimeError(f"Failed to download signed libs: HTTP {response.status_code}")
 
@@ -423,8 +445,6 @@ class WheelUpleveler(ArtifactUpleveler):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
       PYPI_API_KEY                                 — PyPI upload token (when index_server_to=pypi)
       TEST_PYPI_API_KEY                            — TestPyPI upload token (when index_server_to=testpypi)
-      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -648,11 +668,13 @@ class NugetUpleveler(ArtifactUpleveler):
                             index_server_to via `nuget push`.
       true                — sign flow: download nupkgs into
                             output/unsigned_artifacts/nuget/, fetch signed-libs
-                            nuget.zip from Artifactory, repackage by replacing the
-                            native win-arm64 onnxruntime_providers_qnn.dll AND the
-                            managed Qualcomm.ML.OnnxRuntime.QNN.dll with their
-                            signed copies, then re-version and upload as in the
-                            standard flow.
+                            nuget.zip from Artifactory, repackage by replacing
+                            whichever native runtimes/win-arm64 and/or win-x64
+                            onnxruntime_providers_qnn.dll(s) the package carries
+                            (a merged package has both; a single-arch package has
+                            one) AND the managed Qualcomm.ML.OnnxRuntime.QNN.dll
+                            with their signed copies, then re-version and upload
+                            as in the standard flow.
 
     NuGet versions use SemVer hyphenation (e.g., 2.4.0-rc125), but the signed-libs
     folder is published under the run-on form (e.g., 2.4.0rc125). Hyphens are
@@ -662,8 +684,6 @@ class NugetUpleveler(ArtifactUpleveler):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
       NUGET_API_KEY                                — nuget.org API key (when index_server_to=nuget)
       TEST_NUGET_API_KEY                           — int.nugettest.org API key (when index_server_to=testnuget)
-      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     def __init__(self, args: argparse.Namespace):
@@ -831,7 +851,9 @@ class NugetUpleveler(ArtifactUpleveler):
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
         For each *.nupkg (top-level, excluding *.snupkg) under artifact_dir:
-        extract, replace the native arm64 DLL and the managed wrapper DLL with their
+        extract, replace whichever native per-arch provider DLL(s) the package
+        contains (win-arm64 and/or win-x64 -- a merged package carries both; a
+        single-arch package carries one) and the managed wrapper DLL with their
         signed equivalents from signed_libs_dir, re-zip into output_dir/<original_name>.
 
         Missing signed DLLs are logged and counted as failures, but the .nupkg is still
@@ -864,11 +886,29 @@ class NugetUpleveler(ArtifactUpleveler):
                     shutil.rmtree(extract_dir)
                 self._extract_signed_libs(nupkg_path, extract_dir)
 
-                native_missing = not self._replace_signed_dll(
-                    src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_PROVIDER_DLL),
-                    dst=os.path.join(extract_dir, "runtimes", "win-arm64", "native", _QNN_PROVIDER_DLL),
-                    label="native",
-                )
+                # Replace whichever per-arch native provider DLL(s) are actually present in
+                # this package. A merged package carries both win-arm64 and win-x64; an
+                # older single-arch package carries only one. Only require a replacement for
+                # an arch folder that exists in the package being repackaged.
+                native_missing = False
+                native_replaced_any = False
+                for arch_rid in (_QNN_NATIVE_ARM64_RID, _QNN_NATIVE_X64_RID):
+                    dst = os.path.join(extract_dir, "runtimes", arch_rid, "native", _QNN_PROVIDER_DLL)
+                    if not os.path.exists(dst):
+                        continue  # this package doesn't carry this arch; nothing to replace
+                    if self._replace_signed_dll(
+                        src=os.path.join(signed_libs_dir, nupkg_no_ext, arch_rid, _QNN_PROVIDER_DLL),
+                        dst=dst,
+                        label=f"native ({arch_rid})",
+                    ):
+                        native_replaced_any = True
+                    else:
+                        native_missing = True
+
+                if not native_replaced_any and not native_missing:
+                    logging.warning(f"    No native runtimes/win-*/native/{_QNN_PROVIDER_DLL} found in package")
+                    native_missing = True
+
                 managed_missing = not self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_MANAGED_DLL),
                     dst=os.path.join(extract_dir, "lib", "netstandard2.0", _QNN_MANAGED_DLL),
@@ -938,8 +978,6 @@ class ZipUpleveler(ArtifactUpleveler):
 
     Credentials (never in argv):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
-      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -950,14 +988,19 @@ class ZipUpleveler(ArtifactUpleveler):
     def _sign_flag(self) -> bool:
         return self.args.sign_artifact
 
+    def _is_excluded_artifact(self, filename: str) -> bool:
+        """Test packages are never upleveled, signed or not."""
+        return filename.endswith("-test_package.zip")
+
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
-        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir.
-        For each one: extract, swap in the signed onnxruntime_providers_qnn.dll from
+        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir. For each
+        one: extract, swap in the signed onnxruntime_providers_qnn.dll from
         signed_libs_dir, re-zip into output_dir/<original_name>.zip.
 
-        All other files are copied as-is
-        into output_dir, flattened (only basename preserved).
+        All other files are copied as-is into output_dir, flattened (only basename
+        preserved). *-test_package.zip is never present here — download_artifacts
+        excludes it via _is_excluded_artifact before this method runs.
 
         Missing signed DLLs are logged and counted as failures, but the zip is still
         re-zipped.
@@ -1058,6 +1101,12 @@ class ZipUpleveler(ArtifactUpleveler):
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update ZIP archive versions (simple copy with renamed version)."""
+        # version_from/to carry the "-pdb" channel suffix (from the Artifactory dir name), but
+        # filenames put it after the arch (onnxruntime-qnn-2.3.0rc1-win-arm64-pdb.zip), so the
+        # suffixed version token never matches. Strip "-pdb" to rename on the core version token.
+        file_version_from = self.args.version_from.removesuffix("-pdb")
+        file_version_to = self.args.version_to.removesuffix("-pdb")
+
         for zip_file in artifact_list:
             logging.info(
                 f"Updating version from {self.args.version_from} to {self.args.version_to} "
@@ -1065,10 +1114,8 @@ class ZipUpleveler(ArtifactUpleveler):
             )
 
             zip_path = os.path.join(input_dir, zip_file)
-            updated_zip_path = os.path.join(
-                output_dir,
-                os.path.basename(zip_path.replace(self.args.version_from, self.args.version_to)),
-            )
+            new_name = os.path.basename(zip_path).replace(file_version_from, file_version_to)
+            updated_zip_path = os.path.join(output_dir, new_name)
 
             shutil.copy(zip_path, updated_zip_path)
 
@@ -1076,6 +1123,37 @@ class ZipUpleveler(ArtifactUpleveler):
                 raise RuntimeError(f"Failed to update zip {zip_file}")
 
             logging.info(f"Version update completed for {zip_file}, updated to {updated_zip_path}")
+
+    @staticmethod
+    def _read_release_notes() -> tuple[str, str]:
+        """Return (title, body) from the first section of docs/release-notes.md.
+
+        title — text of the first H1 line (without the leading '# ').
+        body  — all lines after that H1 up to (not including) the next H1.
+        Both are empty strings if the file is missing or has no H1.
+        """
+        notes_path = _REPO_ROOT / "docs" / "release-notes.md"
+        try:
+            with open(notes_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return "", ""
+
+        title = ""
+        body_lines = []
+        in_section = False
+        for line in lines:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("# "):
+                if not in_section:
+                    title = stripped[2:].strip()
+                    in_section = True
+                else:
+                    break
+            elif in_section:
+                body_lines.append(stripped)
+
+        return title, "\n".join(body_lines).strip()
 
     def _upload_to_github(self, distribution_dir: str) -> None:
         """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
@@ -1120,23 +1198,45 @@ class ZipUpleveler(ArtifactUpleveler):
                         f"git push stderr: {push_result.stderr.decode(errors='replace')}"
                     )
                 logging.info(f"Git tag {tag} was pushed concurrently by another job; reusing it")
-        # Create the draft GitHub Release if it does not exist yet (tag is already pinned above).
-        # `gh release create` exits non-zero both for "already exists" (expected on re-runs and
-        # cross-format runs) and for real failures (auth, repo not found, …). Inspect stderr to
-        # tell them apart so genuine errors don't surface as a confusing upload failure later.
-        create_result = subprocess.run(
-            ["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"],
-            check=False,
-            capture_output=True,
+        # Create the draft GitHub Release only if it does not already exist.
+        # `gh release view` is a fast-path: when zip/tgz jobs run sequentially the second
+        # one short-circuits without invoking `gh release create`. The view+create pair
+        # is still TOCTOU under true parallelism — the `"already exists"` fallback below
+        # is what actually guarantees no duplicate drafts; keep it intact.
+        release_exists = (
+            subprocess.run(["gh", "release", "view", tag], check=False, capture_output=True).returncode == 0
         )
-        if create_result.returncode == 0:
-            logging.info(f"Created draft GitHub Release {tag}")
+        if release_exists:
+            logging.info(f"GitHub Release {tag} already exists, reusing it")
         else:
-            stderr = create_result.stderr.decode(errors="replace")
-            if "already exists" in stderr.lower():
-                logging.info(f"GitHub Release {tag} already exists, reusing it")
+            release_title, release_notes = self._read_release_notes()
+            # Guard against a stale docs/release-notes.md: the parsed H1 title must carry the exact
+            # version being released. Match the vMAJOR.MINOR.PATCH token in the title and compare it
+            # to --version_to; a substring check would let 2.4.0 spuriously match e.g. 12.4.0 or
+            # 2.4.00. Refuse to publish a release whose title/body version disagrees with the tag
+            # rather than silently emit one.
+            if release_title:
+                title_versions = re.findall(r"\bv?(\d+\.\d+\.\d+)\b", release_title)
+                if self.args.version_to not in title_versions:
+                    raise RuntimeError(
+                        f"docs/release-notes.md top H1 ({release_title!r}) does not match "
+                        f"--version_to={self.args.version_to}; refusing to publish a tag/title-mismatch release. "
+                        f"Bump docs/release-notes.md before re-running."
+                    )
+            release_title = release_title or f"ONNX Runtime QNN Execution Provider {tag}"
+            create_result = subprocess.run(
+                ["gh", "release", "create", tag, "--title", release_title, "--notes", release_notes, "--draft"],
+                check=False,
+                capture_output=True,
+            )
+            if create_result.returncode == 0:
+                logging.info(f"Created draft GitHub Release {tag}")
             else:
-                raise RuntimeError(f"Failed to create GitHub Release {tag}: {stderr.strip()}")
+                stderr = create_result.stderr.decode(errors="replace")
+                if "already exists" in stderr.lower():
+                    logging.info(f"GitHub Release {tag} already exists, reusing it")
+                else:
+                    raise RuntimeError(f"Failed to create GitHub Release {tag}: {stderr.strip()}")
 
         # Attach assets; --clobber replaces any existing asset with the same name (safe for re-runs).
         subprocess.run(["gh", "release", "upload", tag, "--clobber", *files], check=True)

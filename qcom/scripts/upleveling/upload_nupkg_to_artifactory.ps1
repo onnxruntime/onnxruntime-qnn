@@ -25,7 +25,7 @@ foreach ($file in $nugetFiles) {
     Write-Host "${fileBasename}: $version"
 
     $sourceName = "artifactory-nuget-test-project-$version"
-    $sourceUrl = "https://artifactory-las.qualcomm.com/artifactory/api/nuget/aisw-test-project-nuget-virtual/onnxruntime-qnn/$version"
+    $sourceUrl = "https://artifactory-qdc-global.qualcomm.com/artifactory/api/nuget/aisw-test-project-nuget-virtual/onnxruntime-qnn/$version"
 
     # Use PackageSourceCredentials environment variables for secure authentication
     # NuGet automatically reads credentials from environment variables in the format:

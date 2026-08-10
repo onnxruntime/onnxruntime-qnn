@@ -160,11 +160,12 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       continue;
     }
 
-    // Get the Q/DQ axis attribute if available.
+    // Get the Q/DQ axis and block_size attributes if available.
     std::optional<int64_t> axis = OrtNodeAttrHelper(*node).GetInt64("axis");
+    std::optional<int64_t> block_size = OrtNodeAttrHelper(*node).GetInt64("block_size");
 
     // Quantization scale and zp are always the input[1, 2].
-    OrtNodeUnitIODef::QuantParam quant_param{node_inputs[1], num_node_inputs == 3 ? node_inputs[2] : nullptr, axis};
+    OrtNodeUnitIODef::QuantParam quant_param{node_inputs[1], num_node_inputs == 3 ? node_inputs[2] : nullptr, axis, block_size};
 
     OrtNodeUnitIODef io_def;
     if (is_input) {
@@ -264,7 +265,8 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
 
   if (std::string(op_type) == "DequantizeLinear") {
     std::optional<int64_t> axis = OrtNodeAttrHelper(*target_node_).GetInt64("axis");
-    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis};
+    std::optional<int64_t> block_size = OrtNodeAttrHelper(*target_node_).GetInt64("block_size");
+    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis, block_size};
 
     OrtNodeUnitIODef input_def, output_def;
     auto input_status = ParseOrtValueInfo(inputs_data[0], quant_param, ort_api, input_def);
@@ -283,7 +285,8 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     outputs_.push_back(output_def);
   } else if (std::string(op_type) == "QuantizeLinear") {
     std::optional<int64_t> axis = OrtNodeAttrHelper(*target_node_).GetInt64("axis");
-    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis};
+    std::optional<int64_t> block_size = OrtNodeAttrHelper(*target_node_).GetInt64("block_size");
+    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis, block_size};
 
     OrtNodeUnitIODef input_def, output_def;
     auto input_status = ParseOrtValueInfo(inputs_data[0], std::nullopt, ort_api, input_def);

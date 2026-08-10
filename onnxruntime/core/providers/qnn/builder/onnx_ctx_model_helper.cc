@@ -76,7 +76,7 @@ Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const Ort
 
         if (op_type != nullptr && std::string(op_type) == EPCONTEXT_OP) {
           OrtNodeAttrHelper node_helper(*node);
-          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get("ep_dlc_context", ""));
+          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get(EP_DLC_CONTEXT, ""));
           if (dlc_path != "") {
             return Ort::Status();
           }
@@ -116,6 +116,38 @@ Ort::Status GetMainContextNode(const OrtGraph** graphs,
   return Ort::Status();
 }
 
+std::unordered_map<std::string, std::string> ParseIoNameOverrides(const OrtNode* ep_context_node) {
+  std::unordered_map<std::string, std::string> overrides;
+  if (ep_context_node == nullptr) {
+    return overrides;
+  }
+  OrtNodeAttrHelper node_helper(*ep_context_node);
+  const std::string encoded = node_helper.Get(IO_NAME_OVERRIDES, std::string{});
+  // Decode "internal=external;" pairs.
+  size_t pos = 0;
+  while (pos < encoded.size()) {
+    size_t sep = encoded.find(';', pos);
+    if (sep == std::string::npos) {
+      sep = encoded.size();
+    }
+    const std::string pair = encoded.substr(pos, sep - pos);
+    pos = sep + 1;
+    if (pair.empty()) {
+      continue;
+    }
+    size_t eq = pair.find('=');
+    if (eq == std::string::npos) {
+      continue;
+    }
+    std::string internal = pair.substr(0, eq);
+    std::string external = pair.substr(eq + 1);
+    if (!internal.empty() && !external.empty()) {
+      overrides.emplace(std::move(internal), std::move(external));
+    }
+  }
+  return overrides;
+}
+
 Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      const OrtApi& ort_api,
                                      const std::basic_string<ORTCHAR_T>& ctx_onnx_model_path,
@@ -131,6 +163,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
 
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
+  bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
   if (is_embed_mode) {
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
@@ -138,7 +171,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                "",
                                                                main_context_node_name,
                                                                qnn_models,
-                                                               max_spill_fill_size);
+                                                               max_spill_fill_size,
+                                                               is_multi_soc_ep_context);
   }
 
   std::filesystem::path folder_path = std::filesystem::path(ctx_onnx_model_path).parent_path();
@@ -183,7 +217,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                context_binary_path_str,
                                                                main_context_node_name,
                                                                qnn_models,
-                                                               max_spill_fill_size);
+                                                               max_spill_fill_size,
+                                                               is_multi_soc_ep_context);
   }
 #endif
 
@@ -207,7 +242,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                              context_binary_path_str,
                                                              main_context_node_name,
                                                              qnn_models,
-                                                             max_spill_fill_size);
+                                                             max_spill_fill_size,
+                                                             is_multi_soc_ep_context);
 }
 
 Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
@@ -296,7 +332,9 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  const Ort::Logger& logger,
                                  bool share_ep_contexts,
                                  bool stop_share_ep_contexts,
-                                 const std::string& ep_name) {
+                                 const std::string& ep_name,
+                                 const std::unordered_map<std::string, std::string>& tensor_name_overrides,
+                                 bool enable_multi_soc_ep_context) {
   // Still need more work to support multiple partition, it's out of EP's scope.
   // Already have code to make sure it's single partition before this method get invoked.
   for (size_t idx = 0; idx < count; ++idx) {
@@ -389,7 +427,7 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
         }
 
         attr = nullptr;
-        size_t max_size = static_cast<int64_t>(max_spill_fill_buffer_size);
+        int64_t max_size = static_cast<int64_t>(max_spill_fill_buffer_size);
         ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(MAX_SIZE.c_str(), &max_size, 1, ORT_OP_ATTR_INT, &attr));
         attributes.push_back(attr);
       }
@@ -426,12 +464,42 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
     attributes.push_back(attr);
 
     attr = nullptr;
+    int64_t is_multi_soc_ep_context = enable_multi_soc_ep_context ? static_cast<int64_t>(1) : static_cast<int64_t>(0);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(IS_MULTI_SOC_EP_CONTEXT.c_str(),
+                                                    &is_multi_soc_ep_context,
+                                                    1,
+                                                    ORT_OP_ATTR_INT,
+                                                    &attr));
+    attributes.push_back(attr);
+
+    attr = nullptr;
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(SOURCE.c_str(),
                                                     ep_name.c_str(),
                                                     static_cast<int>(ep_name.length()),
                                                     ORT_OP_ATTR_STRING,
                                                     &attr));
     attributes.push_back(attr);
+
+    // Persist the offload_graph_io_quantization tensor-name overrides so the cached-context load
+    // path can resolve graph I/O by name rather than by position (position is unreliable when QNN
+    // reorders graph outputs). Skipped when the map is empty (offload disabled) so non-offload
+    // context models are byte-for-byte unaffected.
+    if (!tensor_name_overrides.empty()) {
+      std::string encoded;
+      for (const auto& [internal, external] : tensor_name_overrides) {
+        encoded += internal;
+        encoded += '=';
+        encoded += external;
+        encoded += ';';
+      }
+      attr = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.CreateOpAttr(IO_NAME_OVERRIDES.c_str(),
+                                                      encoded.c_str(),
+                                                      static_cast<int>(encoded.length()),
+                                                      ORT_OP_ATTR_STRING,
+                                                      &attr));
+      attributes.push_back(attr);
+    }
 
     ORT_CXX_RETURN_ON_API_FAIL(model_editor_api.CreateNode(EPCONTEXT_OP.c_str(),
                                                            kMSDomain,

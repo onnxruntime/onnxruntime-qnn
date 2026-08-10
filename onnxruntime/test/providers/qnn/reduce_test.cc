@@ -110,8 +110,7 @@ static void RunReduceTest(const std::string& op_type,
                                                   false),  // noop_with_empty_axes
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //
@@ -335,6 +334,74 @@ TEST_F(QnnCPUBackendTests, ReduceL2Opset13) {
                        ExpectedEPNodeAssignment::All);
 }
 
+//
+// ReduceLogSumExp
+//
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 2}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{0, 1},
+                       true,  // keepdims
+                       18,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_NoKeepDims) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 3, 4}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{1, 2},
+                       false,  // keepdims
+                       18,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_NegativeAxes) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 3, 4}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{-1},
+                       true,  // keepdims
+                       18,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset13) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 2}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{0, 1},
+                       true,  // keepdims
+                       13,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset13_NoKeepDims) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 3, 4}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{1},
+                       false,  // keepdims=False exercises the trailing Reshape on the opset-13 path
+                       13,
+                       ExpectedEPNodeAssignment::All);
+}
+
+// Empty axes input -> reduce over all axes (ONNX default when noop_with_empty_axes=0).
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_DefaultAllAxes) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 3, 4}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{},  // empty -> reduce all
+                       true,                    // keepdims
+                       18,
+                       ExpectedEPNodeAssignment::All);
+}
+
+// Rank-1 input covers the degenerate kept_shape path.
+TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_Rank1) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({5}, false, -5.0f, 5.0f),
+                       std::vector<int64_t>{0},
+                       false,  // keepdims=False exercises the trailing Reshape
+                       18,
+                       ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Test creates a graph with a ReduceSum node, and checks that all nodes are supported by the QNN EP
@@ -371,15 +438,16 @@ template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQReduceOpTestCase(const std::string& reduce_op_type,
                                                       const TestInputDef<float>& input_def,
                                                       bool axes_as_input, const std::vector<int64_t>& axes, bool keepdims,
-                                                      bool noop_with_empty_axes) {
+                                                      bool noop_with_empty_axes, bool use_ms_domain_qdq = false) {
   return [reduce_op_type, input_def, axes_as_input, axes, keepdims,
-          noop_with_empty_axes](ModelTestBuilder& builder,
-                                std::vector<QuantParams<QuantType>>& output_qparams) {
+          noop_with_empty_axes, use_ms_domain_qdq](ModelTestBuilder& builder,
+                                                   std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
     MakeTestInput<float>(builder, "input", input_def);
     const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
     const std::string input_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point,
+                                  use_ms_domain_qdq);
 
     // -> ReduceOp (e.g., ReduceSum) ->
     std::vector<std::string> input_names;
@@ -406,7 +474,7 @@ GetTestQDQModelFn<QuantType> BuildQDQReduceOpTestCase(const std::string& reduce_
 
     // -> Q -> DQ -> final output
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
-        builder, "qdq_out", reduce_out, output_qparams[0].scale, output_qparams[0].zero_point);
+        builder, "qdq_out", reduce_out, output_qparams[0].scale, output_qparams[0].zero_point, use_ms_domain_qdq);
   };
 }
 
@@ -428,7 +496,8 @@ static void RunReduceOpQDQTest(const std::string& op_type,
                                const std::vector<int64_t>& axes,
                                bool keepdims,
                                int opset,
-                               ExpectedEPNodeAssignment expected_ep_assignment) {
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               bool use_ms_domain_qdq = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -439,7 +508,7 @@ static void RunReduceOpQDQTest(const std::string& op_type,
   TestQDQModelAccuracy(BuildReduceOpTestCase<float>(op_type, input_def, axes_as_input, axes, keepdims,
                                                     noop_with_empty_axes),
                        BuildQDQReduceOpTestCase<QuantType>(op_type, input_def, axes_as_input, axes, keepdims,
-                                                           noop_with_empty_axes),
+                                                           noop_with_empty_axes, use_ms_domain_qdq),
                        provider_options,
                        opset,
                        expected_ep_assignment);
@@ -733,6 +802,136 @@ TEST_F(QnnHTPBackendTests, ReduceMeanS8Opset18) {
                              18,            // opset
                              ExpectedEPNodeAssignment::All);
 }
+
+//
+// ReduceL2 on HTP
+//
+
+// Test creates a Q -> DQ -> ReduceL2 -> Q -> DQ graph, and checks that all
+// nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
+//
+// - Uses uint8 as the quantization type.
+// - Uses opset 18, which has "axes" as an input.
+TEST_F(QnnHTPBackendTests, ReduceL2U8Opset18) {
+  RunReduceOpQDQTest<uint8_t>("ReduceL2",
+                              TestInputDef<float>({2, 2}, false, -10.0f, 10.0f),
+                              {0, 1},  // axes
+                              true,    // keepdims
+                              18,      // opset
+                              ExpectedEPNodeAssignment::All);
+}
+
+// - Uses int8 as the quantization type.
+// - Uses opset 13, which has "axes" as an input.
+TEST_F(QnnHTPBackendTests, ReduceL2S8Opset13) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 20.0f, 9);
+
+  RunReduceOpQDQTest<int8_t>("ReduceL2",
+                             TestInputDef<float>({3, 3}, false, input_data),
+                             {0, 1},  // axes
+                             true,    // keepdims
+                             13,      // opset
+                             ExpectedEPNodeAssignment::All);
+}
+
+// Tests that keepdims = false generates expected results.
+TEST_F(QnnHTPBackendTests, ReduceL2U8Opset13_NoKeepDims) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 9);
+
+  RunReduceOpQDQTest<uint8_t>("ReduceL2",
+                              TestInputDef<float>({3, 3}, false, input_data),
+                              {1},    // axes
+                              false,  // keepdims
+                              13,     // opset
+                              ExpectedEPNodeAssignment::All);
+}
+
+// - Uses uint16 as the quantization type. Requires the MS domain QDQ ops since standard
+//   QuantizeLinear/DequantizeLinear don't support a uint16 zero-point.
+// - Uses opset 18, which has "axes" as an input.
+TEST_F(QnnHTPBackendTests, ReduceL2U16Opset18) {
+  RunReduceOpQDQTest<uint16_t>("ReduceL2",
+                               TestInputDef<float>({2, 2}, false, -10.0f, 10.0f),
+                               {0, 1},  // axes
+                               true,    // keepdims
+                               18,      // opset
+                               ExpectedEPNodeAssignment::All,
+                               true);  // use_ms_domain_qdq
+}
+
+//
+// ReduceLogSumExp on HTP
+//
+
+TEST_F(QnnHTPBackendTests, ReduceLogSumExpU8Opset18_Rejected) {
+  RunReduceOpQDQTest<uint8_t>("ReduceLogSumExp",
+                              TestInputDef<float>({2, 2}, false, GetFloatDataInRange(-5.0f, 5.0f, 4)),
+                              {0, 1},  // axes
+                              true,    // keepdims
+                              18,
+                              ExpectedEPNodeAssignment::None);
+}
+
+// FP16 basic test.
+TEST_F(QnnHTPBackendTests, ReduceLogSumExpOpset18_FP16) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 3, 4}, false, -5.0f, 5.0f),
+                       {1, 2},  // axes
+                       true,    // keepdims
+                       18,
+                       ExpectedEPNodeAssignment::All,
+                       3e-2f,
+                       true);  // enable_fp16
+}
+
+// FP16 stability regression: input magnitudes around 30 would overflow naive log(sum(exp(x))) on FP16
+// (FP16 max exp arg ~= 11). The decomposition uses x - max(x) before exp, so values stay in (0, 1].
+TEST_F(QnnHTPBackendTests, ReduceLogSumExpOpset18_FP16_LargeInput) {
+  RunReduceTest<float>("ReduceLogSumExp",
+                       TestInputDef<float>({2, 4}, false, 20.0f, 30.0f),
+                       {1},   // axes
+                       true,  // keepdims
+                       18,
+                       ExpectedEPNodeAssignment::All,
+                       1e-1f,
+                       true);  // enable_fp16
+}
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+
+static void RunReduceLogSumExpHTPBF16Test(const TestInputDef<float>& input_def,
+                                          const std::vector<int64_t>& axes,
+                                          bool keepdims,
+                                          int opset,
+                                          ExpectedEPNodeAssignment expected_ep_assignment,
+                                          float tolerance = 0.01f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["htp_bf16_enable"] = "1";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildReduceOpTestCase<float>("ReduceLogSumExp",
+                                               input_def,
+                                               ReduceOpHasAxesInput("ReduceLogSumExp", opset),
+                                               axes,
+                                               keepdims,
+                                               false),  // noop_with_empty_axes
+                  provider_options,
+                  opset,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
+}
+
+TEST_F(QnnHTPBackendTests, ReduceLogSumExp_HTP_BF16_KeepDims) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+  RunReduceLogSumExpHTPBF16Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-5.0f, 5.0f, 6)),
+                                {1, 2},  // axes
+                                true,    // keepdims
+                                18,
+                                ExpectedEPNodeAssignment::All);
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 }  // namespace test

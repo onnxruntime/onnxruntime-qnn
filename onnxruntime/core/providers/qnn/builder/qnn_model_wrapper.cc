@@ -39,7 +39,10 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to create Qnn graph: " + graph_name).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  ("Failed to create Qnn graph: " + graph_name + ". " +
+                   utils::FormatQnnError(qnn_interface_, rt))
+                      .c_str());
       return false;
     }
   }
@@ -902,6 +905,52 @@ Ort::Status QnnModelWrapper::AddCastNode(const std::string& cast_node_name,
   return Ort::Status();
 }
 
+namespace {
+// Returns true when dt is any QNN SFIXED_POINT or UFIXED_POINT variant (4/8/16/32-bit).
+bool IsQnnFixedPointType(Qnn_DataType_t dt) {
+  return dt == QNN_DATATYPE_SFIXED_POINT_4 || dt == QNN_DATATYPE_UFIXED_POINT_4 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_8 || dt == QNN_DATATYPE_UFIXED_POINT_8 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_16 || dt == QNN_DATATYPE_UFIXED_POINT_16 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_32 || dt == QNN_DATATYPE_UFIXED_POINT_32;
+}
+}  // namespace
+
+Ort::Status QnnModelWrapper::AddDequantizeNode(const std::string& input_name,
+                                               const std::string& output_name,
+                                               Qnn_DataType_t output_data_type,
+                                               std::vector<uint32_t> output_shape,
+                                               bool do_op_validation) {
+  RETURN_IF(output_data_type != QNN_DATATYPE_FLOAT_16 && output_data_type != QNN_DATATYPE_FLOAT_32,
+            "AddDequantizeNode: output_data_type must be FLOAT_16 or FLOAT_32");
+  QnnTensorWrapper output_wrapper(output_name, QNN_TENSOR_TYPE_NATIVE, output_data_type,
+                                  QnnQuantParamsWrapper(), std::move(output_shape));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(output_wrapper)), "Failed to add Dequantize output tensor.");
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(input_name, "_dequantize"),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEQUANTIZE,
+                              {input_name}, {output_name}, {}, do_op_validation),
+                "Failed to add Dequantize node.");
+  return Ort::Status();
+}
+
+Ort::Status QnnModelWrapper::AddQuantizeNode(const std::string& input_name,
+                                             const std::string& output_name,
+                                             Qnn_TensorType_t output_tensor_type,
+                                             Qnn_DataType_t output_data_type,
+                                             QnnQuantParamsWrapper output_quant_param,
+                                             std::vector<uint32_t> output_shape,
+                                             bool do_op_validation) {
+  RETURN_IF(!IsQnnFixedPointType(output_data_type),
+            "AddQuantizeNode: output_data_type must be a SFIXED_POINT or UFIXED_POINT type");
+  QnnTensorWrapper output_wrapper(output_name, output_tensor_type, output_data_type,
+                                  std::move(output_quant_param), std::move(output_shape));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(output_wrapper)), "Failed to add Quantize output tensor.");
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(input_name, "_quantize"),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
+                              {input_name}, {output_name}, {}, do_op_validation),
+                "Failed to add Quantize node.");
+  return Ort::Status();
+}
+
 Ort::Status QnnModelWrapper::AddReshapeNode(const std::string& input_name, const std::string& output_name,
                                             const std::vector<uint32_t>& input_shape,
                                             const std::vector<uint32_t>& output_shape,
@@ -1091,23 +1140,6 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
   }
 
   return Ort::Status();
-}
-
-Ort::Status QnnModelWrapper::UnpackEffectiveConstantBytes(const std::string& tensor_name,
-                                                          std::vector<uint8_t>& bytes) {
-  if (IsConstantInput(tensor_name)) {
-    const OrtValueInfo* init = GetConstantTensor(tensor_name);
-    RETURN_IF(init == nullptr, "Constant initializer not found for tensor.");
-    return UnpackInitializerData(init, bytes);
-  }
-  if (IsFoldedConstant(tensor_name) && IsQnnTensorWrapperExist(tensor_name)) {
-    const QnnTensorWrapper& wrapper = GetQnnTensorWrapper(tensor_name);
-    const Qnn_ClientBuffer_t& buf = GetQnnTensorClientBuf(wrapper.GetQnnTensor());
-    const uint8_t* data_ptr = reinterpret_cast<const uint8_t*>(buf.data);
-    bytes.assign(data_ptr, data_ptr + buf.dataSize);
-    return Ort::Status();
-  }
-  return MAKE_EP_FAIL("Tensor is not a constant initializer or folded constant.");
 }
 
 }  // namespace qnn

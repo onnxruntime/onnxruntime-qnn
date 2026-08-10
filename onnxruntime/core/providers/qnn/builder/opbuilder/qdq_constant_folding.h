@@ -20,5 +20,10 @@ bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper,
 Ort::Status TryFoldConstantQDQ(QnnModelWrapper& qnn_model_wrapper,
                                const OrtNodeUnit& node_unit) ORT_MUST_USE_RESULT;
 
+// Reads the raw bytes of a real initializer or a previously-folded STATIC tensor.
+Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,
+                                              const std::string& tensor_name,
+                                              /*out*/ std::vector<uint8_t>& bytes) ORT_MUST_USE_RESULT;
+
 }  // namespace qnn
 }  // namespace onnxruntime
