@@ -332,6 +332,16 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. Disabled.|
 |'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
 
+|`"enable_htp_graph_splitting"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail. The number of sub-graph partitions is controlled by the `GPE_KWAY_PARTITIONS` environment variable.|
+
+|`"GPE_KWAY_PARTITIONS"`|Description|
+|---|---|
+| `8` | Default |
+| `N` | Split into N sub-graphs (must be ≥ 2) |
+
 |`"session.disable_cpu_ep_fallback"`|Description|
 |---|---|
 |'0'|Default. Unsupported operators fall back to the CPU EP.|
@@ -617,8 +627,8 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU backend only; requires QAIRT SDK ≥ 2.48 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
+|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points)|
+|com.microsoft:GroupQueryAttention|GPU backend only; rotary_interleaved=0; no k_quant_type/v_quant_type|
 |com.microsoft.MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:QuickGelu||

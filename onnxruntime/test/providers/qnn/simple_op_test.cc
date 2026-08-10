@@ -385,6 +385,27 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tan_fp) {
   );
 }
 
+// Check that QNN compiles DQ -> Tan -> Q as a single unit.
+// Use an input of rank 3.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U8) {
+  RunQDQOpTest<uint8_t>("Tan",
+                        {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                        {},
+                        11,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// Tests accuracy of 16-bit QDQ Tan.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U16) {
+  RunQDQOpTest<uint16_t>("Tan",
+                         {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                         {},
+                         11,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,  // Tan op domain
+                         true);        // Use com.microsoft Q/DQ op domains
+}
+
 // disabled for QNN 2.28.0.241029 backendValidateOpConfig failed
 // still fails on QNN 2.28.2 and QNN 2.30.0
 // QnnDsp <E> [4294967295] has incorrect Value -32768, expected equal to 0.

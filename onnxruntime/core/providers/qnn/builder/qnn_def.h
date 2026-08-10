@@ -30,6 +30,20 @@ namespace qnn {
 #define QNN_SYSTEM_DLC_API_ENABLED
 #endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
 
+// HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
+// QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+#define QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+#endif
+
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38
+// (QAIRT 2.49).
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif
+
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
 #if QNN_API_VERSION_MAJOR > 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR >= 32))
 #define QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -123,6 +137,7 @@ typedef struct HtpGraphConfigs {
   HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
   bool enable_htp_fp16_precision = false;
   bool enable_htp_monolithic_lstm = false;
+  bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {

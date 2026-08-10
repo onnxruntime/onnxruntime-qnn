@@ -190,7 +190,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
-      // Triggers: WoS without DXCore enumeration (Makena), or Qualcomm Linux/Android arm64.
+      // Triggers: WoS without DXCore enumeration (Makena), Qualcomm Linux arm64 (/dev/fastrpc-cdsp*),
+      // or Qualcomm Android arm64 (ro.soc.manufacturer == QTI).
       OrtHardwareDevice* undetected_npu_hw_device = nullptr;
       RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
       factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(

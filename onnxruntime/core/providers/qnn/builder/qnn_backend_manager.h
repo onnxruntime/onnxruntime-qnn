@@ -225,7 +225,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false,
-      bool enable_htp_prepare_only = false);
+      bool enable_htp_prepare_only = false,
+      bool enable_htp_graph_splitting = false);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -234,7 +235,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     uint32_t soc_model,
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
-                                    bool enable_htp_ref_weight_sharing = false);
+                                    bool enable_htp_ref_weight_sharing = false,
+                                    bool enable_htp_graph_splitting = false);
 
   void ReleaseDeviceAndContext();
 
@@ -470,12 +472,14 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status CreateContext(bool enable_htp_weight_sharing,
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
-                            bool enable_htp_ref_weight_sharing);
+                            bool enable_htp_ref_weight_sharing,
+                            bool enable_htp_graph_splitting = false);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
-                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          bool enable_htp_graph_splitting = false);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,

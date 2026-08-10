@@ -491,7 +491,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
-#endif
+#else
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   // Create 2 identical QDQ models.
@@ -665,6 +665,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
   std::remove(ctx_path1.c_str());
   std::remove(ctx_path2.c_str());
   std::remove(bin_name1.c_str());
+#endif
 }
 
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
