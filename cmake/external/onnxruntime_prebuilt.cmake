@@ -31,11 +31,11 @@ if(onnxruntime_ORT_HOME)
     endif()
     message(STATUS "ORT_PREBUILT_SOURCE: ${ORT_PREBUILT_SOURCE}")
     set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include")
-    # Debian/Ubuntu system packages install ORT headers under include/onnxruntime/ (e.g.
-    # include/onnxruntime/core/session/onnxruntime_cxx_api.h). Source files use bare
+    # Debian/Ubuntu system packages install ORT headers flat under include/onnxruntime/
+    # (e.g. include/onnxruntime/onnxruntime_cxx_api.h). Source files use bare
     # "core/session/..." includes, so the include root must be include/onnxruntime/ rather
     # than include/. QLI 2.0 and NuGet prebuilts have no such subdirectory; EXISTS is false.
-    if(EXISTS "${onnxruntime_ORT_HOME}/include/onnxruntime/core/session/onnxruntime_cxx_api.h")
+    if(EXISTS "${onnxruntime_ORT_HOME}/include/onnxruntime/onnxruntime_cxx_api.h")
         set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include/onnxruntime")
     endif()
     message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: ${ONNXRUNTIME_APPLICATION_INCLUDES}")
