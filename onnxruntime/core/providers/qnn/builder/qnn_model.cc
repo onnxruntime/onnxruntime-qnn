@@ -678,6 +678,31 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
   auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
 
   auto thread_id = std::this_thread::get_id();
+
+  // SetPerThreadHtpPowerConfigs(true) issues SetState(RUN_START), which increments
+  // inflight_run_count_ under state_mutex_ *before* dispatching to the perf setter.
+  // If that pre-run call fails after the increment, or an exception unwinds before
+  // the paired RUN_DONE runs, the count leaks. A leaked count permanently gates the
+  // release timer (its TIMEOUT relax is skipped unless inflight_run_count_ == 0),
+  // pinning the HTP boosted for the rest of the session. Establish the RUN_DONE
+  // scope guard *before* the RUN_START call so it fires on every exit path,
+  // including a failing pre-run call. SetState(RUN_DONE) clamps the counter at 0,
+  // so an unpaired relax (e.g. a RUN_START rejected before it incremented) is
+  // harmless. The compile path already gets this guarantee via HtpPowerStateGuard;
+  // this brings the per-inference hot path to parity.
+  bool run_done_handled = false;
+  auto power_relax = gsl::finally([&]() {
+    if (run_done_handled) {
+      return;
+    }
+    // A scope-exit callback must not throw/return, so log rather than propagate.
+    Ort::Status relax_status = qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false);
+    if (!relax_status.IsOK()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Post-run HTP power relax failed on scope exit: " + relax_status.GetErrorMessage()).c_str());
+    }
+  });
+
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
   execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
@@ -696,7 +721,18 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
   }
 #endif
 
-  RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
+  // Relax on the normal path first to preserve the original relax -> extract-profiling
+  // order, then mark handled so the scope guard above becomes a no-op. Log instead of
+  // early-returning on failure: the RUN_DONE decrement already happened inside SetState
+  // (before its dispatch), and returning here would needlessly skip profiling extraction.
+  {
+    Ort::Status relax_status = qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false);
+    run_done_handled = true;
+    if (!relax_status.IsOK()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Post-run HTP power relax failed: " + relax_status.GetErrorMessage()).c_str());
+    }
+  }
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
