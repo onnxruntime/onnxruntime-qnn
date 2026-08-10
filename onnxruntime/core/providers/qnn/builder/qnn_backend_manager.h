@@ -215,7 +215,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // The new context handle is registered via AddQnnContextHandle on success.
   Ort::Status CreateContextFromFilePath(const std::string& context_bin_filepath,
                                         int64_t max_spill_fill_size,
-                                        bool is_multi_soc_buffer,
                                         Qnn_ContextHandle_t& new_context);
 
   // Returns true if the given context handle is still tracked (not yet freed).

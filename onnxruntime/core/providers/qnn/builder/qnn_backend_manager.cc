@@ -1283,10 +1283,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& context_bin_filepath,
                                                          int64_t max_spill_fill_size,
-                                                         bool is_multi_soc_buffer,
                                                          Qnn_ContextHandle_t& new_context) {
-  ORT_UNUSED_PARAMETER(is_multi_soc_buffer);
-
   QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
 
@@ -2050,7 +2047,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
   if (!context_bin_filepath.empty()) {
     for (auto& [name, model] : qnn_models) {
-      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_, is_multi_soc_buffer);
+      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_);
     }
   }
 

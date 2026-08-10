@@ -158,11 +158,10 @@ class QnnModel {
   // Only applicable to embed_mode=0 (external context binary file); the filepath is empty
   // for embed_mode=1, which disables SSR recovery for that model.
   void SetContextRecoveryInfo(std::string filepath, int64_t max_spill_fill_size,
-                              ContextPriority context_priority, bool is_multi_soc_buffer) {
+                              ContextPriority context_priority) {
     context_bin_filepath_ = std::move(filepath);
     max_spill_fill_size_ = max_spill_fill_size;
     context_priority_ = context_priority;
-    is_multi_soc_buffer_ = is_multi_soc_buffer;
   }
 
   // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
