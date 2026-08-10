@@ -2001,7 +2001,7 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   return Ort::Status();
 }
 
-bool AreZeroPointsSymmetric(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
+bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
                             int64_t bits) {
   std::vector<uint8_t> per_block_uint8_zp;
   const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
@@ -2013,8 +2013,8 @@ bool AreZeroPointsSymmetric(QnnModelWrapper& qnn_model_wrapper, const std::strin
     return false;
   }
   // Build the expected packed byte: pack (8/bits) copies of 2^(bits-1) into one byte.
-  // e.g., bits=4: sym_zp=8 (0b1000), elems_per_byte=2 -> expected=0b10001000
-  //       bits=2: sym_zp=2 (0b10),   elems_per_byte=4 -> expected=0b10101010
+  // e.g., bits=2: sym_zp=2 (0b10),   elems_per_byte=4 -> expected=0b10101010
+  //       bits=4: sym_zp=8 (0b1000), elems_per_byte=2 -> expected=0b10001000
   //       bits=8: sym_zp=128,        elems_per_byte=1 -> expected=0b10000000
   const int64_t elems_per_byte = 8 / bits;
   const uint8_t sym_zp = static_cast<uint8_t>(1u << (bits - 1));

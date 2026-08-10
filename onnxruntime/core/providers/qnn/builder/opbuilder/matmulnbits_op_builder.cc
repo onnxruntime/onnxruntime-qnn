@@ -256,7 +256,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
 
     // QNN GPU expects symmetric quantization.
     if (is_gpu_backend) {
-      RETURN_IF_NOT(utils::AreZeroPointsSymmetric(qnn_model_wrapper, zp_tensor.name, bits),
+      RETURN_IF_NOT(utils::AreZeroPointsSymmetricConstant(qnn_model_wrapper, zp_tensor.name, bits),
                     ("Unsupported input zero_points value, expecting symmetric zero_points for bits=" + std::to_string(bits)).c_str());
     }
   }
@@ -428,7 +428,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         // 2.4 Compute quant params: try LPBQ (BLOCKWISE_EXPANSION) first, otherwise fall back to BwFloatBlock.
         bool used_lpbq = false;
         const bool zp_is_symmetric = !(inputs.size() > 3 && inputs[3].Exists()) ||
-                                     utils::AreZeroPointsSymmetric(qnn_model_wrapper, inputs[3].name, bits);
+                                     utils::AreZeroPointsSymmetricConstant(qnn_model_wrapper, inputs[3].name, bits);
 
         if (bits == 4 && is_act_16bitquant && zp_is_symmetric) {
           // Build a synthetic OrtNodeUnitIODef to drive QnnQuantParamsWrapper::Init's
@@ -438,7 +438,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           // the standard ONNX format, so we construct a synthetic def with:
           //   - scale  = the real scale initializer (provides the BQ scales)
           //   - zero_point = nullptr  ← ZP symmetry has already been verified above via
-          //                             AreZeroPointsSymmetric, so re-checking is redundant
+          //                             AreZeroPointsSymmetricConstant, so re-checking is redundant
           //   - axis   = std::nullopt ← uses Init's DEFAULT_QDQ_AXIS=1, which matches
           //                             the MatMulNBits scale tensor layout [N, K/block_size]
           //   - block_size = block_size
@@ -518,7 +518,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           }
         }
       }
-      // 2.6 Create and register the weight tensor wrapper.
+      // 2.7 Create and register the weight tensor wrapper.
       QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
                                              weight_tensor_type,
                                              weight_datatype,
