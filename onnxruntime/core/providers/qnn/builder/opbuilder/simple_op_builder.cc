@@ -299,7 +299,7 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
       (output_info.qnn_data_type == QNN_DATATYPE_INT_64) ? QNN_DATATYPE_INT_32 : QNN_DATATYPE_UINT_32;
 
   const Qnn_DataType_t intermediate_dtype =
-      output_quantized         ? QNN_DATATYPE_FLOAT_32
+      output_quantized   ? QNN_DATATYPE_FLOAT_32
       : needs_int64_cast ? cast_dtype
                          : output_info.qnn_data_type;
 
@@ -334,7 +334,7 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
     }
     const std::string dq_name = utils::UniqueNameGenerator().New(input_names[i], "_to_f32");
     RETURN_IF_ERROR(qnn_model_wrapper.AddDequantizeNode(input_names[i], dq_name, QNN_DATATYPE_FLOAT_32,
-                                                       shapes[i], do_op_validation));
+                                                        shapes[i], do_op_validation));
     input_names[i] = dq_name;
   }
 
@@ -355,12 +355,11 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
                                QnnQuantParamsWrapper(), std::vector<uint32_t>(running_shape)),
                     "AddTensorWrapper failed for fold output.");
     } else {
-
       // Last binary node writes directly to the graph output tensor. No need for further quantize or cast node.
       const Qnn_TensorType_t output_tensor_type =
           is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
       out_name = output.name;
-      
+
       RETURN_IF_NOT(add_tensor(out_name, output_tensor_type, output_info.qnn_data_type,
                                output_info.quant_param.Copy(), std::vector<uint32_t>(output_info.shape)),
                     "AddTensorWrapper failed for output.");
@@ -375,8 +374,8 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
     const Qnn_TensorType_t out_type =
         is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
     RETURN_IF_ERROR(qnn_model_wrapper.AddQuantizeNode(lhs_name, output.name, out_type, output_info.qnn_data_type,
-                                                     output_info.quant_param.Copy(), output_info.shape,
-                                                     do_op_validation));
+                                                      output_info.quant_param.Copy(), output_info.shape,
+                                                      do_op_validation));
   } else if (needs_int64_cast) {
     RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(node_unit, "_cast_int64"),
                                                   lhs_name, output.name, QNN_TENSOR_TYPE_APP_READ,
