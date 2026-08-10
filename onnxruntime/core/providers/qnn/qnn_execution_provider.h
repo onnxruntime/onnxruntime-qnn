@@ -272,8 +272,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   bool enable_htp_graph_splitting_ = false;
-  uint32_t htp_graphsplitter_num_prepare_threads_ = 8;
-  uint32_t htp_graph_splitting_kway_partitions_ = 4;  // 0 = use SDK default (do not set GPE_KWAY_PARTITIONS env var)
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;

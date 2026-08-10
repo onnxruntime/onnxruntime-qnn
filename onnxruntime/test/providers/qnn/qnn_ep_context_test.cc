@@ -3291,14 +3291,10 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 
 // Helper: build session options with Graph Splittling enabled.
 [[maybe_unused]] static void SetGraphSplittingOptions(Ort::SessionOptions& so,
-                                                      const std::string& ctx_path,
-                                                      const std::string& num_threads = "") {
+                                                      const std::string& ctx_path) {
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
   so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_graph_splitting", "1");
-  if (!num_threads.empty()) {
-    so.AddConfigEntry("ep.qnnexecutionprovider.htp_graphsplitter_num_prepare_threads", num_threads.c_str());
-  }
 }
 
 // Test 1: Graph Splittling enabled with default thread count — context binary is written.
@@ -3346,50 +3342,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds)
 #endif
 }
 
-// Test 2: Graph Splittling enabled with a custom thread count (4 threads) — context binary is written.
-TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_CustomThreads_CompileSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
-#else
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  provider_options["num_graph_prepare_threads"] = "1";
-#endif
-
-  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
-
-  ModelTestBuilder helper;
-  BuildGraphWithQAndNonQ()(helper);
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
-  }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  std::string model_data;
-  helper.model_.SerializeToString(&model_data);
-  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
-
-  const std::string ctx_path = "./qnn_graph_splitting_custom_threads_test.onnx";
-  std::remove(ctx_path.c_str());
-
-  Ort::SessionOptions so;
-  SetGraphSplittingOptions(so, ctx_path, "4");
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
-
-  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
-  EXPECT_TRUE(std::filesystem::exists(ctx_path));
-
-  CleanUpCtxFile(ctx_path);
-#endif
-}
-
-// Test 3: Graph Splittling disabled (key unset) — existing path is unchanged, no regression.
+// Test 2: Graph Splittling disabled (key unset) — existing path is unchanged, no regression.
 TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -3427,99 +3380,6 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
   EXPECT_TRUE(std::filesystem::exists(ctx_path));
 
   CleanUpCtxFile(ctx_path);
-}
-
-// Test: Graph Splittling enabled with explicit kway partition count.
-TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_KwayPartitions_CompileSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
-#else
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  provider_options["num_graph_prepare_threads"] = "1";
-#endif
-  provider_options["htp_graph_splitting_kway_partitions"] = "4";
-
-  const std::string ctx_path = "./qnn_graph_splitting_kway_test.onnx";
-  std::remove(ctx_path.c_str());
-
-  Ort::SessionOptions so;
-  SetGraphSplittingOptions(so, ctx_path);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
-
-  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so));
-  EXPECT_TRUE(std::filesystem::exists(ctx_path));
-
-  CleanUpCtxFile(ctx_path);
-#endif
-}
-
-// Test: GPE_KWAY_PARTITIONS stale value — session 1 sets kway=4, session 2 sets kway=0.
-// Verifies that session 2 clears the env var so the SDK does not inherit the stale 4.
-// Both sessions must complete without error.
-TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_KwayPartitions_StaleEnvVarCleared) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
-#else
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  provider_options["num_graph_prepare_threads"] = "1";
-#endif
-
-  // Session 1: kway=4 — sets GPE_KWAY_PARTITIONS=4 in the process environment.
-  {
-    const std::string ctx_path1 = "./qnn_graph_splitting_kway_stale_session1.onnx";
-    std::remove(ctx_path1.c_str());
-    provider_options["htp_graph_splitting_kway_partitions"] = "4";
-
-    Ort::SessionOptions so1;
-    SetGraphSplittingOptions(so1, ctx_path1);
-
-    RegisteredEpDeviceUniquePtr registered_ep_device1;
-    RegisterQnnEpLibrary(registered_ep_device1, so1, kQnnExecutionProvider, provider_options);
-    ScopedOrtSession scoped1(std::move(registered_ep_device1), Ort::Session(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so1));
-    EXPECT_TRUE(std::filesystem::exists(ctx_path1));
-    CleanUpCtxFile(ctx_path1);
-
-#ifdef _WIN32
-    // Verify session 1 actually set GPE_KWAY_PARTITIONS=4 before proceeding.
-    char buf1[16] = {};
-    GetEnvironmentVariableA("GPE_KWAY_PARTITIONS", buf1, sizeof(buf1));
-    EXPECT_STREQ("4", buf1) << "Session 1 should have set GPE_KWAY_PARTITIONS=4";
-#endif
-  }
-
-  // Session 2: kway=0 — must unset GPE_KWAY_PARTITIONS so the stale "4" is gone.
-  {
-    const std::string ctx_path2 = "./qnn_graph_splitting_kway_stale_session2.onnx";
-    std::remove(ctx_path2.c_str());
-    provider_options["htp_graph_splitting_kway_partitions"] = "0";
-
-    Ort::SessionOptions so2;
-    SetGraphSplittingOptions(so2, ctx_path2);
-
-    RegisteredEpDeviceUniquePtr registered_ep_device2;
-    RegisterQnnEpLibrary(registered_ep_device2, so2, kQnnExecutionProvider, provider_options);
-    ScopedOrtSession scoped2(std::move(registered_ep_device2), Ort::Session(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so2));
-    EXPECT_TRUE(std::filesystem::exists(ctx_path2));
-    CleanUpCtxFile(ctx_path2);
-
-#ifdef _WIN32
-    // After session 2, verify GPE_KWAY_PARTITIONS is unset in the Win32 environment.
-    char buf[16] = {};
-    EXPECT_EQ(0u, GetEnvironmentVariableA("GPE_KWAY_PARTITIONS", buf, sizeof(buf)));
-#endif
-  }
-#endif
 }
 
 // ==============================================================================

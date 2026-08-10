@@ -305,30 +305,6 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
-// Parses a uint32 session config entry. Returns `default_value` if the key is
-// absent or unparseable (logs a WARNING in the latter case).
-// If `was_set` is non-null it is set to true when the key is explicitly present.
-static uint32_t ParseUint32ConfigEntry(const OrtApi& ort_api,
-                                       const OrtSessionOptions& session_options,
-                                       const std::string& key,
-                                       uint32_t default_value,
-                                       const Ort::Logger& logger,
-                                       bool* was_set = nullptr) {
-  std::string str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options, key, "", str);
-  if (was_set) *was_set = !str.empty();
-  if (str.empty()) return default_value;
-  try {
-    return static_cast<uint32_t>(std::stoul(str));
-  } catch (...) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                ("Invalid value for " + key + ": '" + str + "'. Using default " +
-                 std::to_string(default_value) + ".")
-                    .c_str());
-    return default_value;
-  }
-}
-
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -1300,29 +1276,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  bool user_set_graph_splitting_threads = false;
-  htp_graphsplitter_num_prepare_threads_ = ParseUint32ConfigEntry(
-      ort_api, session_options_,
-      FormatEPConfigKey("htp_graphsplitter_num_prepare_threads"),
-      8u, logger_, &user_set_graph_splitting_threads);
-
-  bool user_set_kway = false;
-  htp_graph_splitting_kway_partitions_ = ParseUint32ConfigEntry(
-      ort_api, session_options_,
-      FormatEPConfigKey("htp_graph_splitting_kway_partitions"),
-      4u, logger_, &user_set_kway);
-
-  if (!enable_htp_graph_splitting_) {
-    if (user_set_graph_splitting_threads) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "htp_graphsplitter_num_prepare_threads is set but enable_htp_graph_splitting=0. Value will be ignored.");
-    }
-    if (user_set_kway) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "htp_graph_splitting_kway_partitions is set but enable_htp_graph_splitting=0. Value will be ignored.");
-    }
-  }
-
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(ort_api,
@@ -2091,9 +2044,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 context_bin_map,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
-                                                ep->enable_htp_graph_splitting_,
-                                                ep->htp_graphsplitter_num_prepare_threads_,
-                                                ep->htp_graph_splitting_kway_partitions_);
+                                                ep->enable_htp_graph_splitting_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3430,9 +3381,7 @@ Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
                                                                   ep_.enable_htp_ref_weight_sharing_,
-                                                                  ep_.enable_htp_graph_splitting_,
-                                                                  ep_.htp_graphsplitter_num_prepare_threads_,
-                                                                  ep_.htp_graph_splitting_kway_partitions_));
+                                                                  ep_.enable_htp_graph_splitting_));
 
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
     ep_.CreateHtpPowerConfigId();

@@ -226,9 +226,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
-      bool enable_htp_graph_splitting = false,
-      uint32_t graphsplitter_num_prepare_threads = 8,
-      uint32_t graph_splitting_kway_partitions = 4);
+      bool enable_htp_graph_splitting = false);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -238,9 +236,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,
-                                    bool enable_htp_graph_splitting = false,
-                                    uint32_t graphsplitter_num_prepare_threads = 8,
-                                    uint32_t graph_splitting_kway_partitions = 4);
+                                    bool enable_htp_graph_splitting = false);
 
   void ReleaseDeviceAndContext();
 
@@ -477,17 +473,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
                             bool enable_htp_ref_weight_sharing,
-                            bool enable_htp_graph_splitting = false,
-                            uint32_t graphsplitter_num_prepare_threads = 8,
-                            uint32_t graph_splitting_kway_partitions = 4);
+                            bool enable_htp_graph_splitting = false);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-                                                          bool enable_htp_graph_splitting = false,
-                                                          uint32_t graphsplitter_num_prepare_threads = 8,
-                                                          uint32_t graph_splitting_kway_partitions = 4);
+                                                          bool enable_htp_graph_splitting = false);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
