@@ -106,10 +106,14 @@ Ort::Status GetMcdmServiceName(std::wstring& service_name_out) {
   CONFIGRET cr = ::CM_Get_Device_Interface_List_SizeW(
       &interface_list_size, const_cast<LPGUID>(&mcdm_interface_class_guid), nullptr,
       CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
-  RETURN_IF(cr != CR_SUCCESS || interface_list_size < 2,
+  RETURN_IF(cr != CR_SUCCESS,
             ("Failed to get MCDM device interface list size. CM_Get_Device_Interface_List_SizeW CONFIGRET: " +
              std::to_string(cr))
                 .c_str());
+  // The size counts the double-null-terminated list, so an empty list is 1 wchar_t (the extra
+  // terminator); fewer than 2 means no MCDM device interface is present.
+  RETURN_IF(interface_list_size < 2,
+            "No MCDM device interface found. Is the QNN MCDM driver installed?");
 
   std::vector<wchar_t> interface_list(interface_list_size, L'\0');
   cr = ::CM_Get_Device_Interface_ListW(
