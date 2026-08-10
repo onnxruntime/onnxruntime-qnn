@@ -38,16 +38,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Backend the snapshot side initializes. Accuracy side mirrors the
-// integration-tier counterpart's backend (see `accuracy_backend` field
-// below), which is NOT always equal to `snapshot_backend`:
-//   * `snapshot_backend` is rule-based — CPU keeps the wrapper IR clean of
-//     BF16-conversion ops on FP32 inputs, HTP is required for dtypes
-//     CPU rejects (FP16, U16).
-//   * `accuracy_backend` matches what `onnxruntime/test/providers/qnn/clip_test.cc`
-//     uses for the corresponding `QnnCPUBackendTests.<Case>` /
-//     `QnnHTPBackendTests.<Case>` test, so all three layers exercise the
-//     same production path.
+// Backend the snapshot / accuracy side initializes. QnnCpu is no longer
+// shipped with the QNN EP wheel, so every case runs on HTP now — the CPU
+// enum variant is kept only for source compatibility with older integration
+// cases and for helpers that still branch on it (dlopen guard, skip logic).
+// Any new spec should use HTP. HTP accepts fp32/fp16/u8/u16/int32 for
+// ReluMinMax and supports rank up to 5 for RELUMINMAX (see
+// HtpOpDefSupplement.html: `ElementWiseNeuron` FP16-config section).
 enum class SnapshotBackend { CPU,
                              HTP };
 
@@ -62,7 +59,7 @@ enum class SnapshotBackend { CPU,
 // counterpart (see onnxruntime/test/providers/qnn/clip_test.cc) so all three
 // layers — op-builder snapshot, paired session-accuracy, original integration
 // — exercise the SAME ONNX graph structure on the SAME QNN backend.
-struct ClipPlainSpec {
+struct ClipSpec {
   const char* name;  // gtest case name + golden basename (single source of truth)
   SnapshotBackend snapshot_backend;
   SnapshotBackend accuracy_backend;
@@ -72,7 +69,7 @@ struct ClipPlainSpec {
   std::optional<float> max_val;
 };
 
-inline const ClipPlainSpec kClipFp32Spec = {
+inline const ClipSpec kClipFp32Spec = {
     "Clip_f32",
     SnapshotBackend::HTP,
     SnapshotBackend::HTP,  // integration: QnnHTPBackendTests.Clip_f32
@@ -81,25 +78,25 @@ inline const ClipPlainSpec kClipFp32Spec = {
     -5.0f,
     5.0f};
 
-inline const ClipPlainSpec kClip4DFp32DefaultMinMaxSpec = {
+inline const ClipSpec kClip4DFp32DefaultMinMaxSpec = {
     "Clip_4D_f32_DefaultMinMax",
-    SnapshotBackend::CPU,
-    SnapshotBackend::CPU,  // integration: QnnCPUBackendTests.Clip_4D_f32_DefaultMinMax
+    SnapshotBackend::HTP,
+    SnapshotBackend::HTP,  // was CPU; QnnCpu backend dropped from wheel — HTP supports fp32 ReluMinMax rank<=5 (HtpOpDefSupplement)
     ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
     {1, 3, 4, 4},
     std::nullopt,
     std::nullopt};
 
-inline const ClipPlainSpec kClip5DFp32Spec = {
+inline const ClipSpec kClip5DFp32Spec = {
     "Clip_5D_f32",
-    SnapshotBackend::CPU,
-    SnapshotBackend::CPU,  // integration: QnnCPUBackendTests.Clip_5D_f32
+    SnapshotBackend::HTP,
+    SnapshotBackend::HTP,  // was CPU; QnnCpu dropped, HTP ReluMinMax supports rank 5 (HtpOpDefSupplement)
     ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
     {1, 1, 3, 4, 4},
     -5.0f,
     5.0f};
 
-inline const ClipPlainSpec kClipInt32Spec = {
+inline const ClipSpec kClipInt32Spec = {
     "Clip_int32",
     SnapshotBackend::HTP,
     SnapshotBackend::HTP,  // integration: QnnHTPBackendTests.Clip_int32
@@ -108,7 +105,7 @@ inline const ClipPlainSpec kClipInt32Spec = {
     -5.0f,
     5.0f};
 
-inline const ClipPlainSpec kClipFp16Spec = {
+inline const ClipSpec kClipFp16Spec = {
     "Clip_FP16",
     SnapshotBackend::HTP,
     SnapshotBackend::HTP,  // integration: QnnHTPBackendTests.Clip_FP16
@@ -288,20 +285,78 @@ inline const ClipQDQQuantSpec kClipU8QuantizedMinMaxSpec = {
     QuantScalarSpec{0.001f, 128, 178},
     /*opset=*/13};
 
+// ---------- Group E: bare-float data + Q+DQ-const-wrapped min/max ----------
+//
+// Data input is bare float (NOT Q/DQ-wrapped). Min/max are quantized initializers
+// (each with own scale/zp) wrapped by DequantizeLinear. Output is bare float
+// (no Q consumer). QDQ selector fails on this pattern (empty q_nodes with
+// `is_empty_q_nodes_allowed=false` — see qnn_ep_utils.cc:553) so Clip does
+// NOT form a QDQ group; the min/max DQ nodes remain standalone SingleNode
+// NodeUnits. QNN EP's own qdq_constant_folding pass
+// (simple_op_builder.cc:320 → qdq_constant_folding.cc:TryFoldConstantQDQ)
+// then folds each DQ(const) into a folded fp32 STATIC tensor, and Clip
+// builder reads it via the folded-constant fallback branch
+// (clip_op_builder.cc:45-52, "Path A").
+//
+// This is the ONLY known code path that hits Path A. Group D (QDQ NodeUnit
+// with initializer + quant_param) exercises Path B (QUANT switch); Groups A/C
+// exercise Path C (non-QUANT switch). Verified empirically via gcov —
+// removing these cases zeros out Path A coverage.
+//
+// Integration-tier peers:
+//   * Clip_U8_FloatData_QDQConstMinMax  (clip_test.cc:407)
+//   * Clip_U16_FloatData_QDQConstMinMax (clip_test.cc:375)
+struct ClipFoldedConstSpec {
+  const char* name;
+  SnapshotBackend snapshot_backend;
+  SnapshotBackend accuracy_backend;
+  ONNXTensorElementDataType qdq_dtype;  // UINT8 or UINT16
+  QuantScalarSpec min_spec;
+  QuantScalarSpec max_spec;
+  std::vector<int64_t> shape;  // shape of the bare-float data input
+  int opset;                   // 13 for U8, 21 for U16 (16-bit DQ needs opset >= 21)
+};
+
+// Integration: QnnHTPBackendTests.Clip_U8_FloatData_QDQConstMinMax
+// scale=0.1, zp=128 shared; min=-5.0 (raw=78), max=5.0 (raw=178)
+inline const ClipFoldedConstSpec kClipU8FloatDataQDQConstMinMaxSpec = {
+    "Clip_U8_FloatData_QDQConstMinMax",
+    SnapshotBackend::HTP,
+    SnapshotBackend::HTP,
+    ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
+    QuantScalarSpec{0.1f, 128, 78},
+    QuantScalarSpec{0.1f, 128, 178},
+    /*shape=*/{1, 8},
+    /*opset=*/13};
+
+// Integration: QnnHTPBackendTests.Clip_U16_FloatData_QDQConstMinMax
+// scale=10/65535; asymmetric zp — min_zp=65535 raw=0 folds to -10.0,
+// max_zp=0 raw=65535 folds to 10.0. Exercises the "asymmetric zero_point"
+// sign convention the integration comment cites.
+inline const ClipFoldedConstSpec kClipU16FloatDataQDQConstMinMaxSpec = {
+    "Clip_U16_FloatData_QDQConstMinMax",
+    SnapshotBackend::HTP,
+    SnapshotBackend::HTP,
+    ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
+    QuantScalarSpec{10.0f / 65535.0f, 65535, 0},
+    QuantScalarSpec{10.0f / 65535.0f, 0, 65535},
+    /*shape=*/{1, 8},
+    /*opset=*/21};
+
 // ---------------------------------------------------------------------------
 // Grouped spec lists — the parameter sources each tier's TEST_P instantiates
 // over. Splitting by (kind, tier) is what makes accuracy = snapshot ∪ session
 // hold by construction:
-//   * op-builder snapshot: kClipPlainSpecs + kClipQDQFloatOpBuilderSpecs
-//                          + kClipQDQQuantSpecs
+//   * op-builder snapshot: kClipSpecs + kClipQDQFloatOpBuilderSpecs
+//                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
 //   * session snapshot   : kClipQDQFloatSessionSpecs (Group B only)
-//   * accuracy           : kClipPlainSpecs + kClipQDQFloatAccuracySpecs
-//                          + kClipQDQQuantSpecs
+//   * accuracy           : kClipSpecs + kClipQDQFloatAccuracySpecs
+//                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
 // Adding a case = add one literal to the right list; every consuming tier
 // picks it up with a matching name automatically.
 // ---------------------------------------------------------------------------
 
-inline const std::vector<ClipPlainSpec> kClipPlainSpecs = {
+inline const std::vector<ClipSpec> kClipSpecs = {
     kClip4DFp32DefaultMinMaxSpec,
     kClip5DFp32Spec,
     kClipFp32Spec,
@@ -333,6 +388,12 @@ inline const std::vector<ClipQDQQuantSpec> kClipQDQQuantSpecs = {
     kClipU8QuantizedMinSpec,
     kClipU16QuantizedMaxSpec,
     kClipU8QuantizedMinMaxSpec};
+
+// Group E — bare-float data + Q+DQ-const-wrapped min/max. Only path that
+// exercises the folded-constant fallback in ClipOpBuilder (Path A).
+inline const std::vector<ClipFoldedConstSpec> kClipFoldedConstSpecs = {
+    kClipU8FloatDataQDQConstMinMaxSpec,
+    kClipU16FloatDataQDQConstMinMaxSpec};
 
 }  // namespace test
 }  // namespace onnxruntime

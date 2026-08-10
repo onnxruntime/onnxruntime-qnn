@@ -57,7 +57,7 @@ ProviderOptions MakeAccuracyProviderOptions(SnapshotBackend backend) {
 // std::accumulate of spec.shape). Used for both the FP32 accuracy cases
 // and as the FP32 reference for FP16 cases (TestFp16ModelAccuracy needs
 // a FP32 builder + FP16 builder pair).
-GetTestModelFn BuildClipPlainOnnxF32(const ClipPlainSpec& spec) {
+GetTestModelFn BuildClipOnnxF32(const ClipSpec& spec) {
   const int64_t total = std::accumulate(spec.shape.begin(), spec.shape.end(),
                                         int64_t{1}, std::multiplies<>{});
   auto input_def = TestInputDef<float>(spec.shape, false,
@@ -75,7 +75,7 @@ GetTestModelFn BuildClipPlainOnnxF32(const ClipPlainSpec& spec) {
   return BuildOpTestCase<float, float>("Clip_node", "Clip", {input_def}, mn, /*attrs=*/{});
 }
 
-GetTestModelFn BuildClipPlainOnnxInt32(const ClipPlainSpec& spec) {
+GetTestModelFn BuildClipOnnxInt32(const ClipSpec& spec) {
   // Mirror integration QnnHTPBackendTests.Clip_int32 specific values.
   auto input_def = TestInputDef<int32_t>(spec.shape, false, {1, 2, -5, 3, -10, 25});
   std::vector<TestInputDef<int32_t>> mn;
@@ -90,7 +90,7 @@ GetTestModelFn BuildClipPlainOnnxInt32(const ClipPlainSpec& spec) {
   return BuildOpTestCase<int32_t, int32_t>("Clip_node", "Clip", {input_def}, mn, /*attrs=*/{});
 }
 
-GetTestModelFn BuildClipPlainOnnxFp16(const ClipPlainSpec& spec) {
+GetTestModelFn BuildClipOnnxFp16(const ClipSpec& spec) {
   // Mirror integration QnnHTPBackendTests.Clip_FP16 specific values.
   const std::vector<float> f32_vals = {
       -10.0f, -8.0f, -3.5f, 2.2f,
@@ -120,36 +120,36 @@ GetTestModelFn BuildClipPlainOnnxFp16(const ClipPlainSpec& spec) {
 // Per-dtype dispatch. FP32/INT32 → RunQnnModelTest (integration's standard
 // helper, ORT-CPU oracle). FP16 → TestFp16ModelAccuracy (integration's
 // FP16 helper that runs FP32 reference on ORT-CPU + FP16 actual on QNN).
-void RunClipPlainAccuracy(const ClipPlainSpec& spec) {
+void RunClipAccuracy(const ClipSpec& spec) {
   ProviderOptions po = MakeAccuracyProviderOptions(spec.accuracy_backend);
   switch (spec.dtype) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: {
       // HTP since QAIRT 2.35 internally converts FP32→FP16, requiring
       // 5e-3f tolerance even for "exact" ops. CPU backend is precision-clean.
       const float tol = (spec.accuracy_backend == SnapshotBackend::HTP) ? 5e-3f : 1e-5f;
-      RunQnnModelTest(BuildClipPlainOnnxF32(spec), po,
+      RunQnnModelTest(BuildClipOnnxF32(spec), po,
                       /*opset=*/13,
                       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(tol)});
       break;
     }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
       // Integer math — exact.
-      RunQnnModelTest(BuildClipPlainOnnxInt32(spec), po,
+      RunQnnModelTest(BuildClipOnnxInt32(spec), po,
                       /*opset=*/13,
                       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
       break;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
       // FP16 needs FP32 reference (ORT-CPU may not have native FP16 Clip).
       // Build FP32-ref spec from same shape/min/max but FLOAT dtype.
-      ClipPlainSpec f32_ref = spec;
+      ClipSpec f32_ref = spec;
       f32_ref.dtype = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
-      TestFp16ModelAccuracy(BuildClipPlainOnnxF32(f32_ref),
-                            BuildClipPlainOnnxFp16(spec),
+      TestFp16ModelAccuracy(BuildClipOnnxF32(f32_ref),
+                            BuildClipOnnxFp16(spec),
                             po, /*opset=*/13, ExpectedEPNodeAssignment::All);
       break;
     }
     default:
-      ADD_FAILURE() << "RunClipPlainAccuracy: unsupported dtype " << spec.dtype;
+      ADD_FAILURE() << "RunClipAccuracy: unsupported dtype " << spec.dtype;
   }
 }
 
@@ -338,6 +338,60 @@ void RunClipQDQQuantAccuracy(const ClipQDQQuantSpec& spec) {
                   spec.opset, EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
+// ---------- Group E: bare-float data + Q+DQ-const-wrapped min/max ----------
+//
+// Mirrors integration `Clip_U*_FloatData_QDQConstMinMax` (clip_test.cc:375, 407):
+// bare-float MakeInput → Clip → bare-float MakeOutput; min/max are u*_scalar
+// initializers wrapped by DequantizeLinear. QDQ selector rejects (no output Q),
+// so both DQ nodes remain standalone and are folded by QNN EP's
+// qdq_constant_folding pass. Clip builder consumes them via the folded-constant
+// fallback branch (Path A, clip_op_builder.cc:45-52).
+
+GetTestModelFn BuildClipFoldedConstOnnx(const ClipFoldedConstSpec& spec) {
+  const int64_t total = std::accumulate(spec.shape.begin(), spec.shape.end(),
+                                        int64_t{1}, std::multiplies<>{});
+  // Input range mirrors integration tier: U8 test uses -10..10, U16 test -20..20.
+  const bool is_u8 = spec.qdq_dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  const float lo = is_u8 ? -10.0f : -20.0f;
+  const std::vector<float> input_data = GetFloatDataInRange(lo, -lo, static_cast<size_t>(total));
+
+  const auto min_spec = spec.min_spec;
+  const auto max_spec = spec.max_spec;
+  const auto shape = spec.shape;
+  const auto qdq_dtype = spec.qdq_dtype;
+
+  return [min_spec, max_spec, shape, qdq_dtype, input_data](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("X", shape, input_data);
+    if (qdq_dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
+      builder.MakeInitializer<uint8_t>("min_q", {}, {static_cast<uint8_t>(min_spec.raw)});
+      builder.AddDequantizeLinearNode<uint8_t>("min_dq", "min_q", min_spec.scale,
+                                               static_cast<uint8_t>(min_spec.zp), "min_dq_out");
+      builder.MakeInitializer<uint8_t>("max_q", {}, {static_cast<uint8_t>(max_spec.raw)});
+      builder.AddDequantizeLinearNode<uint8_t>("max_dq", "max_q", max_spec.scale,
+                                               static_cast<uint8_t>(max_spec.zp), "max_dq_out");
+    } else {
+      builder.MakeInitializer<uint16_t>("min_q", {}, {static_cast<uint16_t>(min_spec.raw)});
+      builder.AddDequantizeLinearNode<uint16_t>("min_dq", "min_q", min_spec.scale,
+                                                static_cast<uint16_t>(min_spec.zp), "min_dq_out");
+      builder.MakeInitializer<uint16_t>("max_q", {}, {static_cast<uint16_t>(max_spec.raw)});
+      builder.AddDequantizeLinearNode<uint16_t>("max_dq", "max_q", max_spec.scale,
+                                                static_cast<uint16_t>(max_spec.zp), "max_dq_out");
+    }
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    builder.AddNode("clip", "Clip", {"X", "min_dq_out", "max_dq_out"}, {"Y"}, "", attrs);
+    builder.MakeOutput("Y");
+  };
+}
+
+void RunClipFoldedConstAccuracy(const ClipFoldedConstSpec& spec) {
+  ProviderOptions po = MakeAccuracyProviderOptions(spec.accuracy_backend);
+  // Integration uses ElementwiseAbsoluteVerifier{5e-3f}: HTP internally converts
+  // FP32 → FP16 (QAIRT >= 2.35) so exact equality doesn't hold even for Clip.
+  RunQnnModelTest(BuildClipFoldedConstOnnx(spec), po, spec.opset,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(5e-3f)});
+}
+
 }  // namespace
 
 // Three value-parameterized sub-suites, one per spec struct type. Each case's
@@ -348,15 +402,17 @@ void RunClipQDQQuantAccuracy(const ClipQDQQuantSpec& spec) {
 // QDQFloat is instantiated over kClipQDQFloatAccuracySpecs = the union of the
 // op-builder-snapshot set (Group C) and the session-snapshot set (Group B),
 // so accuracy = snapshot ∪ session holds by construction (see clip_specs.h).
-class QnnUnit_Accuracy_ClipPlainTest
-    : public ::testing::TestWithParam<ClipPlainSpec> {};
+class QnnUnit_Accuracy_ClipTest
+    : public ::testing::TestWithParam<ClipSpec> {};
 class QnnUnit_Accuracy_ClipQDQFloatTest
     : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
 class QnnUnit_Accuracy_ClipQDQQuantTest
     : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
+class QnnUnit_Accuracy_ClipFoldedConstTest
+    : public ::testing::TestWithParam<ClipFoldedConstSpec> {};
 
-TEST_P(QnnUnit_Accuracy_ClipPlainTest, Case) {
-  RunClipPlainAccuracy(GetParam());
+TEST_P(QnnUnit_Accuracy_ClipTest, Case) {
+  RunClipAccuracy(GetParam());
 }
 
 TEST_P(QnnUnit_Accuracy_ClipQDQFloatTest, Case) {
@@ -367,10 +423,14 @@ TEST_P(QnnUnit_Accuracy_ClipQDQQuantTest, Case) {
   RunClipQDQQuantAccuracy(GetParam());
 }
 
+TEST_P(QnnUnit_Accuracy_ClipFoldedConstTest, Case) {
+  RunClipFoldedConstAccuracy(GetParam());
+}
+
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Accuracy_ClipPlainTest,
-    ::testing::ValuesIn(kClipPlainSpecs),
-    [](const ::testing::TestParamInfo<ClipPlainSpec>& i) { return std::string(i.param.name); });
+    , QnnUnit_Accuracy_ClipTest,
+    ::testing::ValuesIn(kClipSpecs),
+    [](const ::testing::TestParamInfo<ClipSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
     , QnnUnit_Accuracy_ClipQDQFloatTest,
@@ -381,6 +441,11 @@ INSTANTIATE_TEST_SUITE_P(
     , QnnUnit_Accuracy_ClipQDQQuantTest,
     ::testing::ValuesIn(kClipQDQQuantSpecs),
     [](const ::testing::TestParamInfo<ClipQDQQuantSpec>& i) { return std::string(i.param.name); });
+
+INSTANTIATE_TEST_SUITE_P(
+    , QnnUnit_Accuracy_ClipFoldedConstTest,
+    ::testing::ValuesIn(kClipFoldedConstSpecs),
+    [](const ::testing::TestParamInfo<ClipFoldedConstSpec>& i) { return std::string(i.param.name); });
 
 }  // namespace test
 }  // namespace onnxruntime
