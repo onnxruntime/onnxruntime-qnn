@@ -895,8 +895,8 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
 // MatMulNBits stores zero_points as packed sub-byte integers in uint8 bytes
 // (e.g., two 4-bit values per byte, four 2-bit values per byte).
 bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper,
-                            const std::string& zp_tensor_name,
-                            int64_t bits);
+                                    const std::string& zp_tensor_name,
+                                    int64_t bits);
 
 }  // namespace utils
 }  // namespace qnn

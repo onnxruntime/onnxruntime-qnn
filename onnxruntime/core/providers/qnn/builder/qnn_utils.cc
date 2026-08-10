@@ -2002,7 +2002,7 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
 }
 
 bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
-                            int64_t bits) {
+                                    int64_t bits) {
   std::vector<uint8_t> per_block_uint8_zp;
   const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
   if (zp_tensor_proto == nullptr) {
