@@ -15,6 +15,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMin", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateCastOpBuilder("Cast", *this);
+  CreateCastOpBuilder("CastLike", *this);
   CreateClipOpBuilder("Clip", *this);
   CreateConcatOpBuilder("Concat", *this);
   CreateConvOpBuilder("Conv", *this);
