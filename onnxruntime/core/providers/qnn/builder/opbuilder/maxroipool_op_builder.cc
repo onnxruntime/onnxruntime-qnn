@@ -47,21 +47,33 @@ Ort::Status ReadRoisAsFloat(QnnModelWrapper& qnn_model_wrapper,
     const float* rois = reinterpret_cast<const float*>(rois_bytes.data());
     std::copy(rois, rois + num_elems, rois_flat.begin());
   } else if (rois_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
-             rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8) {
-    RETURN_IF_NOT(rois_bytes.size() == num_elems, "MaxRoiPool rois initializer size mismatch.");
+             rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
+             rois_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 ||
+             rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16) {
     RETURN_IF_NOT(rois_info.quant_param.IsPerTensor(/*include_bw*/ true),
                   "MaxRoiPool requires per-tensor quantized rois.");
     float scale = 0.0f;
     int32_t offset = 0;
     RETURN_IF_ERROR(rois_info.quant_param.GetPerTensorScaleOffset(scale, offset));
-    const bool is_signed = (rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8);
+    const bool is_16bit = (rois_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 ||
+                           rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16);
+    const bool is_signed = (rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
+                            rois_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16);
+    RETURN_IF_NOT(rois_bytes.size() == num_elems * (is_16bit ? 2u : 1u),
+                  "MaxRoiPool rois initializer size mismatch.");
     for (size_t i = 0; i < num_elems; ++i) {
-      const double q = is_signed ? static_cast<double>(static_cast<int8_t>(rois_bytes[i]))
-                                 : static_cast<double>(rois_bytes[i]);
+      double q;
+      if (is_16bit) {
+        const uint16_t raw = reinterpret_cast<const uint16_t*>(rois_bytes.data())[i];
+        q = is_signed ? static_cast<double>(static_cast<int16_t>(raw)) : static_cast<double>(raw);
+      } else {
+        q = is_signed ? static_cast<double>(static_cast<int8_t>(rois_bytes[i]))
+                      : static_cast<double>(rois_bytes[i]);
+      }
       rois_flat[i] = static_cast<float>(utils::Dequantize(offset, scale, q));
     }
   } else {
-    return MAKE_EP_FAIL("MaxRoiPool only supports float32 or 8-bit quantized rois.");
+    return MAKE_EP_FAIL("MaxRoiPool only supports float32 or 8/16-bit quantized rois.");
   }
   return Ort::Status();
 }
@@ -208,9 +220,8 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::vector<float> rois_flat;
   RETURN_IF_ERROR(ReadRoisAsFloat(qnn_model_wrapper, inputs[1], num_rois, rois_flat));
 
-  const std::string name_base = node_unit.Name().empty()
-                                    ? node_unit.OpType() + std::to_string(node_unit.Index())
-                                    : node_unit.Name();
+  const std::string name_base = (node_unit.Name().empty() ? node_unit.OpType() : node_unit.Name()) +
+                                std::to_string(node_unit.Index());
   auto local_name = [&name_base](std::string_view suffix) { return name_base + std::string(suffix); };
 
   // Reusable zero tensor for empty bins (ONNX fills them with 0.0). Created lazily.
