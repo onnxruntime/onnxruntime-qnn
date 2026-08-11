@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <numeric>
 #include <vector>
 
 #include "QnnOpDef.h"
@@ -88,16 +87,25 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
             "Attention: past_key present but present_key output not provided");
 
   // ---- nonpad_kv_seqlen (input[6], opset 24) ----
+  // The decomposition does not implement the padding-mask computation that
+  // nonpad_kv_seqlen drives (see ONNX spec defs.cc). Reject it entirely rather
+  // than silently ignoring it.
   const bool has_nonpad_kv_seqlen = (num_inputs > 6 && inputs[6].Exists());
-  RETURN_IF(has_nonpad_kv_seqlen && has_past_key,
-            "Attention: nonpad_kv_seqlen and past_key are mutually exclusive per ONNX spec");
+  RETURN_IF(has_nonpad_kv_seqlen,
+            "Attention: nonpad_kv_seqlen is not supported by QNN EP");
+
+  // ---- softmax_precision ----
+  // Cross-dtype cast for softmax accumulation is not implemented.
+  RETURN_IF(node_helper.HasAttr("softmax_precision"),
+            "Attention: softmax_precision is not supported by QNN EP");
 
   // ---- qk_matmul_output_mode ----
   const int64_t qk_mode = node_helper.Get("qk_matmul_output_mode", static_cast<int64_t>(0));
   RETURN_IF(qk_mode < 0 || qk_mode > 3,
             "Attention: qk_matmul_output_mode must be in [0,3]");
-  // If mode != 0 but output[3] is not provided, we just ignore (not an error).
-  // If output[3] is provided but mode == 0, it's mode-0 (post QK matmul).
+  // output[3] carries the intermediate tensor selected by qk_matmul_output_mode.
+  // If output[3] is absent the capture is silently skipped; mode values outside
+  // [0,3] are rejected above.
 
   // ---- scale must be positive if provided ----
   if (node_helper.HasAttr("scale")) {
@@ -111,6 +119,14 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   const size_t q_rank = q_info.shape.size();
   RETURN_IF(q_rank != 3 && q_rank != 4,
             "Attention: Q input must be rank 3 ([B,S_q,n_q*hs]) or rank 4 ([B,n_q,S_q,hs])");
+
+  // ---- Dtype gate: only float16 and float32 are supported ----
+  // The scalar buffer helpers (causal mask, sqrt_scale, softcap) write sizeof(float) or
+  // sizeof(uint16_t) per element. Allowing double (FLOAT_64, 8 bytes) or bfloat16
+  // (BFLOAT_16, 2 bytes with a different bit pattern) would silently corrupt those buffers.
+  RETURN_IF(q_info.qnn_data_type != QNN_DATATYPE_FLOAT_32 &&
+                q_info.qnn_data_type != QNN_DATATYPE_FLOAT_16,
+            "Attention: only float32 and float16 dtypes are supported by QNN EP");
 
   TensorInfo k_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], k_info));
@@ -151,6 +167,18 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
               "Attention: past_key must be rank 4 ([B,n,S_past,hs])");
   }
 
+  // ---- attn_mask dtype check ----
+  // The ONNX spec converts bool masks via Where(mask, 0, -inf) before adding.
+  // This builder emits a raw ADD, so a bool tensor would shift logits by 0/1
+  // instead of 0/-inf, silently computing wrong attention weights.
+  const bool has_attn_mask = (num_inputs > 3 && inputs[3].Exists());
+  if (has_attn_mask) {
+    TensorInfo attn_mask_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[3], attn_mask_info));
+    RETURN_IF(attn_mask_info.qnn_data_type == QNN_DATATYPE_BOOL_8,
+              "Attention: boolean attn_mask is not supported; pre-convert to a float additive bias");
+  }
+
   // ---- Full validation: build decomposed nodes with do_op_validation=true ----
   std::vector<std::string> input_names;
   RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, true));
@@ -167,8 +195,7 @@ static bool ShouldUseNativeGQA(QnnBackendType backend,
                                bool has_present_key);
 
 // ---------------------------------------------------------------------------
-// ProcessInputs — register Q, K, V, attn_mask, past_key, past_value,
-//                 nonpad_kv_seqlen
+// ProcessInputs — register Q, K, V, attn_mask, past_key, past_value
 // ---------------------------------------------------------------------------
 Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                               const OrtNodeUnit& node_unit,
@@ -220,12 +247,10 @@ Ort::Status AttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[4], logger, input_names));
   }
   // input[5] = past_value (optional, KV cache)
+  // Gated on has_past_key: IsOpSupported enforces both-or-neither for past_key
+  // and past_value, so past_value is always present whenever past_key is.
   if (onnx_inputs.size() > 5 && onnx_inputs[5].Exists()) {
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[5], logger, input_names));
-  }
-  // input[6] = nonpad_kv_seqlen (optional, opset 24)
-  if (onnx_inputs.size() > 6 && onnx_inputs[6].Exists()) {
-    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[6], logger, input_names));
   }
 
   return Ort::Status();
@@ -391,14 +416,9 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   const Qnn_DataType_t dtype = q_info.qnn_data_type;
 
   // Derive tensor dimensions needed for 4D output transforms.
-  uint32_t B = 0, S_q = 0;
-  if (is_4d) {
-    B = q_info.shape[0];
-    S_q = q_info.shape[2];
-  } else {
-    B = q_info.shape[0];
-    S_q = q_info.shape[1];
-  }
+  // B is always shape[0]; S_q depends on layout.
+  const uint32_t B = q_info.shape[0];
+  const uint32_t S_q = is_4d ? q_info.shape[2] : q_info.shape[1];
 
   // ---- Params ----
   // For 4D inputs [B, n_q, S_q, hs] the head counts are implicit in the shape;
@@ -503,12 +523,10 @@ static Ort::Status EmitNativeGQANode(QnnModelWrapper& qnn_model_wrapper,
   output_names.push_back(gqa_y_name);
 
   // present_key and present_value (output slots 1-2).
-  // QNN GPU GQA requires real (non-null) tensors for all 3 output slots.
-  // When the ONNX model does not declare present_key/present_value, allocate
-  // private NATIVE scratch tensors so QNN can write to them — the caller
-  // never reads these, but the QNN op def for GQA requires them.
-  // present_key and present_value (output slots 1-2).
-  // ShouldUseNativeGQA requires has_present_key=true so both are always declared.
+  // ShouldUseNativeGQA requires has_present_key=true, so slot 1 is always
+  // a declared ONNX output. Slot 2 (present_value) follows the same gate
+  // (IsOpSupported enforces both-or-neither), but the loop below handles
+  // the absent case with a null tensor for robustness.
   for (size_t i = 1; i <= 2; ++i) {
     const bool declared = (onnx_outputs.size() > i && onnx_outputs[i].Exists());
     if (declared) {
@@ -581,12 +599,17 @@ Ort::Status AttentionOpBuilder::ProcessInputsNativeGQA(const AttentionOpBuilder&
                                                        const OrtNodeUnit&,
                                                        const Ort::Logger&,
                                                        std::vector<std::string>&) {
-  return Ort::Status();
+  // ShouldUseNativeGQA always returns false on SDK < 2.12, so this is unreachable.
+  // Return an error rather than silent success to catch any future regression.
+  return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL,
+                         "ProcessInputsNativeGQA: QNN SDK < 2.12, native GQA unavailable");
 }
 
 static Ort::Status EmitNativeGQANode(QnnModelWrapper&, const OrtNodeUnit&,
                                      std::vector<std::string>&&, bool) {
-  return Ort::Status();
+  // ShouldUseNativeGQA always returns false on SDK < 2.12, so this is unreachable.
+  return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL,
+                         "EmitNativeGQANode: QNN SDK < 2.12, native GQA unavailable");
 }
 
 #endif  // SDK version guard for QNN_OP_GROUP_QUERY_ATTENTION
@@ -803,7 +826,7 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
                                     Qnn_DataType_t dtype,
                                     const QnnQuantParamsWrapper& quant_param,
                                     uint32_t head_ratio,
-                                    bool /*do_op_validation*/) {
+                                    bool do_op_validation) {
   // 4D-only GQA expansion that avoids 5D tensors (HTP finalization fails with 5D).
   //
   // Goal: produce K_expanded[b, kv*head_ratio+r, s, h] = K[b, kv, s, h]
@@ -829,7 +852,7 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(in_name, r1_name,
                                                    in_shape, r1_shape,
                                                    dtype, quant_param,
-                                                   /*do_op_validation=*/false,
+                                                   do_op_validation,
                                                    /*is_for_input=*/false));
 
   // Step 2: Tile [1, head_ratio, 1, 1] → [B, head_ratio, n_kv, S*hs]
@@ -857,7 +880,7 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
                                                   {r1_name},
                                                   {tiled_name},
                                                   std::move(tile_params),
-                                                  /*do_op_validation=*/false),
+                                                  do_op_validation),
                   "Failed to create GQA Tile node.");
   }
 
@@ -870,14 +893,14 @@ static Ort::Status AddGQAExpandNode(QnnModelWrapper& qnn_model_wrapper,
                                                      {0u, 2u, 1u, 3u},
                                                      tr_shape,
                                                      dtype, quant_param,
-                                                     /*do_op_validation=*/false,
+                                                     do_op_validation,
                                                      /*is_for_input=*/false));
 
   // Step 4: Reshape [B, n_kv, head_ratio, S*hs] → [B, n_q, S, hs]
   RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(tr_name, out_name,
                                                    tr_shape, out_shape,
                                                    dtype, quant_param,
-                                                   /*do_op_validation=*/false,
+                                                   do_op_validation,
                                                    /*is_for_input=*/false));
   return Ort::Status();
 }
@@ -1040,13 +1063,16 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   size_t opt_idx = 3;
   const std::string attn_mask_in = has_attn_mask ? input_names[opt_idx++] : std::string{};
   const std::string past_key_in = has_past_key ? input_names[opt_idx++] : std::string{};
+  // past_value_in gated on has_past_key: IsOpSupported rejects models where
+  // past_key and past_value are not both-or-neither, so past_value is always
+  // present whenever past_key is. Relaxing that constraint would corrupt opt_idx.
   const std::string past_value_in = has_past_key ? input_names[opt_idx++] : std::string{};
 
   std::string q_cur = q_in;
   std::string k_cur = k_in;
   std::string v_cur = v_in;
 
-  // ---- Step 1: Create a scalar initializer for sqrt(scale) ----
+  // ---- Compute sqrt(scale) for Q/K scaling ----
   const float scale_default = 1.0f / std::sqrt(static_cast<float>(hs));
   const float scale_attr = node_helper.Get("scale", scale_default);
   const float sqrt_scale = std::sqrt(scale_attr);
@@ -1084,10 +1110,9 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                   "Failed to add sqrt_scale tensor.");
   }
 
-  // ---- Steps 2-3: Scale Q (always) and K (deferred when KV cache is active) ----
-  // For KV cache: present_key = Concat(past_key_raw, K_raw) — store UNSCALED K.
-  // Scaling of the full K_present happens AFTER the concat so that past and
-  // current keys are treated uniformly.  Without cache, scale K immediately.
+  // ---- Scale Q (always) and K (deferred to after KV concat when cache is active) ----
+  // For KV cache: store unscaled K for concat; scale after concat so past and
+  // current keys are treated uniformly. Without cache, scale K immediately.
   const std::string q_scaled = utils::UniqueNameGenerator().New(node_unit, "_q_scaled");
   RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
                                   QNN_OP_ELEMENT_WISE_MULTIPLY,
@@ -1109,7 +1134,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   // If has_past_key: k_cur is still the raw (unscaled) K here.
   // Scaling of k_present happens below, after the Concat.
 
-  // ---- Steps 4-7 (3D only): Reshape + Transpose Q and K into [B, n, S, hs] ----
+  // ---- 3D only: Reshape + Transpose Q and K from BSH into BNSH ----
   if (!is_4d) {
     // Reshape Q: [B, S_q, n_q*hs] -> [B, S_q, n_q, hs]
     const std::string q_reshaped = utils::UniqueNameGenerator().New(node_unit, "_q_reshaped");
@@ -1157,25 +1182,14 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   }
   // k_cur is now [B, n_kv, S_k, hs] in BNSH layout.
 
-  // ---- GQA expansion of K (if GQA) ----
-  if (is_gqa) {
-    const std::vector<uint32_t> k_in_shape = {B, n_kv, S_k, hs};
-    const std::vector<uint32_t> k_out_shape = {B, n_q, S_k, hs};
-    const std::string k_expanded = utils::UniqueNameGenerator().New(node_unit, "_k_gqa");
-    RETURN_IF_ERROR(AddGQAExpandNode(qnn_model_wrapper, node_unit,
-                                     k_cur, k_expanded,
-                                     k_in_shape, k_out_shape,
-                                     dtype, k_quant,
-                                     head_ratio,
-                                     do_op_validation));
-    k_cur = k_expanded;
-  }
-
   // ---- KV cache concat for K ----
+  // Concat happens on n_kv-headed tensors (per spec: past_key has kv_num_heads).
+  // GQA expansion to n_q heads happens AFTER the concat so that the present_key
+  // output retains kv_num_heads as the spec requires.
   std::string k_present_name;
   if (has_past_key) {
     const uint32_t S_k_total = S_past + S_k;
-    const std::vector<uint32_t> k_present_shape = {B, n_q, S_k_total, hs};
+    const std::vector<uint32_t> k_present_shape = {B, n_kv, S_k_total, hs};
     // If present_key is a graph output, emit it as APP_READ directly from concat.
     const bool pk_is_graph_out = (onnx_outputs.size() > 1 &&
                                   onnx_outputs[1].Exists() &&
@@ -1191,21 +1205,40 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                     do_op_validation));
     k_cur = k_present_name;
     S_k = S_k_total;  // Update S_k to reflect the full sequence after concat.
+  }
 
-    // Scale the full K_present (past + current) by sqrt(scale) for attention.
-    // This ensures past and current keys are treated uniformly.
+  // ---- GQA expansion of K (if GQA) ----
+  // Runs after KV concat so the expansion covers past+current keys and the
+  // present_key output retains kv_num_heads as required by the ONNX spec.
+  if (is_gqa) {
+    const uint32_t S_k_cur = S_k;  // S_k already updated if has_past_key.
+    const std::vector<uint32_t> k_in_shape = {B, n_kv, S_k_cur, hs};
+    const std::vector<uint32_t> k_out_shape = {B, n_q, S_k_cur, hs};
+    const std::string k_expanded = utils::UniqueNameGenerator().New(node_unit, "_k_gqa");
+    RETURN_IF_ERROR(AddGQAExpandNode(qnn_model_wrapper, node_unit,
+                                     k_cur, k_expanded,
+                                     k_in_shape, k_out_shape,
+                                     dtype, k_quant,
+                                     head_ratio,
+                                     do_op_validation));
+    k_cur = k_expanded;
+  }
+
+  // ---- Scale K (after GQA expansion covers the full sequence) ----
+  if (has_past_key) {
+    // Scale the full K (past + current, already GQA-expanded) by sqrt(scale).
+    // Deferring until here ensures past and current keys are treated uniformly.
+    const std::vector<uint32_t> k_scaled_shape = {B, n_q, S_k, hs};
     const std::string k_present_scaled = utils::UniqueNameGenerator().New(node_unit, "_k_present_scaled");
     RETURN_IF_ERROR(AddBinaryOpNode(qnn_model_wrapper, node_unit,
                                     QNN_OP_ELEMENT_WISE_MULTIPLY,
                                     k_cur, sqrt_scale_name, k_present_scaled,
-                                    k_present_shape, dtype, k_quant,
+                                    k_scaled_shape, dtype, k_quant,
                                     /*is_graph_output=*/false, do_op_validation));
     k_cur = k_present_scaled;
   }
 
-  // ---- Steps 12-13 (3D only): Reshape + Transpose V into [B, n_kv, S_k_cur, v_hs] ----
-  // NOTE: S_k used here is the original S_k of V (before KV concat).
-  // We do V transform BEFORE KV concat so V uses original S_k dimensions.
+  // ---- 3D only: Reshape + Transpose V from BSH into BNSH ----
   const uint32_t S_k_orig = has_past_key ? (S_k - S_past) : S_k;
   std::string v_cur_4d = v_cur;
 
@@ -1234,25 +1267,12 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   }
   // v_cur_4d is now [B, n_kv, S_k_orig, v_hs] in BNSH layout.
 
-  // ---- GQA expansion of V (if GQA) ----
-  if (is_gqa) {
-    const std::vector<uint32_t> v_in_shape = {B, n_kv, S_k_orig, v_hs};
-    const std::vector<uint32_t> v_out_shape = {B, n_q, S_k_orig, v_hs};
-    const std::string v_expanded = utils::UniqueNameGenerator().New(node_unit, "_v_gqa");
-    RETURN_IF_ERROR(AddGQAExpandNode(qnn_model_wrapper, node_unit,
-                                     v_cur_4d, v_expanded,
-                                     v_in_shape, v_out_shape,
-                                     dtype, v_quant,
-                                     head_ratio,
-                                     do_op_validation));
-    v_cur_4d = v_expanded;
-  }
-
   // ---- KV cache concat for V ----
+  // Same ordering as K: concat on n_kv-headed tensors first, then GQA-expand.
   std::string v_present_name;
   if (has_past_key) {
     const uint32_t S_k_total = S_k;  // already updated above.
-    const std::vector<uint32_t> v_present_shape = {B, n_q, S_k_total, v_hs};
+    const std::vector<uint32_t> v_present_shape = {B, n_kv, S_k_total, v_hs};
     const bool pv_is_graph_out = (onnx_outputs.size() > 2 &&
                                   onnx_outputs[2].Exists() &&
                                   qnn_model_wrapper.IsGraphOutput(onnx_outputs[2].name));
@@ -1268,7 +1288,23 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     v_cur_4d = v_present_name;
   }
 
-  // ---- Step 8: MatMul Q * K^T (transpose_in1) -> [B, n_q, S_q, S_k] ----
+  // ---- GQA expansion of V (if GQA) ----
+  // Runs after KV concat so present_value retains kv_num_heads per the ONNX spec.
+  if (is_gqa) {
+    const uint32_t S_v_cur = S_k;  // S_k updated to S_total when has_past_key.
+    const std::vector<uint32_t> v_in_shape = {B, n_kv, S_v_cur, v_hs};
+    const std::vector<uint32_t> v_out_shape = {B, n_q, S_v_cur, v_hs};
+    const std::string v_expanded = utils::UniqueNameGenerator().New(node_unit, "_v_gqa");
+    RETURN_IF_ERROR(AddGQAExpandNode(qnn_model_wrapper, node_unit,
+                                     v_cur_4d, v_expanded,
+                                     v_in_shape, v_out_shape,
+                                     dtype, v_quant,
+                                     head_ratio,
+                                     do_op_validation));
+    v_cur_4d = v_expanded;
+  }
+
+  // ---- MatMul Q * K^T -> [B, n_q, S_q, S_k] ----
   const std::string qk_out = utils::UniqueNameGenerator().New(node_unit, "_qk_out");
   const std::vector<uint32_t> qk_shape = {B, n_q, S_q, S_k};
   RETURN_IF_ERROR(AddMatMulNode(qnn_model_wrapper, node_unit,
@@ -1277,19 +1313,28 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                 /*transpose_in1=*/true, do_op_validation));
   std::string scores_cur = qk_out;
 
-  // ---- qk_matmul_output mode 0: raw post-QK scores (pre-mask, pre-softcap) ----
-  // Per ONNX spec the pipeline is: QK → softcap → masks → softmax
-  // mode 0 = raw QK, mode 1 = post-mask pre-softcap,
-  // mode 2 = post-softcap,  mode 3 = post-softmax.
+  // ---- qk_matmul_output mode 0: raw post-QK scores (pre-softcap, pre-mask) ----
+  // Per the published ONNX 1.23 spec (1.23 errata reversed the earlier ordering):
+  //   mode 0 = raw QK (pre-softcap, pre-mask)
+  //   mode 1 = post-softcap, pre-mask
+  //   mode 2 = post-softcap+mask (pre-softmax)
+  //   mode 3 = post-softmax
+  // NOTE: cmake/external/onnx is pinned at v1.20.1 (pre-errata) where mode 1
+  // was post-mask, pre-softcap — the opposite. The code below is correct per the
+  // published spec; do not "fix" it by grepping the vendored submodule.
   std::string qk_captured;  // The intermediate captured for qk_matmul_output.
   if (has_qk_output && qk_mode == 0) {
     qk_captured = scores_cur;
   }
 
-  // ---- Softcap BEFORE masks (per ONNX spec) ----
+  // ---- Softcap BEFORE masks (per published ONNX spec) ----
   // From the ONNX spec function body: MatMul → softcap → attn_mask+Add → Softmax.
-  // Softcap must come first: applying the mask (-1e9) before softcap would clamp
-  // it to -softcap (e.g. -5.0), making masked positions visible to softmax.
+  // Softcap must come first: applying the causal mask (-1e9) before softcap would
+  // clamp it to -softcap (e.g. -5.0), making masked positions visible to softmax.
+  //
+  // NOTE: cmake/external/onnx is pinned at v1.20.1 (pre-1.23 errata), where the
+  // submodule shows mask-before-softcap. The published 1.23 errata reverses this.
+  // The ordering here is correct per the published spec.
   if (softcap != 0.0f) {
     const std::string sc_out = utils::UniqueNameGenerator().New(node_unit, "_scores_softcap");
     RETURN_IF_ERROR(AddSoftcapNode(qnn_model_wrapper, node_unit,
@@ -1307,13 +1352,21 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 
   // ---- Causal mask (is_causal=1): ADD static lower-triangular mask ----
   // With KV cache: offset = S_past so that row i attends to positions <= i+S_past.
+  //
+  // Shape is [1, 1, S_q, S_k] — QNN broadcasts this over [B, n_q, S_q, S_k] in ADD.
+  // All batch and head positions share the same lower-triangular pattern, so there
+  // is no need to materialize the full [B, n_q, S_q, S_k] tensor.
+  //
+  // -1e9f (fp32) / -1e4f (fp16) rather than -inf: HTP V73 HVX does not reliably
+  // propagate IEEE-754 -inf through ADD. Using a large finite negative ensures
+  // softmax produces ~0 for masked positions without NaN in the output row.
   if (is_causal != 0) {
     const uint32_t offset = S_past;  // 0 for no KV cache path.
     const std::string causal_mask_name = utils::UniqueNameGenerator().New(node_unit, "_causal_mask");
     {
-      std::vector<uint32_t> mask_shape = {B, n_q, S_q, S_k};
-      const size_t total = static_cast<size_t>(B) * static_cast<size_t>(n_q) *
-                           static_cast<size_t>(S_q) * static_cast<size_t>(S_k);
+      // Broadcast shape: [1, 1, S_q, S_k]
+      const std::vector<uint32_t> mask_shape = {1u, 1u, S_q, S_k};
+      const size_t total = static_cast<size_t>(S_q) * static_cast<size_t>(S_k);
       std::vector<uint8_t> mask_bytes;
 
       if (dtype == QNN_DATATYPE_FLOAT_16) {
@@ -1321,28 +1374,18 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
         const uint16_t neg_raw = fp16_large_neg.val;
         mask_bytes.resize(total * sizeof(uint16_t));
         uint16_t* mask_ptr = reinterpret_cast<uint16_t*>(mask_bytes.data());
-        for (uint32_t b = 0; b < B; ++b) {
-          for (uint32_t h = 0; h < n_q; ++h) {
-            for (uint32_t i = 0; i < S_q; ++i) {
-              for (uint32_t j = 0; j < S_k; ++j) {
-                const size_t idx = ((static_cast<size_t>(b) * n_q + h) * S_q + i) * S_k + j;
-                mask_ptr[idx] = (j <= i + offset) ? static_cast<uint16_t>(0u) : neg_raw;
-              }
-            }
+        for (uint32_t i = 0; i < S_q; ++i) {
+          for (uint32_t j = 0; j < S_k; ++j) {
+            mask_ptr[i * S_k + j] = (j <= i + offset) ? static_cast<uint16_t>(0u) : neg_raw;
           }
         }
       } else {
         constexpr float large_neg = -1e9f;
         mask_bytes.resize(total * sizeof(float));
         float* mask_ptr = reinterpret_cast<float*>(mask_bytes.data());
-        for (uint32_t b = 0; b < B; ++b) {
-          for (uint32_t h = 0; h < n_q; ++h) {
-            for (uint32_t i = 0; i < S_q; ++i) {
-              for (uint32_t j = 0; j < S_k; ++j) {
-                const size_t idx = ((static_cast<size_t>(b) * n_q + h) * S_q + i) * S_k + j;
-                mask_ptr[idx] = (j <= i + offset) ? 0.0f : large_neg;
-              }
-            }
+        for (uint32_t i = 0; i < S_q; ++i) {
+          for (uint32_t j = 0; j < S_k; ++j) {
+            mask_ptr[i * S_k + j] = (j <= i + offset) ? 0.0f : large_neg;
           }
         }
       }
@@ -1351,7 +1394,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                    QNN_TENSOR_TYPE_STATIC,
                                    dtype,
                                    QnnQuantParamsWrapper{},
-                                   std::move(mask_shape),
+                                   std::vector<uint32_t>(mask_shape),
                                    std::move(mask_bytes));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mask_tensor)),
                     "Failed to add causal mask tensor.");
@@ -1383,7 +1426,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     qk_captured = scores_cur;
   }
 
-  // ---- Step 11: Softmax (axis=3) -> [B, n_q, S_q, S_k] ----
+  // ---- Softmax (axis=3) -> [B, n_q, S_q, S_k] ----
   const std::string softmax_out = utils::UniqueNameGenerator().New(node_unit, "_softmax_out");
   RETURN_IF_ERROR(AddSoftmaxNode(qnn_model_wrapper, node_unit,
                                  scores_cur, softmax_out,
@@ -1396,7 +1439,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     qk_captured = attn_weights;
   }
 
-  // ---- Step 14: MatMul attn_weights * V -> [B, n_q, S_q, v_hs] ----
+  // ---- MatMul attn_weights * V -> [B, n_q, S_q, v_hs] ----
   const std::string y_pre_transpose =
       utils::UniqueNameGenerator().New(node_unit, "_y_pre_transpose");
   const std::vector<uint32_t> y_pre_shape = {B, n_q, S_q, v_hs};
@@ -1405,7 +1448,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                 y_pre_shape, dtype, q_quant,
                                 /*transpose_in1=*/false, do_op_validation));
 
-  // ---- Steps 15-16 (3D outputs): Transpose + Reshape back to [B, S_q, n_q*v_hs] ----
+  // ---- 3D outputs: Transpose + Reshape Y back to BSH [B, S_q, n_q*v_hs] ----
   const std::string& final_output_name = onnx_outputs[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
   TensorInfo y_info{};
@@ -1468,20 +1511,19 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   }
 
   // ---- Register KV cache outputs (if not already APP_READ) ----
-  // When has_past_key is true and present_key/present_value are expected outputs,
-  // the concat nodes above already produced them. If they are graph outputs they
-  // were created as APP_READ. If they are not graph outputs but the ONNX node
-  // declares them as outputs we still need to register them.
+  // The concat nodes produced present_key [B,n_kv,S_k,hs] and present_value
+  // [B,n_kv,S_k,v_hs] as NATIVE or APP_READ tensors. If an ONNX output slot
+  // is declared but the tensor was created as a NATIVE intermediate (i.e. the
+  // name differs), expose it with an identity Reshape.
   if (has_past_key) {
     // present_key = output[1]
     if (onnx_outputs.size() > 1 && onnx_outputs[1].Exists()) {
       const bool is_go = qnn_model_wrapper.IsGraphOutput(onnx_outputs[1].name);
       if (!is_go && onnx_outputs[1].name != k_present_name) {
-        // Need to expose it. The concat output already has the right shape.
         RETURN_IF_ERROR(RegisterIntermediateAsOutput(qnn_model_wrapper, node_unit,
                                                      k_present_name,
                                                      onnx_outputs[1].name,
-                                                     {B, n_q, S_k, hs},
+                                                     {B, n_kv, S_k, hs},
                                                      dtype, k_quant,
                                                      do_op_validation));
       }
@@ -1493,7 +1535,7 @@ Ort::Status AttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
         RETURN_IF_ERROR(RegisterIntermediateAsOutput(qnn_model_wrapper, node_unit,
                                                      v_present_name,
                                                      onnx_outputs[2].name,
-                                                     {B, n_q, S_k, v_hs},
+                                                     {B, n_kv, S_k, v_hs},
                                                      dtype, v_quant,
                                                      do_op_validation));
       }

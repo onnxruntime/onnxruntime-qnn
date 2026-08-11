@@ -506,7 +506,6 @@ TEST_F(QnnHTPBackendTests, Attention_KVCache_4D) {
           TestInputDef<float>({1, 4, 4, 16}, true, -1.0f, 1.0f),   // past_value (initializer)
           {test::MakeAttribute("is_causal", static_cast<int64_t>(0))}),
       opts, /*opset_version=*/24,
-      // KV cache (Concat) adds extra operations; fp16 rounding accumulates more error.
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
@@ -566,7 +565,7 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode3) {
 #if defined(_M_ARM64)
 
 // ---------------------------------------------------------------------------
-// Native GQA path
+// Native GQA path (GPU + causal + no softcap/attn_mask/qk_output)
 // ---------------------------------------------------------------------------
 
 // GQA 3D with KV cache, causal — native QNN_OP_GROUP_QUERY_ATTENTION.
@@ -591,10 +590,6 @@ TEST_F(QnnGPUBackendTests, DISABLED_Attention_GPU_GQA_3D_Native_KVCache) {
       opts, /*opset_version=*/24,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
-
-// ---------------------------------------------------------------------------
-// Native GQA path (GPU + causal + no softcap/attn_mask/qk_output)
-// ---------------------------------------------------------------------------
 
 // GQA 3D, head_ratio=2, causal, no KV cache → native QNN_OP_GROUP_QUERY_ATTENTION.
 // Q [1,8,32] (4 heads × 8), K/V [1,8,16] (2 heads × 8).
@@ -652,8 +647,6 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_MHA_3D_Native) {
 }
 
 // GQA 4D BNSH, causal, no KV cache → native (EmitNativeGQANode inserts Transpose+Reshape).
-// DISABLED: after 4D→3D transforms the QNN node has unpacked K/V inputs, which is not
-// supported by the GPU backend in QAIRT 2.48; re-enable in 2.50.
 TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_4D_Native) {
   ProviderOptions opts;
   opts["backend_type"] = "gpu";
@@ -674,7 +667,6 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_4D_Native) {
 // ---------------------------------------------------------------------------
 
 // GQA 3D with softcap — no softcap param in QNN GQA → decomposition.
-// GQA 3D with softcap — no softcap param in QNN GQA → decomposition.
 TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_Softcap) {
   ProviderOptions opts;
   opts["backend_type"] = "gpu";
@@ -693,8 +685,7 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_3D_Decompose_Softcap) {
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
-// GQA 4D BNSH inputs, no KV cache — no past_key → decomposition.
-// GQA 4D BNSH inputs, no KV cache → decomposition (is_causal=0 disqualifies native path).
+// GQA 4D BNSH inputs, is_causal=0 → decomposition (causal required for native path).
 // Q [1,4,8,8] (n_q=4), K/V [1,2,8,8] (n_kv=2).
 TEST_F(QnnGPUBackendTests, Attention_GPU_GQA_4D_Decompose) {
   ProviderOptions opts;
