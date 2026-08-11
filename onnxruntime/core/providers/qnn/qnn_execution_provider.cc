@@ -4,9 +4,11 @@
 #include "qnn_execution_provider.h"
 
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string_view>
 #include <thread>
+#include "onnx/onnx_pb.h"
 #include <unordered_set>
 
 #include "IR/QnnIrGraph.h"
@@ -380,6 +382,26 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   }
 
   std::unique_ptr<qnn::QnnSerializerConfig> qnn_serializer_config = ParseSerializerBackendOptions(provider_options_map);
+
+  // Parse lora_tensor_names_path — used to mark tensors as UPDATEABLE in the QNN graph
+  static const std::string LORA_TENSOR_NAMES_PATH = "lora_tensor_names_path";
+  auto lora_names_path_pos = provider_options_map.find(LORA_TENSOR_NAMES_PATH);
+  if (lora_names_path_pos != provider_options_map.end()) {
+    std::ifstream lora_file(lora_names_path_pos->second);
+    std::string line;
+    while (std::getline(lora_file, line)) {
+      if (!line.empty()) lora_updatable_tensors_.insert(line);
+    }
+    LOGS_DEFAULT(INFO) << "Loaded " << lora_updatable_tensors_.size()
+                       << " lora updatable tensor names from " << lora_names_path_pos->second;
+  }
+
+  // Parse qnn_direct_dlc_mode — serialize DLC directly via IrGraphBuilder, skip EPContext
+  static const std::string QNN_DIRECT_DLC_MODE = "qnn_direct_dlc_mode";
+  direct_dlc_mode_ = ParseBoolOption(QNN_DIRECT_DLC_MODE, false, provider_options_map);
+  if (direct_dlc_mode_) {
+    LOGS_DEFAULT(INFO) << "direct_dlc_mode enabled: DLC will be written directly via IrGraphBuilder";
+  }
 
   std::string profiling_file_path;
   static const std::string PROFILING_LEVEL = "profiling_level";
@@ -960,6 +982,33 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
 
   const auto& logger = *GetLogger();
 
+  // Build ONNX tensor name map once (direct_dlc_mode only).
+  // ORT internally strips _output/_output_N from single-output node tensor names.
+  // We restore originals so QNN tensors match the ONNX tensor names exactly.
+  if (direct_dlc_mode_ && onnx_tensor_name_map_.empty()) {
+    const auto& model_path = graph_viewer.ModelPath();
+    if (!model_path.empty()) {
+      std::ifstream model_file(model_path, std::ios::binary);
+      if (model_file) {
+        ONNX_NAMESPACE::ModelProto model_proto;
+        if (model_proto.ParseFromIstream(&model_file)) {
+          for (const auto& node : model_proto.graph().node()) {
+            if (node.name().empty()) continue;
+            for (int i = 0; i < node.output_size(); i++) {
+              const std::string& onnx_out = node.output(i);
+              if (!onnx_out.empty() && onnx_out != node.name()) {
+                // node.name() is what ORT uses; onnx_out is the original
+                onnx_tensor_name_map_[node.name()] = onnx_out;
+              }
+            }
+          }
+          LOGS(logger, INFO) << "Built ONNX tensor name map with "
+                             << onnx_tensor_name_map_.size() << " entries";
+        }
+      }
+    }
+  }
+
   // Check BF16 compatibility early
   if (model_settings_.htp_bf16_enable) {
     // Check SoC model
@@ -1166,6 +1215,11 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
 }
 
 DataLayout QNNExecutionProvider::GetPreferredLayout() const {
+  // In direct_dlc_mode, skip layout transforms to preserve original ONNX tensor names.
+  // This ensures QNN graph tensor names match lora_tensor_names.txt exactly.
+  if (direct_dlc_mode_) {
+    return DataLayout::NCHW;
+  }
   return DataLayout::NHWC;
 }
 
@@ -1275,12 +1329,14 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
 
     qnn::QnnSerializerConfig* qnn_serializer_config = qnn_backend_manager_->GetQnnSerializerConfig();
     if (qnn_serializer_config) {
-      if (context_cache_enabled_) {
+      if (context_cache_enabled_ && !direct_dlc_mode_) {
+        // Original convergence flow: keep IrGraph in memory, extract via contextGetBinary pointer
         skip_config.option = QNN_IR_GRAPH_CONFIG_OPTION_SKIP_SERIALIZATION;
         skip_graph_config.option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
         skip_graph_config.customConfig = &skip_config;
         all_graph_configs.push_back(&skip_graph_config);
       } else {
+        // direct_dlc_mode: write DLC directly via IrGraphBuilder + DnnWriter in finalize()
         qnn_serializer_config->SetGraphName(fused_node.Name());
         const QnnGraph_Config_t** serializer_configs = qnn_serializer_config->Configure();
         if (serializer_configs) {
@@ -1306,7 +1362,10 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
     }
 
     ORT_RETURN_IF_ERROR(qnn_model->ComposeGraph(graph_viewer, fused_node, model_settings_, logger,
-                                                all_graph_configs_ptr, json_graph_filepath));
+                                                all_graph_configs_ptr, json_graph_filepath,
+                                                lora_updatable_tensors_,
+                                                onnx_tensor_name_map_,
+                                                direct_dlc_mode_));
     ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
 
@@ -1416,8 +1475,8 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
   }
 
   ORT_RETURN_IF_ERROR(CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger));
-  // Generate QNN context model if it's QDQ model + context_cache_enabled=true + not exist already
-  if (!is_qnn_ctx_model && context_cache_enabled_ && !is_ctx_file_exist) {
+  // Generate QNN context model if: QDQ model + context_cache_enabled + not direct_dlc_mode + not cached
+  if (!is_qnn_ctx_model && context_cache_enabled_ && !direct_dlc_mode_ && !is_ctx_file_exist) {
     // All partitioned graph share single QNN context, included in the same context binary
     uint64_t buffer_size(0);
     auto context_buffer = qnn_backend_manager_->GetContextBinaryBuffer(buffer_size);

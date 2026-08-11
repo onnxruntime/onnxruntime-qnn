@@ -95,7 +95,10 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
                               const qnn::ModelSettings& model_settings,
                               const logging::Logger& logger,
                               const QnnGraph_Config_t** graph_configs,
-                              const std::string& json_qnn_graph_path) {
+                              const std::string& json_qnn_graph_path,
+                              const std::unordered_set<std::string>& lora_updatable_tensors,
+                              const std::unordered_map<std::string, std::string>& onnx_tensor_name_map,
+                              bool skip_fusions) {
   LOGS(logger, VERBOSE) << "ComposeGraph Graph name: " << graph_viewer.Name();
 
   // Holder for the NodeUnits in the graph, this will guarantee the NodeUnits is
@@ -113,7 +116,10 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
                                                       model_input_index_map_,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
-                                                      model_settings);
+                                                      model_settings,
+                                                      lora_updatable_tensors,
+                                                      onnx_tensor_name_map,
+                                                      skip_fusions);
   bool rt = true;
 
   qnn::profile::ProfilingInfo profiling_info;
