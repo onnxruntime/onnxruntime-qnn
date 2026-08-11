@@ -507,29 +507,22 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
                                     std::vector<uint32_t>(matmul_out_shape));
 
     const std::string add_node_name = node_base + "_bias_add";
-    Qnn_Scalar_t add_scalar = QNN_SCALAR_INIT;
-    add_scalar.dataType = QNN_DATATYPE_UINT_32;
-    add_scalar.uint32Value = QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD;
-    QnnParamWrapper add_param(matmul_integer.Index(), add_node_name,
-                              QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_scalar);
-    std::string add_param_name = add_param.GetParamTensorName();
 
     if (validate) {
       RETURN_IF_ERROR(qmw.ValidateQnnNode(add_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                          QNN_OP_ELEMENT_WISE_BINARY,
+                                          QNN_OP_ELEMENT_WISE_ADD,
                                           {add_lhs_handle.GetQnnTensor(), bias_tensor.GetQnnTensor()},
                                           {add_out_tensor.GetQnnTensor()},
-                                          {add_param.GetQnnParam()}));
+                                          {}));
     } else {
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor");
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(add_out_tensor)),
                     "Failed to add bias-Add output tensor");
-      RETURN_IF_NOT(qmw.AddParamWrapper(std::move(add_param)), "Failed to add operation param.");
       RETURN_IF_NOT(qmw.CreateQnnNode(add_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                      QNN_OP_ELEMENT_WISE_BINARY,
+                                      QNN_OP_ELEMENT_WISE_ADD,
                                       {matmul_out_name, bias_def.name},
                                       {terminator_output_name_},
-                                      {add_param_name}, /*do_op_validation=*/false),
+                                      {}, /*do_op_validation=*/false),
                     "Failed to create bias-Add node");
     }
   }

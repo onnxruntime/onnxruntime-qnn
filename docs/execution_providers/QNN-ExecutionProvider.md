@@ -511,6 +511,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Atan||
 |ai.onnx:Attention|Opsets 23–24. 3D \[B,S,n·hs\] and 4D \[B,n,S,hs\] inputs. HTP: full decomposition for MHA, GQA/MQA, is\_causal, attn\_mask, softcap, KV cache, qk\_matmul\_output modes 0–3. GPU: native QNN\_OP\_GROUP\_QUERY\_ATTENTION when is\_causal=1 and no softcap/attn\_mask/qk\_output (covers MHA and GQA/MQA); decomposition otherwise. Static shapes only.|
 |ai.onnx:AveragePool||
+|ai.onnx:Bernoulli|CPU and HTP backends supported.|
 |ai.onnx:BatchNormalization|fp16 supported since 1.18.0|
 |ai.onnx:Cast||
 |ai.onnx:CastLike||
