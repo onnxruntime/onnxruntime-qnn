@@ -140,6 +140,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"AveragePool", QNN_OP_POOL_AVG_2D},
         {"BatchNormalization", QNN_OP_BATCHNORM},
         {"Cast", QNN_OP_CAST},
+        {"CastLike", QNN_OP_CAST},
         {"Ceil", QNN_OP_ELEMENT_WISE_UNARY},
         {"Clip", QNN_OP_ELEMENT_WISE_NEURON},
         {"Concat", QNN_OP_CONCAT},

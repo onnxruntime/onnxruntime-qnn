@@ -23,6 +23,7 @@ static const std::string EP_CONTEXT_TYPE = "ep_context_type";
 static const std::string MAIN_CONTEXT = "main_context";
 static const std::string EMBED_MODE = "embed_mode";
 static const std::string EP_CACHE_CONTEXT = "ep_cache_context";
+static const std::string EP_DLC_CONTEXT = "ep_dlc_context";
 static const std::string EP_SDK_VER = "ep_sdk_version";
 static const std::string PARTITION_NAME = "partition_name";
 static const std::string SOURCE = "source";

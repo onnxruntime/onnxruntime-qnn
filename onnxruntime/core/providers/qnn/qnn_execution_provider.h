@@ -270,6 +270,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool enable_htp_extended_udma_mode_ = false;
 
+  // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
+  bool enable_htp_graph_splitting_ = false;
+
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;
   // Per-SoC HTP backend configurations. The size of below arrays are enforced to be the same.

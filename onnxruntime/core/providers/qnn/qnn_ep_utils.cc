@@ -72,33 +72,6 @@ std::optional<ONNXTensorElementDataType> GetNodeOutputDataType(const OrtNode* no
   return GetDataTypeFromValueInfo(ort_api, outputs[index]);
 }
 
-bool Is16BitIntType(ONNXTensorElementDataType data_type) {
-  return data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 ||
-         data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
-}
-
-bool Is4BitIntType(ONNXTensorElementDataType data_type) {
-  return data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
-         data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4;
-}
-
-bool IsDisallowedType(ONNXTensorElementDataType dt, bool allow_16bit, bool allow_4bit) {
-  return (!allow_16bit && Is16BitIntType(dt)) || (!allow_4bit && Is4BitIntType(dt));
-}
-
-//  Helper which returns false if any dtype is disallowed (by allow_16bit/allow_4bit)
-//  or if require_all_same is true and the types differ
-bool CheckQuantTypes(std::initializer_list<ONNXTensorElementDataType> dtypes,
-                     bool allow_16bit, bool allow_4bit,
-                     bool require_all_same = true) {
-  auto first_dt = *dtypes.begin();
-  for (auto dt : dtypes) {
-    if (IsDisallowedType(dt, allow_16bit, allow_4bit)) return false;
-    if (require_all_same && dt != first_dt) return false;
-  }
-  return true;
-}
-
 // Forward declaration
 const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_api, const char* name);
 
@@ -609,7 +582,7 @@ bool OrtDropQDQNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort
     return false;
   }
 
-  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
@@ -650,10 +623,6 @@ bool OrtDropDQNodeGroupSelector::Check(const OrtGraph* /*graph*/, const OrtApi& 
     return false;
   }
 
-  if (IsDisallowedType(dt_input.value(), allow_16bit_, allow_4bit_)) {
-    return false;
-  }
-
   return true;
 }
 
@@ -675,7 +644,7 @@ bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
     return false;
   }
 
-  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
@@ -732,7 +701,7 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
@@ -758,7 +727,7 @@ bool OrtBinaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     return false;
   }
 
-  if (!CheckQuantTypes({dt_input_1.value(), dt_input_2.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
+  if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
     return false;
   }
 
@@ -799,7 +768,7 @@ bool OrtVariadicNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
     }
   }
 
-  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
+  if (dt_input.value() != dt_output.value()) {
     return false;
   }
 
@@ -822,10 +791,6 @@ bool OrtSplitNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   auto dt_input = GetNodeInputDataType(dq_node, ort_api, 0);
 
   if (!dt_input.has_value()) {
-    return false;
-  }
-
-  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
     return false;
   }
 
@@ -899,14 +864,9 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (!allow_4bit_weight_ && Is4BitIntType(dt_weight.value())) {
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
+      dt_weight.value() != dt_input.value()) {
     return false;
-  }
-
-  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
-      return false;
-    }
   }
 
   if (dq_nodes.size() == 3) {
@@ -915,11 +875,6 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     if (!dt_bias.has_value() || dt_bias.value() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
       return false;
     }
-  }
-
-  // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_input.value()) || Is16BitIntType(dt_weight.value()))) {
-    return false;
   }
 
   return true;
@@ -938,21 +893,6 @@ bool OrtEinsumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     auto dt_input = GetNodeInputDataType(dq_nodes[i], ort_api, 0);
 
     if (!dt_input.has_value()) {
-      return false;
-    }
-
-    // Check if INT8 is allowed
-    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-      return false;
-    }
-
-    // Check if 16-bit int types are allowed
-    if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-      return false;
-    }
-
-    // Check if 4-bit int types are allowed
-    if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
       return false;
     }
   }
@@ -988,15 +928,6 @@ bool OrtReciprocalNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& 
     if (!dt_input.has_value()) {
       return false;
     }
-    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-      return false;
-    }
-    if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-      return false;
-    }
-    if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
-      return false;
-    }
   }
   if (!q_nodes.empty()) {
     auto dt_input0 = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
@@ -1027,33 +958,22 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     return false;
   }
 
-  // Check if INT8 is allowed
-  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
-      return false;
-    }
-  }
-
-  if (IsDisallowedType(dt_input.value(), allow_16bit_, allow_4bit_) ||
-      IsDisallowedType(dt_weight.value(), allow_16bit_, allow_4bit_)) {
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
+      dt_weight.value() != dt_input.value()) {
     return false;
   }
 
-  // Potential match for QLinearMatMul or MatMulIntegerToFloat
-  bool qlinear = !q_nodes.empty();
-
-  if (qlinear) {
-    // QLinearMatMul
-    if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
-      return false;
-    }
-
-    auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-    return dt_output.has_value() && dt_input.value() == dt_output.value();
-  } else {
-    // Can be converted to MatMulIntegerToFloat if EP supports that
-    return matmulintegertofloat_allowed_;
+  // Without a trailing Q this would be a MatMulIntegerToFloat, which QNN EP does not build.
+  if (q_nodes.empty()) {
+    return false;
   }
+
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
+    return false;
+  }
+
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+  return dt_output.has_value() && dt_input.value() == dt_output.value();
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1091,11 +1011,6 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     if (!dt_Y.has_value() || dt_A.value() != dt_Y.value()) {  // activation and output must be same type
       return false;
     }
-  }
-
-  if (IsDisallowedType(dt_A.value(), allow_16bit_, allow_4bit_) ||
-      IsDisallowedType(dt_B.value(), allow_16bit_, allow_4bit_)) {
-    return false;
   }
 
   // If there's no bias (less than 3 DQ nodes), we're done
@@ -1137,7 +1052,7 @@ bool OrtWhereNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
     return false;
   }
 
-  if (!CheckQuantTypes({dt_input_1.value(), dt_input_2.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
+  if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
     return false;
   }
 
@@ -1242,11 +1157,9 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
     }
   }
 
-  // INT8 is 3 in ONNX_NAMESPACE::TensorProto_DataType
-  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    if (!int8_allowed_ || dt_scale.value() != dt_input.value()) {
-      return false;
-    }
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
+      dt_scale.value() != dt_input.value()) {
+    return false;
   }
 
   return true;
@@ -1371,6 +1284,30 @@ bool OrtRMSNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const Or
 
   // input and output need to be the same type.
   return (dt_input.value() == dt_output.value());
+}
+
+bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
+                                            const OrtApi& ort_api,
+                                            const OrtNode* node,
+                                            const OrtNode* redundant_clip_node,
+                                            const std::vector<const OrtNode*>& dq_nodes,
+                                            const std::vector<const OrtNode*>& q_nodes) const {
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, /*num_dq_inputs*/ 1)) {
+    return false;
+  }
+
+  auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+
+  if (!dt_input.has_value() || !dt_output.has_value()) {
+    return false;
+  }
+
+  if (dt_input.value() != dt_output.value()) {
+    return false;
+  }
+
+  return true;
 }
 
 // Helper function to get QDQ selection for a node
@@ -1780,6 +1717,10 @@ void OrtSelectorManager::CreateSelectors() {
       {"RMSNormalization", {}},
       {"SimplifiedLayerNormalization", {}}};
   ort_selectors_.RegisterSelector(rmsnorm_ops, std::make_unique<OrtRMSNormalizationNodeGroupSelector>());
+
+  // Register MatMulNBits ops.
+  OrtOpVersionsAndSelector::OpVersionsMap matmulnbits_ops = {{"MatMulNBits", {}}};
+  ort_selectors_.RegisterSelector(matmulnbits_ops, std::make_unique<OrtMatMulNBitsNodeGroupSelector>());
 }
 
 void OrtSelectorManager::InitializeSelectorsMap() {

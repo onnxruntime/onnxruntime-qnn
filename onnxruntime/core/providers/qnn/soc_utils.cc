@@ -10,6 +10,9 @@
 #include <cstring>
 #include <dirent.h>
 #endif
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
 
 #include "core/providers/qnn/soc_utils.h"
 
@@ -186,8 +189,11 @@ int GetSocId() {
 
 bool HasFastRpcCdspDevice() {
 #if !defined(_WIN32) && defined(__aarch64__)
-  // Qualcomm Linux/Android arm64: ORT Core doesn't enumerate Hexagon NPUs.
-  // Detect via any fastRPC compute-DSP char device.
+#if defined(__ANDROID__)
+  char manufacturer[PROP_VALUE_MAX] = {};
+  __system_property_get("ro.soc.manufacturer", manufacturer);
+  return strncasecmp(manufacturer, "QTI", 3) == 0;
+#endif
   DIR* d = opendir("/dev");
   if (!d) {
     return false;
