@@ -10,15 +10,16 @@ namespace qnn {
 
 class QnnModelWrapper;
 
-// True if `node_unit` is a standalone Q/DQ with an effectively-constant input
-// (real initializer or previously-folded tensor) eligible for compile-time folding.
-bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper,
-                        const OrtNodeUnit& node_unit);
+// True only for an initializer-backed standalone per-channel DQ. QNN cannot represent that
+// node directly, so this narrow compatibility case remains foldable. All representable Q/DQ
+// nodes follow the pre-#339 path and stay as QNN operations.
+bool CanFoldInitializerPerChannelDequantize(const QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit);
 
-// Fold the Q/DQ statically and register its output as a STATIC tensor. Caller
-// MUST first verify with `CanFoldConstantQdq`.
-Ort::Status TryFoldConstantQDQ(QnnModelWrapper& qnn_model_wrapper,
-                               const OrtNodeUnit& node_unit) ORT_MUST_USE_RESULT;
+// Fold the initializer-backed per-channel DQ and register its output as a STATIC tensor.
+// Caller MUST first verify with `CanFoldInitializerPerChannelDequantize`.
+Ort::Status FoldInitializerPerChannelDequantize(QnnModelWrapper& qnn_model_wrapper,
+                                                const OrtNodeUnit& node_unit) ORT_MUST_USE_RESULT;
 
 // Reads the raw bytes of a real initializer or a previously-folded STATIC tensor.
 Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,

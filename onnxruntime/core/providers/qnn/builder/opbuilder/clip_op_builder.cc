@@ -39,19 +39,7 @@ static Ort::Status ProcessClipMinMax(QnnModelWrapper& qnn_model_wrapper,
   TensorInfo input_info = {};
   std::vector<uint8_t> val_bytes;
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, input_info));
-
-  // ExplicitOpCheck() accepts either a real initializer or a DQ-of-constant folded to a STATIC
-  // fp32 tensor. A folded input is not an initializer; read its bytes from the registry instead.
-  if (!input_info.is_initializer) {
-    RETURN_IF_NOT(qnn_model_wrapper.IsFoldedConstant(input.name),
-                  "QNN EP: Clip min/max must be a constant initializer or a folded constant.");
-    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input.name, val_bytes));
-    RETURN_IF(val_bytes.size() != sizeof(float), "Clip min/max must be a scalar.");
-    float_value = *reinterpret_cast<const float*>(val_bytes.data());
-    return Ort::Status();
-  }
-
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, val_bytes));
+  RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input.name, val_bytes));
 
   // If the input is quantized, we need to dequantize it
   if (input.quant_param.has_value()) {

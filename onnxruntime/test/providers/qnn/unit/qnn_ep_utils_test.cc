@@ -1558,9 +1558,8 @@ TEST(QnnUnit_EpUtilsTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionP
 // not reached by existing tests.
 // =============================================================================
 
-// OrtClipNodeGroupSelector: CheckQDQNodes fails when q_nodes is empty and
-// is_empty_q_nodes_allowed=false (the Clip default) → returns false.
-TEST(QnnUnit_EpUtilsTest, Clip_CheckQDQNodesFails_ReturnsFalse) {
+// Clip may group its DQ-wrapped constant bounds even when its float output has no Q consumer.
+TEST(QnnUnit_EpUtilsTest, Clip_AcceptsEmptyOutputQ) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1569,9 +1568,8 @@ TEST(QnnUnit_EpUtilsTest, Clip_CheckQDQNodesFails_ReturnsFalse) {
   FakeGraph graph{};
   OrtClipNodeGroupSelector sel;
   OrtNodeGroupSelector& base = sel;
-  // Empty q_nodes → CheckQDQNodes returns is_empty_q_nodes_allowed=false → L699.
-  EXPECT_FALSE(base.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
-                          {dq.AsNode()}, {}));
+  EXPECT_TRUE(base.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                         {dq.AsNode()}, {}));
 }
 
 // OrtClipNodeGroupSelector: data_producer is nullptr (ValueInfo_GetValueProducer
@@ -1825,9 +1823,8 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
                          {dq_data.AsNode(), dq_scale.AsNode()}, {q.AsNode()}));
 }
 
-// OrtBatchNormalizationNodeGroupSelector: !has_float_output path,
-// dt_output.value() != dt_input.value() → returns false.
-TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
+// The builder bridges mixed quantized input/output types through a float BatchNorm.
+TEST(QnnUnit_EpUtilsTest, BatchNorm_AcceptsInputOutputTypeMismatch) {
   EpUtilsTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_data_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1840,8 +1837,8 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
   OrtBatchNormalizationNodeGroupSelector sel;
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq_data.AsNode(), dq_scale.AsNode()}, {q.AsNode()}));
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq_data.AsNode(), dq_scale.AsNode()}, {q.AsNode()}));
 }
 
 // OrtTopKNodeGroupSelector: dt_input.value() != dt_output.value() → returns
