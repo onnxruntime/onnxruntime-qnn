@@ -5,6 +5,7 @@
 
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -51,7 +52,10 @@ class QnnModelWrapper {
                   const std::unordered_map<std::string, size_t>& input_index_map,
                   const std::unordered_map<std::string, size_t>& output_index_map,
                   QnnBackendType qnn_backend_type,
-                  const ModelSettings& model_settings)
+                  const ModelSettings& model_settings,
+                  const std::unordered_set<std::string>& lora_updatable_tensors = {},
+                  const std::unordered_map<std::string, std::string>& onnx_tensor_name_map = {},
+                  bool skip_fusions = false)
       : graph_viewer_(graph_viewer),
         logger_(logger),
         qnn_interface_(qnn_interface),
@@ -59,7 +63,10 @@ class QnnModelWrapper {
         input_index_map_(input_index_map),
         output_index_map_(output_index_map),
         qnn_backend_type_(qnn_backend_type),
-        model_settings_(model_settings) {
+        model_settings_(model_settings),
+        lora_updatable_tensors_(lora_updatable_tensors),
+        onnx_tensor_name_map_(onnx_tensor_name_map),
+        skip_fusions_(skip_fusions) {
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -151,15 +158,24 @@ class QnnModelWrapper {
   }
 
   Qnn_TensorType_t GetTensorType(const std::string& tensor_name) const {
+    bool is_lora = lora_updatable_tensors_.count(tensor_name) > 0;
     if (IsConstantInput(tensor_name)) {
-      return QNN_TENSOR_TYPE_STATIC;
+      return is_lora ? QNN_TENSOR_TYPE_UPDATEABLE_STATIC : QNN_TENSOR_TYPE_STATIC;
     } else if (IsGraphInput(tensor_name)) {
       return QNN_TENSOR_TYPE_APP_WRITE;
     } else if (IsGraphOutput(tensor_name)) {
       return QNN_TENSOR_TYPE_APP_READ;
     } else {
-      return QNN_TENSOR_TYPE_NATIVE;
+      return is_lora ? QNN_TENSOR_TYPE_UPDATEABLE_NATIVE : QNN_TENSOR_TYPE_NATIVE;
     }
+  }
+
+  bool IsSkipFusions() const { return skip_fusions_; }
+
+  // Restore original ONNX tensor name if ORT renamed it (e.g. stripped _output suffix)
+  const std::string& GetOriginalOnnxName(const std::string& ort_name) const {
+    auto it = onnx_tensor_name_map_.find(ort_name);
+    return (it != onnx_tensor_name_map_.end()) ? it->second : ort_name;
   }
 
   Status GetTensorInfo(const NodeUnitIODef& input, TensorInfo& input_info) const;
@@ -389,6 +405,9 @@ class QnnModelWrapper {
   const std::unordered_map<std::string, size_t>& output_index_map_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   ModelSettings model_settings_ = {};
+  std::unordered_set<std::string> lora_updatable_tensors_;
+  std::unordered_map<std::string, std::string> onnx_tensor_name_map_;  // ORT name → original ONNX name
+  bool skip_fusions_ = false;  // skip all QnnNodeGroup fusions for pure ONNX→QNN translation
   utils::QnnJSONGraph json_qnn_graph_;
 };  // QnnModelWrapper
 

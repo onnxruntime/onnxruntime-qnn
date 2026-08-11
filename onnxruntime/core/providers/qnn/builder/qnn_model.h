@@ -4,6 +4,7 @@
 #pragma once
 
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -36,7 +37,10 @@ class QnnModel {
                       const qnn::ModelSettings& model_settings,
                       const logging::Logger& logger,
                       const QnnGraph_Config_t** graph_configs = nullptr,
-                      const std::string& json_qnn_graph_path = "");
+                      const std::string& json_qnn_graph_path = "",
+                      const std::unordered_set<std::string>& lora_updatable_tensors = {},
+                      const std::unordered_map<std::string, std::string>& onnx_tensor_name_map = {},
+                      bool skip_fusions = false);
 
   Status FinalizeGraphs(const logging::Logger& logger);
 
