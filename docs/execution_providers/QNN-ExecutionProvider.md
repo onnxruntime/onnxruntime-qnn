@@ -510,6 +510,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Asin||
 |ai.onnx:Atan||
 |ai.onnx:AveragePool||
+|ai.onnx:Bernoulli|CPU and HTP backends supported.|
 |ai.onnx:BatchNormalization|fp16 supported since 1.18.0|
 |ai.onnx:Cast||
 |ai.onnx:CastLike||

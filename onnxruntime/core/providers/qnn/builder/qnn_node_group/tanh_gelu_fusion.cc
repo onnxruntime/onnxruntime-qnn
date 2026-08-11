@@ -248,23 +248,19 @@ std::unique_ptr<IQnnNodeGroup> TanhGeluFusion::TryFusion(
   }
   OrtNodeUnitIODef final_output = mul_half_outputs[0];
 
-  // Validate QNN ElementWiseNeuron(Gelu) accepts these tensor types.
+  // Validate QNN Gelu accepts these tensor types.
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;
   if (!qmw.MakeTensorWrapper(root_input, input_tensor).IsOK()) return nullptr;
   if (!qmw.MakeTensorWrapper(final_output, output_tensor).IsOK()) return nullptr;
   const std::string node_name = utils::UniqueNameGenerator().New(tanh_node_unit);
-  Qnn_Scalar_t neuron_op = QNN_SCALAR_INIT;
-  neuron_op.dataType = QNN_DATATYPE_UINT_32;
-  neuron_op.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_GELU;
-  QnnParamWrapper op_param(tanh_node_unit.Index(), node_name,
-                           QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_op);
+  // Validate QNN Gelu accepts these tensor types.
   if (!qmw.ValidateQnnNode(node_name,
                            QNN_OP_PACKAGE_NAME_QTI_AISW,
-                           QNN_OP_ELEMENT_WISE_NEURON,
+                           QNN_OP_GELU,
                            {input_tensor.GetQnnTensor()},
                            {output_tensor.GetQnnTensor()},
-                           {op_param.GetQnnParam()})
+                           {})
            .IsOK()) {
     return nullptr;
   }
@@ -295,17 +291,12 @@ Ort::Status TanhGeluFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger&
   RETURN_IF_ERROR(qmw.MakeTensorWrapper(gelu_root_input_, input_tensor));
   RETURN_IF_ERROR(qmw.MakeTensorWrapper(gelu_final_output_, output_tensor));
   const std::string node_name = utils::UniqueNameGenerator().New(*target_node_unit_);
-  Qnn_Scalar_t neuron_op = QNN_SCALAR_INIT;
-  neuron_op.dataType = QNN_DATATYPE_UINT_32;
-  neuron_op.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_GELU;
-  QnnParamWrapper op_param(target_node_unit_->Index(), node_name,
-                           QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_op);
   return qmw.ValidateQnnNode(node_name,
                              QNN_OP_PACKAGE_NAME_QTI_AISW,
-                             QNN_OP_ELEMENT_WISE_NEURON,
+                             QNN_OP_GELU,
                              {input_tensor.GetQnnTensor()},
                              {output_tensor.GetQnnTensor()},
-                             {op_param.GetQnnParam()});
+                             {});
 }
 
 Ort::Status TanhGeluFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& /*logger*/) const {
@@ -323,19 +314,12 @@ Ort::Status TanhGeluFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::L
   const std::string node_name = utils::UniqueNameGenerator().New(*target_node_unit_);
   // QNN GELU uses the exact-erf definition; the tanh approximation differs by at most ~4.7e-4
   // over [-10, 10], which is within the test tolerances (2e-3 to 6e-3) and acceptable for HTP.
-  Qnn_Scalar_t neuron_op = QNN_SCALAR_INIT;
-  neuron_op.dataType = QNN_DATATYPE_UINT_32;
-  neuron_op.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_GELU;
-  QnnParamWrapper op_param(target_node_unit_->Index(), node_name,
-                           QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_op);
-  const std::string op_param_name = op_param.GetParamTensorName();
-  RETURN_IF_NOT(qmw.AddParamWrapper(std::move(op_param)), "Failed to add TanhGelu operation param.");
   RETURN_IF_NOT(qmw.CreateQnnNode(node_name,
                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                  QNN_OP_ELEMENT_WISE_NEURON,
+                                  QNN_OP_GELU,
                                   {gelu_root_input_.name},
                                   {gelu_final_output_.name},
-                                  {op_param_name},
+                                  {},
                                   /*do_op_validation=*/false),
                 "Failed to add fused TanhGelu node.");
   return Ort::Status();
