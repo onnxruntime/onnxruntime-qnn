@@ -78,7 +78,7 @@ static void RunMaxRoiPoolOpTest(const TestInputDef<float>& input_def,
   RunQnnModelTest(BuildMaxRoiPoolTestCase(input_def, roi_def, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment, f32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(f32_abs_err)});
 }
 
 // Runs a QDQ MaxRoiPool model on the QNN HTP backend. Checks the graph node assignment, and that
