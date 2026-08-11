@@ -187,18 +187,12 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   const bool is_fp_to_bool_cast = IsFpToBoolCast(node_unit);
   const std::string qnn_op_type = is_fp_to_bool_cast
-                                      ? QNN_OP_ELEMENT_WISE_BINARY
+                                      ? QNN_OP_ELEMENT_WISE_NOT_EQUAL
                                       : GetQnnOpType(node_unit.OpType());
 
-  // FP->bool cast is implemented as ElementWiseBinary(NOT_EQUAL) against a zero tensor, which
-  // requires the mandatory 'operation' scalar param. Plain Cast takes no params.
+  // FP->bool cast is implemented as ElementWiseNotEqual against a zero tensor. Plain Cast takes no params.
   std::vector<std::string> param_tensor_names;
   const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
-  if (is_fp_to_bool_cast) {
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), cast_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, param_tensor_names));
-  }
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 qnn_op_type,
