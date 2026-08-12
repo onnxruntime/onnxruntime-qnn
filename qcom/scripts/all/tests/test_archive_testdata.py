@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import hashlib
+import http.client
 import shutil
 import tarfile
 import zipfile
@@ -89,7 +90,7 @@ def test_download_and_verify_removes_stale_cache_and_redownloads(tmp_path, monke
 
 
 def test_download_and_verify_raises_on_fresh_download_sha_mismatch(tmp_path, monkeypatch):
-    """When the freshly downloaded file doesn't match the expected SHA, raise ValueError."""
+    """When every downloaded file mismatches the expected SHA, exhaust retries and raise."""
     cache = tmp_path / "ort_core.zip"
     downloaded = tmp_path / "downloaded.zip"
     _make_fake_zip(downloaded)  # has a real SHA1 ≠ "0"*40
@@ -98,13 +99,39 @@ def test_download_and_verify_raises_on_fresh_download_sha_mismatch(tmp_path, mon
         shutil.copy(str(downloaded), path)
 
     monkeypatch.setattr("archive_testdata.urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr("archive_testdata.time.sleep", lambda _s: None)  # don't actually back off in tests
 
-    with pytest.raises(ValueError, match="SHA1 mismatch"):
+    with pytest.raises(RuntimeError, match="Failed to download"):
         download_and_verify(
             url="https://example.invalid/",
             sha1="0" * 40,
             cache_path=cache,
         )
+    # A bad body must never be left behind to poison a persistent cache.
+    assert not cache.exists()
+
+
+def test_download_and_verify_retries_transient_incomplete_read(tmp_path, monkeypatch):
+    """A transient IncompleteRead on the first attempt is retried and the second attempt succeeds."""
+    fresh_zip = tmp_path / "fresh.zip"
+    fresh_sha1 = _make_fake_zip(fresh_zip)  # {"hello.txt": "world"}
+    cache = tmp_path / "ort_core.zip"
+
+    attempts: list[str] = []
+
+    def flaky_urlretrieve(url: str, path: str) -> None:
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise http.client.IncompleteRead(b"partial")
+        shutil.copy(str(fresh_zip), path)
+
+    monkeypatch.setattr("archive_testdata.urlretrieve", flaky_urlretrieve)
+    monkeypatch.setattr("archive_testdata.time.sleep", lambda _s: None)
+
+    result = download_and_verify(url="https://example.invalid/", sha1=fresh_sha1, cache_path=cache)
+    assert len(attempts) == 2, "IncompleteRead on attempt 1 should trigger exactly one retry"
+    assert result == cache
+    assert cache.exists()
 
 
 def _make_tree(root: Path, files: dict[str, str]) -> None:

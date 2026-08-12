@@ -18,10 +18,13 @@ expected by run_tests.{ps1,sh} and the test binaries.
 
 import argparse
 import hashlib
+import http.client
 import logging
+import os
 import re
 import shutil
 import tarfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +32,18 @@ from urllib.request import urlretrieve
 
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
+
+# Retry policy for the ort_core download. GitHub's archive CDN intermittently drops the
+# connection mid-body (http.client.IncompleteRead) or times out; a bare single-shot fetch turns
+# that transient flake into a hard CI failure. Retry with exponential backoff instead.
+# Env-overridable, mirroring qcom/scripts/all/package_manager.py.
+DOWNLOAD_ATTEMPTS = int(os.environ.get("ORT_BUILD_DOWNLOAD_ATTEMPTS", "3"))
+DOWNLOAD_BACKOFF_BASE_SECONDS = float(os.environ.get("ORT_BUILD_DOWNLOAD_BACKOFF_SECONDS", "2"))
+
+# Transient download failures worth retrying. OSError covers urllib.error.URLError/HTTPError and
+# socket timeouts; http.client.HTTPException covers IncompleteRead (a partial/truncated body) — note
+# IncompleteRead is NOT an OSError, so it must be listed explicitly.
+_TRANSIENT_DOWNLOAD_ERRORS = (OSError, http.client.HTTPException)
 
 __all__ = [
     "OrtCoreDep",
@@ -71,7 +86,11 @@ def _sha1_of(path: Path) -> str:
 def download_and_verify(url: str, sha1: str, cache_path: Path) -> Path:
     """Download `url` to `cache_path`. Skip fetch when cache exists with matching SHA1.
     Removes and re-downloads when a stale cache (mismatched SHA1) is found, so persistent
-    CI workspaces recover automatically after a QAIRT uplevel changes cmake/deps.txt."""
+    CI workspaces recover automatically after a QAIRT uplevel changes cmake/deps.txt.
+
+    The download is retried with exponential backoff on transient network/HTTP failures and on a
+    SHA1 mismatch of the freshly downloaded file (a truncated body that still completed the read),
+    because GitHub's archive CDN intermittently drops connections mid-transfer."""
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     if cache_path.exists():
         actual = _sha1_of(cache_path)
@@ -87,12 +106,33 @@ def download_and_verify(url: str, sha1: str, cache_path: Path) -> Path:
             actual,
         )
         cache_path.unlink()
-    logging.info("Downloading %s -> %s", url, cache_path)
-    urlretrieve(url, cache_path)
-    actual = _sha1_of(cache_path)
-    if actual != sha1.lower():
-        raise ValueError(f"SHA1 mismatch on freshly downloaded {cache_path}: expected {sha1}, got {actual}")
-    return cache_path
+
+    last_error: Exception | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            logging.info("Downloading %s -> %s (attempt %d/%d)", url, cache_path, attempt, DOWNLOAD_ATTEMPTS)
+            urlretrieve(url, cache_path)
+            actual = _sha1_of(cache_path)
+            if actual != sha1.lower():
+                # A completed-but-truncated body hashes wrong; treat it as a transient failure and
+                # discard so the next attempt starts clean instead of poisoning the cache.
+                raise ValueError(f"SHA1 mismatch on freshly downloaded {cache_path}: expected {sha1}, got {actual}")
+            return cache_path
+        except (*_TRANSIENT_DOWNLOAD_ERRORS, ValueError) as e:
+            last_error = e
+            cache_path.unlink(missing_ok=True)
+            if attempt < DOWNLOAD_ATTEMPTS:
+                delay = DOWNLOAD_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+                logging.warning(
+                    "Download attempt %d/%d for %s failed: %s. Retrying in %.0fs.",
+                    attempt,
+                    DOWNLOAD_ATTEMPTS,
+                    url,
+                    e,
+                    delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError(f"Failed to download {url} after {DOWNLOAD_ATTEMPTS} attempt(s).") from last_error
 
 
 # Maps each handle name to its source path. Handle names must match MAPPING in extract_testdata.py.
