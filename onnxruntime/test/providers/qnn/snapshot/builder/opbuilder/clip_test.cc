@@ -3,7 +3,7 @@
 //
 // Op-builder snapshot tests for ClipOpBuilder.
 //
-//   QnnUnit_Snapshot_ClipTest — Snapshot tests: JSON golden compare via
+//   QnnUnit_Clip_SnapshotTest — Snapshot tests: JSON golden compare via
 //                               QnnJSONGraph (real QNN backend, no finalize,
 //                               no fusion).
 //
@@ -20,7 +20,7 @@
 //
 // Golden files: $QNN_UT_SNAPSHOT_GOLDEN_DIR/snapshot/builder/opbuilder/clip/<name>.json
 // To generate/update (both env vars on one line):
-//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter="QnnUnit_Snapshot_*"
+//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter="QnnUnit_Clip_Snapshot*"
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
@@ -49,10 +49,10 @@ namespace test {
 
 // ---------------------------------------------------------------------------
 // Snapshot tests — value-parameterized, one suite per spec kind:
-//   QnnUnit_Snapshot_ClipTest             (ClipSpec, Group A: plain)
-//   QnnUnit_Snapshot_ClipQDQFloatTest     (ClipQDQFloatSpec, Group C)
-//   QnnUnit_Snapshot_ClipQDQQuantTest     (ClipQDQQuantSpec, Group D)
-//   QnnUnit_Snapshot_ClipFoldedConstTest  (ClipFoldedConstSpec, Group E)
+//   QnnUnit_Clip_SnapshotTest             (ClipSpec, Group A: plain)
+//   QnnUnit_Clip_Snapshot_QDQFloatTest     (ClipQDQFloatSpec, Group C)
+//   QnnUnit_Clip_Snapshot_QDQQuantTest     (ClipQDQQuantSpec, Group D)
+//   QnnUnit_Clip_Snapshot_FoldedConstTest  (ClipFoldedConstSpec, Group E)
 //
 // Four helpers cover the test patterns:
 //   RunClipSnapshot               — Plain dtype data, optional float min/max
@@ -399,29 +399,29 @@ void RunClipSnapshotFoldedConst(SnapshotBackend backend,
 
 // Value-parameterized suites — one per spec kind. Case name = spec.name.
 
-class QnnUnit_Snapshot_ClipTest : public ::testing::TestWithParam<ClipSpec> {};
-class QnnUnit_Snapshot_ClipQDQFloatTest : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
-class QnnUnit_Snapshot_ClipQDQQuantTest : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
-class QnnUnit_Snapshot_ClipFoldedConstTest : public ::testing::TestWithParam<ClipFoldedConstSpec> {};
+class QnnUnit_Clip_SnapshotTest : public ::testing::TestWithParam<ClipSpec> {};
+class QnnUnit_Clip_Snapshot_QDQFloatTest : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
+class QnnUnit_Clip_Snapshot_QDQQuantTest : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
+class QnnUnit_Clip_Snapshot_FoldedConstTest : public ::testing::TestWithParam<ClipFoldedConstSpec> {};
 
-TEST_P(QnnUnit_Snapshot_ClipTest, Case) {
+TEST_P(QnnUnit_Clip_SnapshotTest, Case) {
   const ClipSpec& s = GetParam();
   RunClipSnapshot(s.snapshot_backend, s.dtype, s.shape, s.min_val, s.max_val, s.name);
 }
 
-TEST_P(QnnUnit_Snapshot_ClipQDQFloatTest, Case) {
+TEST_P(QnnUnit_Clip_Snapshot_QDQFloatTest, Case) {
   const ClipQDQFloatSpec& s = GetParam();
   RunClipSnapshotQDQFloatMinMax(s.snapshot_backend, s.qdq_dtype, s.data, s.shape,
                                 s.min_val, s.max_val, s.name);
 }
 
-TEST_P(QnnUnit_Snapshot_ClipQDQQuantTest, Case) {
+TEST_P(QnnUnit_Clip_Snapshot_QDQQuantTest, Case) {
   const ClipQDQQuantSpec& s = GetParam();
   RunClipSnapshotQDQQuantMinMax(s.snapshot_backend, s.qdq_dtype, s.data, s.shape,
                                 s.min_spec, s.max_spec, s.name);
 }
 
-TEST_P(QnnUnit_Snapshot_ClipFoldedConstTest, Case) {
+TEST_P(QnnUnit_Clip_Snapshot_FoldedConstTest, Case) {
   const ClipFoldedConstSpec& s = GetParam();
   // Compute folded fp32 min/max from the u*_const quant params.
   auto dequantize = [](const QuantScalarSpec& q) -> float {
@@ -432,21 +432,21 @@ TEST_P(QnnUnit_Snapshot_ClipFoldedConstTest, Case) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Snapshot_ClipTest, ::testing::ValuesIn(kClipSpecs),
+    , QnnUnit_Clip_SnapshotTest, ::testing::ValuesIn(kClipSpecs),
     [](const ::testing::TestParamInfo<ClipSpec>& i) { return std::string(i.param.name); });
 
 // Op-builder snapshot exercises the Group C (explicit float min/max) cases.
 // Group B (default min/max) is a session-snapshot-only sentinel.
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Snapshot_ClipQDQFloatTest, ::testing::ValuesIn(kClipQDQFloatOpBuilderSpecs),
+    , QnnUnit_Clip_Snapshot_QDQFloatTest, ::testing::ValuesIn(kClipQDQFloatOpBuilderSpecs),
     [](const ::testing::TestParamInfo<ClipQDQFloatSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Snapshot_ClipQDQQuantTest, ::testing::ValuesIn(kClipQDQQuantSpecs),
+    , QnnUnit_Clip_Snapshot_QDQQuantTest, ::testing::ValuesIn(kClipQDQQuantSpecs),
     [](const ::testing::TestParamInfo<ClipQDQQuantSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Snapshot_ClipFoldedConstTest, ::testing::ValuesIn(kClipFoldedConstSpecs),
+    , QnnUnit_Clip_Snapshot_FoldedConstTest, ::testing::ValuesIn(kClipFoldedConstSpecs),
     [](const ::testing::TestParamInfo<ClipFoldedConstSpec>& i) { return std::string(i.param.name); });
 
 }  // namespace test

@@ -4,10 +4,15 @@
 #
 # Two-pass snapshot+accuracy test runner for QNN EP unit tests.
 #
-# Pass 1: Run all snapshot tests (QnnUnit_Snapshot_* + QnnUnit_SessionSnapshot_*).
+# Pass 1: Run all snapshot tests (QnnUnit_<Op>_Snapshot* + QnnUnit_<Op>_SessionSnapshot*).
 #          If all pass -> done (exit 0). Graph structure unchanged -> accuracy is redundant.
 # Pass 2: For any ops whose snapshot tests failed (golden mismatch), run their
-#          QnnUnit_Accuracy_* tests to verify numerical correctness.
+#          QnnUnit_<Op>_Accuracy* tests to verify numerical correctness.
+#
+# Suite naming is op-first: QnnUnit_<Op>_<Tier>[_<Variant>]Test, where <Tier> is
+# one of Component/Snapshot/SessionSnapshot/Accuracy. The op is recovered as the
+# segment(s) between "QnnUnit_" and the first tier token, so op names may
+# themselves contain underscores (e.g. Gelu_Fusion) without ambiguity.
 #
 # Exit codes:
 #   0  — All good (snapshots pass; OR drift detected + accuracy pass)
@@ -63,7 +68,7 @@ Options:
   --force-accuracy          Always run accuracy tests regardless of snapshot outcome.
   --filter=<group1,group2,...>
                             Scope both passes to these test groups only.
-                            Group name = middle part of QnnUnit_Snapshot_<Group>Test.
+                            Group name = op segment, i.e. QnnUnit_<Group>_Snapshot...Test.
                             Examples: Clip, Conv, GeluFusion (case-sensitive).
 EOF
             exit 0
@@ -107,9 +112,9 @@ fi
 bin_dir="$(dirname "${binary}")"
 
 # Verify this is a coverage build: probe for snapshot tests.
-snapshot_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_Snapshot_*" 2>/dev/null || true)
+snapshot_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_*_Snapshot*" 2>/dev/null || true)
 if [ -z "${snapshot_probe}" ]; then
-    die "No QnnUnit_Snapshot_* tests found in binary. This is not a coverage build (requires --enable-coverage)."
+    die "No QnnUnit_*_Snapshot* tests found in binary. This is not a coverage build (requires --enable-coverage)."
 fi
 
 log_info "=== QNN EP Two-Pass Snapshot+Accuracy Runner ==="
@@ -135,10 +140,10 @@ if [ -n "${filter_groups}" ]; then
         if [ -n "${snapshot_filter}" ]; then
             snapshot_filter+=":"
         fi
-        snapshot_filter+="QnnUnit_Snapshot_${g}Test.*:QnnUnit_SessionSnapshot_${g}Test.*"
+        snapshot_filter+="QnnUnit_${g}_Snapshot*Test.*:QnnUnit_${g}_SessionSnapshot*Test.*"
     done
 else
-    snapshot_filter="QnnUnit_Snapshot_*:QnnUnit_SessionSnapshot_*"
+    snapshot_filter="QnnUnit_*_Snapshot*Test.*:QnnUnit_*_SessionSnapshot*Test.*"
 fi
 
 # ---------------------------------------------------------------------------
@@ -194,7 +199,7 @@ with open(sys.argv[1]) as f:
     data = json.load(f)
 
 ops = set()
-pattern = re.compile(r'^QnnUnit_(?:Snapshot|SessionSnapshot)_(\w+)Test$')
+pattern = re.compile(r'^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$')
 for suite in data.get('testsuites', []):
     m = pattern.match(suite['name'])
     if m:
@@ -230,7 +235,7 @@ with open(sys.argv[1]) as f:
     data = json.load(f)
 
 ops = set()
-pattern = re.compile(r'^QnnUnit_(?:Snapshot|SessionSnapshot)_(\w+)Test$')
+pattern = re.compile(r'^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$')
 for suite in data.get('testsuites', []):
     if suite.get('failures', 0) > 0 or suite.get('errors', 0) > 0:
         m = pattern.match(suite['name'])
@@ -258,9 +263,9 @@ log_info "Accuracy targets: ${target_ops}"
 # ---------------------------------------------------------------------------
 
 # Probe whether accuracy tests are compiled in.
-accuracy_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_Accuracy_*" 2>/dev/null || true)
+accuracy_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_*_Accuracy*" 2>/dev/null || true)
 if [ -z "${accuracy_probe}" ]; then
-    log_warn "No QnnUnit_Accuracy_* tests found (QNN_EP_ACCURACY_UT not enabled?)."
+    log_warn "No QnnUnit_*_Accuracy* tests found (QNN_EP_ACCURACY_UT not enabled?)."
     log_warn "Skipping Pass 2. Snapshot drift is unverified."
     exit 0
 fi
@@ -272,7 +277,7 @@ for op in "${op_array[@]}"; do
     if [ -n "${accuracy_filter}" ]; then
         accuracy_filter+=":"
     fi
-    accuracy_filter+="QnnUnit_Accuracy_${op}Test.*"
+    accuracy_filter+="QnnUnit_${op}_Accuracy*Test.*"
 done
 
 log_info "--- Pass 2: Running accuracy tests ---"

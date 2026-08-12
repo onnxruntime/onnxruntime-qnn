@@ -43,15 +43,15 @@ skip_accuracy=false
 #     tests + any other Qnn suite. Defined by EXCLUSION so new suites land here
 #     automatically. Non-zero exit fails this script.
 #   - snapshot phase (NON-gating): re-runs the migrated ops through the builder and
-#     compares the emitted graph against goldens (the QnnUnit_Snapshot_* /
-#     QnnUnit_SessionSnapshot_* suites). It re-exercises the full builder path so
+#     compares the emitted graph against goldens (the QnnUnit_*_Snapshot* /
+#     QnnUnit_*_SessionSnapshot* suites). It re-exercises the full builder path so
 #     it contributes builder coverage. A golden byte-mismatch (graph-structure
 #     drift) logs a warning but does NOT fail this script: structure drift is a
 #     routing signal for the accuracy tier, not a build failure. Writes a gtest
 #     JSON report. No gate consumes it today; a future accuracy-routing gate will
 #     read it per-case to decide which accuracy tests to route. It MUST run
 #     before accuracy.
-#   - accuracy phase (GATING): QnnUnit_Accuracy_* — the numerical-correctness
+#   - accuracy phase (GATING): QnnUnit_*_Accuracy* — the numerical-correctness
 #     gate. Non-zero exit fails this script. Today this runs unconditionally
 #     (safe baseline: no golden store yet, so every case runs). Once a golden
 #     store with version metadata exists, a future accuracy-routing gate (not
@@ -69,11 +69,11 @@ skip_accuracy=false
 # gtest filter grammar: a single '-' separates the positive section from the
 # negative section; ':'-joined patterns after that '-' are ALL negative (do NOT
 # prefix each with its own '-', or they become literal, never-matching patterns).
-component_filter="*Qnn*:-QnnUnit_Snapshot_*:QnnUnit_SessionSnapshot_*:QnnUnit_Accuracy_*"
-snapshot_filter="QnnUnit_Snapshot_*:QnnUnit_SessionSnapshot_*"
+component_filter="*Qnn*:-QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*:QnnUnit_*_Accuracy*"
+snapshot_filter="QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*"
 # Safe baseline: run every accuracy test. Once the golden-version gate exists it
 # replaces this constant with a run-set computed from the snapshot JSON report.
-accuracy_filter="QnnUnit_Accuracy_*"
+accuracy_filter="QnnUnit_*_Accuracy*"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -244,7 +244,7 @@ run_test_phase() {
 
 # Snapshot-phase JSON report path. Written today but not yet consumed by anything;
 # reserved for a future accuracy-routing gate.
-# Holds the QnnUnit_Snapshot_* / QnnUnit_SessionSnapshot_* per-case results.
+# Holds the QnnUnit_*_Snapshot* / QnnUnit_*_SessionSnapshot* per-case results.
 snapshot_json="${build_dir}/${config}/snapshot_results.json"
 
 comp_exit=0

@@ -4,9 +4,10 @@
 // Op-builder-paired accuracy tests for Clip.
 //
 // 1:1 mapping with the snapshot tiers — every op-builder snapshot case
-// (QnnUnit_Snapshot_Clip{Plain,QDQFloat,QDQQuant}Test) and session-snapshot
-// case (QnnUnit_SessionSnapshot_ClipQDQFloatTest) has a paired accuracy case
-// here (QnnUnit_Accuracy_Clip{Plain,QDQFloat,QDQQuant}Test.Case/<name>)
+// (QnnUnit_Clip_Snapshot[_{QDQFloat,QDQQuant,FoldedConst}]Test) and
+// session-snapshot case (QnnUnit_Clip_SessionSnapshot_QDQFloatTest) has a
+// paired accuracy case here
+// (QnnUnit_Clip_Accuracy[_{QDQFloat,QDQQuant,FoldedConst}]Test.Case/<name>)
 // that runs the same ONNX graph end-to-end through ORT and diffs outputs
 // against an ORT-CPU EP reference within tolerance. Case names come from
 // spec.name so the mapping is aligned by construction (see clip_specs.h).
@@ -402,48 +403,48 @@ void RunClipFoldedConstAccuracy(const ClipFoldedConstSpec& spec) {
 // QDQFloat is instantiated over kClipQDQFloatAccuracySpecs = the union of the
 // op-builder-snapshot set (Group C) and the session-snapshot set (Group B),
 // so accuracy = snapshot ∪ session holds by construction (see clip_specs.h).
-class QnnUnit_Accuracy_ClipTest
+class QnnUnit_Clip_AccuracyTest
     : public ::testing::TestWithParam<ClipSpec> {};
-class QnnUnit_Accuracy_ClipQDQFloatTest
+class QnnUnit_Clip_Accuracy_QDQFloatTest
     : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
-class QnnUnit_Accuracy_ClipQDQQuantTest
+class QnnUnit_Clip_Accuracy_QDQQuantTest
     : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
-class QnnUnit_Accuracy_ClipFoldedConstTest
+class QnnUnit_Clip_Accuracy_FoldedConstTest
     : public ::testing::TestWithParam<ClipFoldedConstSpec> {};
 
-TEST_P(QnnUnit_Accuracy_ClipTest, Case) {
+TEST_P(QnnUnit_Clip_AccuracyTest, Case) {
   RunClipAccuracy(GetParam());
 }
 
-TEST_P(QnnUnit_Accuracy_ClipQDQFloatTest, Case) {
+TEST_P(QnnUnit_Clip_Accuracy_QDQFloatTest, Case) {
   RunClipQDQFloatAccuracy(GetParam());
 }
 
-TEST_P(QnnUnit_Accuracy_ClipQDQQuantTest, Case) {
+TEST_P(QnnUnit_Clip_Accuracy_QDQQuantTest, Case) {
   RunClipQDQQuantAccuracy(GetParam());
 }
 
-TEST_P(QnnUnit_Accuracy_ClipFoldedConstTest, Case) {
+TEST_P(QnnUnit_Clip_Accuracy_FoldedConstTest, Case) {
   RunClipFoldedConstAccuracy(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Accuracy_ClipTest,
+    , QnnUnit_Clip_AccuracyTest,
     ::testing::ValuesIn(kClipSpecs),
     [](const ::testing::TestParamInfo<ClipSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Accuracy_ClipQDQFloatTest,
+    , QnnUnit_Clip_Accuracy_QDQFloatTest,
     ::testing::ValuesIn(kClipQDQFloatAccuracySpecs),
     [](const ::testing::TestParamInfo<ClipQDQFloatSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Accuracy_ClipQDQQuantTest,
+    , QnnUnit_Clip_Accuracy_QDQQuantTest,
     ::testing::ValuesIn(kClipQDQQuantSpecs),
     [](const ::testing::TestParamInfo<ClipQDQQuantSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Accuracy_ClipFoldedConstTest,
+    , QnnUnit_Clip_Accuracy_FoldedConstTest,
     ::testing::ValuesIn(kClipFoldedConstSpecs),
     [](const ::testing::TestParamInfo<ClipFoldedConstSpec>& i) { return std::string(i.param.name); });
 

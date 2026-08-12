@@ -87,10 +87,10 @@ GetTestModelFn BuildClipDefaultMinMaxSessionFn(const ClipQDQFloatSpec& spec) {
 // future ORT release loosens this behavior — e.g. DoubleQDQPairsRemover learns
 // to span Clip, or the contrib-domain U16 path diverges — these goldens will
 // diff and force review.
-class QnnUnit_SessionSnapshot_ClipQDQFloatTest
+class QnnUnit_Clip_SessionSnapshot_QDQFloatTest
     : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
 
-TEST_P(QnnUnit_SessionSnapshot_ClipQDQFloatTest, Case) {
+TEST_P(QnnUnit_Clip_SessionSnapshot_QDQFloatTest, Case) {
   const ClipQDQFloatSpec& s = GetParam();
 
   ProviderOptions provider_options;
@@ -105,7 +105,7 @@ TEST_P(QnnUnit_SessionSnapshot_ClipQDQFloatTest, Case) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_SessionSnapshot_ClipQDQFloatTest,
+    , QnnUnit_Clip_SessionSnapshot_QDQFloatTest,
     ::testing::ValuesIn(kClipQDQFloatSessionSpecs),
     [](const ::testing::TestParamInfo<ClipQDQFloatSpec>& i) { return std::string(i.param.name); });
 

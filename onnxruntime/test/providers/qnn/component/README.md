@@ -35,7 +35,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `onnx_ctx_model_helper_test.cc` | `QnnUnit_OnnxCtxModelHelperTest` | `builder/onnx_ctx_model_helper.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderTest` | `qnn_execution_provider.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderHtpTest` | `qnn_execution_provider.cc` (real-`libQnnHtp.so` paths) |
-| `builder/opbuilder/<op>_test.cc` | `QnnUnit_Component_<Op>Test` | `builder/opbuilder/<op>_op_builder.cc` |
+| `builder/opbuilder/<op>_test.cc` | `QnnUnit_<Op>_ComponentTest` | `builder/opbuilder/<op>_op_builder.cc` |
 
 The last row is the **op-builder component tier**: unlike the core-component
 files above (which sit directly in `component/` and each cover one non-op-builder
@@ -46,7 +46,7 @@ builder — the partition reject path and the dtype-dispatch switch arms that th
 QNN-graph structure and inference accuracy are covered by the sibling
 `snapshot/` and `accuracy/` tiers, which share one set of op specs from
 `test_infra/specs/`. This row is a pattern, not an enumeration — new ops follow
-it without adding a table row (e.g. `clip_test.cc` → `QnnUnit_Component_ClipTest`
+it without adding a table row (e.g. `clip_test.cc` → `QnnUnit_Clip_ComponentTest`
 → `clip_op_builder.cc`).
 
 ## Benefits

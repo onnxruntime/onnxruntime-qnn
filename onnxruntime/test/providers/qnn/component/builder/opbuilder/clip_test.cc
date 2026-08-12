@@ -3,7 +3,7 @@
 //
 // Component-level unit tests for ClipOpBuilder.
 //
-//   QnnUnit_Component_ClipTest — ClipOpBuilder white-box tests:
+//   QnnUnit_Clip_ComponentTest — ClipOpBuilder white-box tests:
 //                                 * partition reject path (dynamic min/max,
 //                                   do_op_validation=true, no QNN backend)
 //                                 * ProcessClipMinMax dtype dispatch, driven
@@ -45,7 +45,7 @@ std::unique_ptr<QnnModelWrapper> MakeStubWrapper(OpBuilderTestContext& ctx) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Component tests — partition reject path (QnnUnit_Component_ClipTest)
+// Component tests — partition reject path (QnnUnit_Clip_ComponentTest)
 //
 // Verify that ClipOpBuilder rejects inputs that QNN EP cannot handle at
 // partitioning time. No QNN backend session is needed — the check is purely
@@ -55,7 +55,7 @@ std::unique_ptr<QnnModelWrapper> MakeStubWrapper(OpBuilderTestContext& ctx) {
 
 // Dynamic (non-initializer) min or max input must be rejected.
 // Each sub-assertion simulates ExplicitOpCheck for one unsupported configuration.
-TEST(QnnUnit_Component_ClipTest, Clip_Dynamic_MinMax_Unsupported) {
+TEST(QnnUnit_Clip_ComponentTest, Clip_Dynamic_MinMax_Unsupported) {
   const IOpBuilder* builder = GetOpBuilder("Clip");
   ASSERT_NE(builder, nullptr);
 
@@ -114,7 +114,7 @@ TEST(QnnUnit_Component_ClipTest, Clip_Dynamic_MinMax_Unsupported) {
 // Kept separate from the dtype-dispatch tests below, which run
 // do_op_validation=false against a stub wrapper — validation and dispatch are
 // orthogonal, so coupling them would obscure which concern a failure belongs to.
-TEST(QnnUnit_Component_ClipTest, Clip_BackendValidation_Htp) {
+TEST(QnnUnit_Clip_ComponentTest, Clip_BackendValidation_Htp) {
   QnnRealHtpBackendContext backend;
   if (!backend.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
 
@@ -146,7 +146,7 @@ TEST(QnnUnit_Component_ClipTest, Clip_BackendValidation_Htp) {
 }
 
 // ---------------------------------------------------------------------------
-// Component tests — ProcessClipMinMax dtype dispatch (QnnUnit_Component_ClipTest)
+// Component tests — ProcessClipMinMax dtype dispatch (QnnUnit_Clip_ComponentTest)
 //
 // Drive the static helper ProcessClipMinMax (clip_op_builder.cc:36) end-to-end
 // via AddToModelBuilder(do_op_validation=false). Each switch arm needs one
@@ -274,14 +274,14 @@ void RunClipQuantDispatchPass(ONNXTensorElementDataType dtype,
 
 // --- Non-quantized dispatch (lines 96-143 in clip_op_builder.cc) ---
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_FP32) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_FP32) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarFloat("min", -2.5f);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_FP16) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_FP16) {
   // FP16 bit pattern for 1.5: 0 01111 1000000000 = 0x3E00.
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarFloat16("min", 0x3E00);
@@ -289,56 +289,56 @@ TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_FP16) {
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_INT8) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_INT8) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarInt8("min", -7);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_INT16) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_INT16) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarInt16("min", -300);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_INT32) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_INT32) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarInt32("min", -100000);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_INT64) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_INT64) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarInt64("min", -123456789LL);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_UINT8) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_UINT8) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarUint8("min", 250);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_UINT16) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_UINT16) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarUint16("min", 60000);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_UINT32) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_UINT32) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarUint32("min", 4000000000U);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32,
                                           std::vector<int64_t>{}));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_UINT64) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_UINT64) {
   g_mock_init_reg.clear();
   g_mock_init_reg.AddScalarUint64("min", 1234567890123ULL);
   RunClipMinMaxDispatchPass(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64,
@@ -347,39 +347,39 @@ TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_UINT64) {
 
 // --- Quantized dispatch (lines 50-94 in clip_op_builder.cc) ---
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_QUANT_INT8) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_QUANT_INT8) {
   RunClipQuantDispatchPass(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, /*scale=*/0.1f,
                            /*zp=*/0, /*raw_min=*/static_cast<uint32_t>(-50));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_QUANT_INT16) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_QUANT_INT16) {
   RunClipQuantDispatchPass(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, /*scale=*/0.01f,
                            /*zp=*/0, /*raw_min=*/static_cast<uint32_t>(-200));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_QUANT_INT32) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_QUANT_INT32) {
   RunClipQuantDispatchPass(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, /*scale=*/0.001f,
                            /*zp=*/0, /*raw_min=*/static_cast<uint32_t>(-1500));
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_QUANT_UINT8) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_QUANT_UINT8) {
   RunClipQuantDispatchPass(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, /*scale=*/0.1f,
                            /*zp=*/128, /*raw_min=*/178);
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_QUANT_UINT16) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_QUANT_UINT16) {
   RunClipQuantDispatchPass(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, /*scale=*/0.01f,
                            /*zp=*/32768, /*raw_min=*/33068);
 }
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_QUANT_UINT32) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_QUANT_UINT32) {
   RunClipQuantDispatchPass(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, /*scale=*/0.001f,
                            /*zp=*/2147483648U, /*raw_min=*/2147485148U);
 }
 
 // --- Default-error path ---
 
-TEST(QnnUnit_Component_ClipTest, ProcessClipMinMax_NonQuant_UnsupportedDtype) {
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_NonQuant_UnsupportedDtype) {
   // BOOL is not in the non-quantized switch → default error.
   g_mock_init_reg.clear();
   MockInitSpec spec;

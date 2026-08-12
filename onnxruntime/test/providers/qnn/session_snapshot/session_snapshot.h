@@ -41,12 +41,12 @@
 // (which points directly at the goldens tree):
 //   $QNN_UT_SNAPSHOT_GOLDEN_DIR/<subdir>/<basename>.json
 // Distinguished from op-builder goldens by the tier directory
-// (e.g. session_snapshot/ vs snapshot/) and by the `QnnUnit_SessionSnapshot_*`
-// test prefix. Subdir auto-derived from caller __FILE__ via
+// (e.g. session_snapshot/ vs snapshot/) and by the `QnnUnit_*_SessionSnapshot*`
+// test name. Subdir auto-derived from caller __FILE__ via
 // DeriveGoldenSubdirFromFile (same as AssertSnapshotJson).
 //
 // Generate / update goldens with (both env vars on one line):
-//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter='QnnUnit_SessionSnapshot_*'
+//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter='QnnUnit_*_SessionSnapshot*'
 
 #pragma once
 
