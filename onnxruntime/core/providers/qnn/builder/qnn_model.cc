@@ -83,6 +83,40 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   graph_inputs_.Clear();
   graph_outputs_.Clear();
 
+  if (context.segment_input_names && context.segment_output_names && context.segment_tensor_info) {
+    const auto& seg_inputs = *context.segment_input_names;
+    const auto& seg_outputs = *context.segment_output_names;
+    const auto& tensor_info = *context.segment_tensor_info;
+
+    for (size_t idx = 0; idx < seg_inputs.size(); ++idx) {
+      const auto& name = seg_inputs[idx];
+      graph_inputs_.indices.emplace(name, idx);
+      graph_inputs_.names.push_back(name);
+
+      auto it = tensor_info.find(name);
+      RETURN_IF(it == tensor_info.end(), ("Segment input tensor info not found: " + name).c_str());
+      graph_inputs_.tensors.emplace(std::piecewise_construct,
+                                    std::forward_as_tuple(name),
+                                    std::forward_as_tuple(idx, it->second.data_type,
+                                                          std::vector<int64_t>(it->second.shape)));
+    }
+
+    for (size_t idx = 0; idx < seg_outputs.size(); ++idx) {
+      const auto& name = seg_outputs[idx];
+      graph_outputs_.indices.emplace(name, idx);
+      graph_outputs_.names.push_back(name);
+
+      auto it = tensor_info.find(name);
+      RETURN_IF(it == tensor_info.end(), ("Segment output tensor info not found: " + name).c_str());
+      graph_outputs_.tensors.emplace(std::piecewise_construct,
+                                     std::forward_as_tuple(name),
+                                     std::forward_as_tuple(idx, it->second.data_type,
+                                                           std::vector<int64_t>(it->second.shape)));
+    }
+
+    return Ort::Status();
+  }
+
   Ort::ConstNode fused_node{&context.fused_node};
   std::vector<Ort::ConstValueInfo> input_defs = fused_node.GetInputs();
 
@@ -257,8 +291,10 @@ const OrtNodeUnit& QnnModel::GetNodeUnit(const OrtNode* node,
 Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   utils::UniqueNameGenerator().Reset();
 
-  RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
-  RETURN_IF(context.onnx_output_names == nullptr, "onnx_output_names is required for ComposeGraph");
+  if (!context.segment_input_names) {
+    RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
+    RETURN_IF(context.onnx_output_names == nullptr, "onnx_output_names is required for ComposeGraph");
+  }
   RETURN_IF(context.model_settings == nullptr, "model_settings is required for ComposeGraph");
 
   const OrtGraph& ort_graph = context.ort_graph;
@@ -277,7 +313,9 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, &ort_graph, logger);
 
   // This name must be same with the EPContext node name
-  const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
+  const std::string graph_name = context.graph_name_override.empty()
+                                     ? Ort::ConstNode(&fused_node).GetName()
+                                     : context.graph_name_override;
   RETURN_IF_ERROR(SetGraphInputOutputInfo(context));
 
   // Framework op trace: create collector before QnnModelWrapper so it can be
@@ -331,6 +369,24 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                         node_unit_holder.size(), logger));
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
+    if (context.node_filter) {
+      // Filter by the TARGET node of the group (the main op, not surrounding DQ/Q).
+      // This prevents QDQ units from being pulled into wrong segments due to DQ/Q
+      // nodes being in a different segment than the target.
+      const OrtNodeUnit* target_unit = qnn_node_group->GetTargetNodeUnit();
+      bool group_in_filter = false;
+      if (target_unit) {
+        const OrtNode& target_node = target_unit->GetNode();
+        const char* node_name = nullptr;
+        auto name_status = api_ptrs_.ort_api.Node_GetName(&target_node, &node_name);
+        if (name_status == nullptr && node_name && context.node_filter->count(node_name)) {
+          group_in_filter = true;
+        }
+        if (name_status) api_ptrs_.ort_api.ReleaseStatus(name_status);
+      }
+      if (!group_in_filter) continue;
+    }
+
     NodeGroupGuard guard(trace_collector.get(), qnn_node_group.get());
 
     Ort::Status status = qnn_node_group->AddToModelBuilder(qnn_model_wrapper, logger);
@@ -455,6 +511,18 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
 
+  static int bind_call_count = 0;
+  ++bind_call_count;
+  if (bind_call_count <= 50 || bind_call_count % 500 == 0) {
+    std::cout << "[MEM-BIND] call#" << bind_call_count
+              << " ptr=" << ort_value_data
+              << " size=" << ort_value_data_size
+              << " device_type=" << ort_value_memory_info_device_type
+              << " device_mem_type=" << ort_value_memory_info_device_memory_type
+              << " uses_shared_memory=" << (uses_shared_memory ? "YES(MEMHANDLE)" : "NO(RAW/clientBuf)")
+              << std::endl;
+  }
+
   if (!uses_shared_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
@@ -462,13 +530,29 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
-    RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
-                                                                      qnn_mem_handle));
+    Ort::Status reg_status = qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
+                                                                               qnn_mem_handle);
+    if (bind_call_count <= 50 || bind_call_count % 500 == 0) {
+      std::cout << "[MEM-BIND]   GetOrRegisterContextMemHandle status=" << (reg_status.IsOK() ? "OK" : reg_status.GetErrorMessage())
+                << " mem_handle=" << qnn_mem_handle << std::endl;
+    }
+    if (!reg_status.IsOK()) {
+      return reg_status;
+    }
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
   }
 
   return Ort::Status();
+}
+
+Ort::Status QnnModel::BindExternalTensorMemory(const OrtApi& ort_api, const Ort::Logger& logger,
+                                               const OrtMemoryInfo* ort_value_memory_info,
+                                               void* raw_data, uint32_t byte_size,
+                                               Qnn_Tensor_t& qnn_tensor) {
+  return BindQnnTensorMemoryToOrtValueMemory(ort_api, logger, *qnn_backend_manager_,
+                                             ort_value_memory_info, raw_data, byte_size,
+                                             graph_info_->GraphContext(), qnn_tensor);
 }
 
 Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
@@ -677,6 +761,48 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 #endif
   auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
 
+  // Dump tensor info on first call for GPU backend
+  static bool bae_dumped = false;
+  if (!bae_dumped && qnn_backend_type_ == QnnBackendType::GPU) {
+    bae_dumped = true;
+    std::cout << "[STANDALONE-TENSOR-DUMP] inputs=" << qnn_inputs.size()
+              << " outputs=" << qnn_outputs.size() << std::endl;
+    for (size_t ti = 0; ti < qnn_inputs.size(); ++ti) {
+      auto& t = qnn_inputs[ti];
+      std::cout << "  in[" << ti << "] id=" << t.v2.id
+                << " type=" << t.v2.type
+                << " memType=" << t.v2.memType
+                << " dataType=" << t.v2.dataType
+                << " rank=" << t.v2.rank
+                << " dims=[";
+      for (uint32_t d = 0; d < t.v2.rank; ++d)
+        std::cout << (d ? "," : "") << t.v2.dimensions[d];
+      std::cout << "]";
+      if (t.v2.memType == QNN_TENSORMEMTYPE_RAW)
+        std::cout << " clientBuf.size=" << t.v2.clientBuf.dataSize;
+      else
+        std::cout << " memHandle=" << t.v2.memHandle;
+      std::cout << " name=" << (t.v2.name ? t.v2.name : "null") << std::endl;
+    }
+    for (size_t ti = 0; ti < qnn_outputs.size(); ++ti) {
+      auto& t = qnn_outputs[ti];
+      std::cout << "  out[" << ti << "] id=" << t.v2.id
+                << " type=" << t.v2.type
+                << " memType=" << t.v2.memType
+                << " dataType=" << t.v2.dataType
+                << " rank=" << t.v2.rank
+                << " dims=[";
+      for (uint32_t d = 0; d < t.v2.rank; ++d)
+        std::cout << (d ? "," : "") << t.v2.dimensions[d];
+      std::cout << "]";
+      if (t.v2.memType == QNN_TENSORMEMTYPE_RAW)
+        std::cout << " clientBuf.size=" << t.v2.clientBuf.dataSize;
+      else
+        std::cout << " memHandle=" << t.v2.memHandle;
+      std::cout << " name=" << (t.v2.name ? t.v2.name : "null") << std::endl;
+    }
+  }
+
   auto thread_id = std::this_thread::get_id();
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
@@ -703,6 +829,46 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
   // and not in production. We can improve synchronization for event profiling if it becomes an issue.
   RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
 
+  return Ort::Status();
+}
+
+Ort::Status QnnModel::ExecuteGraphDirect(Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                         Qnn_Tensor_t* outputs, uint32_t num_outputs,
+                                         const Ort::Logger& logger, bool dump_gpu_profile) {
+  const bool is_gpu = (qnn_backend_type_ == QnnBackendType::GPU);
+  // GPU: skip mutex and HTP power config — no DSP involvement, reduce dispatch overhead
+  std::unique_lock<std::mutex> lock(graph_exec_mutex_, std::defer_lock);
+  if (!is_gpu) {
+    lock.lock();
+  }
+
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+
+  if (!is_gpu) {
+    auto thread_id = std::this_thread::get_id();
+    RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
+  }
+
+  ORT_UNUSED_PARAMETER(dump_gpu_profile);
+
+  Qnn_ErrorHandle_t status = qnn_interface.graphExecute(graph_info_->Graph(),
+                                                        inputs, num_inputs,
+                                                        outputs, num_outputs,
+                                                        nullptr, nullptr);
+
+  if (!is_gpu) {
+    auto thread_id = std::this_thread::get_id();
+    RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
+  }
+
+  if (QNN_GRAPH_NO_ERROR != status) {
+    return MAKE_EP_FAIL(("ExecuteGraphDirect failed for graph " + graph_info_->Name() + ". " +
+                         utils::FormatQnnError(qnn_interface, status))
+                            .c_str());
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("ExecuteGraphDirect completed for graph: " + graph_info_->Name()).c_str());
   return Ort::Status();
 }
 

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -41,6 +42,17 @@ struct QnnModelContext {
 
   // Non-null when tracing is enabled; ComposeGraph writes one OpTraceInfo here.
   OpTraceInfo* op_trace_output = nullptr;
+
+  // Segmented compilation: filter to a subset of nodes with explicit I/O.
+  const std::unordered_set<std::string>* node_filter = nullptr;
+  const std::vector<std::string>* segment_input_names = nullptr;
+  const std::vector<std::string>* segment_output_names = nullptr;
+  struct TensorTypeShape {
+    int32_t data_type;
+    std::vector<int64_t> shape;
+  };
+  const std::unordered_map<std::string, TensorTypeShape>* segment_tensor_info = nullptr;
+  std::string graph_name_override;
 };
 
 class QnnModel {
@@ -62,6 +74,21 @@ class QnnModel {
   Ort::Status SetupQnnInputOutput(const Ort::Logger& logger);
 
   Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
+
+  Ort::Status ExecuteGraphDirect(Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                 Qnn_Tensor_t* outputs, uint32_t num_outputs,
+                                 const Ort::Logger& logger, bool dump_gpu_profile = false);
+
+  // Binds an externally-owned tensor (raw_data/byte_size, with its OrtMemoryInfo) to a Qnn_Tensor_t,
+  // choosing MEMHANDLE (persistent, registered shared memory) when the memory is host-accessible
+  // device memory (e.g. allocated via Dx12SharedMemoryAllocator), or RAW/clientBuf otherwise.
+  Ort::Status BindExternalTensorMemory(const OrtApi& ort_api, const Ort::Logger& logger,
+                                       const OrtMemoryInfo* ort_value_memory_info,
+                                       void* raw_data, uint32_t byte_size,
+                                       Qnn_Tensor_t& qnn_tensor);
+
+  const std::vector<QnnTensorInfo>& InputInfos() const { return qnn_input_infos_; }
+  const std::vector<QnnTensorInfo>& OutputInfos() const { return qnn_output_infos_; }
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = graph_outputs_.tensors.find(name);

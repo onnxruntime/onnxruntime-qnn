@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <gsl/gsl>
+#include <iostream>
 #include <optional>
 #include <shared_mutex>
 
@@ -303,6 +304,8 @@ Ort::Status HtpSharedMemoryAllocator::AddAllocationCleanUpForThisAllocator(void*
 
 void* ORT_API_CALL Dx12SharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
   Dx12SharedMemoryAllocator* allocator = static_cast<Dx12SharedMemoryAllocator*>(this_);
+
+  std::cout << "[DX12-ALLOC] AllocImpl called, requested_size=" << requested_size << std::endl;
 
   if (requested_size == 0) {
     ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: requested_size must be > 0.", ORT_EP_FAIL);
