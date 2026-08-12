@@ -8,7 +8,7 @@
 # Output: one passing group name per line (sorted), to stdout.
 # Exit:   0 = at least one group passed; 1 = zero groups passed; 2 = parse error.
 #
-# A group passes iff every QnnUnit_Accuracy_<Group>Test case has
+# A group passes iff every QnnUnit_<Group>_Accuracy[_<Variant>]Test case has
 # result=COMPLETED and no failures. SKIPPED / NOTRUN cases count as not passed.
 
 import json
@@ -18,7 +18,7 @@ import sys
 
 def filter_pass_groups(data):
     """Return sorted list of group names where all accuracy cases passed."""
-    pattern = re.compile(r"^QnnUnit_Accuracy_(\w+)Test")
+    pattern = re.compile(r"^QnnUnit_(.+?)_Accuracy(?:_\w+)?Test")
     group_all_pass = {}
 
     for suite in data.get("testsuites", []):
