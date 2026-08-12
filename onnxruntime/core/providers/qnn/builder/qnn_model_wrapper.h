@@ -39,6 +39,7 @@ struct ModelSettings {
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
+  bool enable_htp_monolithic_lstm = false;
 };
 
 class QnnModelWrapper {
@@ -58,7 +59,8 @@ class QnnModelWrapper {
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
-                  OpTraceCollector* op_trace_collector = nullptr)
+                  OpTraceCollector* op_trace_collector = nullptr,
+                  bool is_post_layout_transform = false)
       : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
@@ -71,7 +73,8 @@ class QnnModelWrapper {
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides),
-        op_trace_collector_(op_trace_collector) {
+        op_trace_collector_(op_trace_collector),
+        is_post_layout_transform_(is_post_layout_transform) {
     // Invariant: validator interface and handle must both be set or both be null.
     // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
     assert((validator_backend_handle == nullptr) ==
@@ -387,6 +390,8 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
+  bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
+
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
   const Ort::Logger& GetLogger() const { return logger_; }
@@ -413,39 +418,17 @@ class QnnModelWrapper {
 
     // Handle float scales
     if constexpr (std::is_same_v<T, float>) {
-      // Validate dtype up front so an unsupported type returns before any (potentially external)
-      // initializer read, mirroring the early RETURN_IF_NOT guard in the uint8_t branch below.
-      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 ||
-                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
-                    "Expected scale initializer to be of type FLOAT, FLOAT16, or BFLOAT16");
+      // Verify data type for float scales
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                    "Expected scale initializer to be of type FLOAT");
 
       std::vector<uint8_t> initializer_bytes;
       RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
-      // Reinterpret the raw bytes as SrcT and append each element as a float. static_cast covers
-      // float (identity), Ort::Float16_t, and Ort::BFloat16_t (both have operator float()). fp16/bf16
-      // scale initializers are produced by quantization tools that match the scale dtype to the
-      // activation dtype (e.g. fp16 models); QNN quantization structs use float, so decode here.
-      auto append_scales = [&scales, &initializer_bytes](auto src_type_tag) {
-        using SrcT = decltype(src_type_tag);
-        gsl::span<const SrcT> src = gsl::make_span(reinterpret_cast<const SrcT*>(initializer_bytes.data()),
-                                                   initializer_bytes.size() / sizeof(SrcT));
-        scales.reserve(scales.size() + src.size());
-        for (const auto& val : src) {
-          scales.push_back(static_cast<float>(val));
-        }
-      };
+      gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
+                                                  initializer_bytes.size() / sizeof(float));
 
-      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-        append_scales(float{});
-      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-        append_scales(Ort::Float16_t{});
-      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
-        // Spelled out (rather than a bare else) so a future dtype added to the guard above
-        // without a matching branch here fails to compile instead of silently aliasing BFLOAT16.
-        append_scales(Ort::BFloat16_t{});
-      }
+      scales.insert(scales.end(), src.begin(), src.end());
     }
     // Handle uint8_t scales (for block quantization)
     else if constexpr (std::is_same_v<T, uint8_t>) {
@@ -615,6 +598,9 @@ class QnnModelWrapper {
   // QnnModel::ComposeGraph (stack-allocated unique_ptr).
   // Null when tracing is disabled.
   OpTraceCollector* op_trace_collector_ = nullptr;
+
+  // A flag for model wrapper users (e.g., op builders, node group fusions) to know whether pre- or post-layout transform.
+  bool is_post_layout_transform_ = false;
 };  // QnnModelWrapper
 
 template <typename T>

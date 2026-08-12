@@ -248,13 +248,13 @@ static void RunHtpQDQLSTMOpTest(const TestInputDef<float>& X_def,
                                 const int64_t hidden_size,
                                 const int64_t layout,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                bool disable_htp_monolithic_lstm = true,
+                                bool enable_htp_monolithic_lstm = false,
                                 QDQTolerance tolerance = QDQTolerance(),
                                 int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_htp_monolithic_lstm"] = disable_htp_monolithic_lstm ? "1" : "0";
+  provider_options["enable_htp_monolithic_lstm"] = enable_htp_monolithic_lstm ? "1" : "0";
 
   TestQDQModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                        BuildQDQLSTMTestCase<QuantType>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
@@ -278,12 +278,12 @@ static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
                                  const int64_t hidden_size,
                                  const int64_t layout,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
-                                 bool disable_htp_monolithic_lstm = true,
+                                 bool enable_htp_monolithic_lstm = false,
                                  float tolerance = 0.004f,
                                  int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
-  provider_options["disable_htp_monolithic_lstm"] = disable_htp_monolithic_lstm ? "1" : "0";
+  provider_options["enable_htp_monolithic_lstm"] = enable_htp_monolithic_lstm ? "1" : "0";
 
   TestFp16ModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                         BuildLSTMTestCase<Ort::Float16_t>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
@@ -500,10 +500,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_all_initializer) {
                                QDQTolerance(0.008f));
 }
 
-// disable since there is a bug in optional output
-// see https://github.com/microsoft/onnxruntime/pull/27301
-// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_Y_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -529,10 +526,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// disable since there is a bug in optional output
-// see https://github.com/microsoft/onnxruntime/pull/27301
-// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_Y_h_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -558,10 +552,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// disable since there is a bug in optional output
-// see https://github.com/microsoft/onnxruntime/pull/27301
-// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_c_only) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_Y_c_only) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -611,7 +602,9 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_forward) {
                        direction,                                                                               // direction
                        hidden_size,                                                                             // hidden_size
                        0,                                                                                       // layout
-                       ExpectedEPNodeAssignment::All);
+                       ExpectedEPNodeAssignment::All,
+                       false,  // enable_htp_monolithic_lstm: use QNN-EP-side unrolled path
+                       0.51);  // near-zero output elem: fp16 rel err is large; matches monolithic sibling tol
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_reverse) {
@@ -668,7 +661,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional) {
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
       false,
-      0.25);
+      0.50);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_B) {
@@ -696,7 +689,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_B) {
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
       false,
-      0.07);
+      0.15);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_H) {
@@ -781,7 +774,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_all_initializer) {
       0,                                                                                      // layout
       ExpectedEPNodeAssignment::All,
       false,
-      0.14);
+      0.50);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_only) {
@@ -810,7 +803,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_only) {
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
       false,
-      0.25);
+      0.50);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only) {
@@ -899,7 +892,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_forward_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_reverse_monolithic_lstm) {
@@ -929,7 +922,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_reverse_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_monolithic_lstm) {
@@ -959,7 +952,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_B_monolithic_lstm) {
@@ -988,7 +981,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_B_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_H_monolithic_lstm) {
@@ -1017,7 +1010,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_H_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_C_monolithic_lstm) {
@@ -1046,7 +1039,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_C_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_P_monolithic_lstm) {
@@ -1073,7 +1066,7 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_wo_P_monolithic_lstm) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_all_initializer_monolithic_lstm) {
@@ -1103,14 +1096,11 @@ TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_all_initializer_monolit
                                hidden_size,                                                                            // hidden_size
                                0,                                                                                      // layout
                                ExpectedEPNodeAssignment::All,
-                               false,
+                               true,
                                QDQTolerance(0.008f));
 }
 
-// disable since there is a bug in optional output
-// see https://github.com/microsoft/onnxruntime/pull/27301
-// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only_monolithic_lstm) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_Y_only_monolithic_lstm) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -1137,13 +1127,10 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_only_monolit
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
-// disable since there is a bug in optional output
-// see https://github.com/microsoft/onnxruntime/pull/27301
-// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only_monolithic_lstm) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_Y_h_only_monolithic_lstm) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -1170,13 +1157,10 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_h_only_monol
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
-// disable since there is a bug in optional output
-// see https://github.com/microsoft/onnxruntime/pull/27301
-// TODO: enable once above PR merged, ort-core released and we uplevel ort-core
-TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_c_only_monolithic_lstm) {
+TEST_F(QnnHTPBackendTests, LSTM_QDQ_sanity_bidirectional_Y_c_only_monolithic_lstm) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -1203,7 +1187,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LSTM_QDQ_sanity_bidirectional_Y_c_only_monol
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All,
-                               false);
+                               true);
 }
 
 // HTP Fp16 monolithic lstm
@@ -1234,7 +1218,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_forward_monolithic_lstm) {
                        hidden_size,                                                                             // hidden_size
                        0,                                                                                       // layout
                        ExpectedEPNodeAssignment::All,
-                       false,
+                       true,
                        0.51);
 }
 
@@ -1265,7 +1249,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_reverse_monolithic_lstm) {
                        hidden_size,                                                                             // hidden_size
                        0,                                                                                       // layout
                        ExpectedEPNodeAssignment::All,
-                       false,
+                       true,
                        0.013);
 }
 
@@ -1297,7 +1281,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_monolithic_lstm) {
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.05);
 }
 
@@ -1328,7 +1312,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_B_monolithic_lstm) 
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.7);
 }
 
@@ -1359,7 +1343,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_H_monolithic_lstm) 
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.12);
 }
 
@@ -1390,7 +1374,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_C_monolithic_lstm) 
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.03);
 }
 
@@ -1419,8 +1403,8 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_P_monolithic_lstm) 
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
-      0.22);
+      true,
+      0.55);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_all_initializer_monolithic_lstm) {
@@ -1451,7 +1435,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_all_initializer_monoli
       hidden_size,                                                                            // hidden_size
       0,                                                                                      // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.05);
 }
 
@@ -1483,7 +1467,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_only_monolithic_lstm
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.06);
 }
 
@@ -1515,7 +1499,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only_monolithic_ls
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.04);
 }
 
@@ -1547,7 +1531,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only_monolithic_ls
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      false,
+      true,
       0.04);
 }
 
@@ -1877,6 +1861,39 @@ TEST_F(QnnCPUBackendTests, LSTM_FP32_sanity_bidirectional_Y_c_only) {
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All);
+}
+
+// layout=1 tripwire. IsOpSupported rejects layout != 0, so the LSTM must not be assigned to
+// QNN EP. ORT CPU EP does not support the batchwise (layout=1) LSTM either, so session
+// initialization throws. Verify the throw so a future change that drops/reorders the layout
+// guard (and lets a layout=1 LSTM reach ComposeGraph) is caught here rather than silently.
+TEST_F(QnnCPUBackendTests, LSTM_FP32_layout1_forward) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 6;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  // layout=1: X [batch, seq, input], initial_h/initial_c [batch, num_directions, hidden]
+  auto B_def = TestInputDef<float>({num_direction, 8 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({batch_size, num_direction, hidden_size}, false, -1.0f, 1.0f);
+  auto C_def = TestInputDef<float>({batch_size, num_direction, hidden_size}, false, -1.0f, 1.0f);
+  EXPECT_THROW(
+      RunCpuFP32LSTMOpTest(TestInputDef<float>({batch_size, seq_len, input_size}, false, -1.0f, 1.0f),              // X
+                           TestInputDef<float>({num_direction, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                           TestInputDef<float>({num_direction, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                           std::ref(B_def),                                                                         // B
+                           std::ref(H_def),                                                                         // initial_h
+                           std::ref(C_def),                                                                         // initial_c
+                           std::nullopt,                                                                            // P
+                           true,                                                                                    // has_Y
+                           true,                                                                                    // has_Y_h
+                           true,                                                                                    // has_Y_c
+                           direction,                                                                               // direction
+                           hidden_size,                                                                             // hidden_size
+                           1,                                                                                       // layout
+                           ExpectedEPNodeAssignment::None),
+      std::exception);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)

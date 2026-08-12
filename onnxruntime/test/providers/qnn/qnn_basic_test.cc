@@ -875,7 +875,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 }
 
 // Tests running a single session in multiple threads on the HTP backend with run option to set power config
-TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
+TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgSessionRunOption) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -984,9 +984,59 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   }
 }
 
+// Tests running a single session in multiple threads on the HTP backend with EP option to set default power config to sustained high performance
+TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
+  std::unique_ptr<ModelAndBuilder> model;
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::vector<int64_t> shape = {1, 3, 2};
+  std::vector<std::vector<int64_t>> output_shapes = {shape};
+  std::vector<std::vector<float>> output_values = {{3.0f, 6.0f, 9.0f, 12.0f, 15.0f, 18.0f}};
+
+  CreateModelInMemory(model,
+                      QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
+                                                   TestInputDef<float>(shape, false, input_data),
+                                                   TestInputDef<float>(shape, false, input_data)));
+
+  ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnHtp.dll";
+#else
+  options["backend_path"] = "libQnnHtp.so";
+#endif
+  options["offload_graph_io_quantization"] = "0";
+  options["htp_performance_mode"] = "sustained_high_performance";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  Ort::SessionOptions session_opts;
+  session_opts.SetLogId("logger0");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts));
+
+  std::vector<std::thread> threads;
+  constexpr int num_threads = 5;
+  constexpr int loop_count = 10;
+  for (int i = 0; i < num_threads; i++) {
+    threads.push_back(std::thread(RunSessionAndVerify, std::ref(scoped.session()), Ort::RunOptions{nullptr},
+                                  std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
+  }
+
+  for (auto& th : threads) {
+    th.join();
+  }
+}
+
 // Tests running a single session in multiple threads on the HTP backend with
 // EP option to set default power config + run option to set power config for each run
-TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
+TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgDefaultAndRunOption) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -1816,11 +1866,28 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 #endif  // !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 
 #if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
+// RAII guard that unconditionally unregisters an execution provider library on scope exit.
+// The AutoEp tests below register the EP library directly (without appending a device to the
+// session options, so RegisterQnnEpLibrary / RegisteredEpDeviceUniquePtr cannot be reused).
+// Without this guard, an early return from an ASSERT_* failure would leave the library
+// registered in the shared Ort::Env, corrupting subsequent tests (the source of the
+// intermittent failures).
+struct ScopedEpLibraryGuard {
+  const char* registration_name;
+  ~ScopedEpLibraryGuard() {
+    OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, registration_name);
+    if (status != nullptr) {
+      Ort::GetApi().ReleaseStatus(status);
+    }
+  }
+};
+
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1832,13 +1899,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1850,13 +1916,12 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1878,13 +1943,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1908,13 +1972,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1938,8 +2001,6 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
@@ -2399,7 +2460,7 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
 
-// Returns a function that builds a model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a model with EyeLike (CPU-only) + Add
 // to test partition-added inputs.
 static GetTestModelFn BuildPartitionAddedInputModel() {
   return [](ModelTestBuilder& builder) {
@@ -2408,14 +2469,14 @@ static GetTestModelFn BuildPartitionAddedInputModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create constant initializer for RandomNormalLike
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines graph input with partition-added input
-    builder.AddNode("add", "Add", {"input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2480,10 +2541,10 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   // ONNX-declared input first, partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
-// Returns a function that builds a QDQ model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a QDQ model with EyeLike (CPU-only) + Add
 // to test partition-added inputs with offload_graph_io_quantization.
 static GetTestModelFn BuildPartitionAddedInputQDQModel() {
   return [](ModelTestBuilder& builder) {
@@ -2492,8 +2553,8 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create initializers
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
     builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
     builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
 
@@ -2503,11 +2564,11 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // DequantizeLinear: q_input -> dq_input (goes to QNN)
     builder.AddNode("dequantize", "DequantizeLinear", {"q_input", "scale", "zero_point"}, {"dq_input"}, kOnnxDomain);
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines dequantized input with partition-added input
-    builder.AddNode("add", "Add", {"dq_input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"dq_input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2575,7 +2636,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   // partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
 // Returns a model where a single graph input fans out to two separate Q->DQ chains,

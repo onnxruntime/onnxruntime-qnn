@@ -18,10 +18,6 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
 // Accepts weight rank 2–4: shape [..., K, N] where any leading dims beyond K/N must equal 1
 // (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
@@ -95,7 +91,8 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                input_info_1.quant_param.IsLPBQ() &&
                input_info_1.shape.size() == 2 &&
                input_info_1.is_initializer &&
-               input_info_0.shape.size() >= 2;
+               input_info_0.shape.size() >= 2 &&
+               utils::IsQuant16bit(input_info_0.qnn_data_type);
 
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
   // Validation crashes if use QNN FullyConnected in QNN SDK versions 2.26 - 2.27
@@ -111,9 +108,9 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
   use_fully_connected =
       use_fully_connected && !(input_info_0.quant_param.IsPerChannel() && input_info_0.shape.size() > 2);
   // Don't use FullyConnected if both inputs are dynamic and uint16 (quantized)
-  use_fully_connected = use_fully_connected && !(IsQuant16bit(input_info_0.qnn_data_type) &&
+  use_fully_connected = use_fully_connected && !(utils::IsQuant16bit(input_info_0.qnn_data_type) &&
                                                  !input_info_0.is_initializer &&
-                                                 IsQuant16bit(input_info_1.qnn_data_type) &&
+                                                 utils::IsQuant16bit(input_info_1.qnn_data_type) &&
                                                  !input_info_1.is_initializer);
   // Don't use FullyConnected for LPBQ weights
   use_fully_connected = use_fully_connected && !use_conv2d;
