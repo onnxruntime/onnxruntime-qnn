@@ -1292,6 +1292,8 @@ bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
                                             const OrtNode* redundant_clip_node,
                                             const std::vector<const OrtNode*>& dq_nodes,
                                             const std::vector<const OrtNode*>& q_nodes) const {
+  // MatMulNBits has exactly 1 DQ input (activation).
+  // Weight, scales, and zero_points are plain initializer inputs, not DQ nodes.
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, /*num_dq_inputs*/ 1)) {
     return false;
   }
@@ -1718,8 +1720,9 @@ void OrtSelectorManager::CreateSelectors() {
       {"SimplifiedLayerNormalization", {}}};
   ort_selectors_.RegisterSelector(rmsnorm_ops, std::make_unique<OrtRMSNormalizationNodeGroupSelector>());
 
-  // Register MatMulNBits ops.
-  OrtOpVersionsAndSelector::OpVersionsMap matmulnbits_ops = {{"MatMulNBits", {}}};
+  // Register MatMulNBits ops
+  OrtOpVersionsAndSelector::OpVersionsMap matmulnbits_ops = {
+      {"MatMulNBits", {}}};
   ort_selectors_.RegisterSelector(matmulnbits_ops, std::make_unique<OrtMatMulNBitsNodeGroupSelector>());
 }
 
