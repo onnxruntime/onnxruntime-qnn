@@ -398,7 +398,7 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
   } else {
     std::vector<uint8_t> float_bytes;
     RETURN_IF_ERROR(PreDequantizePerChannelWeight(qmw, *b_scale_iodef_, b_zp_iodef,
-                                                  is_signed_weight,
+                                                  mm_inputs[1].type,
                                                   n, b_quant_bytes, float_bytes));
     if (validate) {
       per_channel_float_bytes = std::move(float_bytes);

@@ -503,7 +503,7 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
   } else {
     std::vector<uint8_t> float_bytes;
     RETURN_IF_ERROR(PreDequantizePerChannelWeight(qmw, *b_scale_iodef_, b_zp_iodef,
-                                                  is_signed_weight,
+                                                  ci_inputs[1].type,
                                                   b_info.shape[0], hwcn_weight_bytes,
                                                   float_bytes));
     if (validate) {

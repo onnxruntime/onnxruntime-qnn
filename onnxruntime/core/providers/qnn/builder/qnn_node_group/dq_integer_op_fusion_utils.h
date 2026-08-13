@@ -71,13 +71,19 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
                                    int32_t per_channel_axis,
                                    QnnQuantParamsWrapper& out_params);
 
-// Pre-dequantizes per-channel int8 / uint8 weight bytes to float32 bytes. Per-channel scales /
-// zps are applied along the LAST axis of the byte buffer (used by both Conv's HWCN weight and
-// MatMul's [K,N] weight, where the output-channel dimension is last in both cases).
+// Pre-dequantizes per-channel weight bytes to float32 bytes. Per-channel scales / zps are applied
+// along the LAST axis of the byte buffer (used by both Conv's HWCN weight and MatMul's [K,N]
+// weight, where the output-channel dimension is last in both cases).
+//
+// `quant_bytes` must be what QnnModelWrapper::UnpackInitializerData() produced, so
+// `weight_onnx_type` has to be a type it delivers one byte per element: 8-bit or sub-byte. Wider
+// types are rejected. The QNN element type cannot stand in for the ONNX one, because
+// CreateMapQuantize collapses INT4 / INT2 into SFIXED_POINT_8 and so records neither the bit width
+// (needed to sign-extend the masked bytes) nor the bytes-per-element.
 Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
                                           const OrtNodeUnitIODef& b_scale_iodef,
                                           const OrtNodeUnitIODef* b_zp_iodef,
-                                          bool is_signed_weight,
+                                          ONNXTensorElementDataType weight_onnx_type,
                                           uint32_t out_channels,
                                           const std::vector<uint8_t>& quant_bytes,
                                           std::vector<uint8_t>& out_float_bytes);

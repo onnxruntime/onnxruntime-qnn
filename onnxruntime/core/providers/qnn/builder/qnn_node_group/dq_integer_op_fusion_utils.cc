@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -195,10 +196,31 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
 Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
                                           const OrtNodeUnitIODef& b_scale_iodef,
                                           const OrtNodeUnitIODef* b_zp_iodef,
-                                          bool is_signed_weight,
+                                          ONNXTensorElementDataType weight_onnx_type,
                                           uint32_t out_channels,
                                           const std::vector<uint8_t>& quant_bytes,
                                           std::vector<uint8_t>& out_float_bytes) {
+  // Classify the weight type, rejecting anything UnpackInitializerData() does not deliver one byte
+  // per element -- a wider type would make the `num_elems = quant_bytes.size()` below an overcount.
+  bool is_signed_weight = false;
+  bool needs_sign_extend = false;
+  switch (weight_onnx_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      is_signed_weight = true;
+      break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
+      is_signed_weight = true;
+      needs_sign_extend = true;
+      break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
+      break;  // unsigned: the masked byte already holds the value
+    default:
+      return MAKE_EP_FAIL("Unsupported weight element type for per-channel pre-dequantization");
+  }
+
   std::vector<float> scales;
   RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_iodef, scales));
   RETURN_IF_NOT(scales.size() == static_cast<size_t>(out_channels),
@@ -224,15 +246,25 @@ Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
   // then memcpy out to the byte buffer that QnnTensorWrapper expects. Per-channel scales / zps
   // are applied along the LAST axis of the byte buffer, which holds for both Conv's HWCN
   // weight and MatMul's [K,N] weight.
+  // Signed sub-byte data arrives with the unused high bits masked off; recover the true value in a
+  // copy, `quant_bytes` being the caller's buffer.
+  std::vector<uint8_t> sign_extended_bytes;
+  gsl::span<const uint8_t> plain_bytes(quant_bytes);
+  if (needs_sign_extend) {
+    sign_extended_bytes = quant_bytes;
+    utils::SignExtendUnpackedSubByteData(weight_onnx_type, gsl::make_span(sign_extended_bytes));
+    plain_bytes = sign_extended_bytes;
+  }
+
   std::vector<float> floats(num_elems);
   if (is_signed_weight) {
-    const int8_t* src = reinterpret_cast<const int8_t*>(quant_bytes.data());
+    const int8_t* src = reinterpret_cast<const int8_t*>(plain_bytes.data());
     for (size_t i = 0; i < num_elems; ++i) {
       const size_t c = i % n;
       floats[i] = scales[c] * static_cast<float>(static_cast<int32_t>(src[i]) - zps_onnx[c]);
     }
   } else {
-    const uint8_t* src = quant_bytes.data();
+    const uint8_t* src = plain_bytes.data();
     for (size_t i = 0; i < num_elems; ++i) {
       const size_t c = i % n;
       floats[i] = scales[c] * static_cast<float>(static_cast<int32_t>(src[i]) - zps_onnx[c]);

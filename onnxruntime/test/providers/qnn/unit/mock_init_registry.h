@@ -8,14 +8,19 @@
 // made by QnnQuantParamsWrapper::Init (UnpackScales / UnpackZeroPoints) and
 // QnnModelWrapper::UnpackInitializerData.
 //
-// Usage:
-//   QnnModelWrapperTestContext ctx;
+// Usage, wiring the stubs by hand:
+//   OrtApiStubContext ctx;
 //   auto& reg = g_mock_init_reg;
 //   reg.clear();
 //   auto scale_vi = reg.AddScalarFloat("scale", 0.1f);
 //   auto zp_vi    = reg.AddScalarUint8("zp", 0);
 //   SetupMockInitRegistryStubs(ctx);
 //   // Pass scale_vi / zp_vi as OrtNodeUnitIODef::QuantParam fields.
+//
+// Usage, for code that needs a QnnModelWrapper -- see MockInitWrapperFixture below:
+//   MockInitWrapperFixture fx;
+//   g_mock_init_reg.AddTensorFloat("scale", {2}, {0.1f, 0.2f});
+//   // ... call EP code with *fx.wrapper
 //
 // The registry and stubs live in an anonymous namespace, so each TU including
 // this header gets its own private copy of `g_mock_init_reg`. Tests should
@@ -42,10 +47,12 @@
 
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
 
 #include "test/providers/qnn/unit/qnn_unit_test_utils.h"
@@ -325,6 +332,43 @@ inline void SetupMockInitRegistryStubs(T& ctx) {
   ctx.stub_ort_api.ValueInfo_GetInitializerValue = StubMockValueInfoGetInitializerValue;
   ctx.stub_ort_api.GetTensorData = StubMockGetTensorData;
 }
+
+// A QnnModelWrapper over a fake graph whose initializers resolve out of g_mock_init_reg, which is
+// what makes IsConstantInput() / GetConstantTensor() / UnpackInitializerData() work by name.
+// Clears the registry on construction; tests add their initializers afterwards.
+struct MockInitWrapperFixture {
+  OrtApiStubContext ctx;
+  // Ort::ConstValueInfo / ConstTypeInfo wrappers (e.g. inside
+  // utils::GetOnnxTensorElemDataType) dispatch on the GLOBAL Ort::GetApi(), not on api_ptrs_.
+  // Without this override a mock OrtValueInfo* would reach the real ORT runtime and SIGSEGV.
+  OrtGlobalApiOverride global_api_override{&ctx.stub_ort_api};
+  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
+  Qnn_BackendHandle_t backend_handle = nullptr;
+  QNN_INTERFACE_VER_TYPE qnn_validator_interface = QNN_INTERFACE_VER_TYPE_INIT;
+  Qnn_BackendHandle_t validator_backend_handle = nullptr;
+  Ort::Logger null_logger_{MakeNullLogger()};
+  int fake_graph_sentinel_{};
+  qnn::GraphInputOutputInfo input_info;
+  qnn::GraphInputOutputInfo output_info;
+  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
+
+  MockInitWrapperFixture() {
+    g_mock_init_reg.clear();
+    // Seed from the real OrtApi so everything these paths touch beyond the mocked initializer
+    // queries still works -- notably CreateStatus / ReleaseStatus, which MAKE_EP_FAIL() needs on
+    // an error path and which a zero-initialised table would leave null.
+    ctx.stub_ort_api = *OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    SetupMockInitRegistryStubs(ctx);
+    ApiPtrs api_ptrs = ctx.MakeApiPtrs();
+    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    wrapper = std::make_unique<qnn::QnnModelWrapper>(
+        fake_graph, api_ptrs, null_logger_,
+        qnn_interface, backend_handle,
+        qnn_validator_interface, validator_backend_handle,
+        input_info, output_info,
+        qnn::QnnBackendType::HTP, qnn::ModelSettings{});
+  }
+};
 
 }  // namespace
 

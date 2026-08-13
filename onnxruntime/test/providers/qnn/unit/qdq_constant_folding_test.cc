@@ -17,7 +17,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,42 +31,6 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
-
-// QnnModelWrapper over a fake graph whose initializers come from g_mock_init_reg, which is what
-// makes IsConstantInput() / GetConstantTensor() / UnpackInitializerData() resolve by name.
-struct MockInitWrapperFixture {
-  OrtApiStubContext ctx;
-  // The Ort::ConstValueInfo / ConstTypeInfo wrappers that utils::GetOnnxTensorElemDataType() goes
-  // through dispatch on the GLOBAL Ort::GetApi(), not on api_ptrs_, so without this the mock
-  // OrtValueInfo* would be handed to the real ORT runtime and SIGSEGV.
-  OrtGlobalApiOverride global_api_override{&ctx.stub_ort_api};
-  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t backend_handle = nullptr;
-  QNN_INTERFACE_VER_TYPE qnn_validator_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t validator_backend_handle = nullptr;
-  Ort::Logger null_logger_{MakeNullLogger()};
-  int fake_graph_sentinel_{};
-  qnn::GraphInputOutputInfo input_info;
-  qnn::GraphInputOutputInfo output_info;
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-
-  MockInitWrapperFixture() {
-    g_mock_init_reg.clear();
-    // Seed from the real OrtApi so everything these paths touch beyond the mocked initializer
-    // queries still works -- notably CreateStatus / ReleaseStatus, which MAKE_EP_FAIL() needs on
-    // the not-found path and which a zero-initialised table would leave null.
-    ctx.stub_ort_api = *OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    SetupMockInitRegistryStubs(ctx);
-    ApiPtrs api_ptrs = ctx.MakeApiPtrs();
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
-    wrapper = std::make_unique<qnn::QnnModelWrapper>(
-        fake_graph, api_ptrs, null_logger_,
-        qnn_interface, backend_handle,
-        qnn_validator_interface, validator_backend_handle,
-        input_info, output_info,
-        qnn::QnnBackendType::HTP, qnn::ModelSettings{});
-  }
-};
 
 std::vector<int8_t> AsInt8(const std::vector<uint8_t>& bytes) {
   std::vector<int8_t> out(bytes.size());
