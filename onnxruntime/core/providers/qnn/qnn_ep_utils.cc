@@ -1519,6 +1519,110 @@ bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
   return true;
 }
 
+bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                    const OrtNode* redundant_clip_node,
+                                    const std::vector<const OrtNode*>& dq_nodes,
+                                    const std::vector<const OrtNode*>& q_nodes) const {
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                     static_cast<int>(dq_nodes.size()), /*is_empty_q_nodes_allowed=*/false)) {
+    return false;
+  }
+
+  // GRU ONNX inputs:
+  //   in[0]: X (activation)      — UINT8
+  //   in[1]: W (weights)         — UINT8 or INT8
+  //   in[2]: R (recurrent wts)   — UINT8 or INT8
+  //   in[3]: B (bias, optional)  — INT32
+  //   in[4]: sequence_lens       — not quantized (skip)
+  //   in[5]: initial_h (optional)— UINT8
+  // GRU ONNX outputs:
+  //   out[0]: Y (optional)       — UINT8
+  //   out[1]: Y_h (optional)     — UINT8
+
+  // Build name-to-index map for DQ nodes (map DQ output name -> index in dq_nodes vector)
+  std::unordered_map<std::string, size_t> dq_output_to_index;
+  for (size_t i = 0; i < dq_nodes.size(); ++i) {
+    size_t output_count = 0;
+    auto* status = ort_api.Node_GetNumOutputs(dq_nodes[i], &output_count);
+    if (status != nullptr) {
+      ort_api.ReleaseStatus(status);
+      return false;
+    }
+    std::vector<const OrtValueInfo*> outputs(output_count);
+    status = ort_api.Node_GetOutputs(dq_nodes[i], outputs.data(), outputs.size());
+    if (status != nullptr) {
+      ort_api.ReleaseStatus(status);
+      return false;
+    }
+    const char* name = nullptr;
+    status = ort_api.GetValueInfoName(outputs[0], &name);
+    if (status != nullptr) {
+      ort_api.ReleaseStatus(status);
+      return false;
+    }
+    dq_output_to_index[std::string(name)] = i;
+  }
+
+  // Get GRU node inputs
+  size_t num_inputs = 0;
+  auto* status = ort_api.Node_GetNumInputs(node, &num_inputs);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  status = ort_api.Node_GetInputs(node, inputs.data(), inputs.size());
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+
+  // Per-input data type constraints (index matches ONNX GRU input position)
+  // Empty set means "skip this input" (not quantized)
+  const std::vector<std::unordered_set<int32_t>> input_constraints = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},                                      // in[0]: X
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8},  // in[1]: W
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8},  // in[2]: R
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
+       ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32},  // in[3]: B
+      {},                                     // in[4]: sequence_lens (skip)
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},  // in[5]: initial_h
+  };
+
+  for (size_t i = 0; i < num_inputs && i < input_constraints.size(); ++i) {
+    if (input_constraints[i].empty()) {
+      continue;  // Not a quantized input
+    }
+    const OrtValueInfo* value_info = inputs[i];
+    if (value_info == nullptr) {
+      continue;  // Optional input not provided
+    }
+
+    const char* input_name = nullptr;
+    status = ort_api.GetValueInfoName(value_info, &input_name);
+    if (status != nullptr) {
+      ort_api.ReleaseStatus(status);
+      return false;
+    }
+
+    auto it = dq_output_to_index.find(std::string(input_name));
+    if (it == dq_output_to_index.end()) {
+      continue;  // This input is not DQ-produced (optional input not quantized)
+    }
+
+    auto dt = GetNodeInputDataType(dq_nodes[it->second], ort_api, 0);
+    if (!dt.has_value()) {
+      return false;
+    }
+
+    if (input_constraints[i].find(static_cast<int32_t>(dt.value())) == input_constraints[i].end()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // =============================================================================
 // GetOrtQDQSelection — attempt to form a QDQ node group anchored at `node`.
 //
@@ -1793,6 +1897,10 @@ void OrtSelectorManager::CreateSelectors() {
   OrtOpVersionsAndSelector::OpVersionsMap matmulnbits_ops = {
       {"MatMulNBits", {}}};
   ort_selectors_.RegisterSelector(matmulnbits_ops, std::make_unique<OrtMatMulNBitsNodeGroupSelector>());
+
+  // Register GRU ops
+  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
+  ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 }
 
 void OrtSelectorManager::InitializeSelectorsMap() {
