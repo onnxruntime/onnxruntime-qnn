@@ -713,6 +713,8 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CreateEpDeviceFails_Prop
   EXPECT_TRUE(ctx.created_ep_devices.empty());
   ctx.stub_ort_api.ReleaseStatus(status);
 }
+
+// ===========================================================================
 // Group 4: GetHardwareDeviceIncompatibilityDetailsImpl /
 //          ValidateCompiledModelCompatibilityInfoImpl — error paths that stop
 //          before std::make_unique<QnnEp>. The fixture leaves the default
