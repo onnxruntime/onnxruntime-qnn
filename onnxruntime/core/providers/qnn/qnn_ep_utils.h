@@ -318,6 +318,18 @@ class OrtMatMulNBitsNodeGroupSelector : public OrtNodeGroupSelector {
              const std::vector<const OrtNode*>& q_nodes) const override;
 };
 
+// GRU: DQ nodes for X, W, R, optional B and initial_h -> GRU -> Q nodes for Y and/or Y_h
+class OrtGRUNodeGroupSelector : public OrtNodeGroupSelector {
+ public:
+  OrtGRUNodeGroupSelector() = default;
+
+ private:
+  bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+             const OrtNode* redundant_clip_node,
+             const std::vector<const OrtNode*>& dq_nodes,
+             const std::vector<const OrtNode*>& q_nodes) const override;
+};
+
 // SelectorManager for OrtGraph
 class OrtSelectorManager {
  public:
