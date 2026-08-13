@@ -347,25 +347,27 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   }
   input_names.emplace_back(input_1_name);
 
-  // Inserts a QNN Convert op before uint16 input[1] to avoid QNN HTP validation failure.
+  // Workaround that inserts a QNN Convert op before input[1] (converts from quantized uint16 to quantized uint8
+  // OR converts from asymmetric quantized uint16 to symmetric quantized uint16)
+  // to avoid a QNN validation failure.
   //
-  // QNN graph that fails validation:
+  // QNN graph WITHOUT workaround (fails validation):
   //     input_0_uint16 ---> MatMul ---> output_uint16
   //                         ^
   //                         |
   //     input_1_uint16 -----+
   //
-  // For dynamic weights, QNN graph that passes validation:
-  //     input_0_uint16 ---------------------------> MatMul ---> output_uint16
-  //                                                   ^
-  //                                                   |
-  //     input_1_uint16_asym --> Convert(uint16_sym) --+
+  // For Dynamic weights, QNN graph WITH workaround (passes validation):
+  //     input_0_uint16 ----------------------> MatMul ---> output_uint16
+  //                                            ^
+  //                                            |
+  //     input_1_uint16 --> Convert(to uint8) --+
   //
-  // For static weights, QNN graph that passes validation:
-  //     input_0_uint16 ---------------------> MatMul ---> output_uint16
-  //                                             ^
-  //                                             |
-  //     input_1_uint16 --> Convert(int16_sym) --+
+  // For Static weights, QNN graph WITH workaround (passes validation):
+  //     input_0_uint16 ------------------------------> MatMul ---> output_uint16
+  //                                                      ^
+  //                                                      |
+  //     input_1_uint16 --> Convert(to symmetric int16) --+
   if (!input_info_0.is_initializer &&
       input_info_0.qnn_data_type == input_info_1.qnn_data_type &&
       input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
@@ -381,22 +383,16 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       input_1_shape = {input_info_1.shape[0], 1};
     }
     if (!input_info_1.is_initializer) {
-      // Only insert Convert for asymmetric quantization (i.e., offset != 2^(16-1)).
-      if (quant_param.scaleOffsetEncoding.offset != 32768) {
-        RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
-                                               convert_input_name,
-                                               convert_output_name,
-                                               input_info_1.qnn_data_type,
-                                               QNN_DATATYPE_UFIXED_POINT_16,
-                                               quant_param.scaleOffsetEncoding.offset,
-                                               quant_param.scaleOffsetEncoding.scale,
-                                               input_1_shape,
-                                               true,  // symmetric
-                                               do_op_validation));
-        input_names.push_back(convert_output_name);
-      } else {
-        input_names.push_back(convert_input_name);
-      }
+      RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
+                                             convert_input_name,
+                                             convert_output_name,
+                                             input_info_1.qnn_data_type,
+                                             QNN_DATATYPE_UFIXED_POINT_8,
+                                             quant_param.scaleOffsetEncoding.offset,
+                                             quant_param.scaleOffsetEncoding.scale,
+                                             input_1_shape,
+                                             false,  // asymmetric
+                                             do_op_validation));
     } else {
       RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                              convert_input_name,
@@ -408,8 +404,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
                                              input_1_shape,
                                              true,  // symmetric
                                              do_op_validation));
-      input_names.push_back(convert_output_name);
     }
+    input_names.push_back(convert_output_name);
   }
   return Ort::Status();
 }
