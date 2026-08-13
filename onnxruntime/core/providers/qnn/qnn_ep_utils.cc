@@ -299,21 +299,43 @@ const OrtNode* TryFoldRedundantActivation(const OrtGraph* graph, const OrtApi& o
   return IsActivationEncodingSafe(graph, ort_api, activation, act_op, q_node) ? activation : nullptr;
 }
 
+// 3b.0.0 Reject block-quantized weight (DQ scale is rank-2). BQ Gemm is handled by a
+//         separate path in the builder that emits FC → FP16 → Quantize; composing it with
+//         absorbed-Reshape isn't supported, so gate at the selector to keep the pre-existing
+//         BQ path + standalone Reshape (both QNN-supported).
+bool IsGemmWeightBlockQuantized(const OrtApi& ort_api, const OrtValueInfo* weight_vi) {
+  const OrtNode* dq = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(weight_vi, &dq, nullptr) != nullptr || dq == nullptr) return false;
+  if (Ort::ConstNode(dq).GetOperatorType() != "DequantizeLinear") return false;
+  size_t dq_num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(dq, &dq_num_inputs) != nullptr || dq_num_inputs < 2) return false;
+  std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
+  if (ort_api.Node_GetInputs(dq, dq_inputs.data(), dq_inputs.size()) != nullptr) return false;
+  size_t scale_rank = 0;
+  int64_t scale_dim0 = 0;
+  if (!GetValueInfoRankAndFirstDim(ort_api, dq_inputs[1], scale_rank, scale_dim0)) return false;
+  return scale_rank == 2;
+}
+
 // 3b.0 Split_gemm guard for the absorb-Reshape path.
 //   Reject when the vanilla Gemm builder would have split into FC + Add:
 //     - transB != 0                         (builder hard-asserts transB=0)
 //     - bias is 2-D with shape[0] != 1      (broadcast-bias split)
 //     - bias is produced by another op      (NATIVE bias split)
+//   Also reject block-quantized weight — handled by the BQ builder path.
 bool IsGemmSafeForAbsorbedReshape(const OrtApi& ort_api, const OrtNode* gemm_node) {
   OrtNodeAttrHelper attrs(*gemm_node);
   if (attrs.Get("transB", static_cast<int64_t>(0)) != 0) return false;
 
   size_t num_inputs = 0;
   if (ort_api.Node_GetNumInputs(gemm_node, &num_inputs) != nullptr) return false;
-  if (num_inputs < 3) return true;  // No bias → split_gemm never triggers.
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
   if (ort_api.Node_GetInputs(gemm_node, inputs.data(), inputs.size()) != nullptr) return false;
+  if (num_inputs >= 2 && IsGemmWeightBlockQuantized(ort_api, inputs[1])) return false;
+
+  if (num_inputs < 3) return true;  // No bias → split_gemm never triggers.
+
   const OrtValueInfo* bias_vi = inputs[2];
   if (bias_vi == nullptr) return true;
 
