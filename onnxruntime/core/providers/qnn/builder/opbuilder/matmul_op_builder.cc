@@ -307,7 +307,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
 
   const std::string& org_input_0_name = inputs[0].name;
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
-                                logger, do_op_validation, /*use_fully_connected=*/false));
+                                logger, do_op_validation));
 
   // Process input 1.
   const std::string& org_input_1_name = inputs[1].name;
@@ -426,7 +426,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
 
   const std::string& org_input_0_name = inputs[0].name;
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
-                                logger, do_op_validation, /*use_fully_connected=*/true));
+                                logger, do_op_validation));
 
   // Process input 1.
   const std::string& org_input_1_name = inputs[1].name;
@@ -801,10 +801,10 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
         op_output_shape.insert(op_output_shape.begin(), 1);
       RETURN_IF_ERROR(op_output_quant_param.HandleUnsqueeze<uint32_t>(output_info.shape, op_output_shape));
     } else if (use_fully_connected && input_info_0.shape.size() > 2) {
-      uint32_t batch = 0;
-      RETURN_IF_ERROR(FlattenLeadingDims(input_info_0.shape, batch));
-      op_output_shape = {batch, reshape_input_1 ? 1 : input_info_1.shape.back()};
-      RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN FC output does not support per-channel quant.");
+      op_output_shape = {std::accumulate(input_info_0.shape.begin(), input_info_0.shape.end() - 1,
+                                         static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
+                         reshape_input_1 ? 1 : input_info_1.shape.back()};
+      RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN MatMul output does not support per-channel quant.");
     } else {
       // If both inputs are 1D tensors, the output shape is [1] instead of scalar. So if both inputs are 1D tensors,
       // we only need to add one "1" to the op_output_shape.
