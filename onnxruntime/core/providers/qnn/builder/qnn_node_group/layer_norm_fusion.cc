@@ -86,17 +86,6 @@ static Ort::Status ValidateAndSqueezeScaleBiasShape(
   normalized_axes.erase(std::unique(normalized_axes.begin(), normalized_axes.end()),
                         normalized_axes.end());
 
-  // If already the right rank, verify each dim matches the input at the corresponding axis.
-  if (scale_bias_shape.size() == normalized_axes.size()) {
-    for (size_t i = 0; i < normalized_axes.size(); ++i) {
-      if (scale_bias_shape[i] != input_shape[normalized_axes[i]]) {
-        return MAKE_EP_FAIL("LayerNormFusion: scale/bias shape dimension mismatch at normalized axis.");
-      }
-    }
-    squeezed_shape = scale_bias_shape;
-    return Ort::Status();
-  }
-
   std::vector<uint32_t> scale_shape_broadcast = scale_bias_shape;
   if (scale_bias_shape.size() > input_shape.size()) {
     return MAKE_EP_FAIL("LayerNormFusion: scale/bias shape is not broadcastable to input shape.");
@@ -365,7 +354,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
                                            inp,
                                            node_to_node_unit,
                                            node_unit_to_qnn_node_group);
-      if (parent != div_node_unit) {
+      if (parent != div_node_unit && qnn_model_wrapper.IsConstantInput(inp.name)) {
         gamma_input_def = &inp;
         break;
       }
@@ -386,7 +375,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
                                              node_to_node_unit,
                                              node_unit_to_qnn_node_group);
 
-        if (parent != mul_gamma_node_unit) {
+        if (parent != mul_gamma_node_unit && qnn_model_wrapper.IsConstantInput(inp.name)) {
           beta_input_def = &inp;
           break;
         }

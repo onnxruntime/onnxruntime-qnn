@@ -278,64 +278,6 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_FP16_3D_1D_GammaBeta) {
   AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
-// Dynamic beta with a constant gamma
-TEST_F(QnnHTPBackendTests, LayerNormFusion_DynamicBeta) {
-  const std::filesystem::path json_dir = "LayerNormFusion_DynamicBeta";
-  std::filesystem::remove_all(json_dir);
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions opts = GetProviderOptions("htp");
-  opts["dump_json_qnn_graph"] = "1";
-  opts["json_qnn_graph_dir"] = json_dir.string();
-
-  const int64_t C = 16;
-  const auto gamma_def = TestInputDef<float>({C}, true, std::vector<float>(static_cast<size_t>(C), 1.0f));
-  const auto beta_def = TestInputDef<float>({C}, false, -0.5f, 0.5f);
-  RunQnnModelTest(
-      BuildLayerNormFusionTestCase<float>(
-          TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
-          {-1}, 1e-5f, gamma_def, beta_def),
-      opts,
-      13,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
-
-  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
-  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
-}
-
-// Dynamic gamma and beta
-TEST_F(QnnHTPBackendTests, LayerNormFusion_DynamicGammaBeta) {
-  const std::filesystem::path json_dir = "LayerNormFusion_DynamicGammaBeta";
-  std::filesystem::remove_all(json_dir);
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions opts = GetProviderOptions("htp");
-  opts["dump_json_qnn_graph"] = "1";
-  opts["json_qnn_graph_dir"] = json_dir.string();
-
-  const int64_t C = 16;
-  const auto gamma_def = TestInputDef<float>({C}, false, 0.5f, 1.5f);
-  const auto beta_def = TestInputDef<float>({C}, false, -0.5f, 0.5f);
-  RunQnnModelTest(
-      BuildLayerNormFusionTestCase<float>(
-          TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
-          {-1}, 1e-5f, gamma_def, beta_def),
-      opts,
-      13,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
-
-  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
-  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
-}
-
 // 4D input [1, 4, 4, 64], axes=[-1], 3D gamma/beta {1, 1, 64}.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_3D_GammaBeta) {
   const std::filesystem::path json_dir = "LayerNormFusion_4D_3D_GammaBeta";
@@ -585,7 +527,7 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_DynamicBeta) {
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
 }
 
 // Dynamic gamma and beta
@@ -612,8 +554,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_DynamicGammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
 }
 
 // 3D input [1, 8, 16], axes=[-1], no gamma/beta.
