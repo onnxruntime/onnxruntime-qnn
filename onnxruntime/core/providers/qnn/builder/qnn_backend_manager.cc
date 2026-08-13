@@ -2035,7 +2035,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   bool enable_gpu_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
     enable_gpu_weight_sharing = true;
 #endif
   }
