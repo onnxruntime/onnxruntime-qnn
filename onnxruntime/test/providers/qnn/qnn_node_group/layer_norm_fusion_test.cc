@@ -274,7 +274,8 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_FP16_3D_1D_GammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // Dynamic beta with a constant gamma
@@ -302,7 +303,8 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_DynamicBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // Dynamic gamma and beta
@@ -330,7 +332,8 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_DynamicGammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // 4D input [1, 4, 4, 64], axes=[-1], 3D gamma/beta {1, 1, 64}.
@@ -358,7 +361,8 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_3D_GammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -496,7 +500,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_InvalidGammaShape) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 2);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
 }
 
 // beta {1, 64, 1} with axes=[-1] — non-normalized dim is non-unit, partial fusion with standalone trailing Add.
@@ -523,7 +528,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_InvalidBetaShape) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
 }
 
 // FP16 activations: 3D input [1, 8, 16], axes=[-1], 1D gamma/beta {16}
@@ -550,7 +556,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_FP16_3D_1D_GammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // Dynamic beta with a constant gamma
@@ -577,7 +584,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_DynamicBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // Dynamic gamma and beta
@@ -604,7 +612,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_DynamicGammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // 3D input [1, 8, 16], axes=[-1], no gamma/beta.
@@ -629,7 +638,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_NoGamma_NoBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // 3D input [1, 8, 16], axes=[-1], 1D gamma {16}, no beta.
@@ -655,7 +665,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_Gamma_NoBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // 3D input [1, 8, 16], axes=[-1], no gamma, 1D beta {16}.
@@ -681,7 +692,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_NoGamma_Beta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
 }
 
 // 4D input [1, 4, 4, 64], axes=[-1], 3D gamma/beta {1, 1, 64}.
@@ -708,7 +720,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_4D_3D_GammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 // 4D input [1, 16, 64, 64], axes=[1], 3D gamma/beta {16, 1, 1}.
@@ -735,7 +748,8 @@ TEST_F(QnnGPUBackendTests, LayerNormFusion_4D_3D_Axis1_GammaBeta) {
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
 }
 
 #endif  // defined(_M_ARM64)
