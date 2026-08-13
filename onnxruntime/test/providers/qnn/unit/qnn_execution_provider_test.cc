@@ -650,6 +650,23 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFP16PrecisionInvalid_LogsVerbose) 
                "Invalid value for ep.qnnexecutionprovider.enable_htp_fp16_precision");
 }
 
+// Covers the ctor WARNING that fires when enable_htp_fp16_clamp_overflow=1 but
+// the QAIRT SDK in use lacks the backend enum. The test mirrors the source's
+// #ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE guard so it self-disables when a
+// future QAIRT uplevel defines the macro (see qnn_def.h for the version gate).
+#ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFp16ClampOverflowTrueOnUnsupportedSdk_LogsWarning) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_fp16_clamp_overflow")] = "1";
+  ctx.session_config[EPKey("soc_model")] = "60";  // avoids FP16+no-soc_model throw
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "enable_htp_fp16_clamp_overflow was requested but the QNN HTP SDK in use does not support it");
+}
+#endif  // !QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmTrue_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("enable_htp_monolithic_lstm")] = "1";
@@ -893,16 +910,11 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetCompiledModelCompatibilityInfo_DefaultI
 // ===========================================================================
 // Group 10: ValidateCompiledModelCompatibilityInfo
 //
-// Coverage note (x86_64 host): after the empty-input early return,
-// ValidateCompiledModelCompatibilityInfo has an `#if !defined(__aarch64__) &&
-// !defined(_M_ARM64) && !defined(_M_ARM64EC)` guard that logs a WARNING
-// "Skip compatibility validation on x86 platforms." and returns
-// EP_NOT_APPLICABLE before any field parsing. Because these unit tests only
-// build on Linux x86_64 (QNN_EP_INTERNAL_SYMBOL_ACCESS is set only there),
-// the field-count / version-format parsing branches downstream of that guard
-// are unreachable from this test tier. The tests below exercise the two
-// branches that ARE reachable on x86_64: the empty-input log path and the
-// non-empty x86-skip log path.
+// On x86_64 (the only host QNN_EP_INTERNAL_SYMBOL_ACCESS covers today), the
+// function returns EP_NOT_APPLICABLE at the empty-input branch or the
+// #if !defined(__aarch64__)... x86-skip guard before any field parsing runs.
+// The two tests below cover both reachable branches; parser branches are
+// left for a future arm64 UT tier.
 // ===========================================================================
 
 TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_EmptyString_LogsNoInfoAndReturnsNotApplicable) {
