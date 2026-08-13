@@ -502,6 +502,12 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
           // Note that unlike weights requiring transpose, scales/offsets are expected in original ONNX shape.
           const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
+
+          // HACK: Force symmetric weight encoding (offsets=0) for A16W2 INT16-activation path.
+          if (is_act_16bitquant) {
+            per_block_float_zp.assign(total_blocks, 0.0f);
+          }
+
           quantize_param = QnnQuantParamsWrapper::BwFloatBlock(per_block_float_scale,
                                                                per_block_float_zp,
                                                                gsl::narrow_cast<uint32_t>(bits),
