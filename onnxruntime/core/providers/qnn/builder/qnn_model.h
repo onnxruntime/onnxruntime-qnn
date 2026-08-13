@@ -61,6 +61,12 @@ class QnnModel {
 
   Ort::Status SetupQnnInputOutput(const Ort::Logger& logger);
 
+  // Apply runtime-settable HTP graph configs (currently fp16 clamp overflow) on an already
+  // finalized graph loaded from a context binary, via QnnGraph_setConfig. Only options confirmed
+  // settable on a finalized graph belong here; compile-time-only options must stay in
+  // QnnEp::InitQnnHtpGraphConfigs. No-op when the backend is not HTP or nothing applies.
+  Ort::Status ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs, const Ort::Logger& logger);
+
   Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
@@ -206,6 +212,10 @@ class QnnModel {
   std::string context_bin_filepath_;
   int64_t max_spill_fill_size_ = 0;
   ContextPriority context_priority_ = ContextPriority::NORMAL;
+
+  // Runtime graph configs recorded by ApplyRuntimeGraphConfigs for re-application after an SSR
+  // re-retrieves the graph handle. See the single-call contract in the .cc.
+  HtpGraphConfigs_t runtime_graph_configs_;
 };
 
 }  // namespace qnn
