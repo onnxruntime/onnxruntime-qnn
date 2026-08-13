@@ -1444,6 +1444,63 @@ TEST(QnnUnit_UtilsTest, BroadcastShape_HigherRankMixed) {
   EXPECT_EQ(out, (std::vector<uint32_t>{5, 3, 4}));
 }
 
+// =============================================================================
+// SignExtendUnpackedSubByteData
+//
+// UnpackInitializerData() expands a sub-byte initializer to one byte per element with the unused
+// high bits masked off, which QNN needs but which reads as a positive number in any int8_t-based
+// decode. These tests pin the recovery of the original two's-complement value.
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_Int4_RecoversNegativeValues) {
+  // Every representable INT4 value, so both nibble positions and the whole negative half are hit.
+  const std::vector<int8_t> values{-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<uint8_t> bytes, expected;
+  for (int8_t v : values) {
+    bytes.push_back(static_cast<uint8_t>(v) & 0x0F);  // as UnpackInitializerData() leaves it
+    expected.push_back(static_cast<uint8_t>(v));
+  }
+  qnn::utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                                            gsl::make_span(bytes));
+  EXPECT_EQ(bytes, expected);
+}
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_Int2_RecoversNegativeValues) {
+  const std::vector<int8_t> values{-2, -1, 0, 1};
+  std::vector<uint8_t> bytes, expected;
+  for (int8_t v : values) {
+    bytes.push_back(static_cast<uint8_t>(v) & 0x03);
+    expected.push_back(static_cast<uint8_t>(v));
+  }
+  qnn::utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2,
+                                            gsl::make_span(bytes));
+  EXPECT_EQ(bytes, expected);
+}
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_UnsignedAndByteWideTypesAreLeftAlone) {
+  // UINT4 / UINT2 masked bytes already hold the value, and types stored one element per their own
+  // width were never masked, so all of these must pass through untouched.
+  const std::vector<uint8_t> original{0x00, 0x03, 0x0F, 0x80, 0xFF};
+  for (ONNXTensorElementDataType type : {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT}) {
+    std::vector<uint8_t> bytes = original;
+    qnn::utils::SignExtendUnpackedSubByteData(type, gsl::make_span(bytes));
+    EXPECT_EQ(bytes, original) << "type " << static_cast<int>(type) << " must not be modified";
+  }
+}
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_EmptySpanIsSafe) {
+  std::vector<uint8_t> bytes;
+  qnn::utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                                            gsl::make_span(bytes));
+  EXPECT_TRUE(bytes.empty());
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
