@@ -214,6 +214,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Returns the mutex that serializes SSR context recovery across models sharing this backend.
   std::mutex& GetContextRecoveryMutex() { return context_recovery_mutex_; }
 
+  // Returns true if the QNN context was created with HTP weight sharing enabled.
+  // Used by RecoverFromSSR to restore the same context config after an NPU reset.
+  bool IsHtpWeightSharingEnabled() const { return htp_weight_sharing_enabled_; }
+
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status SetupBackend(
@@ -768,6 +772,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
+  bool htp_weight_sharing_enabled_ = false;       // Set in CreateContext; used by RecoverFromSSR.
   int htp_share_resource_optimization_ = -1;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;

@@ -1502,6 +1502,8 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     return Ort::Status();
   }
 
+  htp_weight_sharing_enabled_ = enable_htp_weight_sharing;
+
   QnnContext_Config_t context_config_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t custom_config;
   custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;

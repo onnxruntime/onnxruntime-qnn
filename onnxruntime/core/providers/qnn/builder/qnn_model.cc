@@ -557,9 +557,20 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
-      // Build context configs: priority + spill fill buffer.
+      // Build context configs: priority + spill fill buffer + weight sharing (if originally enabled).
       QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
       RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, priority_config));
+
+      QnnContext_Config_t weight_sharing_config = QNN_CONTEXT_CONFIG_INIT;
+      QnnHtpContext_CustomConfig_t weight_sharing_custom_config{};
+      if (qnn_backend_manager_->IsHtpWeightSharingEnabled()) {
+        weight_sharing_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
+        weight_sharing_custom_config.weightSharingEnabled = true;
+        weight_sharing_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+        weight_sharing_config.customConfig = &weight_sharing_custom_config;
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    ("SSR recovery: restoring weight-sharing context config for graph: \"" + graph_name + "\"").c_str());
+      }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
       QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
@@ -576,12 +587,20 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
       QnnContext_Config_t* spill_fill_ptr = nullptr;
 #endif
 
-      const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
+      std::vector<const QnnContext_Config_t*> context_configs_vec;
+      context_configs_vec.push_back(&priority_config);
+      if (qnn_backend_manager_->IsHtpWeightSharingEnabled()) {
+        context_configs_vec.push_back(&weight_sharing_config);
+      }
+      if (spill_fill_ptr) {
+        context_configs_vec.push_back(spill_fill_ptr);
+      }
+      context_configs_vec.push_back(nullptr);
 
       auto rt = qnn_interface.contextCreateFromBinary(
           qnn_backend_manager_->GetQnnBackendHandle(),
           qnn_backend_manager_->GetQnnDeviceHandle(),
-          context_configs,
+          context_configs_vec.data(),
           static_cast<void*>(buffer.data()),
           static_cast<Qnn_ContextBinarySize_t>(buffer.size()),
           &new_context,
