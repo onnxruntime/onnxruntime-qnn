@@ -252,6 +252,26 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Sigmoid) {
       shape);
 }
 
+// Test BF16 handling with Reciprocal, which is lowered to ElementWiseDivide against a
+// builder-created constant divisor tensor. Covers that divisor under BF16 mode.
+static GetTestModelFn BuildBF16ReciprocalTestCase(const TestInputDef<float>& input_def) {
+  return [input_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("reciprocal_node", "Reciprocal", {"input"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
+  };
+}
+
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Reciprocal) {
+  std::vector<int64_t> shape = {2, 3, 4};
+  RunBF16ModelTest(
+      BuildBF16ReciprocalTestCase(
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 1.0f, 0.1f))),
+      shape);
+}
+
 // Test BF16 handling with Softmax
 static GetTestModelFn BuildBF16SoftmaxTestCase(const TestInputDef<float>& input_def, int64_t axis) {
   return [input_def, axis](ModelTestBuilder& builder) {
