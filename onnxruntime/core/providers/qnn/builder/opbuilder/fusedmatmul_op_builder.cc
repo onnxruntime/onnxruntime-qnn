@@ -258,16 +258,12 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensor_wrapper)), "Failed to add alpha tensor.");
 
     std::string alpha_scale_node_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_scale");
-    std::vector<std::string> alpha_mul_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), alpha_scale_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, alpha_mul_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(alpha_scale_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY,
+                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {matmul_output_name, alpha_tensor_name},
                                                   {output_name},
-                                                  std::move(alpha_mul_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Failed to create alpha scaling node for FusedMatMul.");
   }

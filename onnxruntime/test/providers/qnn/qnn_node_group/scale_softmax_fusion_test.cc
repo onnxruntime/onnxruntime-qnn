@@ -88,7 +88,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
@@ -109,7 +109,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
@@ -130,7 +130,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
@@ -151,7 +151,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
@@ -173,7 +173,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
@@ -195,7 +195,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
@@ -217,7 +217,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseBinary", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

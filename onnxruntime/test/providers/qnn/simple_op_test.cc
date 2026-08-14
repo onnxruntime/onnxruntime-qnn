@@ -385,6 +385,27 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tan_fp) {
   );
 }
 
+// Check that QNN compiles DQ -> Tan -> Q as a single unit.
+// Use an input of rank 3.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U8) {
+  RunQDQOpTest<uint8_t>("Tan",
+                        {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                        {},
+                        11,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// Tests accuracy of 16-bit QDQ Tan.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U16) {
+  RunQDQOpTest<uint16_t>("Tan",
+                         {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                         {},
+                         11,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,  // Tan op domain
+                         true);        // Use com.microsoft Q/DQ op domains
+}
+
 // disabled for QNN 2.28.0.241029 backendValidateOpConfig failed
 // still fails on QNN 2.28.2 and QNN 2.30.0
 // QnnDsp <E> [4294967295] has incorrect Value -32768, expected equal to 0.
@@ -493,13 +514,10 @@ static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
   return false;
 }
 
-// Builds a uint8 QDQ model (Q -> <op_type> -> DQ), dumps the composed QNN graph, and asserts the
-// op is emitted as the unified "ElementWiseNeuron" op (and that the op's old dedicated QNN op name
-// is absent). Uses QDQ rather than a float model so the test runs on the x86 HTP emulator, where
-// float ElementWiseNeuron ops are unsupported as standalone graph outputs.
-static void RunNeuronOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
-                                const std::string& op_type,
-                                const std::string& legacy_qnn_op_name) {
+// Builds a QDQ model and asserts the op emits as its dedicated fine-grained QNN op name.
+static void RunDedicatedOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
+                                   const std::string& op_type,
+                                   const std::string& expected_qnn_op_name) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup =
@@ -523,26 +541,25 @@ static void RunNeuronOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
     return;
   }
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
-  AssertOpInQnnGraph(json_qnn_graph_dir, legacy_qnn_op_name, /*count=*/0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, expected_qnn_op_name, /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/0);
 }
 
-// Standalone Relu/Sigmoid/Tanh/Elu now map to QNN_OP_ELEMENT_WISE_NEURON. Assert the emitted op
-// type rather than just accuracy.
-TEST_F(QnnHTPBackendTests, NeuronOpType_Relu) {
-  RunNeuronOpTypeTest("NeuronOpType_Relu", "Relu", "Relu");
+// Relu/Sigmoid/Tanh/Elu each map to their dedicated fine-grained QNN op.
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Relu) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Relu", "Relu", "Relu");
 }
 
-TEST_F(QnnHTPBackendTests, NeuronOpType_Sigmoid) {
-  RunNeuronOpTypeTest("NeuronOpType_Sigmoid", "Sigmoid", "Sigmoid");
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Sigmoid) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Sigmoid", "Sigmoid", "Sigmoid");
 }
 
-TEST_F(QnnHTPBackendTests, NeuronOpType_Tanh) {
-  RunNeuronOpTypeTest("NeuronOpType_Tanh", "Tanh", "Tanh");
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Tanh) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Tanh", "Tanh", "Tanh");
 }
 
-TEST_F(QnnHTPBackendTests, NeuronOpType_Elu) {
-  RunNeuronOpTypeTest("NeuronOpType_Elu", "Elu", "Elu");
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Elu) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Elu", "Elu", "Elu");
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U8) {

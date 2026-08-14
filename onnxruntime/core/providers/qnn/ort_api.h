@@ -38,6 +38,16 @@
 
 namespace onnxruntime {
 
+// True for any ARM64 target: native ARM64 (Windows/Linux) AND the ARM64EC half of a
+// Windows arm64x fat binary. ARM64EC must be included because an amd64 process on an
+// arm64 device executes the ARM64EC half of an arm64x module, which defines _M_ARM64EC
+// (not _M_ARM64). Omitting it makes on-device code misdetect itself as an x86 host.
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
+#define QNN_ARCH_ARM64 1
+#else
+#define QNN_ARCH_ARM64 0
+#endif
+
 #define MAKE_FAIL(msg) Ort::Status(msg, ORT_FAIL)
 #define MAKE_EP_FAIL(msg) Ort::Status(msg, ORT_EP_FAIL)
 
