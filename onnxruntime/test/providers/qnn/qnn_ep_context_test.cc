@@ -10,6 +10,7 @@
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
+#include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -2152,7 +2153,7 @@ static void GetModelInputNames(const std::string& model_path,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
 TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2269,7 +2270,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2386,7 +2387,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 }
 
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2512,7 +2513,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 // For Ort sessions to generate the context binary, with session option ep.share_ep_contexts enabled
 // Ort sessions will share the QnnBackendManager, so that all graphs from all models compile into the same Qnn context
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -3389,7 +3390,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
 // [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
 // HTP weight sharing is active: both sessions compile into the same .bin.
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
