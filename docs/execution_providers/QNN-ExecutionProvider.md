@@ -275,6 +275,15 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |---|---|
 |Directory path (string)|Directory path for dumping QNN IR DLC files. Only effective when `dump_qnn_ir_dlc` is enabled.|
 
+|`"dump_partition_dlc_bundle"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable per-partition DLC debug bundle. Forces IR-backend serialization regardless of `backend_type` and writes one DLC per QNN partition under `<partition_dlc_bundle_dir>/partitions/<partition_name>.dlc`, plus a top-level `manifest.json` listing partitions and inter-partition tensor edges. Same constraint as `dump_qnn_ir_dlc`: a session with this flag enabled cannot execute the model — use a separate session (without the flag) to run inference. Effective on JIT compile and AOT Phase 1 (context generation) only; loading an existing EPContext model is a no-op. Use the host-side helper `onnxruntime/python/tools/qnn/generate_partition_dlc_bundle.py` to fill in per-partition `inputs/` and `goldens/` from a CPU-EP reference run.|
+
+|`"partition_dlc_bundle_dir"`|Description|
+|---|---|
+|Directory path (string)|Output directory for the partition DLC debug bundle. Required when `dump_partition_dlc_bundle` is `'1'`; session init fails if missing.|
+
 |`"enable_framework_op_trace"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

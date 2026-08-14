@@ -473,7 +473,7 @@ static qnn::ProfilingLevel GetProfilingLevelFromETWLevel(unsigned char level, co
 }
 #endif  // defined(_WIN32)
 
-std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const {
+std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() {
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
   static const std::string QNN_SAVER_PATH_KEY = "qnn_saver_path";
   std::string qnn_saver_path;
@@ -529,8 +529,45 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
     }
   }
 
+  static const std::string DUMP_PARTITION_DLC_BUNDLE = "dump_partition_dlc_bundle";
+  dump_partition_dlc_bundle_ = ParseBoolOption(ort_api,
+                                               session_options_,
+                                               FormatEPConfigKey(DUMP_PARTITION_DLC_BUNDLE),
+                                               false,
+                                               logger_);
+
+  static const std::string PARTITION_DLC_BUNDLE_DIR = "partition_dlc_bundle_dir";
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey(PARTITION_DLC_BUNDLE_DIR),
+                                 "",
+                                 partition_dlc_bundle_dir_);
+
   if (dump_qnn_ir_dlc) {
+    if (dump_partition_dlc_bundle_) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "dump_qnn_ir_dlc and dump_partition_dlc_bundle are both set; "
+                  "dump_qnn_ir_dlc takes precedence and the partition bundle will not be produced.");
+    }
     return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path), std::move(qnn_ir_dlc_dir));
+  }
+
+  if (dump_partition_dlc_bundle_) {
+    if (partition_dlc_bundle_dir_.empty()) {
+      ORT_CXX_API_THROW("dump_partition_dlc_bundle is set but partition_dlc_bundle_dir is empty.",
+                        ORT_INVALID_ARGUMENT);
+    }
+    std::filesystem::path partitions_dir =
+        std::filesystem::path(partition_dlc_bundle_dir_) / "partitions";
+    return qnn::QnnSerializerConfig::CreateIr(std::move(qnn_ir_backend_path),
+                                              partitions_dir.string());
+  }
+
+  if (!partition_dlc_bundle_dir_.empty()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "Provided partition_dlc_bundle_dir, but did not set dump_partition_dlc_bundle to 1.");
   }
 
   return nullptr;
@@ -2327,6 +2364,11 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
+
+    if (dump_partition_dlc_bundle_) {
+      partition_bundle_records_.push_back(
+          qnn::RecordPartitionBundle(*qnn_model, fused_node_name));
+    }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     if (use_multithreaded_prepare) {
       auto& model_info = model_infos.emplace_back();
@@ -2917,6 +2959,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       ep->AppendSingleSocTrace();
     }
     ep->WriteFrameworkOpTrace(graphs[0]);
+  }
+
+  if (ep->dump_partition_dlc_bundle_ && !ep->partition_bundle_records_.empty()) {
+    qnn::WritePartitionBundleManifest(ep->partition_dlc_bundle_dir_,
+                                      ep->partition_bundle_records_,
+                                      ep->logger_);
+    ep->partition_bundle_records_.clear();
   }
 
   if (ep->context_cache_enabled_) {
