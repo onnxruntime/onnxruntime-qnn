@@ -1,7 +1,6 @@
 // Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
-#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <optional>
@@ -15,28 +14,6 @@
 
 namespace onnxruntime {
 namespace qnn {
-
-namespace {
-
-// QNN's RmsNorm OpDef requires gamma (and beta) to be rank size(axes), whereas ONNX
-// RMSNormalization lets `scale` be any shape unidirectionally broadcastable to X, e.g. scale
-// [1, 1, C] against X [1, S, C]. Returns `shape` with leading 1-dims dropped to reach
-// `target_rank`, or std::nullopt if a non-1 dim would have to be dropped. A shape already at or
-// below `target_rank` is returned unchanged, leaving QNN to validate it as before.
-std::optional<std::vector<uint32_t>> TrySqueezeLeadingOnesTo(const std::vector<uint32_t>& shape,
-                                                             size_t target_rank) {
-  if (shape.size() <= target_rank) {
-    return shape;
-  }
-
-  const size_t num_leading_dims = shape.size() - target_rank;
-  if (std::any_of(shape.begin(), shape.begin() + num_leading_dims, [](uint32_t dim) { return dim != 1; })) {
-    return std::nullopt;
-  }
-  return std::vector<uint32_t>(shape.begin() + num_leading_dims, shape.end());
-}
-
-}  // namespace
 
 class RMSNormalizationOpBuilder : public BaseOpBuilder {
  public:
@@ -139,8 +116,10 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   size_t axes_rank = 0;
   RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
 
+  // QNN's RmsNorm OpDef requires gamma (and beta) to be rank size(axes), whereas ONNX
+  // RMSNormalization lets `scale` be any shape unidirectionally broadcastable to X.
   const std::optional<std::vector<uint32_t>> squeezed_shape =
-      TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank);
+      utils::TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank);
   RETURN_IF_NOT(squeezed_shape.has_value(),
                 "QNN RMSNorm requires the scale rank to equal the number of normalized axes; this scale has "
                 "non-1 leading dimensions and cannot be squeezed to match.");
