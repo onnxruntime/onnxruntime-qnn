@@ -30,7 +30,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if QNN_ARCH_ARM64 || defined(__linux__)
 static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out_model) {
   std::ifstream fin(path, std::ios::in | std::ios::binary);
   if (!fin) {
@@ -2209,7 +2209,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   EXPECT_TRUE(file_size_1 > 0);
 
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -2328,7 +2328,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 
   provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
 
@@ -2445,7 +2445,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   EXPECT_TRUE(file_size_1 > 0);
 
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -2498,7 +2498,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
                                             output_names_c.data(), 1);
   auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                    output_names_c.data(), 1);
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // QNN_ARCH_ARM64
 
   for (auto model_path : onnx_model_paths) {
     std::remove(model_path.c_str());
@@ -2828,7 +2828,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   EXPECT_EQ(status.GetErrorMessage(), "Error from OrtOutStreamWriteFunc callback");
 }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
 // Tests setting num_graph_prepare_threads to compile model
 // 1. Compile model with 2 threads
 // 2. Check for successful compilation (_ctx.onnx model should exist)
@@ -2947,7 +2947,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
                                       output_names_c.data(), 1);
   std::filesystem::remove(output_model_file);
 }
-#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // _WIN32 && QNN_ARCH_ARM64
 
 struct CustomInitializerHandlerState {
   const ORTCHAR_T* external_file_path = nullptr;
@@ -3454,9 +3454,9 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
 #endif
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // QNN_ARCH_ARM64 || defined(__linux__)
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
 
 // GPU backend does not support QDQ (quantized) ops. This creates a plain float
 // Add model that GPU can compile into a context binary.
@@ -3597,7 +3597,7 @@ TEST_F(QnnGPUBackendTests, QnnContextGenGpuNoWeightSharing) {
   ASSERT_EQ(std::remove(bin1.c_str()), 0);
   ASSERT_EQ(std::remove(bin2.c_str()), 0);
 }
-#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
 
 }  // namespace test
 }  // namespace onnxruntime
