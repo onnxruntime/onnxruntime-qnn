@@ -773,6 +773,223 @@ TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
+// MatMulAddFusion (Gemm sandwiched by Reshapes) supergroup tests. The QDQ selector absorbs
+// the trailing Reshape (and Relu when Q's encoding is bounded to [0, +inf)) into the Gemm
+// unit; the op-builder emits FC (rank-2, encoded) + QNN Reshape (rank-N, same encoding).
+namespace {
+
+//   input (rank-3, float) -> Q(ActQType) -> DQ ─┐
+//                                               ├─ MatMul -> Add(DQ'd int32 bias) -> [Relu] -> Q -> DQ -> output
+//   weight (rank-2, float, static) -> Q(WtQType) -> DQ ┘
+// The activation is rank-3 so MatMulAddFusion inserts the Reshape wrappers around
+// the resulting rank-2 Gemm. The output Q is unsigned with zero_point == 0, so
+// encoding_min = scale * (qmin - zp) = 0 and the Relu fold is encoding-safe.
+template <typename ActQType, typename WtQType>
+GetTestModelFn BuildMatMulAddFusionQDQTestCase(int64_t M, int64_t K, int64_t N, bool include_relu) {
+  return [M, K, N, include_relu](ModelTestBuilder& builder) {
+    const std::vector<int64_t> act_shape{1, M, K};
+    const std::vector<int64_t> weight_shape{K, N};
+    const std::vector<int64_t> bias_shape{N};
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(act_shape, false, -1.0f, 1.0f));
+    QuantParams<ActQType> act_qp = QuantParams<ActQType>::Compute(-1.0f, 1.0f, /*symmetric=*/false);
+    const std::string act_qdq = AddQDQNodePair<ActQType>(builder, "act", "input", act_qp.scale,
+                                                         act_qp.zero_point, /*use_contrib_qdq=*/true);
+
+    // Static weight -> DQ.
+    QuantParams<WtQType> wt_qp = QuantParams<WtQType>::Compute(-0.5f, 0.5f, /*symmetric=*/true);
+    TestInputDef<float> wt_def(weight_shape, /*is_initializer=*/true,
+                               GetFloatDataInRange(-0.5f, 0.5f, static_cast<size_t>(K * N)));
+    std::vector<WtQType> wt_quantized(static_cast<size_t>(K * N));
+    const std::vector<float> wt_scales{wt_qp.scale};
+    const std::vector<WtQType> wt_zps{wt_qp.zero_point};
+    QuantizeValues<float, WtQType>(wt_def.GetRawData(), wt_quantized, weight_shape,
+                                   wt_scales, wt_zps, std::nullopt);
+    builder.MakeInitializer<WtQType>("weight_q", weight_shape, wt_quantized);
+    builder.AddDequantizeLinearNode<WtQType>("weight_dq", "weight_q", wt_qp.scale,
+                                             wt_qp.zero_point, "weight_dq", /*use_contrib_qdq=*/true);
+
+    // MatMul.
+    builder.AddNode("MatMul", "MatMul", {act_qdq, "weight_dq"}, {"mm_out"}, kOnnxDomain);
+
+    // DQ'd int32 bias with bias_scale = act_scale * weight_scale.
+    TestInputDef<float> bias_def(bias_shape, /*is_initializer=*/true,
+                                 GetFloatDataInRange(-0.2f, 0.2f, static_cast<size_t>(N)));
+    const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
+                                                     act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
+    builder.AddNode("Add", "Add", {"mm_out", bias_dq}, {"add_out"}, kOnnxDomain);
+
+    // Optional Relu.
+    const std::string post_activation = include_relu ? "relu_out" : "add_out";
+    if (include_relu) {
+      builder.AddNode("Relu", "Relu", {"add_out"}, {"relu_out"});
+    }
+
+    // Output Q(zp=0) makes the encoding safe for the Relu fold; ORT normally drops
+    // Relu itself in this case, but we assert that even if the Relu survives (e.g.,
+    // because L2 cleanup decides to keep it), the group forms and QNN accepts the FC.
+    QuantParams<ActQType> out_qp = QuantParams<ActQType>::Compute(0.0f, 8.0f, /*symmetric=*/false);
+    AddQDQNodePairWithOutputAsGraphOutput<ActQType>(builder, "out", post_activation,
+                                                    out_qp.scale, out_qp.zero_point,
+                                                    /*use_contrib_qdq=*/true);
+  };
+}
+
+ProviderOptions GetMatMulAddFusionProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On x86_64 Linux, the default HTP validator is v68 which lacks 16-bit-weight FC support.
+  // Pin to SM8550 (v73) to validate 16-bit-weight paths without a real device.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// U16 activation, U8 weight, with Relu
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_U16Act_U8Weight_WithRelu) {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint16_t, uint8_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/true),
+                  opts, /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// U16 activation, S16 weight, with Relu.
+// On x86 Linux the v68 default validator rejects 16-bit-weight FC (QNN error 3110); the
+// provider options above pin to SM8550 (v73) to validate.
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_U16Act_S16Weight_WithRelu) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint16_t, int16_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/true),
+                  GetMatMulAddFusionProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Direct QDQ Gemm -> Reshape -> Q graphs (no MatMul+Add) — exercise the absorb-Reshape
+// selector's guard-rails on shapes; MatMulAddFusion never emits (transB=1, NATIVE bias).
+namespace {
+// activation: rank-2 [M, K] float -> Q(u16) -> DQ
+// weight:    rank-2 [K, N] (or [N, K] when trans_b=1) static -> DQ
+// bias (opt): rank-1 [N] INT32 static -> DQ
+// -> Gemm -> Reshape (rank-3 [1, M, N]) -> Q -> DQ -> output
+struct DirectGemmReshapeQConfig {
+  int64_t M = 4;
+  int64_t K = 8;
+  int64_t N = 6;
+  int64_t trans_b = 0;                  // 0 → weight [K,N]; 1 → weight [N,K]
+  bool include_bias = true;             // rank-1 bias by default
+  bool bias_from_intermediate = false;  // if true, bias is produced by an intermediate MatMul (NATIVE bias)
+};
+
+GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& cfg) {
+  return [cfg](ModelTestBuilder& builder) {
+    const std::vector<int64_t> act_shape{cfg.M, cfg.K};
+    const std::vector<int64_t> weight_shape = cfg.trans_b == 0
+                                                  ? std::vector<int64_t>{cfg.K, cfg.N}
+                                                  : std::vector<int64_t>{cfg.N, cfg.K};
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(act_shape, false, -1.0f, 1.0f));
+    QuantParams<uint16_t> act_qp = QuantParams<uint16_t>::Compute(-1.0f, 1.0f, /*symmetric=*/false);
+    const std::string act_qdq = AddQDQNodePair<uint16_t>(builder, "act", "input", act_qp.scale,
+                                                         act_qp.zero_point, /*use_contrib_qdq=*/true);
+
+    QuantParams<uint8_t> wt_qp = QuantParams<uint8_t>::Compute(-0.5f, 0.5f, /*symmetric=*/true);
+    TestInputDef<float> wt_def(weight_shape, /*is_initializer=*/true,
+                               GetFloatDataInRange(-0.5f, 0.5f, static_cast<size_t>(cfg.K * cfg.N)));
+    std::vector<uint8_t> wt_quantized(static_cast<size_t>(cfg.K * cfg.N));
+    const std::vector<float> wt_scales{wt_qp.scale};
+    const std::vector<uint8_t> wt_zps{wt_qp.zero_point};
+    QuantizeValues<float, uint8_t>(wt_def.GetRawData(), wt_quantized, weight_shape,
+                                   wt_scales, wt_zps, std::nullopt);
+    builder.MakeInitializer<uint8_t>("weight_q", weight_shape, wt_quantized);
+    builder.AddDequantizeLinearNode<uint8_t>("weight_dq", "weight_q", wt_qp.scale,
+                                             wt_qp.zero_point, "weight_dq", /*use_contrib_qdq=*/true);
+
+    std::vector<std::string> gemm_inputs{act_qdq, "weight_dq"};
+    if (cfg.include_bias) {
+      if (cfg.bias_from_intermediate) {
+        // Build a NATIVE bias: MatMul produces the tensor consumed by Gemm as C. This is what
+        // MatMulAddFusion normally rewrites into Gemm(C=intermediate), but here we assemble
+        // the pattern by hand so the absorb-Reshape selector must reject it.
+        std::vector<int64_t> mm_a_shape{cfg.M, cfg.K};
+        std::vector<int64_t> mm_w_shape{cfg.K, cfg.N};
+        builder.MakeInput<float>("bias_mm_a", mm_a_shape, -1.0f, 1.0f);
+        builder.MakeInitializer<float>("bias_mm_w", mm_w_shape, -0.5f, 0.5f);
+        const std::string bias_mm_dq_a = AddQDQNodePair<uint16_t>(builder, "bias_mm_a_qdq",
+                                                                  "bias_mm_a", act_qp.scale,
+                                                                  act_qp.zero_point, /*use_contrib_qdq=*/true);
+        builder.AddNode("bias_mm", "MatMul", {bias_mm_dq_a, "bias_mm_w"}, {"bias_native"}, kOnnxDomain);
+        gemm_inputs.push_back("bias_native");
+      } else {
+        const std::vector<int64_t> bias_shape{cfg.N};
+        TestInputDef<float> bias_def(bias_shape, /*is_initializer=*/true,
+                                     GetFloatDataInRange(-0.2f, 0.2f, static_cast<size_t>(cfg.N)));
+        const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
+                                                         act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
+        gemm_inputs.push_back(bias_dq);
+      }
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
+    gemm_attrs.push_back(test::MakeAttribute("transB", cfg.trans_b));
+    builder.AddNode("gemm", "Gemm", gemm_inputs, {"gemm_out"}, kOnnxDomain, gemm_attrs);
+
+    // Explicit Reshape rank-2 -> rank-3.
+    const std::vector<int64_t> reshape_target{1, cfg.M, cfg.N};
+    builder.Make1DInitializer<int64_t>("reshape_shape", reshape_target);
+    builder.AddNode("reshape", "Reshape", {"gemm_out", "reshape_shape"}, {"reshape_out"});
+
+    QuantParams<uint16_t> out_qp = QuantParams<uint16_t>::Compute(0.0f, 8.0f, /*symmetric=*/false);
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "reshape_out",
+                                                    out_qp.scale, out_qp.zero_point,
+                                                    /*use_contrib_qdq=*/true);
+  };
+}
+
+ProviderOptions GetHtpProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  return opts;
+}
+}  // namespace
+
+// Positive: direct Gemm -> Reshape -> Q with transB=0 and rank-1 static bias.
+// The selector absorbs the Reshape and the group is assigned to QNN EP.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransB0_1DBias) {
+  DirectGemmReshapeQConfig cfg;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Negative gate (M-1): direct Gemm(transB=1) -> Reshape -> Q must NOT be absorbed by the
+// absorb-Reshape selector — the builder's absorbed path hard-asserts transB=0. The graph
+// still runs on QNN EP via the split_gemm / regular Gemm path (Reshape is a separate node).
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransB1_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.trans_b = 1;
+  // Successful build proves the selector did not force the absorbed-Reshape path
+  // (which would abort at graph build with transB=1).
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Negative gate (M-2): direct Gemm with a NATIVE bias (produced by an intermediate MatMul)
+// -> Reshape -> Q. The absorb-Reshape path must reject it (unsafe: NATIVE bias would have
+// forced split_gemm). The graph still runs via split_gemm.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_NativeBias_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.bias_from_intermediate = true;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
