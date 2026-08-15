@@ -203,12 +203,9 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
 #if defined(_WIN32)
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
-  ProviderOptions provider_options;
-#if defined(_WIN32)
-  provider_options["backend_path"] = "QnnHtp.dll";
-#else
-  provider_options["backend_path"] = "libQnnHtp.so";
-#endif
+  // enable_fp16_precision=true pins to SM8850 on the x86 sim so fp16 ops aren't rejected
+  // by the v68-default validator, and sets enable_htp_fp16_precision on all platforms.
+  ProviderOptions provider_options = GetProviderOption("htp", /* enable_fp16_precision */ true);
 
   auto testcase = [shape, dst_type](ModelTestBuilder& builder) {
     auto input_def_fp = TestInputDef(shape, false, static_cast<float>(0), static_cast<float>(20));

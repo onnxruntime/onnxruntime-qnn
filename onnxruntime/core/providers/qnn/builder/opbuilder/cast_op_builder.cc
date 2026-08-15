@@ -43,11 +43,10 @@ class CastOpBuilder : public BaseOpBuilder {
   // True when the ONNX Cast/CastLike is (fp32|fp16) -> bool. Independent of backend.
   bool IsFpToBoolCast(const OrtNodeUnit& node_unit) const;
 
-  bool ShouldDecomposeFpToBoolCast(const QnnModelWrapper& qnn_model_wrapper,
-                                   const OrtNodeUnit& node_unit) const;
-
-  bool ShouldUseNotEqualForFpToBoolCast(const QnnModelWrapper& qnn_model_wrapper,
-                                        const OrtNodeUnit& node_unit) const;
+  // True when the fp -> bool Cast should be lowered as Sign -> Abs -> Cast on HTP.
+  // Assumes IsFpToBoolCast(node_unit) is already true; only checks backend + input dtype.
+  bool UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit) const;
 
   Ort::Status ProcessExtraInputForNotEqual(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
@@ -81,27 +80,15 @@ bool CastOpBuilder::IsFpToBoolCast(const OrtNodeUnit& node_unit) const {
           output_qnn_dtype == QNN_DATATYPE_BOOL_8);
 }
 
-bool CastOpBuilder::ShouldDecomposeFpToBoolCast(const QnnModelWrapper& qnn_model_wrapper,
-                                                const OrtNodeUnit& node_unit) const {
-  if (!IsFpToBoolCast(node_unit)) {
-    return false;
-  }
-  ONNXTensorElementDataType input_type = node_unit.Inputs()[0].type;
+bool CastOpBuilder::UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit) const {
   Qnn_DataType_t input_qnn_dtype = QNN_DATATYPE_UNDEFINED;
-  if (!utils::GetQnnDataType(false, input_type, input_qnn_dtype).IsOK() ||
+  if (!utils::GetQnnDataType(false, node_unit.Inputs()[0].type, input_qnn_dtype).IsOK() ||
       input_qnn_dtype != QNN_DATATYPE_FLOAT_32) {
     return false;
   }
   const QnnBackendType be = qnn_model_wrapper.GetQnnBackendType();
   return (be == QnnBackendType::HTP || be == QnnBackendType::SERIALIZER);
-}
-
-bool CastOpBuilder::ShouldUseNotEqualForFpToBoolCast(const QnnModelWrapper& qnn_model_wrapper,
-                                                     const OrtNodeUnit& node_unit) const {
-  if (!IsFpToBoolCast(node_unit)) {
-    return false;
-  }
-  return !ShouldDecomposeFpToBoolCast(qnn_model_wrapper, node_unit);
 }
 
 Ort::Status CastOpBuilder::ProcessExtraInputForNotEqual(QnnModelWrapper& qnn_model_wrapper,
@@ -158,9 +145,10 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
     input_names.push_back(input_name);
-    return ShouldUseNotEqualForFpToBoolCast(qnn_model_wrapper, node_unit)
-               ? ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger)
-               : Ort::Status();
+    if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper, node_unit)) {
+      return ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger);
+    }
+    return Ort::Status();
   }
 
   // 4. Unpack initializer data if the input is a constant.
@@ -192,9 +180,11 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   input_names.push_back(input_name);
 
   // 7. Append the zero-tensor input for the NotEqual lowering when applicable.
-  return ShouldUseNotEqualForFpToBoolCast(qnn_model_wrapper, node_unit)
-             ? ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger)
-             : Ort::Status();
+  // FP -> bool on non-HTP backends needs the zero constant for the NotEqual lowering.
+  if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper, node_unit)) {
+    return ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger);
+  }
+  return Ort::Status();
 }
 
 Ort::Status CastOpBuilder::EmitSignAbsCastDecomposition(QnnModelWrapper& qnn_model_wrapper,
@@ -303,43 +293,51 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
                 "Failed to add output tensor for QNN Cast node.");
 
-  // 5. Sign -> Abs -> Cast lowering for HTP fp32 -> bool.
-  if (ShouldDecomposeFpToBoolCast(qnn_model_wrapper, node_unit)) {
-    RETURN_IF_NOT(input_names.size() == 1, "FP-to-Bool Cast decomposition expects exactly one input.");
+  // 5. FP -> bool: Sign -> Abs -> Cast on HTP, NotEqual(x, 0.f) elsewhere.
+  //    Non-fp -> bool: regular one-to-one Cast.
+  if (IsFpToBoolCast(node_unit)) {
+    if (UseSignAbsCastForHtp(qnn_model_wrapper, node_unit)) {
+      RETURN_IF_NOT(input_names.size() == 1, "FP-to-Bool Cast decomposition expects exactly one input.");
 
-    const auto& input = node_unit.Inputs()[0];
-    Qnn_DataType_t input_qnn_dtype = QNN_DATATYPE_UNDEFINED;
-    RETURN_IF_ERROR(utils::GetQnnDataType(false, input.type, input_qnn_dtype));
+      const auto& input = node_unit.Inputs()[0];
+      Qnn_DataType_t input_qnn_dtype = QNN_DATATYPE_UNDEFINED;
+      RETURN_IF_ERROR(utils::GetQnnDataType(false, input.type, input_qnn_dtype));
 
-    std::vector<uint32_t> input_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape),
-                  "Cannot get shape for FP-to-Bool Cast input.");
+      std::vector<uint32_t> input_shape;
+      RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape),
+                    "Cannot get shape for FP-to-Bool Cast input.");
 
-    return EmitSignAbsCastDecomposition(qnn_model_wrapper,
-                                        node_unit,
-                                        input_names[0],
-                                        input_shape,
-                                        input_qnn_dtype,
-                                        output_name,
-                                        do_op_validation);
+      return EmitSignAbsCastDecomposition(qnn_model_wrapper,
+                                          node_unit,
+                                          input_names[0],
+                                          input_shape,
+                                          input_qnn_dtype,
+                                          output_name,
+                                          do_op_validation);
+    }
+    // NotEqual(x, 0.f) — the zero constant was already appended in ProcessInputs.
+    const std::string notequal_node_name = utils::UniqueNameGenerator().New(node_unit);
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(notequal_node_name,
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_NOT_EQUAL,
+                                                  std::move(input_names),
+                                                  {output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to create NotEqual node.");
+    return Ort::Status();
   }
 
-  // 6. Otherwise emit a single node: NotEqual for non-HTP fp -> bool, plain Cast otherwise.
-  const bool use_notequal = ShouldUseNotEqualForFpToBoolCast(qnn_model_wrapper, node_unit);
-  const std::string qnn_op_type = use_notequal
-                                      ? QNN_OP_ELEMENT_WISE_NOT_EQUAL
-                                      : GetQnnOpType(node_unit.OpType());
-
-  std::vector<std::string> param_tensor_names;
+  // 6. Regular one-to-one Cast.
   const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                qnn_op_type,
+                                                GetQnnOpType(node_unit.OpType()),
                                                 std::move(input_names),
                                                 {output_name},
-                                                std::move(param_tensor_names),
+                                                {},
                                                 do_op_validation),
-                ("Failed to create " + qnn_op_type + " node.").c_str());
+                "Failed to create Cast node.");
 
   return Ort::Status();
 }
