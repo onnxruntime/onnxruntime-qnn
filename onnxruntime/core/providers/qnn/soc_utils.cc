@@ -3,6 +3,7 @@
 
 #include <climits>
 #include <stdint.h>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #ifdef _WIN32
