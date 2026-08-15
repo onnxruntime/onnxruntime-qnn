@@ -58,6 +58,7 @@ class OpBuilderRegistrations {
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type);
 
 void CreateArgMaxMinOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBernoulliOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateCastOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -88,6 +89,7 @@ void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_r
 void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateMaxRoiPoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonMaxSuppressionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

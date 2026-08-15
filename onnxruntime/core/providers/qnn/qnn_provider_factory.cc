@@ -98,6 +98,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
                                              &mem_info);
   if (status != nullptr) {
     ort_api.ReleaseMemoryInfo(mem_info);
+    ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }

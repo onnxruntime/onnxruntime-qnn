@@ -13,6 +13,7 @@ namespace qnn {
 OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
+  CreateAttentionOpBuilder("Attention", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateBernoulliOpBuilder("Bernoulli", *this);
   CreateCastOpBuilder("Cast", *this);
@@ -45,6 +46,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
+  CreateMaxRoiPoolOpBuilder("MaxRoiPool", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
   CreateNonMaxSuppressionOpBuilder("NonMaxSuppression", *this);

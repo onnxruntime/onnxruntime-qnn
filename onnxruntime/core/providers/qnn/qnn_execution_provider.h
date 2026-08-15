@@ -30,6 +30,7 @@
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
+#include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
@@ -196,8 +197,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
     const QnnEp& ep_;
   };
 
-  // Will return true if any power config options need to be updated
-  bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
+  // Retrieves per-thread HTP power configurations from run options
+  void GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
 
   void CreateHtpPowerConfigId() const;
@@ -242,8 +243,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Configurations for HTP backend.
   uint32_t device_id_{0};
   qnn::HtpPerformanceMode default_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
+  qnn::HtpPerformanceMode dynamic_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
+  uint32_t dynamic_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 

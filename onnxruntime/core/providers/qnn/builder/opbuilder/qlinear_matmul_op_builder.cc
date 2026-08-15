@@ -32,12 +32,6 @@ static constexpr size_t kIdxBZeroPoint = 5;
 static constexpr size_t kIdxYScale = 6;
 static constexpr size_t kIdxYZeroPoint = 7;
 
-namespace {
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-}  // namespace
-
 /**
  * Translates ONNX QLinearMatMul into a QNN MatMul or FullyConnected node.
  *
@@ -251,8 +245,8 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
   // per-channel quantized with rank > 2.
   use_fully_connected = use_fully_connected && !(quant_a.IsPerChannel() && shape_a.size() > 2);
   // Don't use FullyConnected if both inputs are dynamic and 16-bit quantized (QNN validation fails).
-  use_fully_connected = use_fully_connected && !(IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
-                                                 IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
+  use_fully_connected = use_fully_connected && !(utils::IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
+                                                 utils::IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
   return use_fully_connected;
 #endif
 }

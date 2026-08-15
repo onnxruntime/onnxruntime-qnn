@@ -509,6 +509,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:ArgMin||
 |ai.onnx:Asin||
 |ai.onnx:Atan||
+|ai.onnx:Attention|Opsets 23–24. 3D \[B,S,n·hs\] and 4D \[B,n,S,hs\] inputs. HTP: full decomposition for MHA, GQA/MQA, is\_causal, attn\_mask, softcap, KV cache, qk\_matmul\_output modes 0–3. GPU: native QNN\_OP\_GROUP\_QUERY\_ATTENTION when is\_causal=1 and no softcap/attn\_mask/qk\_output (covers MHA and GQA/MQA); decomposition otherwise. Static shapes only.|
 |ai.onnx:AveragePool||
 |ai.onnx:Bernoulli|CPU and HTP backends supported.|
 |ai.onnx:BatchNormalization|fp16 supported since 1.18.0|
@@ -567,6 +568,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
 |ai.onnx:MaxPool||
+|ai.onnx:MaxRoiPool|rois must be a constant initializer|
 |ai.onnx:Mean||
 |ai.onnx:Min||
 |ai.onnx:Mod||
@@ -1491,7 +1493,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 
 ## Error handling
 ### HTP SubSystem Restart - [SSR](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#subsystem-restart-ssr-)
-QNN EP returns StatusCode::ENGINE_ERROR regarding QNN HTP SSR issue. Uppper level framework/application should recreate Onnxruntime session if this error detected during session run.
+When an unrecoverable SSR (NPU crash) is detected, QNN EP returns `ORT_DEVICE_RESET` on ONNX Runtime 1.28.0+, or `ORT_ENGINE_ERROR` (`StatusCode::ENGINE_ERROR`) on older ONNX Runtime versions. Either way, the upper level framework/application should recreate the ONNX Runtime session if this error is detected during session run.
 
 
 ## Add new operator support in QNN EP
