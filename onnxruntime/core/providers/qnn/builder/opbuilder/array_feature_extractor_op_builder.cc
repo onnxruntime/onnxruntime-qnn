@@ -54,27 +54,27 @@ Ort::Status ArrayFeatureExtractorOpBuilder::IsOpSupported(QnnModelWrapper& qnn_m
                                                           const Ort::Logger& logger) const {
   const auto& inputs = node_unit.Inputs();
   RETURN_IF(inputs.size() != 2,
-            "QNN EP: ArrayFeatureExtractor must have exactly two inputs (X, Y).");
+            "ArrayFeatureExtractor must have exactly two inputs (X, Y).");
 
   // Validate X dtype: float32, int32, int64 are accepted; double and string are not.
   const ONNXTensorElementDataType x_type = inputs[0].type;
   RETURN_IF(x_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE ||
                 x_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING,
-            "QNN EP: ArrayFeatureExtractor does not support double or string X input.");
+            "ArrayFeatureExtractor does not support double or string X input.");
 
   // Validate X rank >= 1.
   std::vector<uint32_t> x_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, x_shape),
-                "QNN EP: Cannot get shape for ArrayFeatureExtractor input X.");
+                "Cannot get shape for ArrayFeatureExtractor input X.");
   RETURN_IF(x_shape.empty(),
-            "QNN EP: ArrayFeatureExtractor requires X rank >= 1.");
+            "ArrayFeatureExtractor requires X rank >= 1.");
 
   // Reject scalar Y (rank-0 indices). ORT does not infer the output shape for
   // ai.onnx.ml.ArrayFeatureExtractor when Y is scalar, so QnnModel::SetGraphInputOutputInfo
   // would throw at compile time. Falls back to CPU for this edge case.
   const auto& y_input = inputs[1];
   if (y_input.shape.has_value() && y_input.shape->empty()) {
-    return MAKE_EP_FAIL("QNN EP: ArrayFeatureExtractor does not support scalar (rank-0) Y indices.");
+    return MAKE_EP_FAIL("ArrayFeatureExtractor does not support scalar (rank-0) Y indices.");
   }
 
   // Skip BaseOpBuilder::IsOpSupported — it calls ProcessDataTypes, which calls GetTensorInfo
@@ -153,7 +153,7 @@ Ort::Status ArrayFeatureExtractorOpBuilder::ProcessInputs(QnnModelWrapper& qnn_m
           idx += axis_dim;
         }
         RETURN_IF_NOT(idx >= 0 && idx < axis_dim,
-                      "QNN EP: ArrayFeatureExtractor static indices contain out-of-bounds values.");
+                      "ArrayFeatureExtractor static indices contain out-of-bounds values.");
         dst[i] = static_cast<int32_t>(idx);
       }
       y_info.qnn_data_type = QNN_DATATYPE_INT_32;
@@ -168,7 +168,7 @@ Ort::Status ArrayFeatureExtractorOpBuilder::ProcessInputs(QnnModelWrapper& qnn_m
           idx += static_cast<int32_t>(axis_dim);
         }
         RETURN_IF_NOT(idx >= 0 && static_cast<int64_t>(idx) < axis_dim,
-                      "QNN EP: ArrayFeatureExtractor static indices contain out-of-bounds values.");
+                      "ArrayFeatureExtractor static indices contain out-of-bounds values.");
         dst[i] = idx;
       }
     } else {
@@ -187,7 +187,7 @@ Ort::Status ArrayFeatureExtractorOpBuilder::ProcessInputs(QnnModelWrapper& qnn_m
                                      std::move(y_info.shape),
                                      std::move(qnn_indices_bytes));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(y_tensorwrapper)),
-                  "QNN EP: Failed to add Y tensor for ArrayFeatureExtractor.");
+                  "Failed to add Y tensor for ArrayFeatureExtractor.");
   }
 
   // Insert Cast node for dynamic int64 indices → int32.
@@ -223,7 +223,7 @@ Ort::Status ArrayFeatureExtractorOpBuilder::ProcessAttributesAndOutputs(
   // axis = rank(X) - 1 (fixed by ONNX spec for ArrayFeatureExtractor).
   const auto& x_tw = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
   const uint32_t x_rank = x_tw.GetTensorRank();
-  RETURN_IF(x_rank == 0, "QNN EP: ArrayFeatureExtractor requires X rank >= 1.");
+  RETURN_IF(x_rank == 0, "ArrayFeatureExtractor requires X rank >= 1.");
   const int32_t axis = static_cast<int32_t>(x_rank - 1);
 
   std::vector<std::string> param_tensor_names;
@@ -271,7 +271,7 @@ Ort::Status ArrayFeatureExtractorOpBuilder::ProcessAttributesAndOutputs(
                                       x_was_int64 ? QnnQuantParamsWrapper() : quant_param.Copy(),
                                       std::vector<uint32_t>(output_shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(gather_out_wrapper)),
-                "QNN EP: Failed to add Gather output tensor for ArrayFeatureExtractor.");
+                "Failed to add Gather output tensor for ArrayFeatureExtractor.");
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -280,7 +280,7 @@ Ort::Status ArrayFeatureExtractorOpBuilder::ProcessAttributesAndOutputs(
                                                 {gather_out_name},
                                                 std::move(param_tensor_names),
                                                 do_op_validation),
-                "QNN EP: Failed to create Gather node for ArrayFeatureExtractor.");
+                "Failed to create Gather node for ArrayFeatureExtractor.");
 
   // Cast int32 Gather output back to int64 if X was originally int64.
   if (needs_int64_cast) {

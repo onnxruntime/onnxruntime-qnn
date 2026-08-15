@@ -116,6 +116,15 @@ TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Int64_2D) {
       ExpectedEPNodeAssignment::All);
 }
 
+// Negative int64 indices (static initializer): -2 → axis_dim-2, -1 → axis_dim-1.
+// Exercises the idx += axis_dim normalisation in ProcessInputs.
+TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Int32_2D_NegativeIndices) {
+  RunArrayFeatureExtractorTest<int32_t, int64_t>(
+      TestInputDef<int32_t>({3, 4}, false, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}),
+      TestInputDef<int64_t>({2}, true, {-2, -1}),  // normalised to [2, 3]
+      ExpectedEPNodeAssignment::All);
+}
+
 // ---------------------------------------------------------------------------
 // Scalar index test
 // ---------------------------------------------------------------------------
