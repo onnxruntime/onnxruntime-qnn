@@ -25,6 +25,19 @@ namespace test {
  * \return A function that builds the graph with the provided builder.
  */
 template <typename InputType>
+static GetTestModelFn BuildCastTestCaseWithData(const std::vector<int64_t>& shape,
+                                                ONNX_NAMESPACE::TensorProto_DataType dst_type,
+                                                const std::vector<InputType>& input_data) {
+  return [shape, dst_type, input_data](ModelTestBuilder& builder) {
+    builder.MakeInput<InputType>("X", shape, input_data);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("to", static_cast<int64_t>(dst_type)));
+    builder.AddNode("cast", "Cast", {"X"}, {"Y"}, "", attributes);
+    builder.MakeOutput("Y");
+  };
+}
+
+template <typename InputType>
 static GetTestModelFn BuildCastTestCase(const std::vector<int64_t>& shape,
                                         ONNX_NAMESPACE::TensorProto_DataType dst_type) {
   return [shape, dst_type](ModelTestBuilder& builder) {
@@ -298,6 +311,18 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
                        ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                        ExpectedEPNodeAssignment::All,
                        "htp");
+}
+
+// Cast(fp32 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
+// Guards the Sign -> Abs -> Cast lowering in cast_op_builder.cc.
+TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
+  RunQnnModelTest(BuildCastTestCaseWithData<float>(
+                      {8},
+                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
+                      {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f}),
+                  GetProviderOption("htp", false),
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Cast float16 to bool on HTP.
