@@ -18,17 +18,34 @@ expected by run_tests.{ps1,sh} and the test binaries.
 
 import argparse
 import hashlib
+import http.client
 import logging
+import os
 import re
 import shutil
 import tarfile
+import time
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
+
+# Persistent download cache root, matching package_manager.py's FileCache so we reuse the same
+# on-disk file (see ort_core_cache_path below). Kept outside build/ so `git clean -ffdx` can't wipe
+# it. Stdlib-only: this script runs on the bare interpreter (no venv), so it can't import FileCache
+# (certifi/tqdm/yaml).
+DEFAULT_CACHE_ROOT = Path(
+    os.environ.get("ORT_BUILD_PACKAGE_CACHE_PATH", str((Path("~") / ".ort-package-cache").expanduser()))
+)
+
+# GitHub's codeload endpoint drops large transfers mid-stream (http.client.IncompleteRead) under
+# throttling; retry with exponential backoff before giving up.
+DOWNLOAD_ATTEMPTS = int(os.environ.get("ORT_BUILD_DOWNLOAD_ATTEMPTS", "3"))
+DOWNLOAD_BACKOFF_BASE_SECONDS = float(os.environ.get("ORT_BUILD_DOWNLOAD_BACKOFF_SECONDS", "2"))
 
 __all__ = [
     "OrtCoreDep",
@@ -60,6 +77,13 @@ def parse_deps_txt(deps_file: Path) -> OrtCoreDep:
     raise ValueError(f"ort_core entry not found in {deps_file}")
 
 
+def ort_core_cache_path(cache_root: Path, url: str) -> Path:
+    """Location of the cached ort_core zip, matching package_manager.py's FileCache layout
+    (<root>/ort_core/<url-basename>, e.g. <root>/ort_core/v1.27.0.zip) so a zip already fetched by
+    fetch_cmake_deps.py on a persistent runner is reused instead of re-downloaded."""
+    return cache_root / "ort_core" / PurePosixPath(urlparse(url).path).name
+
+
 def _sha1_of(path: Path) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as f:
@@ -87,12 +111,33 @@ def download_and_verify(url: str, sha1: str, cache_path: Path) -> Path:
             actual,
         )
         cache_path.unlink()
-    logging.info("Downloading %s -> %s", url, cache_path)
-    urlretrieve(url, cache_path)
-    actual = _sha1_of(cache_path)
-    if actual != sha1.lower():
-        raise ValueError(f"SHA1 mismatch on freshly downloaded {cache_path}: expected {sha1}, got {actual}")
-    return cache_path
+
+    last_error: Exception | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            logging.info("Downloading %s -> %s (attempt %d/%d)", url, cache_path, attempt, DOWNLOAD_ATTEMPTS)
+            urlretrieve(url, cache_path)
+            actual = _sha1_of(cache_path)
+            if actual != sha1.lower():
+                raise ValueError(f"SHA1 mismatch on freshly downloaded {cache_path}: expected {sha1}, got {actual}")
+            return cache_path
+        except (OSError, http.client.HTTPException, ValueError) as e:
+            # OSError (urllib/socket), HTTPException (IncompleteRead — not an OSError), and our own
+            # SHA1 ValueError all mean a bad/partial body; drop it so the next attempt starts clean.
+            last_error = e
+            cache_path.unlink(missing_ok=True)
+            if attempt < DOWNLOAD_ATTEMPTS:
+                delay = DOWNLOAD_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+                logging.warning(
+                    "Download attempt %d/%d for %s failed: %s. Retrying in %.0fs.",
+                    attempt,
+                    DOWNLOAD_ATTEMPTS,
+                    url,
+                    e,
+                    delay,
+                )
+                time.sleep(delay)
+    raise RuntimeError(f"Failed to download {url} after {DOWNLOAD_ATTEMPTS} attempt(s).") from last_error
 
 
 # Maps each handle name to its source path. Handle names must match MAPPING in extract_testdata.py.
@@ -160,11 +205,21 @@ def main() -> int:
         default=REPO_ROOT / "build",
         help="Directory to write onnxruntime-testdata.{zip,tar.bz2} into.",
     )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=DEFAULT_CACHE_ROOT,
+        help=(
+            "Persistent cache root for the ort_core zip. Defaults to ORT_BUILD_PACKAGE_CACHE_PATH "
+            "(the same root as package_manager.py), so the ~278 MiB zip is shared with the build's "
+            "fetch_cmake_deps download and survives `git clean` across CI runs."
+        ),
+    )
     args = parser.parse_args()
 
     dep = parse_deps_txt(REPO_ROOT / "cmake" / "deps.txt")
 
-    cache_zip = args.build_dir / "ort_core.zip"
+    cache_zip = ort_core_cache_path(args.cache_dir, dep.url)
     download_and_verify(dep.url, dep.sha1, cache_zip)
 
     extract_root = args.build_dir / "ort_core-src"

@@ -81,12 +81,9 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   // Create Sin node: input -> sin_out
   std::vector<std::string> sin_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_Sin",
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIN),
-                                         QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, sin_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Sin"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_UNARY,
+                                                QNN_OP_ELEMENT_WISE_SIN,
                                                 {input_names[0]},
                                                 {sin_output_name},
                                                 std::move(sin_param_names),
@@ -95,12 +92,9 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   // Create Cos node: input -> cos_out
   std::vector<std::string> cos_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_Cos",
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_UNARY_OPERATION_COS),
-                                         QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, cos_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Cos"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_UNARY,
+                                                QNN_OP_ELEMENT_WISE_COS,
                                                 {input_names[0]},
                                                 {cos_output_name},
                                                 std::move(cos_param_names),
@@ -118,12 +112,9 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   // Create Div node: sin_out / cos_out -> output
   std::string div_node_name = utils::UniqueNameGenerator().New(node_unit, "_Div");
   std::vector<std::string> div_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), div_node_name,
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
-                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                QNN_OP_ELEMENT_WISE_DIVIDE,
                                                 {sin_output_name, cos_output_name},
                                                 {output_name},
                                                 std::move(div_param_names),

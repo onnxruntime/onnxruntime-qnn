@@ -553,6 +553,10 @@ class QnnModelWrapper {
 
   bool ProcessBF16Conversions(std::vector<QnnOpProperty>& final_ops);
 
+  // QNN requires node names to be unique within a graph. Reserve names here,
+  // where every composed QNN node is collected.
+  std::string MakeUniqueQnnNodeName(const std::string& requested_name);
+
   const std::string* GetTensorNameOverride(const std::string& internal) const;
 
   const OrtGraph& ort_graph_;
@@ -573,6 +577,7 @@ class QnnModelWrapper {
   // All QnnParamWrapper for the graph
   std::unordered_map<std::string, QnnParamWrapper> model_params_map_;
   std::vector<QnnOpProperty> qnn_op_property_list_;
+  std::unordered_set<std::string> qnn_node_names_;
   // <tensor_name, qnn_tensor_id> -- stores the QNN-assigned ID once the tensor is created
   // it includes normal qnn_tensors and qnn_tensors inside param_tensors
   std::unordered_map<std::string, uint32_t> qnn_tensor_id_map_;

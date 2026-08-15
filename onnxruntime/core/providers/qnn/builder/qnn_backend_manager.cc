@@ -343,6 +343,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                           QNN_API_VERSION_PATCH},
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  htp_power_config_manager_.Init(qnn_interface_);
   backend_id_ = backend_interface_provider->backendId;
   core_api_version_ = backend_interface_provider->apiVersion.coreApiVersion;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
@@ -410,6 +411,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
        QNN_API_VERSION_PATCH},
       &serializer_interface_provider)));
   qnn_interface_ = serializer_interface_provider->QNN_INTERFACE_VER_NAME;  // NOTE: QnnSaver/Ir will provide the interfaces
+  htp_power_config_manager_.Init(qnn_interface_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   Qnn_Version_t serializer_interface_version = GetQnnInterfaceApiVersion(serializer_interface_provider);
@@ -2255,9 +2257,21 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
   return status;
 }
 
-Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
-                                                   uint32_t core_id,
-                                                   uint32_t& htp_power_config_id) {
+Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
+  RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
+  htp_power_config_manager_.CreateTimerThread(htp_power_config_id);
+  return Ort::Status();
+}
+
+void QnnBackendManager::DeInitializePerfTimer() {
+  htp_power_config_manager_.ReleaseTimerThread();
+}
+
+void QnnBackendManager::DropBoostedPowerConfigId(uint32_t htp_power_config_id) {
+  htp_power_config_manager_.DropBoostedPowerConfigId(htp_power_config_id);
+}
+
+Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
   // create an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
@@ -2277,26 +2291,6 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                                  HtpPerformanceMode htp_performance_mode,
-                                                  uint32_t rpc_polling_time,
-                                                  uint32_t rpc_control_latency) {
-  // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
-  // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
-  // set an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
-  RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
-  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time, *logger_ptr_));
-  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency, *logger_ptr_));
-  RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(htp_performance_mode,
-                                                                  htp_power_config_client_id,
-                                                                  *logger_ptr_));
-  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_client_id,
-                                                           GetQnnInterface(),
-                                                           *logger_ptr_));
-
-  return Ort::Status();
-}
-
 Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run) {
   PerThreadHtpPowerConfigs_t htp_power_configs;
   if (!GetPerThreadHtpPowerConfigMapping(thread_id, htp_power_configs)) {
@@ -2305,29 +2299,23 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
 
   auto htp_power_config_id = htp_power_configs.power_config_id;
   if (pre_run) {
+    // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.pre_run_perf_mode,
-                                                                      htp_power_config_id,
-                                                                      *logger_ptr_));
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_START, config, *logger_ptr_));
+    } else if (htp_power_configs.default_perf_mode.has_value()) {
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_START, config, *logger_ptr_));
     }
-
-    if (htp_power_configs.rpc_control_latency.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(*htp_power_configs.rpc_control_latency,
-                                                                     *logger_ptr_));
+  } else {
+    if (htp_power_configs.post_run_perf_mode.has_value()) {
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
+    } else if (htp_power_configs.default_perf_mode.has_value()) {
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
     }
-
-    if (htp_power_configs.rpc_polling_time.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(*htp_power_configs.rpc_polling_time,
-                                                                  *logger_ptr_));
-    }
-  } else if (htp_power_configs.post_run_perf_mode.has_value()) {
-    RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.post_run_perf_mode,
-                                                                    htp_power_config_id,
-                                                                    *logger_ptr_));
   }
-
-  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_id, GetQnnInterface(), *logger_ptr_));
-
   return Ort::Status();
 }
 
@@ -2362,7 +2350,7 @@ void QnnBackendManager::RemovePerThreadHtpPowerConfigMapping(const std::thread::
   per_thread_power_configs_.erase(thread_id);
 }
 
-Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config_id) {
+Ort::Status QnnBackendManager::DestroyHtpPowerConfigId(uint32_t htp_power_config_id) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
   RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
@@ -2409,6 +2397,15 @@ Ort::Status QnnBackendManager::TerminateQnnLog() {
 void QnnBackendManager::ReleaseResources() {
   // Each sub-function guards against releasing resources that were never created,
   // so all calls are safe regardless of how far setup progressed.
+
+  // Tear down the HTP release timer FIRST. Its callback drives the QNN device
+  // (SetPowerConfig), so it must be joined before the device/context is released
+  // to avoid the callback touching freed QNN handles. Tying timer teardown to the
+  // manager's lifetime (rather than to an individual QnnEp destructor) is also
+  // what makes a shared manager safe: the timer now dies with the manager (the
+  // last session out), not when the first sharing session is destroyed.
+  DeInitializePerfTimer();
+
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());

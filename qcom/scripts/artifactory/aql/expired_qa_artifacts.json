@@ -6,7 +6,7 @@
                     "repo": "${repo}",
                     "$and": [
                         {
-                            "created": { "$before": "30d" },
+                            "created": { "$before": "60d" },
                             "path": { "$match": "qa/*" }
                         }
                     ]
