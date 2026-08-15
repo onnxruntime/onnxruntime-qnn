@@ -792,6 +792,36 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelMalformed_Succeeds) {
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelStringName_SM8750_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("soc_model")] = "SM8750";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelStringName_Lowercase_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("soc_model")] = "sm8550";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelStringName_UnrecognizedName_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("soc_model")] = "FOOBAR";
+  auto factory = MakeFactory(ctx);
+  // Unrecognized name falls back to UNKNOWN (0) with a warning — must not throw.
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelBf16WithStringName_Throws) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_bf16_enable")] = "1";
+  ctx.session_config[EPKey("soc_model")] = "SM8550";  // maps to 43, which is < 88
+  auto factory = MakeFactory(ctx);
+  EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+}
+
 // Non-writable json_qnn_graph_dir exercises ProbeDumpDirectoryWritable's
 // failure branch; ctor recovers (disables dump internally) rather than throwing.
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpJsonGraphDirNonWritable_Succeeds) {

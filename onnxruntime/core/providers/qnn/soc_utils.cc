@@ -1,7 +1,9 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#include <climits>
 #include <stdint.h>
+#include <string_view>
 #include <unordered_map>
 #ifdef _WIN32
 #include <windows.h>
@@ -210,6 +212,112 @@ bool HasFastRpcCdspDevice() {
 #else
   return false;
 #endif
+}
+
+uint32_t SocModelFromName(std::string_view name) {
+  // Static lookup table with UPPERCASE keys matching QNN SDK Qnn_SocModel_t enum values.
+  // All named entries from QNN/QnnTypes.h are included (value 0 = UNKNOWN is the default).
+  static const std::unordered_map<std::string, uint32_t> kSocModelNameMap = {
+      {"SDM845", 1},
+      {"SDM835", 2},
+      {"SDM821", 3},
+      {"SDM820", 4},
+      {"SDM801", 5},
+      {"SDM670", 6},
+      {"SDM660", 7},
+      {"SDM652", 8},
+      {"SDM636", 9},
+      {"SDM630", 10},
+      {"SDM625", 11},
+      {"SDM855", 12},
+      {"SDM710", 13},
+      {"SDM632", 15},
+      {"SM6150", 16},
+      {"SM7150", 17},
+      {"QCS405", 18},
+      {"SM6125", 19},
+      {"QCS403", 20},
+      {"SDM865", 21},
+      {"IPQ6018", 23},
+      {"IPQ6028", 24},
+      {"SM7250", 25},
+      {"SA8195", 26},
+      {"SM6250", 27},
+      {"SM4250", 28},
+      {"SM6350", 29},
+      {"SM8350", 30},
+      {"SM4350", 31},
+      {"SM7350", 32},
+      {"QCS410", 33},
+      {"SM8325", 34},
+      {"SM7325", 35},
+      {"SM8450", 36},
+      {"SC8280X", 37},
+      {"SM7315", 38},
+      {"SA8295", 39},
+      {"SM6225", 40},
+      {"SM7450", 41},
+      {"SM8475", 42},
+      {"SM8550", 43},
+      {"SXR1230P", 45},
+      {"SSG2115P", 46},
+      {"STP6225P", 47},
+      {"QCS6125", 48},
+      {"QRB4210", 49},
+      {"SM6450", 50},
+      {"QCS7230", 51},
+      {"SA8255", 52},
+      {"SXR2230P", 53},
+      {"SM7475", 54},
+      {"SM4375", 55},
+      {"QCM4325", 56},
+      {"SM8650", 57},
+      {"SSG2125P", 58},
+      {"SM4450", 59},
+      {"SC8380XP", 60},
+      {"SM7435", 61},
+      {"SA8540", 62},
+      {"AIC100", 63},
+      {"SM7550", 64},
+      {"SM6450Q", 65},
+      {"QCS8550", 66},
+      {"SA8620P", 67},
+      {"SM8635", 68},
+      {"SM8750", 69},
+      {"SM7675", 70},
+      {"SM4635", 71},
+      {"SA8797", 72},
+      {"SM7635", 73},
+      {"SM6650", 74},
+      {"SXR2330P", 75},
+      {"SM6475", 76},
+      {"QCS9100", 77},
+      {"QCM6690", 78},
+      {"IPQ9574", 79},
+      {"IPQ5404", 80},
+      {"IPQ5424", 81},
+      {"QCS8300", 82},
+      {"QCS2290", 83},
+      {"SA525M", 84},
+      {"SM8735", 85},
+      {"SM7750", 86},
+      {"SM8850", 87},
+      {"DYNAMIC_SDM", static_cast<uint32_t>(INT_MAX)},
+  };
+
+  // Uppercase input for case-insensitive lookup (ASCII-only, no locale dependency).
+  std::string upper;
+  upper.reserve(name.size());
+  for (char c : name) {
+    upper += static_cast<char>(
+        (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c);
+  }
+
+  auto it = kSocModelNameMap.find(upper);
+  if (it != kSocModelNameMap.end()) {
+    return it->second;
+  }
+  return 0;
 }
 
 }  // namespace soc
