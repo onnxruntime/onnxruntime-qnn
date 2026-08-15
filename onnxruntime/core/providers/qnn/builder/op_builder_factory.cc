@@ -19,7 +19,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateConcatOpBuilder("Concat", *this);
   CreateConvOpBuilder("Conv", *this);
   CreateConvOpBuilder("ConvTranspose", *this);
-  CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateCumSumOpBuilder("CumSum", *this);
   CreateEinsumOpBuilder("Einsum", *this);
   CreateExpandOpBuilder("Expand", *this);
@@ -54,6 +53,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("GlobalAveragePool", *this);
   CreatePoolOpBuilder("GlobalMaxPool", *this);
   CreatePoolOpBuilder("MaxPool", *this);
+  CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
   CreateQuickGeluOpBuilder("QuickGelu", *this);
   CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);

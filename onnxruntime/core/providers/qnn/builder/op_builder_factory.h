@@ -63,7 +63,6 @@ void CreateCastOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_
 void CreateClipOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateConvOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateQLinearConvOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateCumSumOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateEinsumOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateExpandOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -95,6 +94,7 @@ void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& 
 void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateQLinearConvOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQLinearMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomNormalLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
