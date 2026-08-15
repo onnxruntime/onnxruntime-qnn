@@ -27,6 +27,65 @@ static GetTestModelFn WrapWithMLDomain(GetTestModelFn inner_fn) {
   };
 }
 
+// Runs a model on QNN EP only — no CPU reference session.
+// Use when the CPU EP rejects the inputs (e.g. negative indices, which are
+// outside the ONNX spec for ArrayFeatureExtractor but handled defensively
+// by the QNN EP builder). Verifies EP assignment and compares output against
+// hardcoded expected values.
+template <typename OutputType>
+static void RunQnnOnlyModelTest(
+    const GetTestModelFn& build_test_case,
+    const std::vector<OutputType>& expected_output,
+    const std::vector<int64_t>& expected_shape) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 9}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  build_test_case(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    auto* opset = helper.model_.add_opset_import();
+    opset->set_domain(domain);
+    opset->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+  TryEnableQNNSaver(provider_options);
+
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+
+  RegisteredEpDeviceUniquePtr ep_device;
+  const std::string registration_name = "QNNExecutionProvider";
+  RegisterQnnEpLibrary(ep_device, session_options, registration_name, provider_options);
+
+  ScopedOrtSession scoped(std::move(ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(),
+                                       model_data.size(), session_options));
+
+  ASSERT_NO_FATAL_FAILURE(
+      VerifyEPNodeAssignment(scoped.session(), registration_name,
+                             ExpectedEPNodeAssignment::All));
+
+  Ort::RunOptions run_options;
+  run_options.SetRunTag("QNN_EP_TestLogID");
+  std::vector<Ort::Value> fetches;
+  RunWithEP(scoped.session(), run_options, helper.feeds_, fetches);
+
+  ASSERT_EQ(fetches.size(), 1u);
+  const auto shape = fetches[0].GetTensorTypeAndShapeInfo().GetShape();
+  ASSERT_EQ(shape, expected_shape);
+  const OutputType* data = fetches[0].GetTensorData<OutputType>();
+  for (size_t i = 0; i < expected_output.size(); ++i) {
+    EXPECT_EQ(data[i], expected_output[i]) << "mismatch at index " << i;
+  }
+}
+
 // Runs an ArrayFeatureExtractor model on QNN HTP and compares outputs to CPU EP.
 // opset_version applies to the default "" (ai.onnx) domain, not ai.onnx.ml.
 // It must be >= 7 for ORT's layout transformer to allow QNN EP participation;
@@ -118,11 +177,18 @@ TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Int64_2D) {
 
 // Negative int64 indices (static initializer): -2 → axis_dim-2, -1 → axis_dim-1.
 // Exercises the idx += axis_dim normalisation in ProcessInputs.
+// Uses RunQnnOnlyModelTest because the CPU EP rejects negative indices.
 TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Int32_2D_NegativeIndices) {
-  RunArrayFeatureExtractorTest<int32_t, int64_t>(
-      TestInputDef<int32_t>({3, 4}, false, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}),
-      TestInputDef<int64_t>({2}, true, {-2, -1}),  // normalised to [2, 3]
-      ExpectedEPNodeAssignment::All);
+  // X[3,4], Y=[-2,-1] → normalised to [2,3] → output {2,3,6,7,10,11} shape (3,2).
+  RunQnnOnlyModelTest<int32_t>(
+      WrapWithMLDomain(
+          BuildOpTestCase<int32_t, int64_t>(
+              "afe_node", "ArrayFeatureExtractor",
+              {TestInputDef<int32_t>({3, 4}, false, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})},
+              {TestInputDef<int64_t>({2}, true, {-2, -1})},
+              {}, kAiOnnxMlDomain)),
+      /*expected_output=*/{2, 3, 6, 7, 10, 11},
+      /*expected_shape=*/{3, 2});
 }
 
 // ---------------------------------------------------------------------------
