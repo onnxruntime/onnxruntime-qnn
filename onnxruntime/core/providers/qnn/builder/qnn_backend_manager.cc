@@ -3055,14 +3055,30 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
   if (platform_info_ptr->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
     const QnnDevice_PlatformInfoV1_t& plt_info = platform_info_ptr->v1;
 
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                    ("GetPlatformInfo: numHwDevices=" + std::to_string(plt_info.numHwDevices)).c_str());
+
     for (uint32_t idx = 0; idx < plt_info.numHwDevices; ++idx) {
       const QnnDevice_HardwareDeviceInfo_t& hw_info = plt_info.hwDevices[idx];
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                      ("GetPlatformInfo: device[" + std::to_string(idx) +
+                       "] hw_version=" + std::to_string(hw_info.version) +
+                       " extensionPtr=" + (hw_info.v1.deviceInfoExtension ? "non-null" : "null"))
+                          .c_str());
       if (hw_info.version != QNN_DEVICE_HARDWARE_DEVICE_INFO_VERSION_1) {
         continue;
       }
 
       const auto* htp_ext = reinterpret_cast<const QnnHtpDevice_DeviceInfoExtension_t*>(hw_info.v1.deviceInfoExtension);
-      if (htp_ext && htp_ext->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP) {
+      if (htp_ext) {
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                        ("GetPlatformInfo: device[" + std::to_string(idx) +
+                         "] devType=" + std::to_string(static_cast<int>(htp_ext->devType)) +
+                         " arch=" + std::to_string(static_cast<int>(htp_ext->onChipDevice.arch)))
+                            .c_str());
+      }
+      if (htp_ext && (htp_ext->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP ||
+                      htp_ext->devType == QNN_HTP_DEVICE_TYPE_OFF_CHIP)) {
         htp_arch_internal_ = htp_ext->onChipDevice.arch;
         vtcm_size_internal_ = static_cast<uint32_t>(htp_ext->onChipDevice.vtcmSize);
         break;

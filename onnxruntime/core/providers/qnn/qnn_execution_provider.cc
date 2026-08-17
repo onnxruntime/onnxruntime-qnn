@@ -2063,6 +2063,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
+  // Populate HTP arch now that SetupBackend has resolved htp_arch_internal_.
+  // Not set for multi-SoC path; that path uses per-SoC htp_arch_per_soc_ arrays instead.
+  if (!ep->enable_multi_soc_ep_context_) {
+    ep->model_settings_.htp_arch = ep->qnn_backend_manager_->GetHtpArch();
+  }
+
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
     // Create the HTP power config id (and its release timer) for the main thread.
     // The perf mode itself is not voted here: it is applied around graph compile
