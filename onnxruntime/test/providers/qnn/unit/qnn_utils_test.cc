@@ -1401,6 +1401,49 @@ TEST(QnnUnit_UtilsTest, ConvertBlockQuantScalesToLpbq_UnsupportedBitwdithReturns
   EXPECT_FALSE(st.IsOK());
 }
 
+// =============================================================================
+// BroadcastShape — right-aligned broadcasting rules
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, BroadcastShape_SameShape) {
+  std::vector<uint32_t> a = {2, 3, 4};
+  std::vector<uint32_t> b = {2, 3, 4};
+  std::vector<uint32_t> out;
+  auto st = qnn::utils::BroadcastShape<uint32_t>(a, b, out);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(out, (std::vector<uint32_t>{2, 3, 4}));
+}
+
+TEST(QnnUnit_UtilsTest, BroadcastShape_DimOneBroadcasts) {
+  // {1, 3} vs {2, 1} → {2, 3}
+  std::vector<uint32_t> a = {1, 3};
+  std::vector<uint32_t> b = {2, 1};
+  std::vector<uint32_t> out;
+  auto st = qnn::utils::BroadcastShape<uint32_t>(a, b, out);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(out, (std::vector<uint32_t>{2, 3}));
+}
+
+TEST(QnnUnit_UtilsTest, BroadcastShape_DifferentRanksRightAligned) {
+  // {3} vs {2, 3} → {2, 3}
+  std::vector<uint32_t> a = {3};
+  std::vector<uint32_t> b = {2, 3};
+  std::vector<uint32_t> out;
+  auto st = qnn::utils::BroadcastShape<uint32_t>(a, b, out);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(out, (std::vector<uint32_t>{2, 3}));
+}
+
+TEST(QnnUnit_UtilsTest, BroadcastShape_HigherRankMixed) {
+  // {5, 1, 4} vs {3, 1} → {5, 3, 4}
+  std::vector<uint32_t> a = {5, 1, 4};
+  std::vector<uint32_t> b = {3, 1};
+  std::vector<uint32_t> out;
+  auto st = qnn::utils::BroadcastShape<uint32_t>(a, b, out);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(out, (std::vector<uint32_t>{5, 3, 4}));
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

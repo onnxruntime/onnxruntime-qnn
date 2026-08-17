@@ -270,7 +270,7 @@ Ort::Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Left-folds a variadic ONNX Sum/Max/Min (>=2 inputs) into a chain of QNN binary ops and builds
+// Left-folds a variadic ONNX Sum/Max/Min (>=2 inputs) into a chain of fine-grained QNN ops and builds
 // the final output node itself.
 // For quantized output: input->DQ->float32->Q->output
 //    The DQ process should've been added in ProcessInputs, written here to keep ProcessInputs clean
@@ -278,7 +278,7 @@ Ort::Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
 Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          std::vector<std::string>& input_names,
-                                         uint32_t binary_operation,
+                                         const std::string& qnn_op_type,
                                          bool do_op_validation) {
   const auto& inputs = node_unit.Inputs();
   const auto& output = node_unit.Outputs()[0];
@@ -311,13 +311,10 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
 
   auto add_binary = [&](const std::string& lhs, const std::string& rhs,
                         const std::string& out_name) -> Ort::Status {
-    const std::string node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    std::vector<std::string> params;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, binary_operation,
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, params));
+    const std::string node_name = utils::UniqueNameGenerator().New(node_unit, qnn_op_type);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY, {lhs, rhs}, {out_name},
-                                                  std::move(params), do_op_validation),
+                                                  qnn_op_type, {lhs, rhs}, {out_name},
+                                                  {}, do_op_validation),
                   "Failed to add binary node.");
     return Ort::Status();
   };
@@ -499,22 +496,16 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_ERROR(ProcessGridSampleAttributes(qnn_model_wrapper, node_unit, param_tensor_names));
   }
 
-  // Variadic Sum/Max/Min with > 2 inputs.  left-folded chain of QNN binary ops. The helper does its
+  // Variadic Sum/Max/Min with > 2 inputs.  left-folded chain of fine-grained QNN ops. The helper does its
   // own dequantize/fold/requantize and builds the output node itself, returns directly and
   // bypasses the base ProcessOutputs.
   // The 2-input case falls through to the ProcessOutputs path below (GetQnnOpType).
-  static const std::unordered_map<std::string, uint32_t> variadic_op_to_operation = {
-      {"Sum", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD},
-      {"Max", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MAXIMUM},
-      {"Min", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MINIMUM},
-  };
-  auto variadic_it = variadic_op_to_operation.find(op_type);
-  if (variadic_it != variadic_op_to_operation.end() && input_names.size() > 2) {
+  if ((op_type == "Sum" || op_type == "Max" || op_type == "Min") && input_names.size() > 2) {
     return ProcessVariadicToBinaryChain(qnn_model_wrapper, node_unit, input_names,
-                                        variadic_it->second, do_op_validation);
+                                        GetQnnOpType(op_type), do_op_validation);
   }
 
-
+  return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),
                         std::move(param_tensor_names),
                         logger, do_op_validation, GetQnnOpType(op_type));
