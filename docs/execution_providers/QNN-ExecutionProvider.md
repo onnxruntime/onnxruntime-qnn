@@ -1493,7 +1493,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 
 ## Error handling
 ### HTP SubSystem Restart - [SSR](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#subsystem-restart-ssr-)
-QNN EP returns StatusCode::ENGINE_ERROR regarding QNN HTP SSR issue. Uppper level framework/application should recreate Onnxruntime session if this error detected during session run.
+When an unrecoverable SSR (NPU crash) is detected, QNN EP returns `ORT_DEVICE_RESET` on ONNX Runtime 1.28.0+, or `ORT_ENGINE_ERROR` (`StatusCode::ENGINE_ERROR`) on older ONNX Runtime versions. Either way, the upper level framework/application should recreate the ONNX Runtime session if this error is detected during session run.
 
 
 ## Add new operator support in QNN EP

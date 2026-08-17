@@ -24,7 +24,11 @@ void OrtSelectors::RegisterSelector(const OrtOpVersionsAndSelector::OpVersionsMa
 
 namespace {
 
-// Helper function to extract the data type from a value info
+// =============================================================================
+// 1. ValueInfo / node metadata helpers
+// =============================================================================
+
+// 1.1 Extract the ONNX element type from a ValueInfo.
 std::optional<ONNXTensorElementDataType> GetDataTypeFromValueInfo(const OrtApi& ort_api,
                                                                   const OrtValueInfo* value_info) {
   const OrtTypeInfo* type_info = nullptr;
@@ -38,44 +42,58 @@ std::optional<ONNXTensorElementDataType> GetDataTypeFromValueInfo(const OrtApi& 
 
   ONNXTensorElementDataType element_type;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorElementType(tensor_info, &element_type), ort_api, std::nullopt);
-
   return element_type;
 }
 
-// Helper function to get the data type of a node's input at a given index
+// 1.2 Element type of `node`'s input[index].
 std::optional<ONNXTensorElementDataType> GetNodeInputDataType(const OrtNode* node, const OrtApi& ort_api, int index) {
   size_t num_defs = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_defs), ort_api, std::nullopt);
-
   if (index >= static_cast<int>(num_defs)) {
     return std::nullopt;
   }
-
   std::vector<const OrtValueInfo*> inputs(num_defs);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api, std::nullopt);
-
   return GetDataTypeFromValueInfo(ort_api, inputs[index]);
 }
 
-// Helper function to get the data type of a node's output at a given index
+// 1.3 Element type of `node`'s output[index].
 std::optional<ONNXTensorElementDataType> GetNodeOutputDataType(const OrtNode* node, const OrtApi& ort_api, int index) {
   size_t num_defs = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &num_defs), ort_api, std::nullopt);
-
   if (index >= static_cast<int>(num_defs)) {
     return std::nullopt;
   }
-
   std::vector<const OrtValueInfo*> outputs(num_defs);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api, std::nullopt);
-
   return GetDataTypeFromValueInfo(ort_api, outputs[index]);
 }
 
-// Forward declaration
+// 1.4 (rank, dim[0]) for a ValueInfo. Returns false on API failure.
+bool GetValueInfoRankAndFirstDim(const OrtApi& ort_api, const OrtValueInfo* value_info,
+                                 size_t& rank, int64_t& first_dim) {
+  const OrtTypeInfo* type_info = nullptr;
+  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) return false;
+  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
+  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr || tensor_info == nullptr) return false;
+  if (ort_api.GetDimensionsCount(tensor_info, &rank) != nullptr) return false;
+  first_dim = 0;
+  if (rank >= 1) {
+    std::vector<int64_t> dims(rank);
+    if (ort_api.GetDimensions(tensor_info, dims.data(), rank) != nullptr) return false;
+    first_dim = dims[0];
+  }
+  return true;
+}
+
+// =============================================================================
+// 2. Initializer / scalar readers
+// =============================================================================
+
+// 2.0 Forward decl — defined further below with the QDQ-pair helpers.
 const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_api, const char* name);
 
-// Helper to get a constant initializer OrtValue from a ValueInfo (combines name lookup + initializer fetch).
+// 2.1 Look up the constant initializer OrtValue backing a ValueInfo by name.
 const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi& ort_api,
                                             const OrtValueInfo* value_info) {
   const char* name = nullptr;
@@ -85,21 +103,30 @@ const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi&
   return GetConstantInitializer(graph, ort_api, name);
 }
 
-// Helper to read a scalar zero_point value from an OrtValue initializer
-// Returns the zero_point as int64_t and the corresponding Qnn_DataType_t
+// 2.2 Read a scalar of type T from an initializer.
+template <typename T>
+bool GetScalarValue(const OrtApi& ort_api, const OrtValue* initializer, T& value) {
+  T* data = nullptr;
+  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(initializer), (void**)&data) != nullptr) {
+    return false;
+  }
+  value = *data;
+  return true;
+}
+
+// 2.3 Read a scalar zero_point → (int64 value, matching QNN datatype).
 bool GetZeroPointValue(const OrtApi& ort_api, const OrtValue* zp_init,
                        int64_t& zero_point, Qnn_DataType_t& qnn_data_type) {
   OrtTensorTypeAndShapeInfo* zp_info = nullptr;
-  if (ort_api.GetTensorTypeAndShape(zp_init, &zp_info) != nullptr) {
-    return false;
-  }
+  if (ort_api.GetTensorTypeAndShape(zp_init, &zp_info) != nullptr) return false;
 
   ONNXTensorElementDataType zp_type;
-  if (ort_api.GetTensorElementType(zp_info, &zp_type) != nullptr) {
-    ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+  OrtStatus* status = ort_api.GetTensorElementType(zp_info, &zp_type);
+  ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
-  ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
 
   void* zp_data = nullptr;
   if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(zp_init), &zp_data) != nullptr || zp_data == nullptr) {
@@ -128,56 +155,33 @@ bool GetZeroPointValue(const OrtApi& ort_api, const OrtValue* zp_init,
   }
 }
 
-// Helper to read a scalar value of type T from an OrtValue initializer.
-template <typename T>
-bool GetScalarValue(const OrtApi& ort_api, const OrtValue* initializer, T& value) {
-  T* data = nullptr;
-  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(initializer), (void**)&data) != nullptr) {
-    return false;
-  }
-  value = *data;
-  return true;
-}
-
-// Helper to read scale and zero_point from a Q/DQ node.
-// Returns true if both scale and zero_point could be read successfully.
+// 2.4 Read scale (input[1]) and zero_point (input[2]) from a Q/DQ node.
 bool GetQNodeScaleAndZeroPoint(const OrtGraph* graph, const OrtApi& ort_api,
                                const OrtNode* q_node,
                                float& scale, int64_t& zero_point,
                                Qnn_DataType_t& qnn_data_type) {
   size_t num_inputs = 0;
-  if (ort_api.Node_GetNumInputs(q_node, &num_inputs) != nullptr || num_inputs < 3) {
-    return false;
-  }
+  if (ort_api.Node_GetNumInputs(q_node, &num_inputs) != nullptr || num_inputs < 3) return false;
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  if (ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size()) != nullptr) {
-    return false;
-  }
+  if (ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size()) != nullptr) return false;
 
-  // Read scale (input[1])
   const OrtValue* scale_init = GetInitializerFromValueInfo(graph, ort_api, inputs[1]);
-  if (scale_init == nullptr || !GetScalarValue(ort_api, scale_init, scale)) {
-    return false;
-  }
+  if (scale_init == nullptr || !GetScalarValue(ort_api, scale_init, scale)) return false;
 
-  // Read zero_point (input[2])
   const OrtValue* zp_init = GetInitializerFromValueInfo(graph, ort_api, inputs[2]);
-  if (zp_init == nullptr) {
-    return false;
-  }
+  if (zp_init == nullptr) return false;
 
   return GetZeroPointValue(ort_api, zp_init, zero_point, qnn_data_type);
 }
 
-// Helper to read Clip node's min and max values.
-// Handles both opset 6 (attributes) and opset 11+ (input initializers).
+// 2.5 Read Clip's [min, max]. Opset 6 stores them as attrs; opset 11+ as inputs[1..2] initializers.
 void GetClipMinMax(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* clip_node,
                    float& clip_min, float& clip_max) {
   clip_min = std::numeric_limits<float>::lowest();
   clip_max = std::numeric_limits<float>::max();
 
-  // Try attributes (opset 6)
+  // 2.5.1 Opset 6: attribute-carried min/max.
   OrtNodeAttrHelper clip_helper(*clip_node);
   if (clip_helper.HasAttr("min") || clip_helper.HasAttr("max")) {
     clip_min = clip_helper.Get("min", clip_min);
@@ -185,31 +189,232 @@ void GetClipMinMax(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* 
     return;
   }
 
-  // Opset 11+: read from input initializers
+  // 2.5.2 Opset 11+: initializer-carried min (input[1]) / max (input[2]).
   size_t clip_num_inputs = 0;
-  if (ort_api.Node_GetNumInputs(clip_node, &clip_num_inputs) != nullptr || clip_num_inputs < 2) {
-    return;
-  }
+  if (ort_api.Node_GetNumInputs(clip_node, &clip_num_inputs) != nullptr || clip_num_inputs < 2) return;
   std::vector<const OrtValueInfo*> clip_inputs(clip_num_inputs);
-  if (ort_api.Node_GetInputs(clip_node, clip_inputs.data(), clip_inputs.size()) != nullptr) {
-    return;
-  }
+  if (ort_api.Node_GetInputs(clip_node, clip_inputs.data(), clip_inputs.size()) != nullptr) return;
 
-  // input[1] = min
   if (clip_num_inputs >= 2 && clip_inputs[1] != nullptr) {
-    const OrtValue* min_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[1]);
-    if (min_init != nullptr) {
+    if (const OrtValue* min_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[1])) {
       GetScalarValue(ort_api, min_init, clip_min);
     }
   }
-
-  // input[2] = max
   if (clip_num_inputs >= 3 && clip_inputs[2] != nullptr) {
-    const OrtValue* max_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[2]);
-    if (max_init != nullptr) {
+    if (const OrtValue* max_init = GetInitializerFromValueInfo(graph, ort_api, clip_inputs[2])) {
       GetScalarValue(ort_api, max_init, clip_max);
     }
   }
+}
+
+// =============================================================================
+// 3. QDQ-unit fold helpers
+//
+//   Two related transforms that expand what the vanilla `DQ -> op -> Q` selector
+//   would otherwise pick up:
+//
+//     3a. TryFoldRedundantActivation:  DQ -> op -> Relu/Clip -> Q
+//         Fold the activation into the QDQ unit iff the terminal Q's encoding
+//         cannot represent values outside the activation's clamp range (else
+//         HTP would silently skip the clamp).
+//
+//     3b. TryAbsorbTrailingReshape:    Gemm -> Reshape -> [Relu/Clip ->] Q
+//         (MatMulAddFusion sandwich) Absorb the trailing Reshape (+ optionally
+//         Relu/Clip) so the group's output IODef inherits Q's encoding; the op
+//         builder then emits FC + Reshape.
+// =============================================================================
+
+// 3.0 Encoding-safe check for a Relu/Clip whose output is quantised by `q_node`.
+// Fuse is safe iff [encoding_min, encoding_max] ⊆ [activation_min, activation_max].
+bool IsActivationEncodingSafe(const OrtGraph* graph, const OrtApi& ort_api,
+                              const OrtNode* activation_node, const std::string& op_type,
+                              const OrtNode* q_node) {
+  float scale_val = 0.0f;
+  int64_t zero_point = 0;
+  Qnn_DataType_t qnn_dt = QNN_DATATYPE_UNDEFINED;
+  if (!GetQNodeScaleAndZeroPoint(graph, ort_api, q_node, scale_val, zero_point, qnn_dt)) return false;
+
+  int64_t qmin = 0, qmax = 0;
+  if (!qnn::utils::GetQminQmax(qnn_dt, qmin, qmax).IsOK()) return false;
+
+  const float encoding_min = scale_val * static_cast<float>(qmin - zero_point);
+  const float encoding_max = scale_val * static_cast<float>(qmax - zero_point);
+
+  float activation_min = 0.0f;  // Relu: [0, +inf)
+  float activation_max = std::numeric_limits<float>::max();
+  if (op_type == "Clip") {
+    GetClipMinMax(graph, ort_api, activation_node, activation_min, activation_max);
+  }
+  return encoding_min >= activation_min && encoding_max <= activation_max;
+}
+
+// 3.0.1 Convenience: does `value_info` have exactly one consumer AND is not a graph output?
+// Populates `sole_consumer` on success. Any API error → false.
+bool GetSoleNonOutputConsumer(const OrtApi& ort_api, const OrtValueInfo* value_info,
+                              const OrtNode*& sole_consumer) {
+  bool is_graph_output = false;
+  if (ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output) != nullptr || is_graph_output) return false;
+  size_t num_consumers = 0;
+  if (ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers) != nullptr || num_consumers != 1) return false;
+  int64_t unused_idx = 0;
+  if (ort_api.ValueInfo_GetValueConsumers(value_info, &sole_consumer, &unused_idx, 1) != nullptr) return false;
+  return sole_consumer != nullptr;
+}
+
+// 3.0.2 Convenience: get the single output ValueInfo of `node`. Returns nullptr on any deviation.
+const OrtValueInfo* GetSingleOutput(const OrtApi& ort_api, const OrtNode* node) {
+  size_t n = 0;
+  if (ort_api.Node_GetNumOutputs(node, &n) != nullptr || n != 1) return nullptr;
+  std::vector<const OrtValueInfo*> outs(1);
+  if (ort_api.Node_GetOutputs(node, outs.data(), 1) != nullptr) return nullptr;
+  return outs[0];
+}
+
+// 3a. Detect  node -> Relu/Clip -> Q  and, if encoding-safe, return the Relu/Clip so it
+//     folds into the QDQ unit. Returns nullptr on any mismatch.
+//
+// The encoding-safety gate matters: if the Q encoding can represent values outside the
+// activation's clamp range (e.g. Relu output → Q with zp != 0 permits negatives), then
+// HTP would NOT re-clamp under fusion and the model would be semantically wrong.
+const OrtNode* TryFoldRedundantActivation(const OrtGraph* graph, const OrtApi& ort_api,
+                                          const OrtNode* node) {
+  // 3a.1 node must have exactly one output; that output must have exactly one consumer
+  //      and must not be a graph output.
+  const OrtValueInfo* node_out = GetSingleOutput(ort_api, node);
+  if (node_out == nullptr) return nullptr;
+  const OrtNode* activation = nullptr;
+  if (!GetSoleNonOutputConsumer(ort_api, node_out, activation)) return nullptr;
+
+  // 3a.2 The consumer must be Relu or Clip, with exactly one output whose sole
+  //      consumer is a QuantizeLinear.
+  const std::string act_op = Ort::ConstNode(activation).GetOperatorType();
+  if (act_op != "Relu" && act_op != "Clip") return nullptr;
+  const OrtValueInfo* act_out = GetSingleOutput(ort_api, activation);
+  if (act_out == nullptr) return nullptr;
+  const OrtNode* q_node = nullptr;
+  if (!GetSoleNonOutputConsumer(ort_api, act_out, q_node)) return nullptr;
+  if (Ort::ConstNode(q_node).GetOperatorType() != "QuantizeLinear") return nullptr;
+
+  // 3a.3 Only fold when Q's encoding cannot represent values outside the activation range.
+  return IsActivationEncodingSafe(graph, ort_api, activation, act_op, q_node) ? activation : nullptr;
+}
+
+// 3b.0.0 Reject block-quantized weight (DQ scale is rank-2). BQ Gemm is handled by a
+//         separate path in the builder that emits FC → FP16 → Quantize; composing it with
+//         absorbed-Reshape isn't supported, so gate at the selector to keep the pre-existing
+//         BQ path + standalone Reshape (both QNN-supported).
+bool IsGemmWeightBlockQuantized(const OrtApi& ort_api, const OrtValueInfo* weight_vi) {
+  const OrtNode* dq = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(weight_vi, &dq, nullptr) != nullptr || dq == nullptr) return false;
+  if (Ort::ConstNode(dq).GetOperatorType() != "DequantizeLinear") return false;
+  size_t dq_num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(dq, &dq_num_inputs) != nullptr || dq_num_inputs < 2) return false;
+  std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
+  if (ort_api.Node_GetInputs(dq, dq_inputs.data(), dq_inputs.size()) != nullptr) return false;
+  size_t scale_rank = 0;
+  int64_t scale_dim0 = 0;
+  if (!GetValueInfoRankAndFirstDim(ort_api, dq_inputs[1], scale_rank, scale_dim0)) return false;
+  return scale_rank == 2;
+}
+
+// 3b.0 Split_gemm guard for the absorb-Reshape path.
+//   Reject when the vanilla Gemm builder would have split into FC + Add:
+//     - transB != 0                         (builder hard-asserts transB=0)
+//     - bias is 2-D with shape[0] != 1      (broadcast-bias split)
+//     - bias is produced by another op      (NATIVE bias split)
+//   Also reject block-quantized weight — handled by the BQ builder path.
+bool IsGemmSafeForAbsorbedReshape(const OrtApi& ort_api, const OrtNode* gemm_node) {
+  OrtNodeAttrHelper attrs(*gemm_node);
+  if (attrs.Get("transB", static_cast<int64_t>(0)) != 0) return false;
+
+  size_t num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(gemm_node, &num_inputs) != nullptr) return false;
+
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  if (ort_api.Node_GetInputs(gemm_node, inputs.data(), inputs.size()) != nullptr) return false;
+  if (num_inputs >= 2 && IsGemmWeightBlockQuantized(ort_api, inputs[1])) return false;
+
+  if (num_inputs < 3) return true;  // No bias → split_gemm never triggers.
+
+  const OrtValueInfo* bias_vi = inputs[2];
+  if (bias_vi == nullptr) return true;
+
+  // 3b.0.1 Shape gate: reject 2-D bias with shape[0] != 1.
+  size_t bias_rank = 0;
+  int64_t bias_dim0 = 0;
+  if (!GetValueInfoRankAndFirstDim(ort_api, bias_vi, bias_rank, bias_dim0)) return false;
+  if (bias_rank == 2 && bias_dim0 != 1) return false;
+
+  // 3b.0.2 NATIVE-bias gate: walk through a DQ (if any) to the true producer. If that
+  //         producer is another op, the bias is NATIVE (intermediate) and the builder
+  //         would have split_gemm'd.
+  const OrtNode* bias_producer = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(bias_vi, &bias_producer, nullptr) != nullptr) return false;
+  if (bias_producer == nullptr) return true;  // graph input / initializer
+
+  if (Ort::ConstNode(bias_producer).GetOperatorType() != "DequantizeLinear") {
+    return false;  // Bias directly produced by another op.
+  }
+  size_t dq_num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(bias_producer, &dq_num_inputs) != nullptr || dq_num_inputs == 0) return false;
+  std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
+  if (ort_api.Node_GetInputs(bias_producer, dq_inputs.data(), dq_inputs.size()) != nullptr) return false;
+  const OrtNode* upstream = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(dq_inputs[0], &upstream, nullptr) != nullptr) return false;
+  return upstream == nullptr;  // DQ's own input must originate at a graph input / initializer.
+}
+
+// 3b. Detect  Gemm -> Reshape -> [Relu/Clip ->] Q  (MatMulAddFusion sandwich) and, if
+//     safe, absorb the Reshape (+ optional activation) into the Gemm's QDQ unit.
+//
+// "Absorbed" means: the Reshape becomes part of the Gemm's QDQ group instead of a
+// standalone QNN op, and `gemm_op_builder` emits the pair as FC (rank-2, encoded) +
+// QNN Reshape (rank-N, same encoding).
+//
+// Reachability: ORT's L1 `QDQPropagationTransformer` propagates Q backwards across
+// Reshape (but not Relu/Clip), so `Gemm -> [Reshape] -> Q` is rewritten to
+// `Gemm -> Q -> DQ -> [Reshape] -> Q` before QNN EP runs — only the Relu/Clip chain
+// (3b.3.2) reaches this code today;
+// 3b.3.1 is a defensive fallback for the `QDQPropagationTransformer`.
+bool TryAbsorbTrailingReshape(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* gemm_node,
+                              const OrtNode*& absorbed_reshape, const OrtNode*& folded_activation) {
+  // 3b.1 Op-type and safety gate on the Gemm attrs/inputs.
+  if (Ort::ConstNode(gemm_node).GetOperatorType() != "Gemm") return false;
+  if (!IsGemmSafeForAbsorbedReshape(ort_api, gemm_node)) return false;
+
+  // 3b.2 Gemm -> single-consumer output feeding a Reshape.
+  const OrtValueInfo* gemm_out = GetSingleOutput(ort_api, gemm_node);
+  if (gemm_out == nullptr) return false;
+  const OrtNode* reshape_node = nullptr;
+  if (!GetSoleNonOutputConsumer(ort_api, gemm_out, reshape_node)) return false;
+  if (Ort::ConstNode(reshape_node).GetOperatorType() != "Reshape") return false;
+
+  // 3b.3 Reshape -> single-consumer output feeding Q or Relu/Clip.
+  const OrtValueInfo* reshape_out = GetSingleOutput(ort_api, reshape_node);
+  if (reshape_out == nullptr) return false;
+  const OrtNode* next_node = nullptr;
+  if (!GetSoleNonOutputConsumer(ort_api, reshape_out, next_node)) return false;
+
+  const std::string next_op = Ort::ConstNode(next_node).GetOperatorType();
+
+  // 3b.3.1 Reshape -> Q: unconditional absorb.
+  if (next_op == "QuantizeLinear") {
+    absorbed_reshape = reshape_node;
+    return true;
+  }
+  if (next_op != "Relu" && next_op != "Clip") return false;
+
+  // 3b.3.2 Reshape -> Relu/Clip -> Q: run the encoding-safe fold.
+  const OrtValueInfo* act_out = GetSingleOutput(ort_api, next_node);
+  if (act_out == nullptr) return false;
+  const OrtNode* q_node = nullptr;
+  if (!GetSoleNonOutputConsumer(ort_api, act_out, q_node)) return false;
+  if (Ort::ConstNode(q_node).GetOperatorType() != "QuantizeLinear") return false;
+  if (!IsActivationEncodingSafe(graph, ort_api, next_node, next_op, q_node)) return false;
+
+  absorbed_reshape = reshape_node;
+  folded_activation = next_node;
+  return true;
 }
 
 // Helper function to get a constant initializer from a node's input
@@ -1312,228 +1517,90 @@ bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
   return true;
 }
 
-// Helper function to get QDQ selection for a node
+// =============================================================================
+// GetOrtQDQSelection — attempt to form a QDQ node group anchored at `node`.
+//
+//   1. Collect DQ producers of `node`'s inputs.
+//   2. Try to extend the group forward:
+//      2a.  node -> Relu/Clip -> Q                    (encoding-safe fold)
+//      2b.  Gemm -> Reshape -> [Relu/Clip ->] Q       (MatMulAddFusion sandwich)
+//   3. Collect Q consumers off the resolved anchor (clip > reshape > node).
+//   4. Delegate the final accept/reject to the op-specific selector.
+// =============================================================================
 std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtApi& ort_api,
                                                const OrtNode* node, const OrtNodeGroupSelector* selector) {
-  // Find DQ nodes that feed into this node
+  // 1. Collect DQ producers feeding `node`.
   std::vector<const OrtNode*> dq_nodes;
-
-  // Get the inputs as OrtValueInfo instances
   size_t num_inputs = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api, std::nullopt);
-
   std::vector<const OrtValueInfo*> inputs(num_inputs);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api, std::nullopt);
-
-  // For each input, get the producer node
   for (size_t i = 0; i < num_inputs; ++i) {
-    const OrtValueInfo* value_info = inputs[i];
-    if (value_info == nullptr) {
-      continue;
-    }
-
-    // Get the producer node
-    const OrtNode* producer_node = nullptr;
-    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(value_info, &producer_node, nullptr), ort_api);
-
-    if (producer_node == nullptr) {
-      continue;
-    }
-
-    // Check if this is a DQ node
-    if (Ort::ConstNode(producer_node).GetOperatorType() == "DequantizeLinear") {
-      dq_nodes.push_back(producer_node);
+    if (inputs[i] == nullptr) continue;
+    const OrtNode* producer = nullptr;
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(inputs[i], &producer, nullptr), ort_api);
+    if (producer != nullptr && Ort::ConstNode(producer).GetOperatorType() == "DequantizeLinear") {
+      dq_nodes.push_back(producer);
     }
   }
 
-  // For redundant clip node, currently only support node with only one output, which is consumed by Clip/Relu->Q.
-  const OrtNode* clip_node = nullptr;
-
-  // Get the outputs to check count
+  // 2. Extend the group forward.
   size_t output_count = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &output_count), ort_api, std::nullopt);
 
+  // 2a. Redundant Relu/Clip fold (see TryFoldRedundantActivation).
+  const OrtNode* clip_node = nullptr;
   if (output_count == 1) {
-    // Get the outputs as OrtValueInfo instances
-    std::vector<const OrtValueInfo*> outputs(output_count);
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api, std::nullopt);
+    clip_node = TryFoldRedundantActivation(graph, ort_api, node);
+  }
 
-    // For each output, get the consumer nodes
-    const OrtValueInfo* value_info = outputs[0];
-
-    // Get the number of consumers
-    size_t num_consumers = 0;
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api, std::nullopt);
-
-    if (num_consumers == 1) {
-      // Get the consumer node
-      const OrtNode* next_node = nullptr;
-      int64_t input_index = 0;  // This value is not used, but necessary for the API call
-      RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(value_info, &next_node, &input_index, 1), ort_api, std::nullopt);
-
-      // Check if it's a Relu or Clip node
-      const std::string next_node_op_type = Ort::ConstNode(next_node).GetOperatorType();
-      if (next_node_op_type == "Relu" || next_node_op_type == "Clip") {
-        // Get the outputs of the next node to check count
-        size_t next_output_count = 0;
-        RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(next_node, &next_output_count), ort_api, std::nullopt);
-
-        if (next_output_count == 1) {
-          // Get the outputs of the next node
-          std::vector<const OrtValueInfo*> next_outputs(next_output_count);
-          RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(next_node, next_outputs.data(), next_outputs.size()), ort_api, std::nullopt);
-
-          // Check if any of the outputs are graph outputs
-          bool produces_graph_output = false;
-          for (size_t i = 0; i < next_output_count; i++) {
-            const OrtValueInfo* next_value_info = next_outputs[i];
-            bool is_graph_output = false;
-            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(next_value_info, &is_graph_output), ort_api);
-
-            if (is_graph_output) {
-              produces_graph_output = true;
-              break;
-            }
-          }
-
-          // Get the number of consumers of the next node's output
-          size_t next_num_consumers = 0;
-          if (next_output_count > 0) {
-            const OrtValueInfo* next_value_info = next_outputs[0];
-            RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(next_value_info, &next_num_consumers), ort_api, std::nullopt);
-          }
-
-          if (next_num_consumers == 1 && !produces_graph_output) {
-            // Determine whether to fuse Relu/Clip into the QDQ node unit
-            //
-            // When fused, EP emits a single Conv/Gemm with the post-activation output encoding
-            // and no separate Relu/Clip node. QNN HTP will only clamp the output if the encoding
-            // cannot represent values outside the activation range — i.e., HTP respects the encoding
-            // bounds but does NOT apply Relu/Clip semantics independently.
-            //
-            // Safe to fuse when: encoding_min >= activation_min
-            //   encoding_min = scale * (type_min - zero_point)
-            //   - Relu:  activation_min = 0. Fuse if encoding_min >= 0 (zp == 0 for unsigned types).
-            //   - Clip:  activation_min = clip.min. Fuse if encoding_min >= clip.min.
-            //
-            // NOT safe to fuse when: encoding_min < activation_min
-            //   The encoding can represent values below activation_min (e.g., negatives after Relu). In which case,
-            //   HTP will NOT clamp these values — it just quantizes the Conv output as-is and hence breaking the orig model
-            //   Must keep Relu/Clip as a separate QNN ElementWiseNeuron node to enforce clamping
-            bool should_fuse = true;
-
-            // Find the Q node consuming the Relu/Clip output
-            const OrtValueInfo* relu_out_info = next_outputs[0];
-            const OrtNode* q_after_clip = nullptr;
-            size_t relu_out_consumers = 0;
-            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(relu_out_info, &relu_out_consumers), ort_api);
-            if (relu_out_consumers == 1) {
-              int64_t unused_idx = 0;
-              ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(relu_out_info, &q_after_clip, &unused_idx, 1), ort_api);
-            }
-
-            if (q_after_clip != nullptr && Ort::ConstNode(q_after_clip).GetOperatorType() == "QuantizeLinear") {
-              float scale_val = 0.0f;
-              int64_t zero_point = 0;
-              Qnn_DataType_t qnn_dt = QNN_DATATYPE_UNDEFINED;
-
-              if (GetQNodeScaleAndZeroPoint(graph, ort_api, q_after_clip, scale_val, zero_point, qnn_dt)) {
-                int64_t qmin = 0, qmax = 0;
-                if (qnn::utils::GetQminQmax(qnn_dt, qmin, qmax).IsOK()) {
-                  float encoding_min = scale_val * static_cast<float>(qmin - zero_point);
-                  float encoding_max = scale_val * static_cast<float>(qmax - zero_point);
-
-                  // activation bounds: Relu has min=0, no max. Clip has both min and max.
-                  float activation_min = 0.0f;
-                  float activation_max = std::numeric_limits<float>::max();
-                  if (next_node_op_type == "Clip") {
-                    GetClipMinMax(graph, ort_api, next_node, activation_min, activation_max);
-                  }
-
-                  if (encoding_min < activation_min || encoding_max > activation_max) {
-                    should_fuse = false;
-                  }
-                }
-              }
-            }
-
-            if (should_fuse) {
-              clip_node = next_node;
-            }
-          }
-        }
-      }
+  // 2b. MatMulAddFusion post-Gemm Reshape absorb (see TryAbsorbTrailingReshape).
+  //     Skipped when 2a already folded — the two paths are mutually exclusive.
+  const OrtNode* output_reshape_node = nullptr;
+  if (clip_node == nullptr && output_count == 1) {
+    const OrtNode* folded_activation = nullptr;
+    if (TryAbsorbTrailingReshape(graph, ort_api, node, output_reshape_node, folded_activation) &&
+        folded_activation != nullptr) {
+      clip_node = folded_activation;
     }
   }
 
-  // Find Q nodes that consume from this node or the clip node
+  // 3. Collect Q consumers from the extended anchor.
+  //    Anchor precedence: clip > absorbed reshape > node.
+  const OrtNode* q_anchor = clip_node ? clip_node : (output_reshape_node ? output_reshape_node : node);
   std::vector<const OrtNode*> q_nodes;
-
-  // Get the outputs as OrtValueInfo instances
   size_t num_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(clip_node ? clip_node : node, &num_outputs), ort_api, std::nullopt);
-
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(q_anchor, &num_outputs), ort_api, std::nullopt);
   std::vector<const OrtValueInfo*> outputs(num_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(clip_node ? clip_node : node, outputs.data(), outputs.size()), ort_api, std::nullopt);
-
-  // For each output, get the consumer nodes
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(q_anchor, outputs.data(), outputs.size()), ort_api, std::nullopt);
   for (size_t i = 0; i < num_outputs; ++i) {
-    const OrtValueInfo* value_info = outputs[i];
-    if (value_info == nullptr) {
-      continue;
-    }
-
-    // Get the number of consumers
+    if (outputs[i] == nullptr) continue;
     size_t num_consumers = 0;
-    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
-
-    if (num_consumers > 0) {
-      // Allocate arrays for consumer nodes and input indices
-      std::vector<const OrtNode*> consumer_nodes_vec(num_consumers);
-      std::vector<int64_t> input_indices_vec(num_consumers);
-
-      // Get the consumer nodes
-      ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(value_info, consumer_nodes_vec.data(), input_indices_vec.data(), num_consumers), ort_api);
-
-      // Check each consumer node
-      for (size_t j = 0; j < num_consumers; ++j) {
-        const OrtNode* consumer_node = consumer_nodes_vec[j];
-
-        // Check if this is a Q node
-        if (Ort::ConstNode(consumer_node).GetOperatorType() == "QuantizeLinear") {
-          q_nodes.push_back(consumer_node);
-        }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(outputs[i], &num_consumers), ort_api);
+    if (num_consumers == 0) continue;
+    std::vector<const OrtNode*> consumers(num_consumers);
+    std::vector<int64_t> input_indices(num_consumers);
+    ORT_CONTINUE_ON_ERROR(
+        ort_api.ValueInfo_GetValueConsumers(outputs[i], consumers.data(), input_indices.data(), num_consumers),
+        ort_api);
+    for (const OrtNode* consumer : consumers) {
+      if (Ort::ConstNode(consumer).GetOperatorType() == "QuantizeLinear") {
+        q_nodes.push_back(consumer);
       }
     }
   }
 
-  // Check if the node group is supported by the selector
-  if (selector->Check(graph, ort_api, node, clip_node, dq_nodes, q_nodes)) {
-    // Create a NodeGroup
-    OrtNodeGroup node_group;
-
-    node_group.target_node = node;
-
-    if (clip_node) {
-      node_group.redundant_clip_node = clip_node;
-    }
-
-    // Add DQ node indices
-    node_group.dq_nodes.reserve(dq_nodes.size());
-    for (const OrtNode* dq_node : dq_nodes) {
-      node_group.dq_nodes.push_back(dq_node);
-    }
-
-    // Add Q node indices
-    node_group.q_nodes.reserve(q_nodes.size());
-    for (const OrtNode* q_node : q_nodes) {
-      node_group.q_nodes.push_back(q_node);
-    }
-
-    return node_group;
+  // 4. Delegate accept/reject to the op-specific selector.
+  if (!selector->Check(graph, ort_api, node, clip_node, dq_nodes, q_nodes)) {
+    return std::nullopt;
   }
-
-  return std::nullopt;
+  OrtNodeGroup node_group;
+  node_group.target_node = node;
+  node_group.redundant_clip_node = clip_node;
+  node_group.output_reshape_node = output_reshape_node;
+  node_group.dq_nodes = std::move(dq_nodes);
+  node_group.q_nodes = std::move(q_nodes);
+  return node_group;
 }
 
 // Implementation of OrtSelectorManager constructor and related functions
@@ -1911,6 +1978,11 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
         }
 
         supported_group.push_back(node);
+        const OrtNode* output_reshape_node = node_unit->GetOutputReshapeNode();
+        if (output_reshape_node) {
+          supported_group.push_back(output_reshape_node);
+          supported_group_border.erase(output_reshape_node);
+        }
         const OrtNode* redundent_clip_node = node_unit->GetRedundantClipNode();
         if (redundent_clip_node) {
           supported_group.push_back(redundent_clip_node);
@@ -2002,6 +2074,9 @@ GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& log
     add_node_unit_to_map({qdq_selection.target_node}, qdq_unit.get());
     if (qdq_selection.redundant_clip_node) {
       add_node_unit_to_map({qdq_selection.redundant_clip_node}, qdq_unit.get());
+    }
+    if (qdq_selection.output_reshape_node) {
+      add_node_unit_to_map({qdq_selection.output_reshape_node}, qdq_unit.get());
     }
 
     node_unit_holder.push_back(std::move(qdq_unit));
