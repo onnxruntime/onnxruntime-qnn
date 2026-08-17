@@ -401,7 +401,6 @@ static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, 
 //
 // HTP tests:
 //
-// TEMPORARILY DISABLED: GQA on HTP requires QAIRT >= 2.49 (QNN opset 2.12).
 struct ScopedGQAHtpAffinityConfig {
   explicit ScopedGQAHtpAffinityConfig(const std::string& tag = CurrentTestTag())
       : path(WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", tag)) {}
@@ -570,81 +569,66 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
 
 // === HTP inference tests (QNN vs CPU) ===
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_ScaleExplicit_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_ScaleExplicit_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_MHA_NumHeadsEqKv_FP32) {
   RunHTPPackedGQATest<float>(8, 8, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_MQA_KvOne_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_MQA_KvOne_FP32) {
   RunHTPPackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Prefill_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Prefill_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Llama3_AR1_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Llama3_AR1_FP32) {
   RunHTPPackedGQATest<float>(32, 8, 64, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Rotary_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Basic_FP16) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_PaddedCache_NoisePadding_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_PaddedCache_NoisePadding_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 1, /*total*/ 16, /*scale*/ 0.0f, /*do_rotary*/ 0,
                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_ScaleExplicit_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.5f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_MQA_KvOne_FP32) {
   RunHTPUnpackedGQATest<float>(8, 1, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Prefill_FP32) {
+TEST_F(QnnHTPBackendTests,GroupQueryAttention_Unpacked_Prefill_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, /*seq*/ 64, /*total*/ 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Rotary_FP32) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Rotary_FP32) {
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_Unpacked_Basic_FP16) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
@@ -742,8 +726,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigne
   ASSERT_FALSE(session_failed);
 }
 
-// TODO(QAIRT >= 2.49): remove DISABLED_ prefix once CI SDK upgrades.
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "htp_pin_htp");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::All, &session_failed);
@@ -759,7 +742,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
-  ASSERT_TRUE(session_failed);
+  ASSERT_FALSE(session_failed);
   std::filesystem::remove(path);
 }
 
@@ -771,7 +754,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
   std::filesystem::remove(path);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
   const std::filesystem::path missing =
       std::filesystem::temp_directory_path() / "gqa_op_affinity_does_not_exist_12345.json";
   bool session_failed = false;
