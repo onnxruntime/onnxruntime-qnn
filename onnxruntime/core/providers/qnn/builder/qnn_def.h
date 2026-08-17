@@ -64,6 +64,13 @@ namespace qnn {
 #endif
 #endif
 
+// Cross device prepare is only available on WoS starting from QAIRT 2.51 (or QNN API 2.40).
+#if defined(_WIN32) && QNN_ARCH_ARM64
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_CROSS_DEVICE_PREPARE_AVAILABLE
+#endif  //  QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
+
 // QNN only support subset of POSIX of dlopen/dlsym/dladdr/dlerror/dlclose
 // except the following flags for dlopen, others should be done only
 // when we really need them

@@ -88,9 +88,14 @@ Ort::Status GetHtpUsrDrvInfo(QnnBackendManager* qnn_backend_manager,
                              const uint32_t htp_arch,
                              /*out*/ QnnVersion& sdk_version,
                              /*out*/ bool& is_htp_usr_drv) {
-  RETURN_IF_ERROR(htp_usr_drv::IsHtpUsrDrvEnabled(qnn_backend_manager->GetBackendLibDir(),
-                                                  htp_arch,
-                                                  is_htp_usr_drv));
+  if (qnn_backend_manager->IsBackendHostMode()) {
+    // HNRD is unsupported if backend is configured to host mode.
+    is_htp_usr_drv = false;
+  } else {
+    RETURN_IF_ERROR(htp_usr_drv::IsHtpUsrDrvEnabled(qnn_backend_manager->GetBackendLibDir(),
+                                                    htp_arch,
+                                                    is_htp_usr_drv));
+  }
 
   // There is no way to query HNRD's backend API version with current APIs. Fortunately, since backend API versions are
   // bumped along with SDK versions, adopt SDK versions in HNRD scenarios, which can be extracted from driver's file

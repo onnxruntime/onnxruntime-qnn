@@ -361,6 +361,11 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 - Setting `enable_htp_prepare_and_load=1` with `ep.context_enable=0` AND an explicit `ep.context_file_path` raises an error (contradictory: "don't persist" + "here's where to persist").
 - If the input model is already a pre-compiled context model (`_ctx.onnx`), `enable_htp_prepare_and_load` is silently ignored with a warning — the model loads directly via the existing AOT path.
 
+|`"enable_cross_device_prepare"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable cross device prepare on WoS, allowing WoS to behave like Windows x86 host. Features originally restricted to Windows x86 host (e.g., Flexible Context Binary) are now supported on WoS when setting this option. Requires at least QAIRT 2.51 SDK for this feature; specifying this option with older SDK would not take effect.|
+
 |`"enable_htp_graph_splitting"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
