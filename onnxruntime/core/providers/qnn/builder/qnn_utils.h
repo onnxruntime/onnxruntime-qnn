@@ -36,6 +36,14 @@ class QnnModelWrapper;
 class QnnQuantParamsWrapper;
 
 namespace utils {
+
+template <typename T>
+inline bool IsCompatibleFcBiasShape(const std::vector<T>& bias_shape, T output_channels) {
+  return (bias_shape.empty() && output_channels == 1) ||
+         (bias_shape.size() == 1 && bias_shape[0] == output_channels) ||
+         (bias_shape.size() == 2 && bias_shape[0] == 1 && bias_shape[1] == output_channels);
+}
+
 /**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
