@@ -322,15 +322,12 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-// Cast float16 to bool on HTP.
-// The Sign -> Abs -> Cast lowering emits a final Cast(fp16 -> BOOL) which the x86 HTP
-// prepare-lib validator rejects even at soc_model=SM8850. On real HTP silicon (v79+)
-// this passes and is required to work around the fp16 zero-comparison defect — see
-// UseSignAbsCastForHtp in cast_op_builder.cc.
+// Cast float16 to bool on HTP. (Windows ARM64 CI v73 rejects).
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
 #endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);
@@ -339,12 +336,10 @@ TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
 // Cast(fp16 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
 // Guards the Sign -> Abs -> Cast lowering for fp16 in cast_op_builder.cc.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP_GenericFpValues) {
-#if defined(_WIN32)
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
 #endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   const std::vector<float> fp32_data = {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f};
   std::vector<Ort::Float16_t> fp16_data;
   fp16_data.reserve(fp32_data.size());
