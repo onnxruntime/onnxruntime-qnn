@@ -3455,32 +3455,6 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
 }
 
 // Builds a simple fp16 Conv graph (float I/O; enable_htp_fp16_precision runs it in fp16 on HTP).
-static GetTestModelFn BuildFp16ConvModel() {
-  return [](ModelTestBuilder& builder) {
-    // Use large constant weights so the Conv accumulator reliably exceeds the fp16 maximum
-    // (~65504) when inputs are also large. Each output element = 8 * (300 * 300) = 720000,
-    // which overflows fp16: without fp16_clamp_overflow the output is NaN; with it, it
-    // saturates to fp16-max (finite), making the round-trip isfinite assertion a real fence.
-    auto input_def = TestInputDef<float>({1, 2, 4, 4}, false, std::vector<float>(32, 300.0f));
-    auto weights_def = TestInputDef<float>({2, 2, 2, 2}, true, std::vector<float>(16, 300.0f));
-    auto bias_def = TestInputDef<float>({2}, true, {0.0f, 0.0f});
-
-    MakeTestInput<float>(builder, "input", input_def);
-    MakeTestInput<float>(builder, "weights", weights_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
-
-    builder.MakeOutput("output");
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"output"}, kOnnxDomain, conv_attrs);
-  };
-}
-
 // Verifies that enable_htp_fp16_clamp_overflow is applied on the EPContext (context-binary) path.
 // The option is a runtime graph config applied via graphSetConfig after the graph is restored
 // from the binary (QnnModel::ApplyRuntimeGraphConfigs). Input and weight values of 300.0f ensure
@@ -3502,7 +3476,7 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 #endif
 
   ModelTestBuilder helper;
-  BuildFp16ConvModel()(helper);
+  BuildFp16ClampOverflowConvTestCase()(helper);
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};

@@ -444,10 +444,10 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
 
 Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
                                                const Ort::Logger& logger) {
-  // Record for re-application after an SSR event re-retrieves the graph handle.
-  // Contract: intended to be called once per QnnModel at session creation; RecoverFromSSR
-  // relies on this cached value, so re-calling with different configs would silently change
-  // post-SSR behaviour.
+  // Caches configs for re-application after an SSR event re-retrieves the graph handle.
+  // Each call overwrites runtime_graph_configs_; RecoverFromSSR always re-applies the most
+  // recently cached value. Normal usage calls this once at session creation, but correctness
+  // does not depend on that.
   runtime_graph_configs_ = configs;
 
   if (qnn_backend_type_ != QnnBackendType::HTP || graph_info_ == nullptr) {

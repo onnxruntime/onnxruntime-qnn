@@ -10,8 +10,6 @@
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
-#include "core/providers/qnn/builder/qnn_def.h"
-
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -672,48 +670,33 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextWeightSharing) {
 
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
+// Duplicated from core/providers/qnn/builder/qnn_def.h to avoid pulling that EP-private header
+// into this public-API-only test file.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif
+
 // Test that ApplyRuntimeGraphConfigs is re-applied after an SSR event on the
 // context-binary path. The mock SSR fires on the first graphExecute, triggering
 // RecoverFromSSR which calls ApplyRuntimeGraphConfigs(runtime_graph_configs_).
 // With inputs/weights of 300.0f the Conv accumulator overflows fp16 max (~65504):
 // if the clamp config is not re-applied after recovery the output would be NaN.
 //
-// Gated on QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE (QNN API >= 2.38 / QAIRT >= 2.49)
+// Gated on QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE (QNN API >= 2.38 / QAIRT >= 2.49)
 // and HTP arch > V75 since fp16 overflow→NaN only manifests on v79+.
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && \
-    defined(QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE)
+    defined(QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE)
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_ReappliedAfterRecovery) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
 
   const std::string context_model_file = "./ssr_fp16_clamp_overflow_ctx.onnx";
   std::remove(context_model_file.c_str());
 
-  // Build an fp16 Conv model with overflow-triggering inputs/weights (300.0f).
-  // Each output element = 8 * (300 * 300) = 720000 >> fp16 max (~65504).
-  // Without fp16_clamp_overflow the output is NaN; with it it saturates to fp16-max (finite).
-  auto build_fp16_conv = [](ModelTestBuilder& builder) {
-    auto input_def = TestInputDef<float>({1, 2, 4, 4}, false, std::vector<float>(32, 300.0f));
-    auto weights_def = TestInputDef<float>({2, 2, 2, 2}, true, std::vector<float>(16, 300.0f));
-    auto bias_def = TestInputDef<float>({2}, true, {0.0f, 0.0f});
-
-    MakeTestInput<float>(builder, "input", input_def);
-    MakeTestInput<float>(builder, "weights", weights_def);
-    MakeTestInput<float>(builder, "bias", bias_def);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
-
-    builder.MakeOutput("output");
-    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"output"}, kOnnxDomain, conv_attrs);
-  };
-
   // Build and serialize the ONNX model.
   ModelTestBuilder helper;
-  build_fp16_conv(helper);
+  BuildFp16ClampOverflowConvTestCase()(helper);
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
@@ -802,7 +785,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_Reappl
 
   CleanUpCtxFile(context_model_file);
 }
-#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
 }  // namespace test
 }  // namespace onnxruntime
