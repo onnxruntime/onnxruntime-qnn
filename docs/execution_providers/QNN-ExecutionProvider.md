@@ -70,7 +70,7 @@ For build instructions, please see the [BUILD page](./build.md).
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
     | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.48.40` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.49.40` |
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
