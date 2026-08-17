@@ -47,6 +47,10 @@
 namespace onnxruntime {
 namespace qnn {
 
+// Sets the QNN context priority config from a ContextPriority enum value.
+// Handles all 8 supported priority levels.
+Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Config_t& qnn_context_config);
+
 // Forward declaration.
 class QnnModel;
 class QnnBackendSystemDlcPlugin;
@@ -190,6 +194,26 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       int64_t max_spill_fill_size,
       bool is_multi_soc_buffer = false);
 
+  // Remove a single context handle from all tracking structures and free it via contextFree.
+  void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
+
+  // Adds a new QNN context handle and takes ownership (responsible for freeing via contextFree).
+  Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
+
+  // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
+  // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
+  // file I/O logic.
+  Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
+                                    std::vector<char>& buffer);
+
+  // Returns true if the given context handle is still tracked (not yet freed).
+  bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
+    return context_map_.find(context_handle) != context_map_.end();
+  }
+
+  // Returns the mutex that serializes SSR context recovery across models sharing this backend.
+  std::mutex& GetContextRecoveryMutex() { return context_recovery_mutex_; }
+
   // Initializes handles to QNN resources (device, logger, etc.).
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status SetupBackend(
@@ -201,7 +225,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false,
-      bool enable_htp_prepare_only = false);
+      bool enable_htp_prepare_only = false,
+      bool enable_htp_graph_splitting = false);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -210,7 +235,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     uint32_t soc_model,
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
-                                    bool enable_htp_ref_weight_sharing = false);
+                                    bool enable_htp_ref_weight_sharing = false,
+                                    bool enable_htp_graph_splitting = false);
 
   void ReleaseDeviceAndContext();
 
@@ -219,10 +245,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
-  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                 HtpPerformanceMode htp_performance_mode,
-                                 uint32_t rpc_polling_time,
-                                 uint32_t rpc_control_latency);
+  Ort::Status InitializePowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
+
+  void DeInitializePerfTimer();
+
+  // Drops a per-session power-config id from the release timer's boosted set.
+  // Call before destroying the id when the (possibly shared) timer may still be
+  // live, so it will not relax a destroyed id.
+  void DropBoostedPowerConfigId(uint32_t htp_power_config_id);
+
+  Ort::Status DestroyHtpPowerConfigId(uint32_t htp_power_config_id);
 
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
@@ -321,8 +353,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      : backend_path.parent_path().string();
   }
 
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
-
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,
                                         bool is_multi_soc_buffer,
@@ -384,9 +414,15 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   } FileMappingCallbackInfo_t;
 #endif
 
-  void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
+  void ResetLogger(const Ort::Logger& logger) {
+    logger_ptr_ = &logger;
+  }
 
   bool IsDx12SharedMemoryAllocatorSupported();
+
+  power::HtpPowerConfigManager& GetHtpPowerConfigManager() {
+    return htp_power_config_manager_;
+  }
 
  private:
   Ort::Status LoadBackend();
@@ -446,15 +482,14 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status CreateContext(bool enable_htp_weight_sharing,
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
-                            bool enable_htp_ref_weight_sharing);
+                            bool enable_htp_ref_weight_sharing,
+                            bool enable_htp_graph_splitting = false);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
-  Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer);
-
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
-                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          bool enable_htp_graph_splitting = false);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
@@ -544,10 +579,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const char* QnnProfileErrorToString(QnnProfile_Error_t error);
   std::string QnnErrorHandleToString(Qnn_ErrorHandle_t error);
   QnnLog_Level_t MapOrtSeverityToQNNLogLevel(OrtLoggingLevel ort_log_level);
-
-  // Adds a new QNN context.
-  // Transfers ownership of `context_handle` (i.e., responsibility of freeing it) to this instance
-  Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
 
   bool GetPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
                                          PerThreadHtpPowerConfigs_t& htp_power_configs);
@@ -692,6 +723,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Note: Using shared_ptr<QnnContextHandleRecord> so that we can refer to it with a weak_ptr from a
   // HtpSharedMemoryAllocator allocation cleanup callback.
   std::unordered_map<Qnn_ContextHandle_t, std::shared_ptr<QnnContextHandleRecord>> context_map_;
+
+  // Serializes the check → release → create → register sequence in RecoverFromSSR().
+  // In weight-sharing scenarios multiple QnnModel instances may detect an SSR event
+  // simultaneously and call RecoverFromSSR() concurrently.  Without this mutex the
+  // first-model-wins check (HasContextHandle) is racy: both models see the stale handle,
+  // both release it (double-free), or one reads a null context mid-recovery.
+  std::mutex context_recovery_mutex_;
 
   // Map of EP Main Context Node names to Qnn_ContextHandle_t
   std::mutex ep_context_handle_map_mutex_;

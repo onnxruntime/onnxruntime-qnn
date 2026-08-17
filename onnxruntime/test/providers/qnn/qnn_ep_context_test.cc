@@ -2157,7 +2157,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#endif
+#else
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2265,6 +2265,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
     std::remove(ctx_model_path.c_str());
   }
   std::remove(qnn_ctx_binary_file_name1.c_str());
+#endif
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
@@ -2273,7 +2274,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#endif
+#else
 
   // Disable the test on test-android job in Qualcomm CI here while we investigate
   // but do not upstream this change.
@@ -2381,6 +2382,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
     std::remove(ctx_model_path.c_str());
   }
   std::remove(qnn_ctx_binary_file_name1.c_str());
+#endif
 }
 
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
@@ -2389,7 +2391,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#endif
+#else
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -2504,6 +2506,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
     std::remove(ctx_model_path.c_str());
   }
   std::remove(qnn_ctx_binary_file_name1.c_str());
+#endif
 }
 
 // For Ort sessions to generate the context binary, with session option ep.share_ep_contexts enabled
@@ -2514,7 +2517,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#endif
+#else
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2573,6 +2576,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
     ASSERT_EQ(std::remove(ctx_model_path.c_str()), 0);
   }
   ASSERT_EQ(std::remove(qnn_ctx_binary_file_name1.c_str()), 0);
+#endif
 }
 
 // Session created from array wth ep.context_enable enabled without ep.context_file_path
@@ -3281,6 +3285,103 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   CleanUpCtxFile(ctx_path);
 }
 
+// ============================================================
+// Graph Splitting tests
+// ============================================================
+
+// Helper: build session options with Graph Splittling enabled.
+[[maybe_unused]] static void SetGraphSplittingOptions(Ort::SessionOptions& so,
+                                                      const std::string& ctx_path) {
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_graph_splitting", "1");
+}
+
+// Test 1: Graph Splittling enabled with default thread count — context binary is written.
+// On SDK 2.48 the Graph Splittling config block is compiled out; the test still passes because
+// QnnContext_create succeeds without option 22.
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#else
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_graph_splitting_default_threads_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetGraphSplittingOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  CleanUpCtxFile(ctx_path);
+#endif
+}
+
+// Test 2: Graph Splittling disabled (key unset) — existing path is unchanged, no regression.
+TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_graph_splitting_disabled_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  // Graph Splittling key is intentionally NOT set — validate no regression.
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  CleanUpCtxFile(ctx_path);
+}
+
 // ==============================================================================
 // GPU weight-sharing tests
 // ==============================================================================
@@ -3293,7 +3394,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#endif
+#else
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3349,6 +3450,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
     ASSERT_EQ(std::remove(ctx_model_path.c_str()), 0);
   }
   ASSERT_EQ(std::remove(qnn_ctx_binary_file_name1.c_str()), 0);
+#endif
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

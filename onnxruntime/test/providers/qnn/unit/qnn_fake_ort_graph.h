@@ -30,7 +30,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -121,10 +123,47 @@ static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
               "FakeOrtValue/FakeValueInfo layout drift: shape offset mismatch");
 
 // ---------------------------------------------------------------------------
+// FakeOpAttr
+//
+// Acts as OrtOpAttr* in tests that exercise Node_GetAttributeByName /
+// OpAttr_GetType / ReadOpAttr stubs (e.g., OrtNodeAttrHelper::Get(...)).
+//
+// Holds a name + type + value. Currently supports ORT_OP_ATTR_STRING and
+// ORT_OP_ATTR_INT. Add more value fields if other attribute types are needed.
+// ---------------------------------------------------------------------------
+struct FakeOpAttr {
+  // For debugging only. Node_GetAttributeByName looks up attrs by the map key in
+  // FakeNode::attrs, not by this field — stubs never read FakeOpAttr::name.
+  std::string name;
+  OrtOpAttrType type = OrtOpAttrType::ORT_OP_ATTR_STRING;
+  std::string string_value;
+  int64_t int64_value = 0;
+
+  const OrtOpAttr* AsOpAttr() const { return reinterpret_cast<const OrtOpAttr*>(this); }
+
+  static FakeOpAttr MakeString(std::string name, std::string val) {
+    FakeOpAttr a;
+    a.name = std::move(name);
+    a.type = OrtOpAttrType::ORT_OP_ATTR_STRING;
+    a.string_value = std::move(val);
+    return a;
+  }
+  static FakeOpAttr MakeInt64(std::string name, int64_t val) {
+    FakeOpAttr a;
+    a.name = std::move(name);
+    a.type = OrtOpAttrType::ORT_OP_ATTR_INT;
+    a.int64_value = val;
+    return a;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // FakeNode
 //
 // Pointers to inputs/outputs are observed (non-owning) — caller keeps
 // FakeValueInfo objects alive for as long as the node is in use.
+// `attrs` maps attribute name to a (non-owning) FakeOpAttr pointer used by
+// Node_GetAttributeByName. An empty map represents a node with no attributes.
 // ---------------------------------------------------------------------------
 struct FakeNode {
   std::string name;
@@ -133,6 +172,7 @@ struct FakeNode {
   int since_version = 13;
   std::vector<FakeValueInfo*> inputs;
   std::vector<FakeValueInfo*> outputs;
+  std::unordered_map<std::string, FakeOpAttr*> attrs;
 
   const OrtNode* AsNode() const {
     return reinterpret_cast<const OrtNode*>(this);
@@ -174,6 +214,8 @@ struct FakeGraph {
 //   - Node_Get{Name,OperatorType,Domain,SinceVersion,EpName}
 //   - Node_GetNum{Inputs,Outputs,ImplicitInputs,Attributes,Subgraphs}
 //   - Node_Get{Inputs,Outputs,ImplicitInputs,Attributes,Subgraphs}
+//   - Node_GetAttributeByName (looks up FakeOpAttr in FakeNode::attrs)
+//   - OpAttr_GetType, ReadOpAttr (ORT_OP_ATTR_STRING and ORT_OP_ATTR_INT)
 //
 // Anything not in this list is left untouched and the caller can replace it
 // with a more specific test stub.
@@ -365,8 +407,10 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   api.Node_GetSubgraphs = [](const OrtNode*, const OrtGraph**, size_t, const char**) noexcept -> OrtStatus* {
     return nullptr;
   };
-  api.Node_GetAttributeByName = [](const OrtNode*, const char*, const OrtOpAttr** out) noexcept -> OrtStatus* {
-    *out = nullptr;  // attribute "not found" — matches our 0-attribute FakeNode
+  api.Node_GetAttributeByName = [](const OrtNode* n, const char* name, const OrtOpAttr** out) noexcept -> OrtStatus* {
+    auto& fn = *reinterpret_cast<const FakeNode*>(n);
+    auto it = fn.attrs.find(name);
+    *out = (it == fn.attrs.end() || it->second == nullptr) ? nullptr : it->second->AsOpAttr();
     return nullptr;
   };
   api.Node_GetGraph = [](const OrtNode*, const OrtGraph** g) noexcept -> OrtStatus* {
@@ -416,6 +460,51 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
     for (size_t i = 0; i < count; ++i) {
       consumers[i] = nullptr;
       if (indices) indices[i] = 0;
+    }
+    return nullptr;
+  };
+
+  // ---- OrtOpAttr (read attribute type + value) ----
+  // OpAttr_GetType: returns FakeOpAttr::type. Used by CheckAttrType in
+  // ConstOpAttr::GetValue<T>() to verify the requested type matches.
+  api.OpAttr_GetType = [](const OrtOpAttr* attr, OrtOpAttrType* out) noexcept -> OrtStatus* {
+    *out = reinterpret_cast<const FakeOpAttr*>(attr)->type;
+    return nullptr;
+  };
+  // ReadOpAttr: probe-then-read pattern used by ConstOpAttr::GetValue<T>().
+  //   First call: buf=nullptr, buf_size=0 → write required size into *out_size.
+  //   Second call: buf!=nullptr → copy at most buf_size bytes into buf, write
+  //   actual size into *out_size.
+  // Handles ORT_OP_ATTR_STRING (string_value) and ORT_OP_ATTR_INT (int64_value).
+  api.ReadOpAttr = [](const OrtOpAttr* attr, OrtOpAttrType expected_type,
+                      void* buf, size_t buf_size, size_t* out_size) noexcept -> OrtStatus* {
+    auto* fa = reinterpret_cast<const FakeOpAttr*>(attr);
+    if (fa->type != expected_type) {
+      // Type mismatch. The scalar numeric path (Ort::ConstOpAttr::GetNumericValue)
+      // calls ReadOpAttr directly with no preceding CheckAttrType, so a wrong-typed
+      // numeric Get reaches here; the real API returns an error, which the caller
+      // (OrtNodeAttrHelper::Get) maps to its default value. Return a real error to
+      // match that contract. (STRING/array reads never hit this branch because
+      // ConstOpAttr::GetValue<T>() calls CheckAttrType via OpAttr_GetType first.)
+      *out_size = 0;
+      return reinterpret_cast<OrtStatus*>(
+          new FakeOrtStatus{ORT_INVALID_ARGUMENT, "ReadOpAttr: attribute type mismatch"});
+    }
+    if (expected_type == OrtOpAttrType::ORT_OP_ATTR_STRING) {
+      // Byte count of string_value, NOT including a null terminator — matches
+      // the real ReadOpAttr contract and how Ort::ConstOpAttr::GetValue<std::string>
+      // consumes it (result.resize(size) + memcpy(size), no trailing '\0').
+      *out_size = fa->string_value.size();
+      if (buf != nullptr && buf_size >= fa->string_value.size()) {
+        std::memcpy(buf, fa->string_value.data(), fa->string_value.size());
+      }
+    } else if (expected_type == OrtOpAttrType::ORT_OP_ATTR_INT) {
+      *out_size = sizeof(int64_t);
+      if (buf != nullptr && buf_size >= sizeof(int64_t)) {
+        std::memcpy(buf, &fa->int64_value, sizeof(int64_t));
+      }
+    } else {
+      *out_size = 0;
     }
     return nullptr;
   };

@@ -27,6 +27,13 @@
 namespace onnxruntime {
 namespace qnn {
 
+// Unknown-value sentinel for htp_arch/soc_model (mirrors the SDK's 0-valued
+// QNN_HTP_DEVICE_ARCH_NONE / QNN_SOC_MODEL_UNKNOWN; kept SDK-header-free here).
+inline constexpr uint32_t kSocUnknown = 0;
+
+// qnn_op_trace.json schema version; bumped on each breaking change (v2 = FCB soc_traces[]).
+inline constexpr int kFrameworkOpTraceSchemaVersion = 2;
+
 // Source target type: matches the integer encoding used by the QNN SDK
 // (TENSOR = 0, OP = 1, defined in QnnInterface.h).
 enum class TraceTargetType : uint8_t {
@@ -59,21 +66,21 @@ struct UnsupportedNodeInfo {
   std::string node_name;
   std::string op_type;
   size_t node_index;
+  // Single-SoC: raw QNN validator message. Multi-SoC: SoC-attributed by
+  // MergePerSocUnsupportedNodes, e.g. "V73: A; V81: B".
   std::string reason;
 };
 
 struct TraceSummary {
   size_t total_onnx_nodes = 0;
-  // Count of unique ONNX source nodes that appear as OP-typed sources across
-  // all op_mappings. Deduplicated by source name so an N:M fusion (which
-  // emits the same ONNX sources from multiple QNN op entries) is counted
-  // once per ONNX node rather than once per QNN op entry.
+  // Unique ONNX nodes appearing as OP-typed sources, deduped by source name.
   size_t supported_nodes = 0;
   size_t unsupported_nodes = 0;
   size_t qnn_subgraphs = 0;
   size_t total_qnn_ops = 0;
-  // std::map keeps keys in sorted order, which produces deterministic JSON
-  // output and makes trace files diff-friendly across runs.
+  // SoC iteration count (single-SoC = 1; multi-SoC FCB = N).
+  uint32_t total_socs = 0;
+  // std::map for deterministic, diff-friendly JSON key order.
   std::map<std::string, size_t> fusion_count;
 };
 
@@ -83,10 +90,17 @@ struct CompilationTarget {
   uint32_t device_id = 0;
 };
 
+// One SoC iteration's target. Single-SoC = one SocTrace; multi-SoC FCB = one per SoC.
+struct SocTrace {
+  CompilationTarget compilation_target;
+};
+
 struct FrameworkOpTrace {
   std::string model_name;
   std::string backend_type;
-  CompilationTarget compilation_target;
+  // One entry per SoC iteration.
+  std::vector<SocTrace> soc_traces;
+  // SoC-agnostic op mappings; stays at root and is collected once (not per SoC).
   std::vector<OpTraceInfo> subgraph_traces;
   std::vector<UnsupportedNodeInfo> unsupported_nodes;
   TraceSummary summary;
@@ -95,6 +109,40 @@ struct FrameworkOpTrace {
 // Compute summary statistics for a FrameworkOpTrace.
 // Defined in qnn_op_tracing_serialization.cc.
 void ComputeTraceSummary(FrameworkOpTrace& trace);
+
+// Encode a raw HTP arch number as "V<n>", or "" for 0 (QNN_HTP_DEVICE_ARCH_NONE).
+// Single source of truth for the arch-string form; SDK-header-free (uint32_t).
+std::string EncodeHtpArch(uint32_t htp_arch);
+
+// Build the SoC label attributing a per-SoC rejection. `htp_arch` / `soc_model`
+// are raw ids (0 = unknown). Format:
+//   - arch + soc_model: "V73/soc_model=60"
+//   - arch only:        "V73"
+//   - soc_model only:   "soc_model=60"
+std::string MakeSocLabel(uint32_t htp_arch, uint32_t soc_model);
+
+// One SoC's rejections, tagged with its SoC label (see MakeSocLabel).
+struct PerSocUnsupportedNodes {
+  std::string soc_label;
+  std::vector<UnsupportedNodeInfo> nodes;
+
+  PerSocUnsupportedNodes() = default;
+  // From a pre-built label.
+  PerSocUnsupportedNodes(std::string soc_label, std::vector<UnsupportedNodeInfo> nodes)
+      : soc_label(std::move(soc_label)), nodes(std::move(nodes)) {}
+  // From raw ids, so call sites pass (htp_arch, soc_model) directly.
+  PerSocUnsupportedNodes(uint32_t htp_arch, uint32_t soc_model, std::vector<UnsupportedNodeInfo> nodes)
+      : soc_label(MakeSocLabel(htp_arch, soc_model)), nodes(std::move(nodes)) {}
+};
+
+// Merge per-SoC rejections into one UnsupportedNodeInfo per ONNX node, so the row
+// count equals the distinct-node count. Each distinct reason is attributed to its
+// SoC(s), in first-seen order:
+//   - same reason on V73 and V81 -> "V73,V81: R"
+//   - different reasons          -> "V73: A; V81: B"
+// node_name/op_type come from the first SoC to report the node.
+std::vector<UnsupportedNodeInfo> MergePerSocUnsupportedNodes(
+    const std::vector<PerSocUnsupportedNodes>& per_soc);
 
 // Serialize a FrameworkOpTrace to JSON.
 // Defined in qnn_op_tracing_serialization.cc.  Call sites that use the return value must

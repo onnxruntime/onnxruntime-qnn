@@ -245,6 +245,31 @@ bool WriteTraceToFile(const FrameworkOpTrace& trace,
   return true;
 }
 
+void FrameworkOpTraceBuilder::AppendSoc(uint32_t htp_arch, uint32_t soc_model, uint32_t device_id) {
+  CompilationTarget target;
+  target.device_id = device_id;
+  if (soc_model != kSocUnknown) {
+    target.soc_model = soc_model;
+  }
+  target.htp_arch = EncodeHtpArch(htp_arch);  // "" when arch is unknown
+  trace_.soc_traces.push_back(SocTrace{std::move(target)});
+}
+
+bool FrameworkOpTraceBuilder::FinalizeAndWrite(const std::string& model_name,
+                                               const std::string& backend_type,
+                                               const std::filesystem::path& output_path,
+                                               const Ort::Logger& logger) {
+  trace_.model_name = model_name.empty() ? "<in-memory>" : model_name;
+  trace_.backend_type = backend_type;
+  ComputeTraceSummary(trace_);
+
+  // Skip a wholly-empty trace (e.g. an EPContext cached run with no fresh compile).
+  if (trace_.subgraph_traces.empty() && trace_.unsupported_nodes.empty()) {
+    return false;
+  }
+  return WriteTraceToFile(trace_, output_path, logger);
+}
+
 bool LoadTraceLookupFromFile(const std::filesystem::path& trace_path,
                              OpTraceLookup& out_lookup,
                              const Ort::Logger& logger) {

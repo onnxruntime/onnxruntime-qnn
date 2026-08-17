@@ -19,6 +19,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"
@@ -30,6 +31,7 @@
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
@@ -109,7 +111,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                        const size_t node_unit_size,
                                        std::vector<const OrtNode*>& supported_nodes,
                                        std::vector<utils::QnnNodeGroupInfo>& groups,
-                                       std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id) const;
+                                       std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id,
+                                       std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
@@ -117,7 +120,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                               const OrtNode** fused_nodes,
                               size_t count,
                               OrtNodeComputeInfo** node_compute_infos,
-                              const qnn::HtpGraphConfigs_t& htp_graph_configs);
+                              const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                              bool collect_subgraph_traces = true);
 
   OrtStatus* CompileMultiSocOnnxModel(const OrtGraph** graphs,
                                       const OrtNode** fused_nodes,
@@ -143,10 +147,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Helper functions
   void ParsePerSocHtpConfigs();
 
-  // Framework op trace helpers. trace_ is populated incrementally during
-  // GetCapability (unsupported_nodes) and Compile (subgraph_traces); this
-  // function finalizes summary fields and writes the JSON file.
-  void CollectAndWriteFrameworkOpTrace(const OrtGraph* primary_graph);
+  // Append a SocTrace: from live backend state (single-SoC), or one per configured SoC.
+  void AppendSingleSocTrace();
+  void AppendMultiSocTraces();
+  // Feed EP-side inputs (model name, backend type, dir) to op_trace_builder_ and write.
+  void WriteFrameworkOpTrace(const OrtGraph* primary_graph);
 
   // Emit a one-shot WARNING when the QNN EP is running on the HTP user-driver (HNRD) fallback path.
   void WarnIfHnrdPathActive();
@@ -197,8 +202,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
     const QnnEp& ep_;
   };
 
-  // Will return true if any power config options need to be updated
-  bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
+  // Retrieves per-thread HTP power configurations from run options
+  void GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
 
   void CreateHtpPowerConfigId() const;
@@ -243,8 +248,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Configurations for HTP backend.
   uint32_t device_id_{0};
   qnn::HtpPerformanceMode default_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
+  qnn::HtpPerformanceMode dynamic_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
+  uint32_t dynamic_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 
@@ -266,12 +273,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // === Framework op trace ===
   bool enable_framework_op_trace_ = false;
   std::string framework_op_trace_dir_;
-  // Accumulates the trace state for this session: unsupported nodes are pushed
-  // by GetSupportedNodes, per-subgraph mappings are pushed by CompileImpl, and
-  // CollectAndWriteFrameworkOpTrace finalizes/serializes.
-  qnn::FrameworkOpTrace trace_;
+  // Owns trace assembly; the EP only feeds it data during GetCapability/Compile.
+  qnn::FrameworkOpTraceBuilder op_trace_builder_;
 
   bool enable_htp_extended_udma_mode_ = false;
+
+  // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
+  bool enable_htp_graph_splitting_ = false;
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;

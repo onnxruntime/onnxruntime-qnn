@@ -226,6 +226,16 @@ ext_modules = []
 # Extra files such as EULA and ThirdPartyNotices (and Qualcomm License, only for QNN release packages)
 extra = ["LICENSE", "ThirdPartyNotices.txt", "Privacy.md", "Qualcomm_LICENSE.pdf"]
 
+# QAIRT SDK pybind extensions bundled next to deploy_multi_soc_ep_context.py
+# (.so on Linux, .pyd on Windows).
+if sys.version_info[:2] == (3, 12):
+    if platform.system() == "Windows":
+        dlc_utils_libs = ["libDlModelToolsPy312.pyd"]
+    else:
+        dlc_utils_libs = ["libDlModelToolsPy312.so"]
+else:
+    dlc_utils_libs = []
+
 # Description
 readme_file = "docs/python/README.rst"
 README = path.join(getcwd(), readme_file)
@@ -265,7 +275,7 @@ classifiers = [
 ]
 
 packages = ["onnxruntime_qnn"]
-package_data = {"onnxruntime_qnn": data + extra}
+package_data = {"onnxruntime_qnn": data + extra + dlc_utils_libs}
 
 version_number = ""
 with open("VERSION_NUMBER") as f:

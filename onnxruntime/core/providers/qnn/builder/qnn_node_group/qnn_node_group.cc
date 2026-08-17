@@ -20,12 +20,14 @@
 #include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/l2_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
@@ -101,8 +103,9 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Erf", {GeluFusion::TryFusion}},
     {"Tanh", {TanhGeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
+    {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
-    {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
+    {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
