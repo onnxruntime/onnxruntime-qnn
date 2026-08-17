@@ -183,7 +183,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"soc_model"`|Description|
 |---|---|
-|Model number or chip name (string)|The SoC model to target. Accepts either a **numeric model ID** (e.g. `"69"`) or a **chip-family name string** (e.g. `"SM8750"`, case-insensitive). Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid numeric values. Common chip names: `SM8350`, `SM8450`, `SM8550`, `SM8650`, `SM8750`, `SM8850`, `SC8380XP`. Defaults to `"0"` (unknown). Accepts a comma-separated list (e.g. `"SM8550,SM8750"` or `"60,88"`) to enable [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
+|Model number (string)|The SoC model to target. Accepts a **numeric model ID** (e.g. `"69"`). Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid numeric values. Defaults to `"0"` (unknown). Accepts a comma-separated list (e.g. `"43,69"`) to enable [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
 
 |`"htp_arch"`|Description|
 |---|---|
@@ -1257,7 +1257,7 @@ ep_options = {
     "htp_performance_mode": "burst",
     "device_id": "0",
     "htp_graph_finalization_optimization_mode": "3",
-    "soc_model": "60",  # or use a chip name, e.g. "SC8380XP"
+    "soc_model": "60",
     "htp_arch": "73",
     "vtcm_mb": "8",
     "profiling_level": "basic",
@@ -1320,7 +1320,7 @@ ep_options = {
     "htp_performance_mode": "burst",
     "device_id": "0",
     "htp_graph_finalization_optimization_mode": "3",
-    "soc_model": "60",  # or use a chip name, e.g. "SC8380XP"
+    "soc_model": "60",
     "htp_arch": "73",
     "vtcm_mb": "8",
     "profiling_level": "optrace",  # Set profiling_level to optrace
