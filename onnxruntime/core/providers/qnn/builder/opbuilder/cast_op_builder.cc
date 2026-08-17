@@ -19,7 +19,8 @@ namespace qnn {
 // added to the QNN graph.
 //
 // FP -> Bool lowering:
-//   * HTP: emit Sign -> Abs -> Cast so the Cast input is normalised to {0.0, 1.0} to comply v79+
+//   * HTP: emit Sign -> Abs -> Cast so the Cast input is normalised to {0.0, 1.0}. Applies to
+//     both fp32 and fp16 (fp16 exhibits the same defect on real HTP silicon — v79+).
 //   * Other backends: emit NotEqual(x, 0.f).
 class CastOpBuilder : public BaseOpBuilder {
  public:
@@ -44,9 +45,8 @@ class CastOpBuilder : public BaseOpBuilder {
   bool IsFpToBoolCast(const OrtNodeUnit& node_unit) const;
 
   // True when the fp -> bool Cast should be lowered as Sign -> Abs -> Cast on HTP.
-  // Assumes IsFpToBoolCast(node_unit) is already true; only checks backend + input dtype.
-  bool UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper,
-                            const OrtNodeUnit& node_unit) const;
+  // Assumes IsFpToBoolCast(node_unit) is already true; only checks the backend.
+  bool UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper) const;
 
   Ort::Status ProcessExtraInputForNotEqual(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
@@ -80,13 +80,7 @@ bool CastOpBuilder::IsFpToBoolCast(const OrtNodeUnit& node_unit) const {
           output_qnn_dtype == QNN_DATATYPE_BOOL_8);
 }
 
-bool CastOpBuilder::UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper,
-                                         const OrtNodeUnit& node_unit) const {
-  Qnn_DataType_t input_qnn_dtype = QNN_DATATYPE_UNDEFINED;
-  if (!utils::GetQnnDataType(false, node_unit.Inputs()[0].type, input_qnn_dtype).IsOK() ||
-      input_qnn_dtype != QNN_DATATYPE_FLOAT_32) {
-    return false;
-  }
+bool CastOpBuilder::UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper) const {
   const QnnBackendType be = qnn_model_wrapper.GetQnnBackendType();
   return (be == QnnBackendType::HTP || be == QnnBackendType::SERIALIZER);
 }
@@ -145,7 +139,7 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
     input_names.push_back(input_name);
-    if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper, node_unit)) {
+    if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper)) {
       return ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger);
     }
     return Ort::Status();
@@ -181,7 +175,7 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   // 7. Append the zero-tensor input for the NotEqual lowering when applicable.
   // FP -> bool on non-HTP backends needs the zero constant for the NotEqual lowering.
-  if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper, node_unit)) {
+  if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper)) {
     return ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger);
   }
   return Ort::Status();
@@ -296,7 +290,7 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // 5. FP -> bool: Sign -> Abs -> Cast on HTP, NotEqual(x, 0.f) elsewhere.
   //    Non-fp -> bool: regular one-to-one Cast.
   if (IsFpToBoolCast(node_unit)) {
-    if (UseSignAbsCastForHtp(qnn_model_wrapper, node_unit)) {
+    if (UseSignAbsCastForHtp(qnn_model_wrapper)) {
       RETURN_IF_NOT(input_names.size() == 1, "FP-to-Bool Cast decomposition expects exactly one input.");
 
       const auto& input = node_unit.Inputs()[0];

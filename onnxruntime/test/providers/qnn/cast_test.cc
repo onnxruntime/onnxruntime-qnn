@@ -323,10 +323,48 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
 }
 
 // Cast float16 to bool on HTP.
+// The Sign -> Abs -> Cast lowering emits a final Cast(fp16 -> BOOL) which the x86 HTP
+// prepare-lib validator rejects even at soc_model=SM8850. On real HTP silicon (v79+)
+// this passes and is required to work around the fp16 zero-comparison defect — see
+// UseSignAbsCastForHtp in cast_op_builder.cc.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
+#endif
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);
+}
+
+// Cast(fp16 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
+// Guards the Sign -> Abs -> Cast lowering for fp16 in cast_op_builder.cc.
+TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP_GenericFpValues) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
+#endif
+  const std::vector<float> fp32_data = {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f};
+  std::vector<Ort::Float16_t> fp16_data;
+  fp16_data.reserve(fp32_data.size());
+  for (float v : fp32_data) {
+    fp16_data.push_back(Ort::Float16_t(v));
+  }
+
+  auto testcase = [fp16_data](ModelTestBuilder& builder) {
+    builder.MakeInput<Ort::Float16_t>("X", {8}, fp16_data);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute(
+        "to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL)));
+    builder.AddNode("cast", "Cast", {"X"}, {"Y"}, "", attributes);
+    builder.MakeOutput("Y");
+  };
+
+  RunQnnModelTest(testcase,
+                  GetProviderOption("htp", /* enable_fp16_precision */ true),
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Cast float to double on HTP.
