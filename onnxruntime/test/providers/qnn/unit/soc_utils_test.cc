@@ -44,8 +44,9 @@ TEST(QnnUnit_SocUtilsTest, SocModelFromName_SC8380XP_Returns60) {
   EXPECT_EQ(SocModelFromName("SC8380XP"), 60u);
 }
 
-TEST(QnnUnit_SocUtilsTest, SocModelFromName_SDM845_Returns1) {
-  EXPECT_EQ(SocModelFromName("SDM845"), 1u);
+TEST(QnnUnit_SocUtilsTest, SocModelFromName_SDM845_Returns0) {
+  // SDM845 predates HTP; not in the supported-arch map.
+  EXPECT_EQ(SocModelFromName("SDM845"), 0u);
 }
 
 // ---------------------------------------------------------------------------
