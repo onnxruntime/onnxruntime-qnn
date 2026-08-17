@@ -10,6 +10,8 @@
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
+#include "core/providers/qnn/builder/qnn_def.h"
+
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
