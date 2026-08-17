@@ -2095,7 +2095,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
     // Create the HTP power config id (and its release timer) for the main thread.
     // The perf mode itself is not voted here: it is applied around graph compile
     // via the INIT_START/INIT_DONE power guard in CompileImpl, and per run via
@@ -2103,6 +2103,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // session created but never run ends compile in the relaxed state and frees
     // its vote on destruction.
     ep->CreateHtpPowerConfigId();
+
     ep->WarnIfHnrdPathActive();
   }
 

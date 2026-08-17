@@ -38,9 +38,6 @@ std::optional<QnnBackendType> BackendFromName(const std::string& raw_name) {
 }
 
 bool BackendMatches(QnnBackendType pinned, QnnBackendType session_backend) {
-  if (IsNpuBackend(pinned) && IsNpuBackend(session_backend)) {
-    return true;
-  }
   return pinned == session_backend;
 }
 

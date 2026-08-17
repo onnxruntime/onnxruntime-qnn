@@ -45,7 +45,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
 
-  RETURN_IF_NOT(IsGpuBackend(backend_type) || IsNpuBackend(backend_type),
+  RETURN_IF_NOT(IsGpuBackend(backend_type) || backend_type == QnnBackendType::HTP,
                 "GroupQueryAttention is only supported with the GPU and HTP backends");
 
   const size_t num_inputs = node_unit.Inputs().size();

@@ -319,7 +319,7 @@ static void RunGQATest(
   if (use_shared_memory_allocator) {
     // GPU and HTP use different shared-memory allocators. Both expose the same "QnnHtpShared"
     // host-accessible MemoryInfo, but they are enabled via different provider options.
-    if (backend_name == "gpu" && use_shared_memory_allocator) {
+    if (backend_name == "gpu") {
       provider_options["enable_dx12_shared_memory_allocator"] = "1";
     } else if (backend_name == "htp") {
       provider_options["enable_htp_shared_memory_allocator"] = "1";
@@ -751,11 +751,15 @@ TEST_F(QnnHTPBackendTests, DISABLED_GroupQueryAttention_OpAffinity_HtpPinHtp_Ass
   std::filesystem::remove(path);
 }
 
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_NotAssigned) {
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
+#if !defined(GQA_SUPPORTED)
+  GTEST_SKIP() << "GQA requires QAIRT >= 2.48; the affinity gate below is unreachable "
+                  "without GQA support, so this test can't exercise it on this build.";
+#endif
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;
   RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
-  ASSERT_FALSE(session_failed);
+  ASSERT_TRUE(session_failed);
   std::filesystem::remove(path);
 }
 
