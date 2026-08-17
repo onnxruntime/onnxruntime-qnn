@@ -141,6 +141,7 @@ struct QnnBackendManagerConfig {
   bool skip_backend_op_validation = false;
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
+  bool configure_host_mode = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -177,6 +178,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
         skip_backend_op_validation_(config.skip_backend_op_validation),
+        configure_host_mode_(config.configure_host_mode),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
@@ -434,6 +436,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return file_mapped_weights_enabled_;
   }
 
+  // Note that whether in host mode is meaningless if not on device.
+  bool IsBackendHostMode() const { return configure_host_mode_; }
+
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
                                Qnn_ContextBinaryDmaDataResponse_t* response,
@@ -475,6 +480,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
  private:
   Ort::Status LoadBackend();
+
+  Ort::Status SetGlobalConfig();
 
   // Shared implementation for InitializeBackend / InitializeValidatorBackend.
   Ort::Status InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
@@ -852,6 +859,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // When true, skip wiring up the target-backend validator during DLC dump so that
   // op validation falls back to the serializer's generic checks (see SetupBackend).
   bool skip_backend_op_validation_ = false;
+  bool configure_host_mode_ = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 
