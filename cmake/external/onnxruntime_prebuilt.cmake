@@ -5,8 +5,8 @@ include(ExternalProject)
 
 set(ORT_SOURCE_DIR "${ort_core_SOURCE_DIR}")
 set(ORT_BUILD_DIR "${ort_core_BINARY_DIR}")
-message(STATUS "ORT_SOURCE_DIR: " ${ORT_SOURCE_DIR})
-message(STATUS "ORT_BUILD_DIR: " ${ORT_BUILD_DIR})
+message(STATUS "ORT_SOURCE_DIR: ${ORT_SOURCE_DIR}")
+message(STATUS "ORT_BUILD_DIR: ${ORT_BUILD_DIR}")
 
 # Determine the correct path for the test executable based on generator type
 # Single-config generators (like Ninja) don't have config subdirectories
@@ -23,8 +23,22 @@ endif()
 if(onnxruntime_ORT_HOME)
     message(STATUS "Use prebuilt from MS only at ${onnxruntime_ORT_HOME}. ORT Core will NOT be built from source")
     set(ORT_BUILD_COMMAND ${CMAKE_COMMAND} -E echo "Skipping ORT_BUILD_COMMAND")
-    set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_LIBRARY_ARCHITECTURE AND
+       EXISTS "${onnxruntime_ORT_HOME}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
+        set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
+    else()
+        set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib")
+    endif()
+    message(STATUS "ORT_PREBUILT_SOURCE: ${ORT_PREBUILT_SOURCE}")
     set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include")
+    # Debian/Ubuntu system packages install ORT headers flat under include/onnxruntime/
+    # (e.g. include/onnxruntime/onnxruntime_cxx_api.h). Source files use bare
+    # "core/session/..." includes, so the include root must be include/onnxruntime/ rather
+    # than include/. QLI 2.0 and NuGet prebuilts have no such subdirectory; EXISTS is false.
+    if(EXISTS "${onnxruntime_ORT_HOME}/include/onnxruntime/onnxruntime_cxx_api.h")
+        set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include/onnxruntime")
+    endif()
+    message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: ${ONNXRUNTIME_APPLICATION_INCLUDES}")
 else()
     # Use Python to run build.py
     find_package(Python3 REQUIRED COMPONENTS Interpreter)

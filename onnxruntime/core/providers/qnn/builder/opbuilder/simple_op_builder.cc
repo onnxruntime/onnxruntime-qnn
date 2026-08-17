@@ -75,7 +75,7 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
   if (op_type == "Sum") {
     size_t inputs_num = node_unit.Inputs().size();
     RETURN_IF_NOT(inputs_num == 2,
-                  ("QNN EP supports Sum operator with QNN_OP_ELEMENT_WISE_BINARY, which takes exactly 2 inputs."
+                  ("QNN EP supports Sum operator with QNN_OP_ELEMENT_WISE_ADD, which takes exactly 2 inputs."
                    "Got ONNX's Sum operator with " +
                    std::to_string(inputs_num) + " inputs.")
                       .c_str());
@@ -344,56 +344,8 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   if (op_type == "Elu") {
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_ELU;
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
-
     RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
-                                         QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, param_tensor_names));
-  }
-
-  if (op_type == "Gelu") {
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_GELU;
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
-  }
-
-  if (op_type == "Relu") {
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_RELU;
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
-  }
-
-  if (op_type == "Sigmoid") {
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SIGMOID;
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
-  }
-
-  if (op_type == "Tanh") {
-    Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
-    neuron_operation.dataType = QNN_DATATYPE_UINT_32;
-    neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_TANH;
-    QnnParamWrapper operation_param(node_unit.Index(), node_unit.Name(),
-                                    QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
-    param_tensor_names.push_back(operation_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+                                         QNN_OP_ELU_PARAM_ALPHA, param_tensor_names));
   }
 
   if (op_type == "Softplus") {
@@ -437,56 +389,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (op_type == "GridSample") {
     RETURN_IF_ERROR(ProcessGridSampleAttributes(qnn_model_wrapper, node_unit, param_tensor_names));
-  }
-
-  static const std::unordered_map<std::string, uint32_t> binary_op_to_operation = {
-      {"Add", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD},
-      {"Sub", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_SUBTRACT},
-      {"Mul", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY},
-      {"Div", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE},
-      {"Max", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MAXIMUM},
-      {"Min", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MINIMUM},
-      {"Sum", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD},
-      {"Expand", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY},
-      {"And", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_AND},
-      {"Or", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_OR},
-      {"Xor", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_XOR},
-      {"Equal", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_EQUAL},
-      {"NotEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_NOT_EQUAL},
-      {"Greater", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER},
-      {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_GREATER_EQUAL},
-      {"Less", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_LESS},
-      {"LessOrEqual", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_LESS_EQUAL},
-      {"Pow", QNN_OP_ELEMENT_WISE_BINARY_OPERATION_POWER},
-  };
-  auto binary_it = binary_op_to_operation.find(op_type);
-  if (binary_it != binary_op_to_operation.end()) {
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                           static_cast<uint32_t>(binary_it->second),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, param_tensor_names));
-  }
-
-  static const std::unordered_map<std::string, uint32_t> unary_op_to_operation = {
-      {"Abs", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ABS},
-      {"Asin", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ASIN},
-      {"Atan", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ATAN},
-      {"Ceil", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_CEIL},
-      {"Cos", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_COS},
-      {"Exp", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_EXP},
-      {"Floor", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_FLOOR},
-      {"Log", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_LOG},
-      {"Neg", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_NEG},
-      {"Not", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_NOT},
-      {"Round", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_ROUND},
-      {"Sign", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIGN},
-      {"Sin", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SIN},
-      {"Sqrt", QNN_OP_ELEMENT_WISE_UNARY_OPERATION_SQRT},
-  };
-  auto unary_it = unary_op_to_operation.find(op_type);
-  if (unary_it != unary_op_to_operation.end()) {
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                           static_cast<uint32_t>(unary_it->second),
-                                           QNN_OP_ELEMENT_WISE_UNARY_PARAM_OPERATION, param_tensor_names));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,

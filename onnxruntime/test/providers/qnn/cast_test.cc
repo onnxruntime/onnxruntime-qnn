@@ -4,6 +4,7 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -69,6 +70,34 @@ static GetTestModelFn BuildCastFP64TestCase(const std::vector<int64_t>& shape) {
   };
 }
 
+/**
+ * Creates a graph with a single CastLike operator.
+ *
+ * \param shape The shape of the input and output. Input data is randomly generated with this shape.
+ * \param dst_type The destination type, conveyed via a same-typed scalar initializer fed as the second input.
+ *
+ * \return A function that builds the graph with the provided builder.
+ */
+template <typename InputType, typename DstType>
+static GetTestModelFn BuildCastLikeTestCase(const std::vector<int64_t>& shape) {
+  return [shape](ModelTestBuilder& builder) {
+    // Random input data
+    builder.MakeInput<InputType>("X", shape, static_cast<InputType>(0), static_cast<InputType>(20));
+    // The second input only conveys the target dtype; its value is irrelevant.
+    if constexpr (std::is_same_v<DstType, bool>) {
+      builder.MakeInitializerBool("target_type_like", {}, {false});
+    } else {
+      builder.MakeScalarInitializer<DstType>("target_type_like", static_cast<DstType>(0));
+    }
+    builder.AddNode(
+        "cast_like",
+        "CastLike",
+        {"X", "target_type_like"},
+        {"Y"});
+    builder.MakeOutput("Y");
+  };
+}
+
 ProviderOptions GetProviderOption(const std::string& backend_name, bool enable_fp16_precision) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
@@ -126,6 +155,31 @@ static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
   RunQnnModelTest(BuildCastFP64TestCase(shape),
                   GetProviderOption(backend_name, true),
                   13,  // opset
+                  EPVerificationParams{expected_ep_assignment});
+}
+
+/**
+ * Runs a CastLike model on the QNN CPU or HTP backend. Checks the graph node assignment, and that inference
+ * outputs for QNN and CPU match.
+ *
+ * \param shape The shape of the input and output. Input data is randomly generated with this shape.
+ * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
+ * \param backend_name True to run on HTP backend. Otherwise, runs on CPU.
+ */
+template <typename InputType, typename DstType>
+static void RunCastLikeOpTest(const std::vector<int64_t>& shape,
+                              ExpectedEPNodeAssignment expected_ep_assignment,
+                              const std::string& backend_name = "cpu",
+                              bool enable_fp16_precision = true) {
+  if (backend_name == "htp" && enable_fp16_precision) {
+#if defined(_WIN32)
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+  }
+
+  RunQnnModelTest(BuildCastLikeTestCase<InputType, DstType>(shape),
+                  GetProviderOption(backend_name, enable_fp16_precision),
+                  15,  // opset (CastLike introduced at opset 15)
                   EPVerificationParams{expected_ep_assignment});
 }
 
@@ -189,6 +243,16 @@ TEST_F(QnnCPUBackendTests, TestCastFloatToDouble) {
   RunCastFP64OpTest({2, 3}, ExpectedEPNodeAssignment::All);
 }
 
+// CastLike int32_t to float on CPU
+TEST_F(QnnCPUBackendTests, TestCastLikeInt32ToFloat) {
+  RunCastLikeOpTest<int32_t, float>({2, 3}, ExpectedEPNodeAssignment::All);
+}
+
+// CastLike float to int32_t on CPU
+TEST_F(QnnCPUBackendTests, TestCastLikeFloatToInt32) {
+  RunCastLikeOpTest<float, int32_t>({2, 3}, ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:
@@ -246,6 +310,27 @@ TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
 // Cast float to double on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloatToDoubleHTP) {
   RunCastFP64OpTest({3, 3}, ExpectedEPNodeAssignment::All, "htp");
+}
+
+// CastLike int32_t to float on HTP
+TEST_F(QnnHTPBackendTests, TestCastLikeInt32ToFloatHTP) {
+  RunCastLikeOpTest<int32_t, float>({3, 3}, ExpectedEPNodeAssignment::All, "htp", false);
+}
+
+// CastLike float to int32_t on HTP
+TEST_F(QnnHTPBackendTests, TestCastLikeFloatToInt32HTP) {
+  RunCastLikeOpTest<float, int32_t>({3, 3}, ExpectedEPNodeAssignment::All, "htp", false);
+}
+
+// CastLike int64_t to int32_t on HTP
+TEST_F(QnnHTPBackendTests, TestCastLikeInt64ToInt32HTP) {
+  RunCastLikeOpTest<int64_t, int32_t>({3, 3}, ExpectedEPNodeAssignment::All, "htp");
+}
+
+// CastLike float to bool on HTP. Exercises the FP-to-Bool -> NotEqual fallback path with a
+// second (target-type) input present.
+TEST_F(QnnHTPBackendTests, TestCastLikeFloatToBoolHTP) {
+  RunCastLikeOpTest<float, bool>({3, 3}, ExpectedEPNodeAssignment::All, "htp");
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
