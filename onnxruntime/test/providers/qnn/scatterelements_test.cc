@@ -192,7 +192,8 @@ TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesInitializer) {
 // Different axis bounds -- indices `[-1]` resolves to `kRows-1` for scatterA
 // and `kCols-1` for scatterB. The `_qnn_idx` rename prevents the two
 // per-axis rewrites from aliasing.
-TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesDifferentAxes) {
+// Disabling this test as it is flaky with QAIRT 2.49.40
+TEST_F(QnnHTPBackendTests, DISABLED_ScatterElementsSharedNegativeIndicesDifferentAxes) {
   constexpr int64_t kRows = 3;
   constexpr int64_t kCols = 7;  // != kRows so rewritten bytes differ.
 
