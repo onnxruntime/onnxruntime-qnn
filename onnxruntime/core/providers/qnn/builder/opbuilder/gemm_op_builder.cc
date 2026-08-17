@@ -464,6 +464,66 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return Ort::Status();
   }
 
+  // MatMulAddFusion post-Gemm Reshape absorbed by the QDQ selector: FC (rank-2, encoded) followed
+  // by a QNN Reshape (rank-N, same encoding). node_unit.Outputs()[0] already reflects the Reshape's
+  // rank-N shape and the terminal Q's encoding.
+  const OrtNode* absorbed_reshape = node_unit.GetOutputReshapeNode();
+  if (absorbed_reshape != nullptr) {
+    const std::string& final_output_name = node_unit.Outputs()[0].name;
+    TensorInfo final_output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], final_output_info));
+
+    // Derive FC's rank-2 output shape [M, N] from the rank-2 activation input [M, K] and the
+    // weight [K, N] (transB=0 asserted for MatMulAddFusion pattern).
+    TensorInfo act_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], act_info));
+    TensorInfo weight_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], weight_info));
+    RETURN_IF_NOT(act_info.shape.size() == 2, "QNN EP: absorbed-Reshape Gemm activation must be rank-2 [M, K].");
+    RETURN_IF_NOT(weight_info.shape.size() == 2, "QNN EP: absorbed-Reshape Gemm weight must be rank-2 [K, N].");
+    const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
+    RETURN_IF_NOT(trans_b == 0, "QNN EP: absorbed-Reshape Gemm only supports transB=0.");
+    const int64_t trans_a = node_helper.Get("transA", static_cast<int64_t>(0));
+    RETURN_IF_NOT(trans_a == 0, "QNN EP: absorbed-Reshape Gemm only supports transA=0.");
+    // fc_output_shape = [M, N]: with transA=0 the activation is [M, K] so act_info.shape[0] == M.
+    std::vector<uint32_t> fc_output_shape{act_info.shape[0], weight_info.shape[1]};
+
+    const bool final_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+
+    // FC intermediate tensor: rank-2 shape, same encoding as the final output.
+    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(final_output_name, "_fc");
+    QnnTensorWrapper fc_out_wrapper(fc_output_name, QNN_TENSOR_TYPE_NATIVE, final_output_info.qnn_data_type,
+                                    final_output_info.quant_param.Copy(), std::vector<uint32_t>(fc_output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fc_out_wrapper)),
+                  "Failed to add FC output tensor for absorbed-Reshape Gemm.");
+
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_FULLY_CONNECTED,
+                                                  std::move(input_names),
+                                                  {fc_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to add FullyConnected node (absorbed-Reshape path).");
+
+    // Final Reshape tensor: rank-N shape, same encoding.
+    Qnn_TensorType_t final_tensor_type = final_is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper final_wrapper(final_output_name, final_tensor_type, final_output_info.qnn_data_type,
+                                   final_output_info.quant_param.Copy(),
+                                   std::vector<uint32_t>(final_output_info.shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_wrapper)),
+                  "Failed to add final Reshape output tensor for absorbed-Reshape Gemm.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_RESHAPE,
+                                                  {fc_output_name},
+                                                  {final_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to add Reshape node (absorbed-Reshape path).");
+    return Ort::Status();
+  }
+
   // Non-BQ path: decompose Gemm into FullyConnected + Add when needed.
   bool split_gemm = false;
   if (node_unit.Inputs().size() == 3 && beta != 0.0f) {
