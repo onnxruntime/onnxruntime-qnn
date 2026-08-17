@@ -1274,6 +1274,14 @@ TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FLOAT) {
                    ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FP16) {
+  RunFP16OpTest("Reciprocal",
+                {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
+                {},  // No attributes
+                13,
+                ExpectedEPNodeAssignment::All);
+}
+
 TEST_F(QnnHTPBackendTests, Reciprocal_QU8) {
   RunQDQOpTest<uint8_t>("Reciprocal",
                         {TestInputDef<float>({2, 2}, false, GetFloatDataInRange(1.0f, 5.0f, 4))},
