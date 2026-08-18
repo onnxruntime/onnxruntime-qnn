@@ -272,10 +272,10 @@ log_info "Staged ${golden_count} golden file(s) from ${#pass_groups[@]} passing 
 # ---------------------------------------------------------------------------
 # Write manifest.json (version-stamped by resolve_tool_versions.sh).
 # ---------------------------------------------------------------------------
-qairt_version="$(resolve_qairt_version)" \
-    || die "QAIRT version undeterminable — refusing to produce an unversioned manifest."
-ort_version="$(resolve_ort_version)" \
-    || die "ORT version undeterminable — refusing to produce an unversioned manifest."
+qairt_version="$(resolve_qairt_version "${bin_dir}")" \
+    || die "QAIRT version undeterminable (checked ${bin_dir}/CMakeCache.txt) — refusing to produce an unversioned manifest."
+ort_version="$(resolve_ort_version "${bin_dir}")" \
+    || die "ORT version undeterminable (checked ${bin_dir}/CMakeCache.txt and _deps/ort_core-src) — refusing to produce an unversioned manifest."
 
 git_sha="$(git -C "${REPO_ROOT}" rev-parse --short=10 HEAD)"
 generated_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
