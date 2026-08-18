@@ -18,10 +18,6 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
 // Accepts weight rank 2–4: shape [..., K, N] where any leading dims beyond K/N must equal 1
 // (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
@@ -95,7 +91,8 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                input_info_1.quant_param.IsLPBQ() &&
                input_info_1.shape.size() == 2 &&
                input_info_1.is_initializer &&
-               input_info_0.shape.size() >= 2;
+               input_info_0.shape.size() >= 2 &&
+               utils::IsQuant16bit(input_info_0.qnn_data_type);
 
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
   // Validation crashes if use QNN FullyConnected in QNN SDK versions 2.26 - 2.27
@@ -111,9 +108,9 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
   use_fully_connected =
       use_fully_connected && !(input_info_0.quant_param.IsPerChannel() && input_info_0.shape.size() > 2);
   // Don't use FullyConnected if both inputs are dynamic and uint16 (quantized)
-  use_fully_connected = use_fully_connected && !(IsQuant16bit(input_info_0.qnn_data_type) &&
+  use_fully_connected = use_fully_connected && !(utils::IsQuant16bit(input_info_0.qnn_data_type) &&
                                                  !input_info_0.is_initializer &&
-                                                 IsQuant16bit(input_info_1.qnn_data_type) &&
+                                                 utils::IsQuant16bit(input_info_1.qnn_data_type) &&
                                                  !input_info_1.is_initializer);
   // Don't use FullyConnected for LPBQ weights
   use_fully_connected = use_fully_connected && !use_conv2d;
@@ -126,8 +123,6 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
 //   1. is_rank1:          input is rank-1 (reshaped to [1, K] for MatMul/FC compatibility).
 //   2. shape_mismatch:    target_shape is provided and differs from the current shape
 //                         (used by the Conv2D path to produce 4D NHWC layout).
-//   3. use_fully_connected && rank > 2: leading dims are flattened to a single batch dim
-//                         so QNN FullyConnected receives a 2D input.
 // Note: target_shape and use_fully_connected are mutually exclusive - the Conv2D path
 // always passes target_shape and never sets use_fully_connected.
 Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
@@ -140,9 +135,10 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
                           const std::vector<uint32_t>* target_shape = nullptr) {
   // use_fully_connected and target_shape (conv2d path) are mutually exclusive
   assert(!(use_fully_connected && target_shape != nullptr));
+  ORT_UNUSED_PARAMETER(use_fully_connected);
   const bool is_rank1 = input_0_info.shape.size() == 1;
   const bool shape_mismatch = (target_shape != nullptr && input_0_info.shape != *target_shape);
-  const bool reshape_input_0 = is_rank1 || shape_mismatch || (use_fully_connected && input_0_info.shape.size() > 2);
+  const bool reshape_input_0 = is_rank1 || shape_mismatch;
   std::string actual_input_0_name = original_input_0_name;
 
   if (reshape_input_0) {
@@ -150,17 +146,11 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint32_t> reshape_target;
     if (shape_mismatch) {
       reshape_target = *target_shape;
-    } else if (is_rank1) {
-      reshape_target = {1, input_0_info.shape[0]};
     } else {
-      uint32_t batch = 0;
-      RETURN_IF_ERROR(FlattenLeadingDims(input_0_info.shape, batch));
-      reshape_target = {batch, input_0_info.shape.back()};
+      reshape_target = {1, input_0_info.shape[0]};
     }
     QnnQuantParamsWrapper quant_param_reshaped = input_0_info.quant_param.Copy();
-    if (is_rank1 || shape_mismatch) {
-      RETURN_IF_ERROR(quant_param_reshaped.HandleUnsqueeze<uint32_t>(input_0_info.shape, reshape_target));
-    }
+    RETURN_IF_ERROR(quant_param_reshaped.HandleUnsqueeze<uint32_t>(input_0_info.shape, reshape_target));
 
     // If input_0 is initializer, unpack it and add the tensor with new quantization parameter and shape.
     // Otherwise, add a Reshape node.
@@ -347,25 +337,27 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   }
   input_names.emplace_back(input_1_name);
 
-  // Inserts a QNN Convert op before uint16 input[1] to avoid QNN HTP validation failure.
+  // Workaround that inserts a QNN Convert op before input[1] (converts from quantized uint16 to quantized uint8
+  // OR converts from asymmetric quantized uint16 to symmetric quantized uint16)
+  // to avoid a QNN validation failure.
   //
-  // QNN graph that fails validation:
+  // QNN graph WITHOUT workaround (fails validation):
   //     input_0_uint16 ---> MatMul ---> output_uint16
   //                         ^
   //                         |
   //     input_1_uint16 -----+
   //
-  // For dynamic weights, QNN graph that passes validation:
-  //     input_0_uint16 ---------------------------> MatMul ---> output_uint16
-  //                                                   ^
-  //                                                   |
-  //     input_1_uint16_asym --> Convert(uint16_sym) --+
+  // For Dynamic weights, QNN graph WITH workaround (passes validation):
+  //     input_0_uint16 ----------------------> MatMul ---> output_uint16
+  //                                            ^
+  //                                            |
+  //     input_1_uint16 --> Convert(to uint8) --+
   //
-  // For static weights, QNN graph that passes validation:
-  //     input_0_uint16 ---------------------> MatMul ---> output_uint16
-  //                                             ^
-  //                                             |
-  //     input_1_uint16 --> Convert(int16_sym) --+
+  // For Static weights, QNN graph WITH workaround (passes validation):
+  //     input_0_uint16 ------------------------------> MatMul ---> output_uint16
+  //                                                      ^
+  //                                                      |
+  //     input_1_uint16 --> Convert(to symmetric int16) --+
   if (!input_info_0.is_initializer &&
       input_info_0.qnn_data_type == input_info_1.qnn_data_type &&
       input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
@@ -381,22 +373,16 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       input_1_shape = {input_info_1.shape[0], 1};
     }
     if (!input_info_1.is_initializer) {
-      // Only insert Convert for asymmetric quantization (i.e., offset != 2^(16-1)).
-      if (quant_param.scaleOffsetEncoding.offset != 32768) {
-        RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
-                                               convert_input_name,
-                                               convert_output_name,
-                                               input_info_1.qnn_data_type,
-                                               QNN_DATATYPE_UFIXED_POINT_16,
-                                               quant_param.scaleOffsetEncoding.offset,
-                                               quant_param.scaleOffsetEncoding.scale,
-                                               input_1_shape,
-                                               true,  // symmetric
-                                               do_op_validation));
-        input_names.push_back(convert_output_name);
-      } else {
-        input_names.push_back(convert_input_name);
-      }
+      RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
+                                             convert_input_name,
+                                             convert_output_name,
+                                             input_info_1.qnn_data_type,
+                                             QNN_DATATYPE_UFIXED_POINT_8,
+                                             quant_param.scaleOffsetEncoding.offset,
+                                             quant_param.scaleOffsetEncoding.scale,
+                                             input_1_shape,
+                                             false,  // asymmetric
+                                             do_op_validation));
     } else {
       RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                              convert_input_name,
@@ -408,8 +394,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
                                              input_1_shape,
                                              true,  // symmetric
                                              do_op_validation));
-      input_names.push_back(convert_output_name);
     }
+    input_names.push_back(convert_output_name);
   }
   return Ort::Status();
 }
@@ -801,9 +787,9 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
         op_output_shape.insert(op_output_shape.begin(), 1);
       RETURN_IF_ERROR(op_output_quant_param.HandleUnsqueeze<uint32_t>(output_info.shape, op_output_shape));
     } else if (use_fully_connected && input_info_0.shape.size() > 2) {
-      uint32_t batch = 0;
-      RETURN_IF_ERROR(FlattenLeadingDims(input_info_0.shape, batch));
-      op_output_shape = {batch, reshape_input_1 ? 1 : input_info_1.shape.back()};
+      op_output_shape = {std::accumulate(input_info_0.shape.begin(), input_info_0.shape.end() - 1,
+                                         static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
+                         reshape_input_1 ? 1 : input_info_1.shape.back()};
       RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN FC output does not support per-channel quant.");
     } else {
       // If both inputs are 1D tensors, the output shape is [1] instead of scalar. So if both inputs are 1D tensors,
