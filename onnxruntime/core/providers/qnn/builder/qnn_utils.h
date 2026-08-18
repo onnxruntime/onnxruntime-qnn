@@ -503,6 +503,31 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   return Ort::Status();
 }
 
+// Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
+// (right-aligned dimensions; a dim of 1 broadcasts against any dim).
+template <typename T>
+Ort::Status BroadcastShape(const std::vector<T>& a, const std::vector<T>& b,
+                           /*out*/ std::vector<T>& out) {
+  const size_t rank = std::max(a.size(), b.size());
+  out.assign(rank, 1);
+  for (size_t i = 0; i < rank; ++i) {
+    const T da = (i < a.size()) ? a[a.size() - 1 - i] : 1;
+    const T db = (i < b.size()) ? b[b.size() - 1 - i] : 1;
+    T dim = 0;
+    if (da == db) {
+      dim = da;
+    } else if (da == 1) {
+      dim = db;
+    } else if (db == 1) {
+      dim = da;
+    } else {
+      return MAKE_EP_FAIL("BroadcastShape: incompatible dimensions, cannot broadcast.");
+    }
+    out[rank - 1 - i] = dim;
+  }
+  return Ort::Status();
+}
+
 // Gets error message associated with QNN error handle value.
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                Qnn_ErrorHandle_t qnn_error_handle);
