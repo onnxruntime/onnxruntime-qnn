@@ -217,8 +217,10 @@ bool HasFastRpcCdspDevice() {
 
 uint32_t SocModelFromName(std::string_view name) {
   // Lookup table restricted to SoC models whose HTP architecture is supported
-  // by this EP (V68/V69/V73/V75/V79/V81). Values match Qnn_SocModel_t in QNN/QnnTypes.h.
-  // Chips without a supported HTP architecture are intentionally omitted.
+  // by this EP (V68/V69/V73/V75/V79/V81/V85). Values match Qnn_SocModel_t in
+  // QNN/QnnTypes.h where available; entries not yet in the enum use the known
+  // assigned value. This table is best-effort — chips not listed here can still
+  // be targeted by passing the numeric soc_model ID directly.
   static const std::unordered_map<std::string, uint32_t> kSocModelNameMap = {
       {"SM8350", 30},
       {"SM8325", 34},
@@ -231,6 +233,8 @@ uint32_t SocModelFromName(std::string_view name) {
       {"SM8750", 69},
       {"SM7675", 70},
       {"SM8850", 87},
+      {"SC8480XP", 88},
+      {"SM8975", 103},
   };
 
   // Uppercase input for case-insensitive lookup (ASCII-only, no locale dependency).
