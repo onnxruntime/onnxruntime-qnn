@@ -3460,6 +3460,9 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
 // from the binary (QnnModel::ApplyRuntimeGraphConfigs). Input and weight values of 300.0f ensure
 // the Conv accumulator reliably overflows fp16 max (~65504): without the clamp the output is NaN;
 // with it the output saturates to fp16-max (finite), making the isfinite assertion a real fence.
+// Requires QAIRT >= 2.49 (QNN API >= 2.38) for the clamp option to be effective; the overflow
+// → NaN behavior only manifests on HTP arch v79+ (Glymur/SM8850 and later).
+#ifdef QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
 
@@ -3550,6 +3553,7 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 
   CleanUpCtxFile(context_model_file);
 }
+#endif  // QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

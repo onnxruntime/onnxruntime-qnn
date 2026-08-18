@@ -1719,6 +1719,14 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
   };
 }
 
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
+// Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
+// not include EP-private headers can gate on it without breaking the public-API-only boundary.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif
+
 // Returns a function that builds a single fp16 Conv model with overflow-triggering
 // inputs and weights (300.0f). Each output element = 8 * (300 * 300) = 720000,
 // which overflows fp16 max (~65504): without fp16_clamp_overflow the output is NaN;

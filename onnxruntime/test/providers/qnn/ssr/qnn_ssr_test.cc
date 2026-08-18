@@ -670,24 +670,16 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextWeightSharing) {
 
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
-// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
-// Duplicated from core/providers/qnn/builder/qnn_def.h to avoid pulling that EP-private header
-// into this public-API-only test file.
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
-#define QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
-#endif
-
 // Test that ApplyRuntimeGraphConfigs is re-applied after an SSR event on the
 // context-binary path. The mock SSR fires on the first graphExecute, triggering
 // RecoverFromSSR which calls ApplyRuntimeGraphConfigs(runtime_graph_configs_).
 // With inputs/weights of 300.0f the Conv accumulator overflows fp16 max (~65504):
 // if the clamp config is not re-applied after recovery the output would be NaN.
 //
-// Gated on QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE (QNN API >= 2.38 / QAIRT >= 2.49)
+// Gated on QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE (QNN API >= 2.38 / QAIRT >= 2.49)
 // and HTP arch > V75 since fp16 overflow→NaN only manifests on v79+.
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && \
-    defined(QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE)
+    defined(QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE)
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_ReappliedAfterRecovery) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
 
@@ -785,7 +777,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_Reappl
 
   CleanUpCtxFile(context_model_file);
 }
-#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && QNN_SSR_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
 }  // namespace test
 }  // namespace onnxruntime
