@@ -642,13 +642,30 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFP16PrecisionInvalid_LogsVerbose) 
   // Invalid value leaves enable_HTP_FP16_precision_ at its default true.
   // On Linux x86_64, FP16+no-soc_model throws; provide a soc_model so the
   // constructor can proceed past the FP16 validation. The invalid value is
-  // parsed by ParseBoolOption, which logs VERBOSE (not ERROR) at line 301.
+  // parsed by ParseBoolOption, which logs VERBOSE (not ERROR) in its else-branch.
   ctx.session_config[EPKey("soc_model")] = "60";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                "Invalid value for ep.qnnexecutionprovider.enable_htp_fp16_precision");
 }
+
+// Covers the ctor WARNING that fires when enable_htp_fp16_clamp_overflow=1 but
+// the QAIRT SDK in use lacks the backend enum. The test mirrors the source's
+// #ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE guard so it self-disables when a
+// future QAIRT uplevel defines the macro (see qnn_def.h for the version gate).
+#ifndef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFp16ClampOverflowTrueOnUnsupportedSdk_LogsWarning) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_fp16_clamp_overflow")] = "1";
+  ctx.session_config[EPKey("soc_model")] = "60";  // avoids FP16+no-soc_model throw
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "enable_htp_fp16_clamp_overflow was requested but the QNN HTP SDK in use does not support it");
+}
+#endif  // !QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmTrue_Succeeds) {
   EpStubContext ctx;
@@ -747,7 +764,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BoolOptionInvalidValue_LogsVerbose) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   // offload_graph_io_quantization uses ParseBoolOption with default true.
-  // "x" is neither 0 nor 1, so the else-branch at line 301 fires.
+  // "x" is neither 0 nor 1, so the else-branch of ParseBoolOption fires.
   ctx.session_config[EPKey("offload_graph_io_quantization")] = "x";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
@@ -755,7 +772,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BoolOptionInvalidValue_LogsVerbose) {
                "Invalid value for ep.qnnexecutionprovider.offload_graph_io_quantization");
 }
 
-// IR backend path AND dump enabled → "IR  backend path" info log (line 547)
+// IR backend path AND dump enabled → "IR  backend path" info log in InitQnnSerializerConfig.
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrBackendPathWithDumpEnabled_LogsInfo) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
@@ -767,11 +784,11 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrBackendPathWithDumpEnabled_LogsInfo
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_INFO, "IR  backend path: /custom/libQnnIr.so");
 }
 
-// EP input graph dump enabled with no dir → falls back to cwd (line 1084)
+// EP input graph dump enabled with no dir → falls back to std::filesystem::current_path() in the QnnEp ctor.
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpEpInputGraphNoDir_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("dump_qnn_ep_input_graph")] = "1";
-  // No dump_qnn_ep_input_graph_dir → falls back to current_path() (line 1084).
+  // No dump_qnn_ep_input_graph_dir → falls back to current_path() in the QnnEp ctor.
   // ProbeDumpDirectoryWritable on cwd should succeed, so no throw.
   ctx.session_config[EPKey("soc_model")] = "60";
   auto factory = MakeFactory(ctx);
@@ -892,42 +909,50 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetCompiledModelCompatibilityInfo_DefaultI
 
 // ===========================================================================
 // Group 10: ValidateCompiledModelCompatibilityInfo
+//
+// On x86_64 (the only host QNN_EP_INTERNAL_SYMBOL_ACCESS covers today), the
+// function returns EP_NOT_APPLICABLE at the empty-input branch or the
+// #if !defined(__aarch64__)... x86-skip guard before any field parsing runs.
+// The two tests below cover both reachable branches; parser branches are
+// left for a future arm64 UT tier.
 // ===========================================================================
 
-TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_EmptyString_NotApplicable) {
+TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_EmptyString_LogsNoInfoAndReturnsNotApplicable) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   auto factory = MakeFactory(ctx);
   auto ep = MakeEp(*factory, ctx);
 
   OrtCompiledModelCompatibility compat = OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL;
-  OrtStatus* s = ep->ValidateCompiledModelCompatibilityInfo(nullptr, 0, "", &compat);
+  OrtStatus* s;
+  {
+    UseGlobalEpStubs use(ctx);
+    s = ep->ValidateCompiledModelCompatibilityInfo(nullptr, 0, "", &compat);
+  }
   EXPECT_EQ(s, nullptr);
   EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "No compatibility info to be validated.");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_TooFewFields_NotApplicable) {
+TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_NonEmptyOnX86Host_LogsSkipAndReturnsNotApplicable) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   auto factory = MakeFactory(ctx);
   auto ep = MakeEp(*factory, ctx);
 
-  // Only 3 colon-separated fields; function expects 6.
+  // Any non-empty info string trips the x86 platform-skip guard on this test
+  // host (see Group 10 header). Input shape is irrelevant — pick a 6-field
+  // string that would be well-formed on aarch64 to make that clear.
   OrtCompiledModelCompatibility compat = OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL;
-  OrtStatus* s = ep->ValidateCompiledModelCompatibilityInfo(nullptr, 0, "1:2:3", &compat);
+  OrtStatus* s;
+  {
+    UseGlobalEpStubs use(ctx);
+    s = ep->ValidateCompiledModelCompatibilityInfo(
+        nullptr, 0, "1:1.0.0:2.1.0:3.0.0:73:0", &compat);
+  }
   EXPECT_EQ(s, nullptr);
   EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
-}
-
-TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_BadVersionFormat_NotApplicable) {
-  EpStubContext ctx;
-  auto factory = MakeFactory(ctx);
-  auto ep = MakeEp(*factory, ctx);
-
-  // 6 fields but version field (idx 1) has wrong format (2 parts, not 3).
-  OrtCompiledModelCompatibility compat = OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL;
-  OrtStatus* s = ep->ValidateCompiledModelCompatibilityInfo(
-      nullptr, 0, "1:1.0:2.1.0:3.0.0:73:0", &compat);
-  EXPECT_EQ(s, nullptr);
-  EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation on x86 platforms.");
 }
 
 // ===========================================================================
