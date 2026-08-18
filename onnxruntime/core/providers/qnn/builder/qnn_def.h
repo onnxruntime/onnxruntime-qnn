@@ -37,6 +37,13 @@ namespace qnn {
 #define QNN_HTP_GRAPH_SPLITTING_AVAILABLE
 #endif
 
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38
+// (QAIRT 2.49).
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif
+
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
 #if QNN_API_VERSION_MAJOR > 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR >= 32))
 #define QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -95,11 +102,18 @@ enum class HtpPerformanceMode : uint8_t {
   kHtpExtremePowerSaver,
 };
 
+// pre_run_perf_mode and post_run_perf_mode takes precedence over default_perf_mode. If pre_run_perf_mode is set,
+// it will be used for performance setting in OnRunStart().
+// If post_run_perf_mode is set, it will be used for performance setting in OnRunDone().
+// If default_perf_mode is set and pre_run_perf_mode or post_run_perf_mode is not set,
+// default_perf_mode will be used for performance setting in both OnRunStart() and OnRunDone().
+// rpc_control_latency and rpc_polling_time will be set beforehand in OnRunStart() as it depends on the performance mode set in OnRunStart().
 typedef struct PerThreadHtpPowerConfigs {
   std::optional<HtpPerformanceMode> pre_run_perf_mode;
   std::optional<HtpPerformanceMode> post_run_perf_mode;
   std::optional<uint32_t> rpc_control_latency;
   std::optional<uint32_t> rpc_polling_time;
+  std::optional<HtpPerformanceMode> default_perf_mode;
 
   uint32_t power_config_id = 0;
 } PerThreadHtpPowerConfigs_t;
@@ -130,6 +144,7 @@ typedef struct HtpGraphConfigs {
   HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode = HtpGraphFinalizationOptimizationMode::kDefault;
   bool enable_htp_fp16_precision = false;
   bool enable_htp_monolithic_lstm = false;
+  bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {
@@ -165,16 +180,22 @@ std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type);
 
 std::string QnnBackendTypeToString(QnnBackendType backend_type);
 
-// constexpr config values
+// latency values are in microseconds
 constexpr const int kSleepMinLatency = 40;
 constexpr const int kSleepLowLatency = 100;
 constexpr const int kSleepMediumLatency = 1000;
 constexpr const int kSleepHighLatency = 2000;
+constexpr const int kSleepHigherLatency = 65535;
+
+// constexpr config values
 constexpr const int kDcvsDisable = 0;
 constexpr const int kDcvsEnable = 1;
 constexpr const uint32_t kDisableRpcPolling = 0;
 constexpr const uint32_t kDisableRpcControlLatency = 0;
 constexpr const uint32_t kMaxRpcPolling = 9999;
+
+// Sustained high performance mode timer timeout duration in microseconds
+constexpr const uint64_t kDefaultTimerTimeoutUs = 300000;
 
 struct OnnxTensorInfo {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxTensorInfo);

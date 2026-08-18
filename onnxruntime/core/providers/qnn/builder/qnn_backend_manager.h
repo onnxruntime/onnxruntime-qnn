@@ -226,9 +226,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
-      bool enable_htp_graph_splitting = false,
-      uint32_t graphsplitter_num_prepare_threads = 8,
-      uint32_t graph_splitting_kway_partitions = 4);
+      bool enable_htp_graph_splitting = false);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -238,9 +236,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,
-                                    bool enable_htp_graph_splitting = false,
-                                    uint32_t graphsplitter_num_prepare_threads = 8,
-                                    uint32_t graph_splitting_kway_partitions = 4);
+                                    bool enable_htp_graph_splitting = false);
 
   void ReleaseDeviceAndContext();
 
@@ -249,10 +245,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
-  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                 HtpPerformanceMode htp_performance_mode,
-                                 uint32_t rpc_polling_time,
-                                 uint32_t rpc_control_latency);
+  Ort::Status InitializePowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
+
+  void DeInitializePerfTimer();
+
+  // Drops a per-session power-config id from the release timer's boosted set.
+  // Call before destroying the id when the (possibly shared) timer may still be
+  // live, so it will not relax a destroyed id.
+  void DropBoostedPowerConfigId(uint32_t htp_power_config_id);
+
+  Ort::Status DestroyHtpPowerConfigId(uint32_t htp_power_config_id);
 
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
@@ -351,8 +353,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      : backend_path.parent_path().string();
   }
 
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
-
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,
                                         bool is_multi_soc_buffer,
@@ -414,12 +414,18 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   } FileMappingCallbackInfo_t;
 #endif
 
-  void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
+  void ResetLogger(const Ort::Logger& logger) {
+    logger_ptr_ = &logger;
+  }
 
   // Release the current QNN context handles (frees HW resources).
   // Idempotent — safe to call even if no context is active.
   Ort::Status ReleaseContext();
   bool IsDx12SharedMemoryAllocatorSupported();
+
+  power::HtpPowerConfigManager& GetHtpPowerConfigManager() {
+    return htp_power_config_manager_;
+  }
 
  private:
   Ort::Status LoadBackend();
@@ -480,17 +486,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
                             bool enable_htp_ref_weight_sharing,
-                            bool enable_htp_graph_splitting = false,
-                            uint32_t graphsplitter_num_prepare_threads = 8,
-                            uint32_t graph_splitting_kway_partitions = 4);
+                            bool enable_htp_graph_splitting = false);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-                                                          bool enable_htp_graph_splitting = false,
-                                                          uint32_t graphsplitter_num_prepare_threads = 8,
-                                                          uint32_t graph_splitting_kway_partitions = 4);
+                                                          bool enable_htp_graph_splitting = false);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,

@@ -789,7 +789,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8F32) {
 TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "Skipped on x86_64 simulator due to flaky behavior";
-#endif
+#else
   constexpr int64_t batch = 1;
   constexpr int64_t channels = 4;
   constexpr int64_t H = 2;
@@ -812,6 +812,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
   RunBatchNormQDQTest<uint16_t, uint8_t>(input_def, scale_def, bias_def,
                                          ExpectedEPNodeAssignment::All,
                                          QDQTolerance(0.008f));
+#endif
 }
 
 // Test BatchNorm with near-zero variance channels (U8 input). When gamma/sqrt(var+eps) produces
@@ -890,7 +891,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U8) {
 TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorGamma_PerChannelVar_U16) {
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "Skipped on x86_64 simulator due to flaky behavior";
-#endif
+#else
   constexpr int64_t batch = 1;
   constexpr int64_t channels = 4;
   constexpr int64_t H = 2;
@@ -970,6 +971,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorGamma_PerChannelVar_U16) {
   TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
                        qdq_model_fn, provider_options, 21, ExpectedEPNodeAssignment::All,
                        QDQTolerance(0.008f));
+#endif
 }
 
 // Negative test: scale is per-channel, var is per-tensor. Verifies float-promotion triggers
@@ -977,7 +979,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorGamma_PerChannelVar_U16) {
 TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelGamma_PerTensorVar_U16) {
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "Skipped on x86_64 simulator due to flaky behavior";
-#endif
+#else
   constexpr int64_t batch = 1;
   constexpr int64_t channels = 4;
   constexpr int64_t H = 2;
@@ -1056,6 +1058,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelGamma_PerTensorVar_U16) {
   TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
                        qdq_model_fn, provider_options, 21, ExpectedEPNodeAssignment::All,
                        QDQTolerance(0.008f));
+#endif
 }
 
 // Builds the float (reference) form of the NASNet reduction-cell pattern:

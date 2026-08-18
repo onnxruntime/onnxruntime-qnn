@@ -165,17 +165,12 @@ class OrtSplitNodeGroupSelector : public OrtNodeGroupSelector {
 // DQ nodes for X, W and optionally B -> node -> Q
 class OrtConvNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  // default to 'true'
-  explicit OrtConvNodeGroupSelector(bool int8_allowed = true)
-      : int8_allowed_(int8_allowed) {}
+  OrtConvNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  bool int8_allowed_;
 };
 
 class OrtWhereNodeGroupSelector : public OrtNodeGroupSelector {
@@ -201,50 +196,34 @@ class OrtPadNodeGroupSelector : public OrtNodeGroupSelector {
 // one ore more DQ nodes for each input -> node -> Q
 class OrtEinsumNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  explicit OrtEinsumNodeGroupSelector(bool allow_int8 = true)
-      : allow_int8_(allow_int8) {}
+  OrtEinsumNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  bool allow_int8_;
 };
 
 class OrtReciprocalNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  explicit OrtReciprocalNodeGroupSelector(bool allow_int8 = true)
-      : allow_int8_(allow_int8) {}
+  OrtReciprocalNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  bool allow_int8_;
 };
 
-// 2 DQ nodes for input -> node -> optional Q if QLinearMatMul, MatMulIntegerToFloat if not
-// The lack of a trailing Q isn't really a QDQ node group, so we default support for that to off.
+// 2 DQ nodes for input -> node -> Q.
+// A group without a trailing Q isn't really a QDQ node group, so it is not selected.
 class OrtMatMulNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  OrtMatMulNodeGroupSelector(bool int8_allowed = true,
-                             bool matmulintegertofloat_allowed = false)
-      : int8_allowed_(int8_allowed),
-        matmulintegertofloat_allowed_(matmulintegertofloat_allowed) {
-  }
+  OrtMatMulNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  bool int8_allowed_;
-  bool matmulintegertofloat_allowed_;
 };
 
 // Input: DQ nodes for A, B and optional C
@@ -271,16 +250,12 @@ class OrtInstanceAndLayerNormalizationNodeGroupSelector : public OrtNodeGroupSel
 // DQ nodes for X, W and optionally B, not used for mean, var -> node -> Q
 class OrtBatchNormalizationNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  // default to 'true'
-  OrtBatchNormalizationNodeGroupSelector(bool int8_allowed = true) : int8_allowed_(int8_allowed) {}
+  OrtBatchNormalizationNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  bool int8_allowed_;
 };
 
 // 2 DQ nodes providing input -> node with bool output tensor.

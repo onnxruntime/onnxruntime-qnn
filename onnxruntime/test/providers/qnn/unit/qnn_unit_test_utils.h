@@ -39,21 +39,14 @@ namespace test {
 
 // MakeNullLogger
 //
-// Constructs an Ort::Logger with logger_=nullptr and cached_severity_level_=
-// ORT_LOGGING_LEVEL_FATAL, so that all ORT_CXX_LOG calls (severity < FATAL)
-// short-circuit on the cached-severity check without dereferencing the null
-// logger pointer. QNN EP never logs at FATAL, so LogMessage is never reached.
+// Constructs an Ort::Logger whose cached severity is FATAL, so every ORT_CXX_LOG
+// call short-circuits on the severity gate and never dereferences the null logger
+// pointer. QNN EP never logs at FATAL, so LogMessage is unreachable.
 //
-// Background: the public ORT API exposes no way to construct an Ort::Logger
-// without a real OrtLogger* obtained through EP plugin loading. The
-// Logger(const OrtLogger*) constructor calls Logger_GetLoggingSeverityLevel
-// on the pointer, which crashes on nullptr. The Logger(nullptr_t) constructor
-// is a no-op that leaves cached_severity_level_=VERBOSE, which makes every
-// log statement attempt the underlying LogMessage call.
-//
-// This helper uses memcpy to set cached_severity_level_=FATAL after default
-// construction. Well-defined for trivially copyable types per [basic.types] /
-// memcpy semantics.
+// The public ORT API can't build an Ort::Logger without a real OrtLogger* from EP
+// plugin loading: Logger(const OrtLogger*) crashes on nullptr, and Logger(nullptr_t)
+// leaves the cached severity at VERBOSE (every log then attempts LogMessage). So we
+// default-construct and memcpy FATAL into the cached-severity field.
 inline Ort::Logger MakeNullLogger() {
   static_assert(sizeof(Ort::Logger) == 2 * sizeof(void*),
                 "Ort::Logger layout changed — update MakeNullLogger()");
@@ -175,21 +168,17 @@ struct OrtApiStubContext {
 };
 
 // Context for tests that need a real QNN HTP backend (e.g., ValidateQnnNode).
-// Loads libQnnHtp.so at construction time via dlopen and creates a live backend handle.
+// Loads libQnnHtp.so via dlopen at construction and creates a live backend handle.
 //
-// libQnnHtp.so is part of the QAIRT SDK that ships with every supported CI image,
-// so a missing library is a CI configuration error rather than a normal condition.
-// Tests should ASSERT_TRUE(backend.IsValid()) so a missing SDK fails the test
-// loudly instead of silently skipping.
+// This helper produces ONLY a Qnn_BackendHandle_t. It does NOT create a QNN
+// context/session (no contextCreate) and does NOT create a graph — the validation
+// path (backendValidateOpConfig) only needs the backend handle. Tests that need a
+// real context/session, graph, or graph execution must add their own helper.
 //
-// Note: this helper only produces a Qnn_BackendHandle_t. It does NOT create a QNN
-// context/session (no contextCreate call) and does NOT create a graph. The validation
-// path (backendValidateOpConfig) only needs the backend handle, so a session is
-// unnecessary for the current set of unit tests. Tests that need a real QNN
-// context/session, graph, or graph execution must add their own helper.
-//
-// On Linux x86-64 (the unit-test host), libQnnHtp.so loads successfully and supports
-// graph-validation calls. Graph execution requires HTP hardware and is not exercised here.
+// On Linux x86-64 (the unit-test host) libQnnHtp.so loads and supports graph
+// validation; graph execution requires HTP hardware and is not exercised here.
+// See the mock-strategy table in unit/README.md for when to ASSERT_TRUE(IsValid())
+// vs GTEST_SKIP().
 //
 // Usage:
 //   QnnRealHtpBackendContext backend;

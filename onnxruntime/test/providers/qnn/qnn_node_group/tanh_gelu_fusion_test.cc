@@ -147,7 +147,7 @@ ProviderOptions GetProviderOptions() {
   return provider_options;
 }
 
-// Runs a positive fusion test: verifies fusion fires (one ElementWiseNeuron in the QNN graph)
+// Runs a positive fusion test: verifies fusion fires (one Gelu in the QNN graph)
 // and that QNN output matches CPU EP within abs_err.
 void RunTanhGeluFusionTest(const std::string& test_name,
                            const GetTestModelFn& build_fn,
@@ -166,7 +166,7 @@ void RunTanhGeluFusionTest(const std::string& test_name,
                   /*opset_version=*/13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(abs_err)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 }  // namespace
