@@ -14,13 +14,13 @@ using namespace onnxruntime::qnn::soc;
 
 // One representative chip per supported HTP arch tier (V68 through V81).
 TEST(QnnUnit_SocUtilsTest, SocModelFromName_SupportedChips) {
-  EXPECT_EQ(SocModelFromName("SM8350"), 30u);   // V68 — Snapdragon 888
-  EXPECT_EQ(SocModelFromName("SM8450"), 36u);   // V69 — Snapdragon 8 Gen 1
-  EXPECT_EQ(SocModelFromName("SM8550"), 43u);   // V73 — Snapdragon 8 Gen 2
-  EXPECT_EQ(SocModelFromName("SM8650"), 57u);   // V75 — Snapdragon 8 Gen 3
+  EXPECT_EQ(SocModelFromName("SM8350"), 30u);    // V68 — Snapdragon 888
+  EXPECT_EQ(SocModelFromName("SM8450"), 36u);    // V69 — Snapdragon 8 Gen 1
+  EXPECT_EQ(SocModelFromName("SM8550"), 43u);    // V73 — Snapdragon 8 Gen 2
+  EXPECT_EQ(SocModelFromName("SM8650"), 57u);    // V75 — Snapdragon 8 Gen 3
   EXPECT_EQ(SocModelFromName("SC8380XP"), 60u);  // V75 — Snapdragon X Elite
-  EXPECT_EQ(SocModelFromName("SM8750"), 69u);   // V79 — Snapdragon 8 Elite
-  EXPECT_EQ(SocModelFromName("SM8850"), 87u);   // V81
+  EXPECT_EQ(SocModelFromName("SM8750"), 69u);    // V79 — Snapdragon 8 Elite
+  EXPECT_EQ(SocModelFromName("SM8850"), 87u);    // V81
 }
 
 // Lowercase input is normalized before lookup.
