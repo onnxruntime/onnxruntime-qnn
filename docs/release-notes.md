@@ -60,6 +60,10 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 
 **Full Changelog:** [rel-2.4.0...rel-2.5.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.4.0...rel-2.5.0)
 
+## Known Issues
+
+- **LLM model load failure (`QNN_MEMORY_ALLOCATION_ERROR`, 1002)** — Some LLM models fail to load with all EP context binaries. Workaround: enable the `enable_vtcm_backup_buffer_sharing` QNN EP option. This option is AOT-flow only and may not cover all use cases. Fix targeted for `2.6.0`.
+
 ## Contributors
 
 This release includes contributions from:
