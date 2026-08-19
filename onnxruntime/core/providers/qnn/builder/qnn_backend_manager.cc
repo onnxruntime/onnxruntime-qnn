@@ -1309,6 +1309,7 @@ Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& cont
 
   Qnn_ErrorHandle_t rt = QNN_SUCCESS;
   uint64_t buffer_length = 0;
+  bool use_file_mapping = false;
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Attempt file mapping first if enabled (matches initial load behavior).
@@ -1321,36 +1322,59 @@ Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& cont
     void* bin_buffer = nullptr;
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
 
-    auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
-
-    Qnn_ContextBinaryCallback_t callbacks;
-    callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
-    callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
-    callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
-    callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
-    callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
-
-    file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-
-    rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
-                                                            device_handle_,
-                                                            context_configs,
-                                                            &callbacks,
-                                                            bin_buffer,
-                                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                                            &new_context,
-                                                            profile_backend_handle_,
-                                                            NULL);
-    if (rt != QNN_SUCCESS) {
+    // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
+    auto sys_ctx_handle = GetSystemContextHandle();
+    RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
+    Qnn_Version_t blob_version = {0, 0, 0};
+    uint32_t graph_count = 0;
+    QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
+    RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
+                                              bin_buffer,
+                                              static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                              blob_version,
+                                              graph_count,
+                                              &graphs_info));
+    if (!MinVersionMet(blob_version, {3, 3, 3})) {
+      std::string version_str = std::to_string(blob_version.major) + "." +
+                                std::to_string(blob_version.minor) + "." +
+                                std::to_string(blob_version.patch);
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                      ("SSR recovery: file mapping failed (" + QnnErrorHandleToString(rt) +
-                       "). Retrying with direct read.")
+                      ("SSR recovery: context binary version " + version_str +
+                       " < 3.3.3, file mapping not supported. Falling back to direct read.")
                           .c_str());
+    } else {
+      use_file_mapping = true;
+      auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
+
+      Qnn_ContextBinaryCallback_t callbacks;
+      callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
+      callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
+      callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
+      callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
+      callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
+
+      file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+
+      rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
+                                                              device_handle_,
+                                                              context_configs,
+                                                              &callbacks,
+                                                              bin_buffer,
+                                                              static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                              &new_context,
+                                                              profile_backend_handle_,
+                                                              NULL);
+      if (rt != QNN_SUCCESS) {
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                        ("SSR recovery: file mapping failed (" + QnnErrorHandleToString(rt) +
+                         "). Retrying with direct read.")
+                            .c_str());
+      }
     }
   }
 #endif
 
-  if (!file_mapped_weights_enabled_ || rt != QNN_SUCCESS) {
+  if (!use_file_mapping || rt != QNN_SUCCESS) {
     // Direct read fallback (or primary path when file mapping is disabled).
     std::vector<char> buffer;
     RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer));
