@@ -26,6 +26,10 @@ on:
         description: "Do everything except the actual Artifactory upload. Defaults true so a manual dispatch never clobbers the shared store by accident; the scheduled producer passes false explicitly."
         type: boolean
         default: true
+      keep_zip_artifact:
+        description: "Also upload the packaged goldens.zip as a GitHub Actions artifact (retained 3 days). For manual inspection only, off by default."
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs: *common_inputs
 
@@ -91,6 +95,10 @@ jobs:
             args+=(--skip-regen)
           fi
 
+          if [ "${{ inputs.keep_zip_artifact }}" = "true" ]; then
+            args+=(--keep-zip="${GITHUB_WORKSPACE}/goldens_artifact/goldens.zip")
+          fi
+
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             args+=(--dry-run)
           else
@@ -98,6 +106,14 @@ jobs:
           fi
 
           bash qcom/scripts/linux/publish_goldens.sh "${args[@]}"
+
+      - name: Upload goldens.zip artifact
+        if: ${{ inputs.keep_zip_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: goldens-zip-${{ github.sha }}
+          path: goldens_artifact/goldens.zip
+          retention-days: 3
 
       - name: Summary
         if: ${{ !cancelled() }}
