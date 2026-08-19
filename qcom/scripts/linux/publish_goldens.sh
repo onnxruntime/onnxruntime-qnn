@@ -39,6 +39,8 @@
 #   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
 #                         BUILD_ARTIFACTORY_REPO.
 #   --skip-regen          Reuse existing goldens + accuracy results (re-publish).
+#   --keep-zip=<path>     Also copy the packaged goldens.zip to this path before the
+#                         staging dir is cleaned up (e.g. for CI artifact upload).
 #   -h|--help
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -60,6 +62,7 @@ dry_run=false
 publish=false
 skip_regen=false
 mode_flag_given=false
+keep_zip=""
 
 for arg in "$@"; do
     case "${arg}" in
@@ -70,6 +73,7 @@ for arg in "$@"; do
         --dry-run)        dry_run=true;  mode_flag_given=true ;;
         --publish)        publish=true;  mode_flag_given=true ;;
         --skip-regen)     skip_regen=true ;;
+        --keep-zip=*)     keep_zip="${arg#--keep-zip=}" ;;
         -h|--help)
             cat <<EOF
 Usage: $(basename "${BASH_SOURCE[0]}") --build-dir=<path> [options]
@@ -85,6 +89,8 @@ publish them (+ a version-stamped manifest.json) to Artifactory.
   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
                         BUILD_ARTIFACTORY_REPO.
   --skip-regen          Reuse existing goldens + accuracy results.
+  --keep-zip=<path>     Also copy the packaged goldens.zip to this path before
+                        the staging dir is cleaned up.
 
 Default when neither --dry-run nor --publish is given: dry-run (safe).
 EOF
@@ -317,6 +323,12 @@ zip_path="${staging}/goldens.zip"
     zip -r -q goldens.zip . -x goldens.zip
 )
 log_info "Packaged: goldens.zip ($(du -h "${zip_path}" | cut -f1))"
+
+if [ -n "${keep_zip}" ]; then
+    mkdir -p "$(dirname "${keep_zip}")"
+    cp "${zip_path}" "${keep_zip}"
+    log_info "Copied goldens.zip to: ${keep_zip}"
+fi
 
 # ---------------------------------------------------------------------------
 # Upload: write-once archive first, then the mutable latest/ pointer.
