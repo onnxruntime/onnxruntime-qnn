@@ -42,6 +42,12 @@ extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
 // QNN >= 2.32); always false on other platforms since the API doesn't exist there.
 static bool g_file_mapping_used_for_recovery = false;
 
+// When true, contextCreateFromBinaryWithCallback returns QNN_COMMON_ERROR_NOT_SUPPORTED
+// during SSR recovery without forwarding to the real backend, simulating the behavior
+// seen with a pre-3.3.3 context binary (file mapping not supported).
+// NOT reset by QnnInterface_getProviders; tests must set/clear this explicitly.
+static bool g_simulate_old_blob_version = false;
+
 namespace {
 #if defined(_WIN32)
 // Load QnnHtp.dll at DLL startup and resolve the real QnnInterface_getProviders.
@@ -109,6 +115,12 @@ Qnn_ErrorHandle_t QnnContext_createFromBinaryWithCallback(
     Qnn_ProfileHandle_t profileHandle,
     void* reserved) {
   if (g_ssr_fired) {
+    if (g_simulate_old_blob_version) {
+      // Simulate a pre-3.3.3 context binary: reject the callback API and do NOT record
+      // this as a successful file-mapping recovery.  The caller should fall back to
+      // contextCreateFromBinary (direct read).
+      return QNN_COMMON_ERROR_NOT_SUPPORTED;
+    }
     g_file_mapping_used_for_recovery = true;
   }
   if (!real_providerList) {
@@ -127,6 +139,14 @@ Qnn_ErrorHandle_t QnnContext_createFromBinaryWithCallback(
 // file mapping was used for recovery.
 extern "C" bool QnnMockSSR_WasFileMappingUsedForRecovery() {
   return g_file_mapping_used_for_recovery;
+}
+
+// When set to true, the contextCreateFromBinaryWithCallback interceptor will return
+// QNN_COMMON_ERROR_NOT_SUPPORTED during SSR recovery instead of forwarding to the real
+// backend, simulating a pre-3.3.3 context binary where the callback API is unsupported.
+// This flag is NOT reset by QnnInterface_getProviders; callers must reset it explicitly.
+extern "C" void QnnMockSSR_SetSimulateOldBlobVersion(bool simulate) {
+  g_simulate_old_blob_version = simulate;
 }
 
 // 'interface' is #defined as 'struct' in <objbase.h> (pulled in via <windows.h>).
