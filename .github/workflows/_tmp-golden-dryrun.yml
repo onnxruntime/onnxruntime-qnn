@@ -32,3 +32,4 @@ jobs:
     with:
       dry_run: true
       filter: Clip
+      keep_zip_artifact: true
