@@ -2560,6 +2560,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
             /*json_qnn_graph_path=*/{}};
         RETURN_IF_NOT_OK(qnn_model_shared->SetGraphInputOutputInfo(context));
         RETURN_IF_NOT_OK(qnn_model_shared->SetupQnnInputOutput(logger_));
+        RETURN_IF_NOT_OK(qnn_model_shared->ApplyRuntimeGraphConfigs(htp_graph_configs_, logger_));
         qnn_models_.emplace(names[graph_idx].first, std::move(qnn_model_shared));
 
         auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
@@ -2662,6 +2663,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
         /*json_qnn_graph_path=*/{}};
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(context));
     RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
+    RETURN_IF_NOT_OK(qnn_model->ApplyRuntimeGraphConfigs(htp_graph_configs_, logger_));
 
     // fused node name is QNNExecutionProvider_QNN_[hash_id]_[id]
     // the name here must be same with context->node_name in compute_info

@@ -9,9 +9,11 @@
 #include <thread>
 
 #include "HTP/QnnHtpContext.h"
+#include "HTP/QnnHtpGraph.h"
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -440,6 +442,60 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
   return Ort::Status();
 }
 
+Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
+                                               const Ort::Logger& logger) {
+  // Caches configs for re-application after an SSR event re-retrieves the graph handle.
+  // Each call overwrites runtime_graph_configs_; RecoverFromSSR always re-applies the most
+  // recently cached value. Normal usage calls this once at session creation, but correctness
+  // does not depend on that.
+  runtime_graph_configs_ = configs;
+
+  if (qnn_backend_type_ != QnnBackendType::HTP || graph_info_ == nullptr) {
+    return Ort::Status();
+  }
+
+  // Build the runtime-settable subset of graph configs using the same builder pattern as
+  // QnnEp::InitQnnHtpGraphConfigs. Only add options confirmed settable on a finalized graph;
+  // a compile-time-only option here would come back as QNN_GRAPH_ERROR_GRAPH_FINALIZED.
+  QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  if (configs.enable_htp_fp16_clamp_overflow) {
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> cc = builder.PushCustomConfig();
+    cc->option = QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW;
+    cc->fp16ClampOverflow = true;
+    gsl::not_null<QnnGraph_Config_t*> gc = builder.PushConfig();
+    gc->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    gc->customConfig = cc;
+  }
+  // NOTE: future runtime-settable options append their own guarded block here.
+#endif
+
+  const QnnGraph_Config_t** graph_configs = builder.GetQnnConfigs();
+  if (graph_configs == nullptr) {
+    return Ort::Status();  // Nothing runtime-applicable was requested.
+  }
+
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+  RETURN_IF(nullptr == qnn_interface.graphSetConfig,
+            "Invalid function pointer for graphSetConfig; cannot apply runtime graph configs.");
+  Qnn_ErrorHandle_t rt = qnn_interface.graphSetConfig(graph_info_->Graph(), graph_configs);
+  if (QNN_SUCCESS != rt) {
+    // QNN_GRAPH_ERROR_GRAPH_FINALIZED here means an option in the set is not runtime-settable
+    // on this SDK and must move back to compile-time wiring in InitQnnHtpGraphConfigs.
+    const std::string message = "Failed to apply runtime graph configs for graph: " +
+                                graph_info_->Name() + ". " +
+                                utils::FormatQnnError(qnn_interface, rt);
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return MAKE_EP_FAIL(message.c_str());
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Applied runtime graph configs for graph: " + graph_info_->Name()).c_str());
+  return Ort::Status();
+}
+
 static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
                                                        const Ort::Logger& logger,
                                                        QnnBackendManager& qnn_backend_manager,
@@ -551,7 +607,10 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
   graph_info_->ResetHandles(new_graph, new_context);
 
   // Re-build the tensor I/O metadata against the new graph handles.
-  return SetupQnnInputOutput(logger);
+  RETURN_IF_ERROR(SetupQnnInputOutput(logger));
+
+  // The freshly retrieved graph handle does not carry runtime graph configs, so re-apply them.
+  return ApplyRuntimeGraphConfigs(runtime_graph_configs_, logger);
 }
 
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,

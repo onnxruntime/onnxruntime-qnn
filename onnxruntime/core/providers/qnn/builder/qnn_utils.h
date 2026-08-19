@@ -252,6 +252,15 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
                                  /*out*/ gsl::span<float> data, Qnn_DataType_t data_type,
                                  std::optional<int64_t> axis = std::nullopt);
 
+// Recovers the true two's-complement value of sub-byte data that UnpackInitializerData() expanded
+// to one byte per element with the unused high bits masked off (UnpackInt4ToInt8 / UnpackInt2ToInt8
+// mask to work around a QNN INT4 accuracy bug; that mask must stay). Consumers that read those
+// bytes as plain integers need this: DequantizePerChannel is told SFIXED_POINT_8, since
+// CreateMapQuantize collapses INT4 into it on non-GPU backends, so a negative 4-bit value would
+// read back as q + 16. UINT4/UINT2 are never masked and are left alone.
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes);
+
 Ort::Status Quantize(const double double_value,
                      const float scale,
                      const int32_t zero_point,
