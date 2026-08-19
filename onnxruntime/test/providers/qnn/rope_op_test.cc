@@ -308,6 +308,71 @@ TEST_F(QnnHTPBackendTests, RotaryEmbedding_RandomPositionIds) {
       kDefaultRopeOpToleranceFp16);
 }
 
+// FP32 variant — validates FP32 data type support advertised by IsOpSupported.
+TEST_F(QnnHTPBackendTests, RotaryEmbedding_FP32) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+
+  constexpr int64_t batch_size = 1;
+  constexpr int64_t num_heads = 2;
+  constexpr int64_t seq_len = 4;
+  constexpr int64_t head_size = 8;
+  constexpr int64_t rotary_dim = head_size;
+
+  auto input_f32 = GetFloatDataInRange(-1.0f, 1.0f, batch_size * num_heads * seq_len * head_size);
+  auto cos_f32 = GetFloatDataInRange(-1.0f, 1.0f, seq_len * (rotary_dim / 2));
+  auto sin_f32 = GetFloatDataInRange(-1.0f, 1.0f, seq_len * (rotary_dim / 2));
+
+  RunRopeOpTest<float>(
+      TestInputDef<float>({batch_size, num_heads, seq_len, head_size}, false, input_f32),
+      TestInputDef<int64_t>({batch_size, seq_len}, false, std::vector<int64_t>{0, 1, 2, 3}),
+      TestInputDef<float>({seq_len, rotary_dim / 2}, false, cos_f32),
+      TestInputDef<float>({seq_len, rotary_dim / 2}, false, sin_f32),
+      {test::MakeAttribute("interleaved", int64_t{0}),
+       test::MakeAttribute("num_heads", num_heads),
+       test::MakeAttribute("rotary_embedding_dim", rotary_dim)},
+      /*opset_version*/ 23,
+      ExpectedEPNodeAssignment::All,
+      1e-3f);
+}
+
+// No rotary_embedding_dim attribute — exercises the 0→head_size resolution path.
+TEST_F(QnnHTPBackendTests, RotaryEmbedding_DefaultRotaryDim) {
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+
+  constexpr int64_t batch_size = 1;
+  constexpr int64_t num_heads = 2;
+  constexpr int64_t seq_len = 4;
+  constexpr int64_t head_size = 8;
+  constexpr int64_t rotary_dim = head_size;  // full rotation
+
+  auto input_f32 = GetFloatDataInRange(-1.0f, 1.0f, batch_size * num_heads * seq_len * head_size);
+  auto cos_f32 = GetFloatDataInRange(-1.0f, 1.0f, seq_len * (rotary_dim / 2));
+  auto sin_f32 = GetFloatDataInRange(-1.0f, 1.0f, seq_len * (rotary_dim / 2));
+
+  TestInputDef<Ort::Float16_t> input_def_fp16 = ConvertToFP16InputDef(
+      TestInputDef<float>({batch_size, num_heads, seq_len, head_size}, false, input_f32));
+  TestInputDef<Ort::Float16_t> cos_def_fp16 = ConvertToFP16InputDef(
+      TestInputDef<float>({seq_len, rotary_dim / 2}, false, cos_f32));
+  TestInputDef<Ort::Float16_t> sin_def_fp16 = ConvertToFP16InputDef(
+      TestInputDef<float>({seq_len, rotary_dim / 2}, false, sin_f32));
+
+  // Note: no rotary_embedding_dim attribute — defaults to 0, resolved to head_size
+  RunRopeOpTest<Ort::Float16_t>(
+      input_def_fp16,
+      TestInputDef<int64_t>({batch_size, seq_len}, false, std::vector<int64_t>{0, 1, 2, 3}),
+      cos_def_fp16,
+      sin_def_fp16,
+      {test::MakeAttribute("interleaved", int64_t{0}),
+       test::MakeAttribute("num_heads", num_heads)},
+      /*opset_version*/ 23,
+      ExpectedEPNodeAssignment::All,
+      kDefaultRopeOpToleranceFp16);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

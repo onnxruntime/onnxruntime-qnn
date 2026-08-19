@@ -5,6 +5,7 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -19,6 +20,12 @@ class RotaryEmbeddingOpBuilder final : public BaseOpBuilder {
                             const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
 
  protected:
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
+
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
@@ -36,9 +43,10 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
                                                     const Ort::Logger& logger) const {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Validating RotaryEmbedding op for QNN EP");
 
-  RETURN_IF_NOT(node_unit.Domain() != "com.microsoft",
-                "QNN EP only supports standard ONNX RotaryEmbedding (opset 23), "
-                "not com.microsoft.RotaryEmbedding");
+  RETURN_IF_NOT(node_unit.Domain() != kMSDomain,
+                "QNN EP only supports standard ONNX RotaryEmbedding (opset 23+), "
+                "not com.microsoft.RotaryEmbedding. "
+                "The native QNN op does not support the contrib op's input layout or attributes.");
 
   RETURN_IF_NOT(IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
                 "QNN RotaryEmbedding is only supported on HTP backend");
@@ -101,6 +109,8 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
   if (rotary_embedding_dim == 0) {
     rotary_embedding_dim = head_size;
   }
+  RETURN_IF_NOT(rotary_embedding_dim % 2 == 0,
+                "rotary_embedding_dim must be even");
   RETURN_IF_NOT(rotary_embedding_dim >= 2 && rotary_embedding_dim <= static_cast<int64_t>(head_size),
                 "rotary_embedding_dim must be in [2, head_size]");
 
@@ -111,12 +121,19 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, sin_shape),
                 "Cannot get sin_cache shape");
 
-  RETURN_IF_NOT(cos_shape.size() == 2 || cos_shape.size() == 3,
-                "cos_cache must be rank 2 or 3");
-  RETURN_IF_NOT(sin_shape.size() == 2 || sin_shape.size() == 3,
-                "sin_cache must be rank 2 or 3");
-  RETURN_IF_NOT(cos_shape.size() == sin_shape.size(),
-                "cos_cache and sin_cache must have same rank");
+  const bool has_position_ids = (inputs.size() > 3 && inputs[3].Exists());
+
+  if (has_position_ids) {
+    RETURN_IF_NOT(cos_shape.size() == 2,
+                  "cos_cache must be rank 2 [max_pos, rotary_dim/2] when position_ids is provided");
+    RETURN_IF_NOT(sin_shape.size() == 2,
+                  "sin_cache must be rank 2 [max_pos, rotary_dim/2] when position_ids is provided");
+  } else {
+    RETURN_IF_NOT(cos_shape.size() == 3,
+                  "cos_cache must be rank 3 [B, S, rotary_dim/2] when position_ids is absent");
+    RETURN_IF_NOT(sin_shape.size() == 3,
+                  "sin_cache must be rank 3 [B, S, rotary_dim/2] when position_ids is absent");
+  }
 
   const uint32_t expected_cache_dim = static_cast<uint32_t>(rotary_embedding_dim / 2);
   RETURN_IF_NOT(cos_shape.back() == expected_cache_dim,
@@ -124,16 +141,20 @@ Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_w
   RETURN_IF_NOT(sin_shape.back() == expected_cache_dim,
                 "sin_cache last dimension must equal rotary_embedding_dim/2");
 
-  if (inputs.size() > 3 && inputs[3].Exists()) {
+  if (has_position_ids) {
     std::vector<uint32_t> pos_ids_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[3].shape, pos_ids_shape),
                   "Cannot get position_ids shape");
     RETURN_IF_NOT(pos_ids_shape.size() == 2,
                   "position_ids must be rank 2 [B, S]");
+
+    const uint32_t batch_size = input_shape[0];
+    const uint32_t seq_len = (input_rank == 4) ? input_shape[2] : input_shape[1];
+    RETURN_IF_NOT(pos_ids_shape[0] == batch_size && pos_ids_shape[1] == seq_len,
+                  "position_ids shape must match [batch_size, seq_len]");
   }
 
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "RotaryEmbedding op validation successful");
-  return Ort::Status();
+  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
 }
 
 Ort::Status RotaryEmbeddingOpBuilder::ValidateInputShapes(QnnModelWrapper& qnn_model_wrapper,
@@ -150,6 +171,22 @@ Ort::Status RotaryEmbeddingOpBuilder::ValidateInputShapes(QnnModelWrapper& qnn_m
   RETURN_IF_NOT(input_rank == 3 || input_rank == 4,
                 "RotaryEmbedding input must be rank 3 [B,S,NH*HS] or rank 4 [B,NH,S,HS]");
 
+  return Ort::Status();
+}
+
+// Only process inputs that exist — position_ids (input[3]) is optional.
+Ort::Status RotaryEmbeddingOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                                    const OrtNodeUnit& node_unit,
+                                                    const Ort::Logger& logger,
+                                                    std::vector<std::string>& input_names,
+                                                    bool do_op_validation) const {
+  ORT_UNUSED_PARAMETER(do_op_validation);
+  const auto& inputs = node_unit.Inputs();
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    if (inputs[i].Exists()) {
+      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[i], logger, input_names));
+    }
+  }
   return Ort::Status();
 }
 
@@ -227,13 +264,14 @@ Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_interleaved",
                                      interleaved, QNN_OP_ROTARY_EMBEDDING_PARAM_INTERLEAVED, rope_param_names));
 
-  if (rotary_embedding_dim != 0) {
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(),
-                                           node_unit.Name() + "_rotary_embedding_dim",
-                                           static_cast<uint32_t>(rotary_embedding_dim),
-                                           QNN_OP_ROTARY_EMBEDDING_PARAM_ROTARY_EMBEDDING_DIM,
-                                           rope_param_names));
-  }
+  const uint32_t resolved_rotary_dim = (rotary_embedding_dim != 0)
+                                           ? static_cast<uint32_t>(rotary_embedding_dim)
+                                           : head_size;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(),
+                                         node_unit.Name() + "_rotary_embedding_dim",
+                                         resolved_rotary_dim,
+                                         QNN_OP_ROTARY_EMBEDDING_PARAM_ROTARY_EMBEDDING_DIM,
+                                         rope_param_names));
 
   const std::string& output_name = outputs[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
