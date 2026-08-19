@@ -1689,6 +1689,30 @@ Ort::Status TransposeFromCnhwToHwcn(std::vector<int64_t>&& original_input_shape_
                             output_buffer);
 }
 
+Ort::Status DeriveConvertQuantParams(Qnn_DataType_t input_qnn_data_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     int32_t input_offset,
+                                     float input_scale,
+                                     bool output_symmetric,
+                                     float& output_scale,
+                                     int32_t& output_offset) {
+  // Decode the float range the input encoding represents, then re-derive an encoding for that same
+  // range in the target type. Going through the float range (rather than scaling by a power-of-two
+  // bit-width ratio) keeps this correct when the target differs in signedness or symmetry.
+  float qmin = 0.0f;
+  float qmax = 255.0f;
+  RETURN_IF_ERROR(qnn::utils::GetQminQmax(input_qnn_data_type, qmin, qmax));
+  double value_min = qnn::utils::Dequantize(input_offset, input_scale, qmin);
+  double value_max = qnn::utils::Dequantize(input_offset, input_scale, qmax);
+
+  return qnn::utils::GetQuantParams(static_cast<float>(value_min),
+                                    static_cast<float>(value_max),
+                                    output_qnn_data_type,
+                                    output_scale,
+                                    output_offset,
+                                    output_symmetric);
+}
+
 // Inserts a QNN Convert operator to convert from one quantization type (e.g., uint16) to another (e.g., uint8).
 // (OR) Convert from Asymmetric (e.g., UINT16) to Symmetric (e.g., INT16) quantization type
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
@@ -1702,19 +1726,10 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool output_symmetric,
                             bool do_op_validation) {
   // Assume input is already handled.
-  float qmin = 0.0f;
-  float qmax = 255.0f;
-  RETURN_IF_ERROR(qnn::utils::GetQminQmax(input_qnn_data_type, qmin, qmax));
-  double value_min = qnn::utils::Dequantize(input_offset, input_scale, qmin);
-  double value_max = qnn::utils::Dequantize(input_offset, input_scale, qmax);
   float scale = 0.0f;
   int32_t offset = 0;
-  RETURN_IF_ERROR(qnn::utils::GetQuantParams(static_cast<float>(value_min),
-                                             static_cast<float>(value_max),
-                                             output_qnn_data_type,
-                                             scale,
-                                             offset,
-                                             output_symmetric));
+  RETURN_IF_ERROR(DeriveConvertQuantParams(input_qnn_data_type, output_qnn_data_type, input_offset,
+                                           input_scale, output_symmetric, scale, offset));
 
   std::vector<uint32_t> output_shape_copy = output_shape;
   QnnTensorWrapper convert_output_tensorwrapper(convert_output_name,

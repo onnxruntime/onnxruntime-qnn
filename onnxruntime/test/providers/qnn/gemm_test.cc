@@ -247,12 +247,14 @@ TEST_F(QnnCPUBackendTests, ReshapeGemmFusion) {
 //
 
 // Returns a function that builds a model with a QDQ Gemm node.
-template <typename InputAQType, typename InputBQType>
-inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<TestInputDef<float>>& input_defs,
+// OutputQType defaults to InputAQType; pass a different type to build a mixed-precision group
+// (e.g. u8 activation with u16 output), which QNN EP handles by inserting a Convert before the FC.
+template <typename InputAQType, typename InputBQType, typename OutputQType = InputAQType>
+inline GetTestQDQModelFn<OutputQType> BuildQDQGemmTestCase(const std::vector<TestInputDef<float>>& input_defs,
                                                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                                            bool use_contrib_qdq = false) {
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
-                                              std::vector<QuantParams<InputAQType>>& output_qparams) {
+                                              std::vector<QuantParams<OutputQType>>& output_qparams) {
     const size_t num_inputs = input_defs.size();
     QNN_ASSERT(num_inputs == 2 || num_inputs == 3);
 
@@ -286,14 +288,14 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<Tes
     builder.AddNode("gemm", "Gemm", gemm_inputs, {"Y"}, "", attributes);
 
     // Output: Y -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(
         builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
 // Runs a QDQ Gemm model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
 // running the QDQ model on QNN EP is at least as accurate as on ORT CPU EP (compared to the baseline float32 model).
-template <typename InputAQType, typename InputBQType>
+template <typename InputAQType, typename InputBQType, typename OutputQType = InputAQType>
 static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_defs,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
@@ -306,8 +308,9 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto f32_model_builder = BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {}, attrs);
-  auto qdq_model_builder = BuildQDQGemmTestCase<InputAQType, InputBQType>(input_defs, attrs, use_contrib_qdq);
-  TestQDQModelAccuracy<InputAQType>(f32_model_builder,
+  auto qdq_model_builder =
+      BuildQDQGemmTestCase<InputAQType, InputBQType, OutputQType>(input_defs, attrs, use_contrib_qdq);
+  TestQDQModelAccuracy<OutputQType>(f32_model_builder,
                                     qdq_model_builder,
                                     provider_options,
                                     opset,
@@ -511,6 +514,108 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
                                          ExpectedEPNodeAssignment::All,
                                          13,     // opset
                                          true);  // Use com.microsoft Q/DQ ops
+}
+
+// Mixed-precision (widening) QDQ Gemm with transA=1: u8 activation, u8 weight, u16 output.
+//
+// Covers the interaction between the transA Transpose and the widening Convert in GemmOpBuilder.
+// HTP FullyConnected requires in[0] and out[0] to share a quantized type, so the builder inserts
+// Convert(u8->u16) on the activation. With transA=1 the activation has already been transposed,
+// so input_names[0] is a Transpose output and the Convert's shape must be read from the staged
+// QNN tensor wrapper (post-permute dims) rather than from the ONNX-side input info. Reading the
+// ONNX dims here would give the Convert a [K, M] shape where the graph carries [M, K].
+//
+// The bias is also requantized, since the Convert changes the activation scale the FC accumulates at.
+TEST_F(QnnHTPBackendTests, Gemm_TransA_MixedPrecision_U8Act_U8Weight_U16Out) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  // A is [K, M] = [6, 1] because transA=1; B is [K, N] = [6, 4] with transB=0.
+  RunQDQGemmTestOnHTP<uint8_t, uint8_t, uint16_t>({TestInputDef<float>({6, 1}, false, input_a_data),
+                                                   TestInputDef<float>({6, 4}, true, input_b_data),
+                                                   TestInputDef<float>({1, 4}, true, input_c_data)},
+                                                  {test::MakeAttribute("transA", static_cast<int64_t>(1))},
+                                                  ExpectedEPNodeAssignment::All,
+                                                  21);  // opset 21 for native 16-bit Q/DQ
+}
+
+// Same widening path with transA=1 and transB=1, so both A and B carry a Transpose.
+//
+// A and B use smaller ranges than the transA-only test above (2.5/1.25 instead of 10/5). Both EPs
+// consume the same quantized inputs, so shrinking A and B does not change their quantization error
+// relative to each other — it shrinks the FC accumulator, and with it the absolute QNN-vs-CPU
+// difference, while the unchanged bias range keeps the output range from shrinking as fast. At
+// 10/5 this configuration lands at 0.409% of the output range, just over the 0.4% default
+// tolerance; the same-data 8-bit sibling Gemm_TransAB_Static_B_And_Bias_U8 is marginal for the
+// same reason (skipped on v79/v81 for exceeding it by 2.7%), so it is the input/double-transpose
+// combination rather than the widening path that sits near the limit.
+TEST_F(QnnHTPBackendTests, Gemm_TransAB_MixedPrecision_U8Act_U8Weight_U16Out) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-2.5f, 2.5f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-1.25f, 1.25f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  RunQDQGemmTestOnHTP<uint8_t, uint8_t, uint16_t>({TestInputDef<float>({6, 1}, false, input_a_data),
+                                                   TestInputDef<float>({4, 6}, true, input_b_data),
+                                                   TestInputDef<float>({1, 4}, true, input_c_data)},
+                                                  {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                                                   test::MakeAttribute("transB", static_cast<int64_t>(1))},
+                                                  ExpectedEPNodeAssignment::All,
+                                                  21);  // opset 21 for native 16-bit Q/DQ
+}
+
+// Narrowing counterpart with transA=1: u16 activation, u8 weight, u8 output. Here the Convert is
+// inserted after the FC (ProcessAttributesAndOutputs) and the bias is deliberately NOT requantized,
+// since the FC still accumulates at the original u16 activation scale.
+TEST_F(QnnHTPBackendTests, Gemm_TransA_MixedPrecision_U16Act_U8Weight_U8Out) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  RunQDQGemmTestOnHTP<uint16_t, uint8_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
+                                                   TestInputDef<float>({6, 4}, true, input_b_data),
+                                                   TestInputDef<float>({1, 4}, true, input_c_data)},
+                                                  {test::MakeAttribute("transA", static_cast<int64_t>(1))},
+                                                  ExpectedEPNodeAssignment::All,
+                                                  21);  // opset 21 for native 16-bit Q/DQ
+}
+
+// Widening mixed-precision Gemm (u8 act, u16 out) whose int32 bias is a *graph input* rather than an
+// initializer: must be rejected, not silently mis-scaled.
+//
+// The widening Convert changes the scale FC accumulates at, so the int32 bias has to be rescaled from
+// old_act_scale * weight_scale to new_act_scale * weight_scale. HTP folds the bias into the FC
+// accumulator at that product and ignores the bias tensor's declared encoding, so re-declaring the
+// encoding alone is not enough — the stored integers must change, which requires a client buffer the
+// builder can rewrite. A graph-input bias has none, so ProcessInputs rejects the node.
+//
+// (A NATIVE int32 bias is deliberately *not* rejected: it forces split_gemm, where the bias lands on a
+// separate ElementWiseAdd that honors its own encoding. See GemmReshapeQ_Direct_NativeBias_NotAbsorbed.)
+TEST_F(QnnHTPBackendTests, Gemm_MixedPrecision_U8Act_U16Out_GraphInputBias_Unsupported) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  RunQDQGemmTestOnHTP<uint8_t, uint8_t, uint16_t>({TestInputDef<float>({1, 6}, false, input_a_data),
+                                                   TestInputDef<float>({6, 4}, true, input_b_data),
+                                                   // Dynamic bias => int32 graph input, no client buffer.
+                                                   TestInputDef<float>({1, 4}, false, input_c_data)},
+                                                  {},
+                                                  ExpectedEPNodeAssignment::None,
+                                                  21);  // opset 21 for native 16-bit Q/DQ
+}
+
+// Mixed-precision Gemm whose activation/output types differ but map to no supported sequence:
+// u8 activation with s8 output. Same bit width, so it is neither widening nor narrowing, and both
+// sides are quantized so it is neither quant-to-float nor float-to-quant. Emitting it anyway would
+// hand HTP FullyConnected mismatched in[0]/out[0] types, so GemmOpBuilder must reject the node
+// (GemmMixedPrecision::IsUnsupported) and let it fall back rather than build a bad graph.
+TEST_F(QnnHTPBackendTests, Gemm_MixedPrecision_U8Act_S8Out_Unsupported) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  RunQDQGemmTestOnHTP<uint8_t, uint8_t, int8_t>({TestInputDef<float>({1, 6}, false, input_a_data),
+                                                 TestInputDef<float>({6, 4}, true, input_b_data),
+                                                 TestInputDef<float>({1, 4}, true, input_c_data)},
+                                                {},
+                                                ExpectedEPNodeAssignment::None,
+                                                21);
 }
 
 // Broken on v79 and v81 devices:
@@ -784,7 +889,12 @@ namespace {
 // The activation is rank-3 so MatMulAddFusion inserts the Reshape wrappers around
 // the resulting rank-2 Gemm. The output Q is unsigned with zero_point == 0, so
 // encoding_min = scale * (qmin - zp) = 0 and the Relu fold is encoding-safe.
-template <typename ActQType, typename WtQType>
+//
+// OutQType defaults to ActQType. Passing a different type builds a mixed-precision group on top of
+// the absorbed Reshape, which makes GemmOpBuilder emit FC + Reshape + Convert. Note that the
+// trailing Reshape is only absorbed when include_relu is true — see the comment on
+// GemmMatMulAddFusion_MixedPrecision_U8Act_U8Weight_U16Out.
+template <typename ActQType, typename WtQType, typename OutQType = ActQType>
 GetTestModelFn BuildMatMulAddFusionQDQTestCase(int64_t M, int64_t K, int64_t N, bool include_relu) {
   return [M, K, N, include_relu](ModelTestBuilder& builder) {
     const std::vector<int64_t> act_shape{1, M, K};
@@ -828,8 +938,8 @@ GetTestModelFn BuildMatMulAddFusionQDQTestCase(int64_t M, int64_t K, int64_t N, 
     // Output Q(zp=0) makes the encoding safe for the Relu fold; ORT normally drops
     // Relu itself in this case, but we assert that even if the Relu survives (e.g.,
     // because L2 cleanup decides to keep it), the group forms and QNN accepts the FC.
-    QuantParams<ActQType> out_qp = QuantParams<ActQType>::Compute(0.0f, 8.0f, /*symmetric=*/false);
-    AddQDQNodePairWithOutputAsGraphOutput<ActQType>(builder, "out", post_activation,
+    QuantParams<OutQType> out_qp = QuantParams<OutQType>::Compute(0.0f, 8.0f, /*symmetric=*/false);
+    AddQDQNodePairWithOutputAsGraphOutput<OutQType>(builder, "out", post_activation,
                                                     out_qp.scale, out_qp.zero_point,
                                                     /*use_contrib_qdq=*/true);
   };
@@ -871,123 +981,37 @@ TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_U16Act_S16Weight_WithRelu) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
-// Direct QDQ Gemm -> Reshape -> Q graphs (no MatMul+Add) — exercise the absorb-Reshape
-// selector's guard-rails on shapes; MatMulAddFusion never emits (transB=1, NATIVE bias).
-namespace {
-// activation: rank-2 [M, K] float -> Q(u16) -> DQ
-// weight:    rank-2 [K, N] (or [N, K] when trans_b=1) static -> DQ
-// bias (opt): rank-1 [N] INT32 static -> DQ
-// -> Gemm -> Reshape (rank-3 [1, M, N]) -> Q -> DQ -> output
-struct DirectGemmReshapeQConfig {
-  int64_t M = 4;
-  int64_t K = 8;
-  int64_t N = 6;
-  int64_t trans_b = 0;                  // 0 → weight [K,N]; 1 → weight [N,K]
-  bool include_bias = true;             // rank-1 bias by default
-  bool bias_from_intermediate = false;  // if true, bias is produced by an intermediate MatMul (NATIVE bias)
-};
-
-GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& cfg) {
-  return [cfg](ModelTestBuilder& builder) {
-    const std::vector<int64_t> act_shape{cfg.M, cfg.K};
-    const std::vector<int64_t> weight_shape = cfg.trans_b == 0
-                                                  ? std::vector<int64_t>{cfg.K, cfg.N}
-                                                  : std::vector<int64_t>{cfg.N, cfg.K};
-
-    MakeTestInput<float>(builder, "input", TestInputDef<float>(act_shape, false, -1.0f, 1.0f));
-    QuantParams<uint16_t> act_qp = QuantParams<uint16_t>::Compute(-1.0f, 1.0f, /*symmetric=*/false);
-    const std::string act_qdq = AddQDQNodePair<uint16_t>(builder, "act", "input", act_qp.scale,
-                                                         act_qp.zero_point, /*use_contrib_qdq=*/true);
-
-    QuantParams<uint8_t> wt_qp = QuantParams<uint8_t>::Compute(-0.5f, 0.5f, /*symmetric=*/true);
-    TestInputDef<float> wt_def(weight_shape, /*is_initializer=*/true,
-                               GetFloatDataInRange(-0.5f, 0.5f, static_cast<size_t>(cfg.K * cfg.N)));
-    std::vector<uint8_t> wt_quantized(static_cast<size_t>(cfg.K * cfg.N));
-    const std::vector<float> wt_scales{wt_qp.scale};
-    const std::vector<uint8_t> wt_zps{wt_qp.zero_point};
-    QuantizeValues<float, uint8_t>(wt_def.GetRawData(), wt_quantized, weight_shape,
-                                   wt_scales, wt_zps, std::nullopt);
-    builder.MakeInitializer<uint8_t>("weight_q", weight_shape, wt_quantized);
-    builder.AddDequantizeLinearNode<uint8_t>("weight_dq", "weight_q", wt_qp.scale,
-                                             wt_qp.zero_point, "weight_dq", /*use_contrib_qdq=*/true);
-
-    std::vector<std::string> gemm_inputs{act_qdq, "weight_dq"};
-    if (cfg.include_bias) {
-      if (cfg.bias_from_intermediate) {
-        // Build a NATIVE bias: MatMul produces the tensor consumed by Gemm as C. This is what
-        // MatMulAddFusion normally rewrites into Gemm(C=intermediate), but here we assemble
-        // the pattern by hand so the absorb-Reshape selector must reject it.
-        std::vector<int64_t> mm_a_shape{cfg.M, cfg.K};
-        std::vector<int64_t> mm_w_shape{cfg.K, cfg.N};
-        builder.MakeInput<float>("bias_mm_a", mm_a_shape, -1.0f, 1.0f);
-        builder.MakeInitializer<float>("bias_mm_w", mm_w_shape, -0.5f, 0.5f);
-        const std::string bias_mm_dq_a = AddQDQNodePair<uint16_t>(builder, "bias_mm_a_qdq",
-                                                                  "bias_mm_a", act_qp.scale,
-                                                                  act_qp.zero_point, /*use_contrib_qdq=*/true);
-        builder.AddNode("bias_mm", "MatMul", {bias_mm_dq_a, "bias_mm_w"}, {"bias_native"}, kOnnxDomain);
-        gemm_inputs.push_back("bias_native");
-      } else {
-        const std::vector<int64_t> bias_shape{cfg.N};
-        TestInputDef<float> bias_def(bias_shape, /*is_initializer=*/true,
-                                     GetFloatDataInRange(-0.2f, 0.2f, static_cast<size_t>(cfg.N)));
-        const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
-                                                         act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
-        gemm_inputs.push_back(bias_dq);
-      }
-    }
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
-    gemm_attrs.push_back(test::MakeAttribute("transB", cfg.trans_b));
-    builder.AddNode("gemm", "Gemm", gemm_inputs, {"gemm_out"}, kOnnxDomain, gemm_attrs);
-
-    // Explicit Reshape rank-2 -> rank-3.
-    const std::vector<int64_t> reshape_target{1, cfg.M, cfg.N};
-    builder.Make1DInitializer<int64_t>("reshape_shape", reshape_target);
-    builder.AddNode("reshape", "Reshape", {"gemm_out", "reshape_shape"}, {"reshape_out"});
-
-    QuantParams<uint16_t> out_qp = QuantParams<uint16_t>::Compute(0.0f, 8.0f, /*symmetric=*/false);
-    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "reshape_out",
-                                                    out_qp.scale, out_qp.zero_point,
-                                                    /*use_contrib_qdq=*/true);
-  };
-}
-
-ProviderOptions GetHtpProviderOptions() {
-  ProviderOptions opts;
-  opts["backend_type"] = "htp";
-  opts["offload_graph_io_quantization"] = "0";
-  return opts;
-}
-}  // namespace
-
-// Positive: direct Gemm -> Reshape -> Q with transB=0 and rank-1 static bias.
-// The selector absorbs the Reshape and the group is assigned to QNN EP.
-TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransB0_1DBias) {
-  DirectGemmReshapeQConfig cfg;
-  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+// Mixed-precision (widening) on top of the absorbed Reshape: u8 activation, u8 weight, u16 output.
+//
+// Regression test for the absorbed-Reshape path skipping the mixed-precision output logic. The
+// widening Convert lands on the *activation* (ProcessInputs), so the FC receives u16 while the
+// absorbed path used to type its FC/Reshape intermediates off the ONNX-side u8 activation type —
+// giving HTP FullyConnected mismatched in[0]/out[0] types. The intermediates must carry the
+// effective FC type (u16 here), not the pre-Convert activation type.
+//
+// include_relu must be true to reach the absorbed path at all: ORT's QDQPropagationTransformer
+// pushes the trailing Q back across a bare Reshape, so `Gemm -> Reshape -> Q` becomes
+// `Gemm -> Q -> DQ -> Reshape -> Q` and the Reshape ends up as a standalone QNN op. It does not
+// propagate across Relu/Clip, so only `Gemm -> Reshape -> Relu -> Q` survives for the selector to
+// absorb (qnn_ep_utils.cc, TryAbsorbTrailingReshape gate 3b.3.2).
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_MixedPrecision_U8Act_U8Weight_U16Out) {
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint8_t, uint8_t, uint16_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/true),
+                  GetMatMulAddFusionProviderOptions(), /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
-// Negative gate (M-1): direct Gemm(transB=1) -> Reshape -> Q must NOT be absorbed by the
-// absorb-Reshape selector — the builder's absorbed path hard-asserts transB=0. The graph
-// still runs on QNN EP via the split_gemm / regular Gemm path (Reshape is a separate node).
-TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransB1_NotAbsorbed) {
-  DirectGemmReshapeQConfig cfg;
-  cfg.trans_b = 1;
-  // Successful build proves the selector did not force the absorbed-Reshape path
-  // (which would abort at graph build with transB=1).
-  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
-}
-
-// Negative gate (M-2): direct Gemm with a NATIVE bias (produced by an intermediate MatMul)
-// -> Reshape -> Q. The absorb-Reshape path must reject it (unsafe: NATIVE bias would have
-// forced split_gemm). The graph still runs via split_gemm.
-TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_NativeBias_NotAbsorbed) {
-  DirectGemmReshapeQConfig cfg;
-  cfg.bias_from_intermediate = true;
-  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+// Narrowing counterpart on the absorbed Reshape: u16 activation, u8 weight, u8 output. Here the FC
+// chain (FC + Reshape) runs at u16 with the u8 output grid re-expressed at 16-bit, and a trailing
+// Convert re-encodes to u8 *after* the Reshape. Before the fix the absorbed path returned early and
+// never emitted that Convert, so the graph output kept the wrong encoding/type.
+//
+// include_relu is true for the same reason as the widening test above.
+TEST_F(QnnHTPBackendTests, GemmMatMulAddFusion_MixedPrecision_U16Act_U8Weight_U8Out) {
+  RunQnnModelTest(BuildMatMulAddFusionQDQTestCase<uint16_t, uint8_t, uint8_t>(
+                      /*M=*/8, /*K=*/16, /*N=*/12, /*include_relu=*/true),
+                  GetMatMulAddFusionProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(4e-2f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

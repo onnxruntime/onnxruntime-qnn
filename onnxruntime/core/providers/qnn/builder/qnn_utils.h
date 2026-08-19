@@ -695,6 +695,17 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
   return Ort::Status();
 }
 
+// Derives the per-tensor encoding that represents the same float range as (input_scale, input_offset)
+// in output_qnn_data_type. Use this when only the target encoding is needed; InsertConvertOp() below
+// applies the same derivation and also emits the Convert node.
+Ort::Status DeriveConvertQuantParams(Qnn_DataType_t input_qnn_data_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     int32_t input_offset,
+                                     float input_scale,
+                                     bool output_symmetric,
+                                     /*out*/ float& output_scale,
+                                     /*out*/ int32_t& output_offset);
+
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             const std::string& convert_input_name,
                             const std::string& convert_output_name,
