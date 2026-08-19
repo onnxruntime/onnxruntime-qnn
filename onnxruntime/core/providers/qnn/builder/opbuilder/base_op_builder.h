@@ -459,5 +459,12 @@ Ort::Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
                                        ONNXTensorElementDataType onnx_tensor_data_type,
                                        std::string error_msg);
 
+// Returns true when the backend is NPU/HTP and the silicon is HTP v68.
+// HTP v68 does not support FP32 or FP16 tensors; callers should reject such ops.
+inline bool IsHtpV68Arch(const QnnModelWrapper& qnn_model_wrapper) {
+  return IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+         qnn_model_wrapper.GetModelSettings().htp_arch == QNN_HTP_DEVICE_ARCH_V68;
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime

@@ -80,6 +80,14 @@ Ort::Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
   if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckCpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    // HTP v68 has no FP32/FP16 execution path. Reject early so nodes fall back
+    // to the CPU EP cleanly rather than failing deep inside the QNN SDK.
+    if (qnn_model_wrapper.GetModelSettings().htp_arch == QNN_HTP_DEVICE_ARCH_V68) {
+      for (const auto& qnn_dt : input_qnn_dtypes) {
+        RETURN_IF(qnn_dt == QNN_DATATYPE_FLOAT_32 || qnn_dt == QNN_DATATYPE_FLOAT_16,
+                  "QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+      }
+    }
     return CheckHtpDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckGpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
@@ -432,6 +440,14 @@ Ort::Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
   const auto float_elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
   bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
   RETURN_IF(is_cpu_backend && onnx_tensor_data_type != float_elem_type, error_msg.c_str());
+
+  // HTP v68 has no FP32/FP16 execution path. Reject here so layout-sensitive ops
+  // that call this function on the pre-layout-transform (NCHW) path fall back to
+  // the CPU EP cleanly on pass 1, without waiting for the validator on pass 2.
+  RETURN_IF(IsHtpV68Arch(qnn_model_wrapper) &&
+                (onnx_tensor_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                 onnx_tensor_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16),
+            "QNN EP does not support FP32 or FP16 tensors on HTP v68.");
 
   return Ort::Status();
 }

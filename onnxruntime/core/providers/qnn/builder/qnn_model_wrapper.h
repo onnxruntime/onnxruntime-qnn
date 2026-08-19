@@ -11,6 +11,7 @@
 
 #include "nlohmann/json.hpp"
 #include "QnnInterface.h"
+#include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
@@ -40,6 +41,7 @@ struct ModelSettings {
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
   bool enable_htp_monolithic_lstm = false;
+  QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
 };
 
 class QnnModelWrapper {
