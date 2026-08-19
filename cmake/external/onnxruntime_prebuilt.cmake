@@ -231,7 +231,7 @@ ExternalProject_Add(
     BINARY_DIR ${ORT_BUILD_DIR}
     DOWNLOAD_COMMAND ""
     PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
-                  -i "${CMAKE_SOURCE_DIR}/cmake/patches/ort_core/0007-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
+                  -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0007-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
     BUILD_ALWAYS ON
