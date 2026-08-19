@@ -219,8 +219,6 @@ class QnnModel {
   // Runtime graph configs recorded by ApplyRuntimeGraphConfigs for re-application after an SSR
   // re-retrieves the graph handle. See the single-call contract in the .cc.
   HtpGraphConfigs_t runtime_graph_configs_;
-
-  bool is_multi_soc_buffer_ = false;
 };
 
 }  // namespace qnn

@@ -8,7 +8,6 @@
 #include <gsl/gsl>
 #include <thread>
 
-#include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpGraph.h"
 #include "QnnOpDef.h"
 
