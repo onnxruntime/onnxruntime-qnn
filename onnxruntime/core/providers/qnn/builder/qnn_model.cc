@@ -576,17 +576,12 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
       QnnContext_Config_t* spill_fill_ptr = nullptr;
 #endif
 
-      std::vector<const QnnContext_Config_t*> context_configs_vec;
-      context_configs_vec.push_back(&priority_config);
-      if (spill_fill_ptr) {
-        context_configs_vec.push_back(spill_fill_ptr);
-      }
-      context_configs_vec.push_back(nullptr);
+      const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
 
       auto rt = qnn_interface.contextCreateFromBinary(
           qnn_backend_manager_->GetQnnBackendHandle(),
           qnn_backend_manager_->GetQnnDeviceHandle(),
-          context_configs_vec.data(),
+          context_configs,
           static_cast<void*>(buffer.data()),
           static_cast<Qnn_ContextBinarySize_t>(buffer.size()),
           &new_context,
