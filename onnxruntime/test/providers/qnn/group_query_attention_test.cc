@@ -715,7 +715,7 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
     Ort::Session& qnn_session = scoped_qnn_session.session();
     ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, expected_ep_assignment));
   } catch (const Ort::Exception& e) {
-    std::cout << e.what() << " Session Failure!" << std::endl;;
+    std::cout << e.what() << " Session Failure!" << std::endl;
     *session_failed = true;
   }
 }
