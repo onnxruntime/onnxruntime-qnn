@@ -1169,7 +1169,9 @@ class ZipUpleveler(ArtifactUpleveler):
         files = [
             os.path.join(distribution_dir, f)
             for f in os.listdir(distribution_dir)
-            if os.path.isfile(os.path.join(distribution_dir, f)) and f.endswith(self.artifact_suffix) and not f.endswith(self._GITHUB_EXCLUDED_SUFFIXES)
+            if os.path.isfile(os.path.join(distribution_dir, f))
+            if f.endswith(self.artifact_suffix)
+            if not f.endswith(self._GITHUB_EXCLUDED_SUFFIXES)
         ]
         if not files:
             raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")
