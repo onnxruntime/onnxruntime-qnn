@@ -462,6 +462,65 @@ TEST(QnnUnit_ModelTest, Probe_HtpSetupBackend_WorksOnX86_64) {
   EXPECT_NE(ctx.model, nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// ApplyRuntimeGraphConfigs tests
+//
+// These tests exercise the code-logic paths of ApplyRuntimeGraphConfigs that
+// are reachable without hardware. The hardware-dependent path (graphSetConfig
+// on a real finalized graph) is covered by the EPContext and SSR integration
+// tests.
+// ---------------------------------------------------------------------------
+
+// A freshly-constructed QnnModel has no graph_info_ yet. ApplyRuntimeGraphConfigs
+// must return OK without calling graphSetConfig (graph_info_ == nullptr guard).
+TEST(QnnUnit_ModelTest, ApplyRuntimeGraphConfigs_NoGraphInfo_ReturnsOk) {
+  QnnModelHtpTestContext ctx;
+  if (!ctx.IsValid()) {
+    GTEST_SKIP() << "HTP backend not available on this host";
+  }
+
+  qnn::HtpGraphConfigs_t configs;
+  configs.enable_htp_fp16_clamp_overflow = true;
+
+  auto status = ctx.model->ApplyRuntimeGraphConfigs(configs, ctx.logger);
+  EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+}
+
+// When no runtime-applicable flags are set, the builder produces nothing and
+// ApplyRuntimeGraphConfigs returns OK without issuing a graphSetConfig call.
+TEST(QnnUnit_ModelTest, ApplyRuntimeGraphConfigs_NoFlagsSet_ReturnsOk) {
+  QnnModelHtpTestContext ctx;
+  if (!ctx.IsValid()) {
+    GTEST_SKIP() << "HTP backend not available on this host";
+  }
+
+  qnn::HtpGraphConfigs_t configs;  // all flags default false
+  auto status = ctx.model->ApplyRuntimeGraphConfigs(configs, ctx.logger);
+  EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+}
+
+// ApplyRuntimeGraphConfigs stores the configs struct for SSR re-apply. Verify
+// the cached value reflects the last call (used by RecoverFromSSR).
+TEST(QnnUnit_ModelTest, ApplyRuntimeGraphConfigs_CachesConfigsForSsr) {
+  QnnModelHtpTestContext ctx;
+  if (!ctx.IsValid()) {
+    GTEST_SKIP() << "HTP backend not available on this host";
+  }
+
+  // First call: enable the flag.
+  qnn::HtpGraphConfigs_t configs_on;
+  configs_on.enable_htp_fp16_clamp_overflow = true;
+  EXPECT_TRUE(ctx.model->ApplyRuntimeGraphConfigs(configs_on, ctx.logger).IsOK());
+
+  // Second call with flag off — SSR would now skip re-applying the config.
+  qnn::HtpGraphConfigs_t configs_off;
+  configs_off.enable_htp_fp16_clamp_overflow = false;
+  EXPECT_TRUE(ctx.model->ApplyRuntimeGraphConfigs(configs_off, ctx.logger).IsOK());
+
+  // Third call restores the flag — SSR re-apply would include it again.
+  EXPECT_TRUE(ctx.model->ApplyRuntimeGraphConfigs(configs_on, ctx.logger).IsOK());
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

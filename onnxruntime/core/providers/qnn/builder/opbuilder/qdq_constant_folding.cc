@@ -24,8 +24,16 @@ Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper
   if (qnn_model_wrapper.IsConstantInput(tensor_name)) {
     const OrtValueInfo* init = qnn_model_wrapper.GetConstantTensor(tensor_name);
     RETURN_IF(init == nullptr, "Constant initializer not found for tensor.");
-    return qnn_model_wrapper.UnpackInitializerData(init, bytes);
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(init, bytes));
+
+    // Undo the sub-byte high-bit masking so callers can read these bytes as plain integers.
+    ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(init, onnx_data_type));
+    utils::SignExtendUnpackedSubByteData(onnx_data_type, gsl::make_span(bytes));
+    return Ort::Status();
   }
+  // A folded tensor holds fp32 bytes (DQ folding) or 8/16/32-bit quantized bytes (QuantizeData
+  // rejects sub-byte types), so both are already plain.
   if (qnn_model_wrapper.IsFoldedConstant(tensor_name) &&
       qnn_model_wrapper.IsQnnTensorWrapperExist(tensor_name)) {
     const QnnTensorWrapper& wrapper = qnn_model_wrapper.GetQnnTensorWrapper(tensor_name);
