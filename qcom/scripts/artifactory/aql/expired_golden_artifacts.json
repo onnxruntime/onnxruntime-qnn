@@ -1,0 +1,17 @@
+{
+    "files": [
+        {
+            "aql": {
+                "items.find": {
+                    "repo": "${repo}",
+                    "$and": [
+                        {
+                            "created": { "$before": "10d" },
+                            "path": { "$match": "qnn-ep-test-store/*/archive/*" }
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+}
