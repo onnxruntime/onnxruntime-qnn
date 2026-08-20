@@ -1161,7 +1161,7 @@ class ZipUpleveler(ArtifactUpleveler):
 
     # Never published to GitHub Releases, even though they're valid upload candidates
     # for the other destinations (Artifactory).
-    _GITHUB_EXCLUDED_SUFFIXES = ("win-arm64ec-pdb.zip", "win-arm64ec.zip")
+    _GITHUB_EXCLUDED_SUFFIXES = ("-pdb.zip", "win-arm64ec.zip")
 
     def _upload_to_github(self, distribution_dir: str) -> None:
         """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
