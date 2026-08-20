@@ -297,6 +297,103 @@ static GetTestQDQModelFn<OutputQType> BuildQDQBlockQuantMatMulTestCase(
   };
 }
 
+// Returns a function that creates a graph with MatMul + Add operators.
+// input0 --|
+//           MatMul -> Add -> output
+// input1 --|
+// bias ----------------|
+static GetTestModelFn BuildMatMulAddOpTestCase(const TestInputDef<float>& input0_def,
+                                               const TestInputDef<float>& input1_def,
+                                               const TestInputDef<float>& bias_def) {
+  return [input0_def, input1_def, bias_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input0", input0_def);
+    MakeTestInput<float>(builder, "input1", input1_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+
+    builder.AddNode("MatMul", "MatMul", {"input0", "input1"}, {"matmul_out"}, kOnnxDomain);
+    builder.AddNode("Add", "Add", {"matmul_out", "bias"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput("Y");
+  };
+}
+
+// Returns a function that creates a QDQ MatMul + Add graph with:
+//   - Per-tensor input Q->DQ
+//   - Per-channel weight (DQ-only, pre-quantized initializer)
+//   - Float bias (initializer, no quantization)
+//   - Per-tensor output Q->DQ
+//
+//   input[f32] -> Q -> DQ - |
+//                           MatMul -> Add -> Q -> DQ -> output[f32]
+//   weight[per-ch] -> DQ -- |        /
+//   bias[f32 initializer] ----------/
+template <typename InputQType, typename WeightQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQPerChannelMatMulAddTestCase(
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    int64_t weight_quant_axis) {
+  return [input_def, weights_def, bias_def, weight_quant_axis](
+             ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
+    QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
+
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // input -> Q -> DQ -> input_qdq
+    const QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<InputQType>(builder, "qdq_in", "input",
+                                   input_qparams.scale, input_qparams.zero_point);
+
+    // Quantized(weights) -> DQ -> weights_dq (per-channel, pre-quantized initializer)
+    auto weight_shape = weights_def.GetShape();
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zero_points;
+    int64_t pos_weight_quant_axis = weight_quant_axis;
+    if (pos_weight_quant_axis < 0) {
+      pos_weight_quant_axis += static_cast<int64_t>(weight_shape.size());
+    }
+
+    GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zero_points,
+                                                   static_cast<size_t>(pos_weight_quant_axis), true);
+
+    std::vector<WeightQType> quantized_weights;
+    size_t num_weight_storage_elems = SizeOfShape(weight_shape);
+    if constexpr (std::is_same_v<WeightQType, Int4x2> || std::is_same_v<WeightQType, UInt4x2>) {
+      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(SizeOfShape(weight_shape));
+    }
+    quantized_weights.resize(num_weight_storage_elems);
+
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights, weight_shape, weight_scales,
+                                       weight_zero_points, pos_weight_quant_axis);
+
+    builder.MakeInitializer<WeightQType>("weights", weights_def.GetShape(), quantized_weights);
+
+    builder.AddDequantizeLinearNode<WeightQType>(
+        "weights_dq",
+        "weights",
+        weight_scales,
+        weight_zero_points,
+        "weights_dq",
+        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(weight_quant_axis))});
+
+    // bias as fp32 initializer (no quantization)
+    MakeTestInput<float>(builder, "bias", bias_def);
+
+    // MatMul(input_qdq, weights_dq) -> matmul_out
+    builder.AddNode("MatMul", "MatMul", {input_qdq, "weights_dq"}, {"matmul_out"}, kOnnxDomain);
+
+    // Add(matmul_out, bias) -> Y
+    builder.AddNode("Add", "Add", {"matmul_out", "bias"}, {"Y"}, kOnnxDomain);
+
+    // Y -> Q -> DQ -> (graph output)
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale,
+                                                       output_qparams[0].zero_point);
+  };
+}
+
 template <typename InputQType, typename WeightQType, typename OutputQType>
 static void RunQDQBlockQuantMatMulOpTest(
     const std::vector<int64_t>& shape_input,
@@ -325,6 +422,31 @@ static void RunQDQBlockQuantMatMulOpTest(
       BuildQDQBlockQuantMatMulTestCase<InputQType, WeightQType, OutputQType>(
           input_def, weight_def, block_size, weight_quant_axis, use_contrib_qdq),
       provider_options, opset, expected_ep_assignment, tolerance);
+}
+
+template <typename InputQType, typename WeightQType, typename OutputQType>
+static void RunQDQPerChannelMatMulAddOpTest(
+    const std::vector<int64_t>& shape_input, const std::vector<int64_t>& shape_weight,
+    const std::vector<int64_t>& bias_shape, int64_t weight_quant_axis,
+    QDQTolerance tolerance = QDQTolerance(),
+    ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All, int opset = 21) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto num_elements = [](const std::vector<int64_t>& shape) -> size_t {
+    return static_cast<size_t>(
+        std::accumulate(shape.begin(), shape.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
+  };
+
+  TestInputDef<float> input_def(shape_input, false, GetFloatDataInRange(-0.1f, 0.1f, num_elements(shape_input)));
+  TestInputDef<float> weight_def(shape_weight, true, GetFloatDataInRange(-0.1f, 0.1f, num_elements(shape_weight)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-0.1f, 0.1f, num_elements(bias_shape)));
+
+  TestQDQModelAccuracy(BuildMatMulAddOpTestCase(input_def, weight_def, bias_def),
+                       BuildQDQPerChannelMatMulAddTestCase<InputQType, WeightQType, OutputQType>(
+                           input_def, weight_def, bias_def, weight_quant_axis),
+                       provider_options, opset, expected_ep_assignment, tolerance);
 }
 
 //
@@ -580,6 +702,213 @@ TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank4Weight) {
                                         /*act_shape_override=*/{}, /*weight_shape_override=*/{1, 1, 16, 4}),
                   GetBQMatMulProviderOptions(), /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// Test QDQ MatMul + Add with per-channel int8 weight and int32 bias, uint16 output.
+// Pattern: input -> Q(u8) -> DQ -> MatMul -> Add -> Q(u16) -> DQ -> output
+//          weight[i8 per-ch] -> DQ ---|        |
+//          bias[i32 per-ch] -> DQ -------------|
+//
+// NOTE: Inputs must be rank-2 (2D). With rank>2 inputs, ORT's MatMulAddFusion optimizer
+// inserts Reshape nodes around Gemm (Reshape -> Gemm -> Reshape), which breaks the QDQ
+// pattern because QNN EP cannot form valid QDQ node units when Reshape sits between DQ and Gemm.
+//
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_U8_I8_U16) {
+  RunQDQPerChannelMatMulAddOpTest<uint8_t, int8_t, uint16_t>(
+      {2, 3}, {3, 2}, {2}, /*weight_quant_axis=*/-1, QDQTolerance(0.002f));
+  // Larger shape
+  RunQDQPerChannelMatMulAddOpTest<uint8_t, int8_t, uint16_t>(
+      {32, 32}, {32, 32}, {32}, /*weight_quant_axis=*/-1, QDQTolerance(0.002f));
+}
+
+// Test QDQ MatMul + Add with per-channel int8 weight, fp32 output (no QDQ on output).
+// Pattern: input -> Q -> DQ -> MatMul -> Add -> output(fp32)
+//     weight[i8 per-ch] -> DQ ---|        /
+//             bias[f32 initializer] -----/
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_U8_I8_FP32) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto num_elements = [](const std::vector<int64_t>& shape) -> size_t {
+    return static_cast<size_t>(
+        std::accumulate(shape.begin(), shape.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
+  };
+
+  std::vector<int64_t> shape_input = {2, 3};
+  std::vector<int64_t> shape_weight = {3, 2};
+  std::vector<int64_t> bias_shape = {2};
+
+  TestInputDef<float> input_def(shape_input, false, GetFloatDataInRange(-0.1f, 0.1f, num_elements(shape_input)));
+  TestInputDef<float> weight_def(shape_weight, true, GetFloatDataInRange(-0.1f, 0.1f, num_elements(shape_weight)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-0.1f, 0.1f, num_elements(bias_shape)));
+
+  // Float reference model: MatMul -> Add -> output (f32)
+  auto f32_model_fn = BuildMatMulAddOpTestCase(input_def, weight_def, bias_def);
+
+  // QDQ model: QDQ(u8) -> MatMul -> Add -> output (f32)
+  auto qdq_model_fn = [input_def, weight_def, bias_def](
+                          ModelTestBuilder& builder, std::vector<QuantParams<uint8_t>>& output_qparams) {
+    QNN_TEST_UNUSED_PARAMETER(output_qparams);
+
+    // input -> Q -> DQ
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<uint8_t>(builder, "qdq_in", "input",
+                                input_qparams.scale, input_qparams.zero_point);
+
+    // weights as fp32 initializer
+    MakeTestInput<float>(builder, "weights", weight_def);
+
+    // bias as fp32 initializer
+    MakeTestInput<float>(builder, "bias", bias_def);
+
+    // MatMul -> Add
+    builder.AddNode("MatMul", "MatMul", {input_qdq, "weights"}, {"matmul_out"}, kOnnxDomain);
+    builder.AddNode("Add", "Add", {"matmul_out", "bias"}, {"Y"}, kOnnxDomain);
+
+    // Output is already fp32, no Cast needed
+    builder.MakeOutput("Y");
+  };
+
+  TestQDQModelAccuracy<uint8_t>(f32_model_fn,
+                                qdq_model_fn,
+                                provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+template <typename InputQType = float, typename WeightQType = int8_t, typename OutputQType = float>
+static void RunMixedPrecisionPerChannelMatMulAddTest(
+    const std::vector<int64_t>& input_shape,
+    const std::vector<int64_t>& weight_shape,
+    const std::vector<int64_t>& bias_shape) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto num_elements = [](const std::vector<int64_t>& shape) -> size_t {
+    return static_cast<size_t>(
+        std::accumulate(shape.begin(), shape.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
+  };
+
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(-0.1f, 0.1f, num_elements(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.1f, 0.1f, num_elements(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true, GetFloatDataInRange(-0.1f, 0.1f, num_elements(bias_shape)));
+
+  auto f32_model_fn = BuildMatMulAddOpTestCase(input_def, weight_def, bias_def);
+
+  // Determine the quant type used for TestQDQModelAccuracy template param.
+  // Priority: OutputQType if quantized, else InputQType if quantized, else uint8_t fallback.
+  using TestQType = std::conditional_t<!std::is_same_v<OutputQType, float>, OutputQType,
+                                       std::conditional_t<!std::is_same_v<InputQType, float>, InputQType, uint8_t>>;
+
+  auto qdq_model_fn = [input_def, weight_def, bias_def](
+                          ModelTestBuilder& builder, std::vector<QuantParams<TestQType>>& output_qparams) {
+    QNN_TEST_UNUSED_PARAMETER(output_qparams);
+
+    MakeTestInput<float>(builder, "input", input_def);
+    std::string matmul_input_name;
+    if constexpr (std::is_same_v<InputQType, float>) {
+      matmul_input_name = "input";
+    } else {
+      const QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
+      matmul_input_name =
+          AddQDQNodePair<InputQType>(builder, "qdq_in", "input",
+                                     input_qparams.scale, input_qparams.zero_point);
+    }
+
+    auto w_shape = weight_def.GetShape();
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zero_points;
+    GetTestInputQuantParamsPerChannel<WeightQType>(weight_def, weight_scales, weight_zero_points, 1, true);
+
+    std::vector<WeightQType> quantized_weights(SizeOfShape(w_shape));
+    QuantizeValues<float, WeightQType>(weight_def.GetRawData(), quantized_weights, w_shape,
+                                       weight_scales, weight_zero_points, 1);
+    builder.MakeInitializer<WeightQType>("weights", w_shape, quantized_weights);
+    builder.template AddDequantizeLinearNode<WeightQType>(
+        "weights_dq", "weights", weight_scales, weight_zero_points, "weights_dq",
+        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(-1))});
+
+    MakeTestInput<float>(builder, "bias", bias_def);
+
+    builder.AddNode("MatMul", "MatMul", {matmul_input_name, "weights_dq"}, {"matmul_out"}, kOnnxDomain);
+    builder.AddNode("Add", "Add", {"matmul_out", "bias"}, {"Y"}, kOnnxDomain);
+
+    if constexpr (std::is_same_v<OutputQType, float>) {
+      builder.MakeOutput("Y");
+    } else {
+      AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                         output_qparams[0].scale,
+                                                         output_qparams[0].zero_point);
+    }
+  };
+
+  TestQDQModelAccuracy<TestQType>(f32_model_fn, qdq_model_fn,
+                                  provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_U8_I8_NoOutputQDQ) {
+  RunMixedPrecisionPerChannelMatMulAddTest<uint8_t, int8_t>({2, 3}, {3, 2}, {2});
+}
+
+// QDQ(u16) input, per-channel int16 weights, fp32 output (no output QDQ).
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_U16_I16_NoOutputQDQ) {
+  RunMixedPrecisionPerChannelMatMulAddTest<uint16_t, int16_t>({2, 3}, {3, 2}, {2});
+}
+
+// fp32 input, per-channel int8 weights, QDQ(u8) output (no input QDQ).
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_NoInputQDQ_U8) {
+  RunMixedPrecisionPerChannelMatMulAddTest<float, int8_t, uint8_t>({2, 3}, {3, 2}, {2});
+}
+
+// fp32 input, per-channel int8 weights, QDQ(u16) output (no input QDQ).
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_NoInputQDQ_U16) {
+  RunMixedPrecisionPerChannelMatMulAddTest<float, int8_t, uint16_t>({2, 3}, {3, 2}, {2});
+}
+// fp32 input, per-channel int8 weights, fp32 output (no input or output QDQ)
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_NoQDQ_FP32) {
+  RunMixedPrecisionPerChannelMatMulAddTest<float, int8_t, float>({2, 3}, {3, 2}, {2});
+}
+
+// The three tests below use a rank-2 [M, N] bias instead of rank-1 [N]. MatMulAddFusion still folds
+// MatMul+Add into a Gemm (C=[M, N] broadcasts unidirectionally), but QNN FullyConnected only accepts
+// a [N] / [1, N] bias, so GemmOpBuilder decomposes into FullyConnected + ElementWiseAdd ("split_gemm").
+// A rank-2 bias also falls outside ORT's WeightBiasQuantization (rank-1 only), so it stays fp32 —
+// which is why only the two float-FC mixed-precision sub-cases can reach the split path: a quantized
+// FC would need a quantized bias, and ExplictOpCheck rejects a quantized C with shape[0] != 1.
+//
+// Regression coverage for the split path: the FC intermediate used to be typed off the ONNX-side
+// activation type (wrong once ProcessInputs re-typed the activation ahead of FC), and the
+// mixed-precision output tail used to be emitted only on the non-split branches. Every rank-1-bias
+// test above takes the non-split path, so both bugs were invisible.
+
+// QDQ(u8) input, per-channel int8 weights, fp32 output, rank-2 bias.
+// quant-to-float + split_gemm: ProcessInputs inserts Dequantize on the activation and pre-dequantizes
+// the weights, so FC runs in fp32. The FC intermediate feeding the ElementWiseAdd must therefore be
+// FLOAT_32; typing it off the ONNX activation (UFIXED_8) hands FC mismatched in[0]/out[0] types.
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_U8_I8_NoOutputQDQ_2DBias) {
+  RunMixedPrecisionPerChannelMatMulAddTest<uint8_t, int8_t>({2, 3}, {3, 2}, {2, 2});
+}
+
+// fp32 input, per-channel int8 weights, QDQ(u16) output, rank-2 bias.
+// float-to-quant + split_gemm: FC and the ElementWiseAdd both run in fp32 and a Quantize tail
+// re-encodes to u16. The tail has to be appended after the Add, not after the FC — before the fix the
+// split branch emitted no tail at all, leaving the node unit's output tensor uncreated.
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_NoInputQDQ_U16_2DBias) {
+  RunMixedPrecisionPerChannelMatMulAddTest<float, int8_t, uint16_t>({2, 3}, {3, 2}, {2, 2});
+}
+
+// fp32 in/out with quantized weights and a rank-2 bias: split_gemm with no mixed-precision tail.
+// Pins the baseline so the two tests above isolate the mixed-precision handling.
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_NoQDQ_FP32_2DBias) {
+  RunMixedPrecisionPerChannelMatMulAddTest<float, int8_t, float>({2, 3}, {3, 2}, {2, 2});
+}
+
+TEST_F(QnnHTPBackendTests, MatMulAddOp_QDQ_PerChannel_U16_I8_U8) {
+  RunQDQPerChannelMatMulAddOpTest<uint16_t, int8_t, uint8_t>(
+      {2, 3}, {3, 2}, {2}, /*weight_quant_axis=*/-1);
+  // Larger shape
+  RunQDQPerChannelMatMulAddOpTest<uint8_t, int8_t, uint16_t>(
+      {32, 32}, {32, 32}, {32}, /*weight_quant_axis=*/-1);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp) {

@@ -17,6 +17,7 @@ gen
 *.DS_Store
 TestResults/
 .idea/
+QNNExecutionProvider_QNNExecutionProvider_*
 onnxruntime.egg-info
 nuget_root/
 .packages/

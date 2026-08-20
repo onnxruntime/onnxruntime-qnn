@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <algorithm>
+
 #include <gsl/gsl>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -41,6 +43,415 @@ bool IsBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitI
   return bq::IsBQScale(scale_shape, weight_shape, block_axis);
 }
 
+// Float types QNN FullyConnected can run in (see HtpOpDefSupplement, FullyConnected datatypes).
+bool IsFloatQnnDataType(Qnn_DataType_t dt) {
+  return dt == QNN_DATATYPE_FLOAT_16 || dt == QNN_DATATYPE_FLOAT_32;
+}
+
+// Precision a QNN FullyConnected kernel runs at. Ordered so that a plain max()
+// picks the precision a Gemm must run at: higher tiers can represent everything a lower tier can
+enum class GemmPrecision {
+  kInt8,     // (U|S)FIXED_POINT_4/8 — HTP folds sub-byte weights into the 8-bit configuration
+  kInt16,    // (U|S)FIXED_POINT_16
+  kFloat16,  // FLOAT_16
+  kFloat32,  // FLOAT_32
+};
+
+// Maps a tensor's data type onto the kernel precision that can hold it. Types with no tier of their
+// own (BFLOAT_16, plain ints) are rejected: they only reach here when a Gemm mixes data types, and
+// there is no kernel that mixes them with anything else.
+Ort::Status GetGemmPrecision(Qnn_DataType_t data_type, /*out*/ GemmPrecision& precision) {
+  switch (data_type) {
+    case QNN_DATATYPE_UFIXED_POINT_4:
+    case QNN_DATATYPE_SFIXED_POINT_4:
+    case QNN_DATATYPE_UFIXED_POINT_8:
+    case QNN_DATATYPE_SFIXED_POINT_8:
+      precision = GemmPrecision::kInt8;
+      return Ort::Status();
+    case QNN_DATATYPE_UFIXED_POINT_16:
+    case QNN_DATATYPE_SFIXED_POINT_16:
+      precision = GemmPrecision::kInt16;
+      return Ort::Status();
+    case QNN_DATATYPE_FLOAT_16:
+      precision = GemmPrecision::kFloat16;
+      return Ort::Status();
+    case QNN_DATATYPE_FLOAT_32:
+      precision = GemmPrecision::kFloat32;
+      return Ort::Status();
+    default:
+      return MAKE_EP_FAIL("QNN EP: Gemm data type cannot mix with another QNN FullyConnected data type.");
+  }
+}
+
+// Data type an activation takes at `precision`. Quantized precisions keep `like`'s signedness so a
+// widened activation stays unsigned/signed like the one it came from.
+Qnn_DataType_t GetActivationDataType(GemmPrecision precision, Qnn_DataType_t like) {
+  const bool is_signed = like == QNN_DATATYPE_SFIXED_POINT_4 || like == QNN_DATATYPE_SFIXED_POINT_8 ||
+                         like == QNN_DATATYPE_SFIXED_POINT_16;
+  switch (precision) {
+    case GemmPrecision::kInt8:
+      return is_signed ? QNN_DATATYPE_SFIXED_POINT_8 : QNN_DATATYPE_UFIXED_POINT_8;
+    case GemmPrecision::kInt16:
+      return is_signed ? QNN_DATATYPE_SFIXED_POINT_16 : QNN_DATATYPE_UFIXED_POINT_16;
+    case GemmPrecision::kFloat16:
+      return QNN_DATATYPE_FLOAT_16;
+    case GemmPrecision::kFloat32:
+      return QNN_DATATYPE_FLOAT_32;
+  }
+  return QNN_DATATYPE_UNDEFINED;  // Unreachable; every GemmPrecision is handled above.
+}
+
+// A per-tensor quantization encoding.
+struct ScaleOffset {
+  float scale = 0.0f;
+  int32_t offset = 0;
+};
+
+// The one decision the whole Gemm translation hangs off: which precision FullyConnected runs at, and
+// therefore what has to be inserted around it. ProcessInputs and ProcessAttributesAndOutputs build
+// one side each and must agree, so both read this instead of re-deriving.
+//
+//   A -> [fix up in]? -> [FC at fc_act_data_type] -> [fix up out]? -> Y
+//
+// HTP forces FC's out[0] to carry its in[0] type, so an activation that does not already sit at
+// fc_act_data_type gets a Convert/Quantize/Dequantize on its side. Examples, weight tier in brackets:
+//
+//   u8  -> u8  [u8 ]  run int8    no fix-up
+//   u8  -> u16 [u8 ]  run int16   Convert u8->u16 in
+//   u16 -> u8  [u8 ]  run int16                                Convert u16->u8 out
+//   u8  -> u8  [s16]  run int16   Convert u8->u16 in           Convert u16->u8 out
+//   u8  -> f16 [s8 ]  run fp16    Dequantize in
+//   f16 -> u8  [s8 ]  run fp16                                 Quantize out
+struct GemmPrecisionPlan {
+  TensorInfo in_act = {};   // ONNX input activation, Gemm input[0]
+  TensorInfo weight = {};   // ONNX weight, Gemm input[1]
+  TensorInfo out_act = {};  // ONNX output activation, Gemm output[0]
+
+  // What FC's in[0] and out[0] both carry. A float FC's weight takes it too (see DequantizeWeight);
+  // a quantized FC's weight keeps its own ONNX type.
+  Qnn_DataType_t fc_act_data_type = QNN_DATATYPE_UNDEFINED;
+
+  // Encoding every tensor the FC chain produces carries (see AddFcChainLink). Empty when FC runs in
+  // float.
+  QnnQuantParamsWrapper chain_quant_param;
+
+  bool FixesUpInput() const { return in_act.qnn_data_type != fc_act_data_type; }
+  bool FixesUpOutput() const { return out_act.qnn_data_type != fc_act_data_type; }
+
+  // A float FC cannot take a quantized weight, so a quantized one needs a float copy.
+  bool DequantizesWeight() const {
+    return IsFloatQnnDataType(fc_act_data_type) && weight.quant_param.IsQuantized();
+  }
+};
+
+// Picks the FC precision (the max over the activations and the weight) and derives everything both
+// build phases need from it. All rejections live here, so both phases fail identically.
+Ort::Status MakeGemmPrecisionPlan(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+                                  /*out*/ GemmPrecisionPlan& plan) {
+  plan = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], plan.in_act));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], plan.weight));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], plan.out_act));
+
+  const Qnn_DataType_t in_type = plan.in_act.qnn_data_type;
+  const Qnn_DataType_t out_type = plan.out_act.qnn_data_type;
+
+  // A Gemm whose activations and weight all share one data type is the common case: FC runs at that
+  // type and nothing is inserted. Answered up front so uniform types with no precision tier of their
+  // own (int32, int64) keep taking the plain path.
+  if (in_type == out_type && plan.weight.qnn_data_type == in_type) {
+    plan.fc_act_data_type = in_type;
+    plan.chain_quant_param = plan.out_act.quant_param.Copy();
+    return Ort::Status();
+  }
+
+  GemmPrecision in_precision = GemmPrecision::kInt8;
+  GemmPrecision out_precision = GemmPrecision::kInt8;
+  GemmPrecision weight_precision = GemmPrecision::kInt8;
+  RETURN_IF_ERROR(GetGemmPrecision(in_type, in_precision));
+  RETURN_IF_ERROR(GetGemmPrecision(out_type, out_precision));
+  RETURN_IF_ERROR(GetGemmPrecision(plan.weight.qnn_data_type, weight_precision));
+
+  // Same precision but a different type (e.g. U8 -> S8) is a pure re-signing. Running at either
+  // side's type leaves the other needing a fix-up that changes signedness without changing
+  // precision, which is not what a Convert expresses. Reject rather than emit such a graph.
+  RETURN_IF(in_precision == out_precision && in_type != out_type,
+            "QNN EP: unsupported mixed-precision Gemm - input and output activations run at the same "
+            "precision but have different data types.");
+
+  // Run at the highest precision any of the three needs. The weight counts because HTP has no kernel
+  // with an 8-bit activation and a 16-bit weight ("16bit Weight must have 16bit Activation"), so such
+  // a Gemm must run at int16 with both activations fixed up. The int32 bias is deliberately left out:
+  // it is an accumulator type, not a kernel precision.
+  const GemmPrecision fc_precision = std::max({in_precision, out_precision, weight_precision});
+
+  // Signedness follows whichever activation already sits at the FC precision. If neither does (the
+  // weight forced the precision up) both activations are at the same precision, and so at the same
+  // type per the check above, so either one answers.
+  const Qnn_DataType_t signedness_like = (out_precision == fc_precision) ? out_type : in_type;
+  plan.fc_act_data_type = GetActivationDataType(fc_precision, signedness_like);
+
+  // A float chain carries no encoding, so chain_quant_param stays empty and there is nothing more to
+  // derive; DequantizesWeight() covers the weight from here.
+  if (IsFloatQnnDataType(plan.fc_act_data_type)) {
+    return Ort::Status();
+  }
+
+  if (plan.FixesUpOutput()) {
+    // Run the chain on the narrow output activation's grid re-expressed at FC's wider bit width, so
+    // the trailing Convert only drops bits and never rescales. FC still accumulates the bias at
+    // input_activation_scale * weight_scale, so the bias needs no requantization for this.
+    ScaleOffset output_encoding = {};
+    RETURN_IF_ERROR(plan.out_act.quant_param.GetPerTensorScaleOffset(output_encoding.scale,
+                                                                     output_encoding.offset));
+    ScaleOffset widened_output_encoding = {};
+    RETURN_IF_ERROR(utils::DeriveConvertQuantParams(out_type, plan.fc_act_data_type, output_encoding.offset,
+                                                    output_encoding.scale, /*output_symmetric*/ false,
+                                                    widened_output_encoding.scale,
+                                                    widened_output_encoding.offset));
+    plan.chain_quant_param = QnnQuantParamsWrapper::PerTensor(widened_output_encoding.scale,
+                                                              widened_output_encoding.offset);
+  } else {
+    // The chain produces the ONNX output tensor itself, so it carries its encoding.
+    plan.chain_quant_param = plan.out_act.quant_param.Copy();
+  }
+
+  return Ort::Status();
+}
+
+// Emits one link of the FC chain — the ops that turn FC's inputs into the node unit's output value:
+//
+//   plain             [FC]
+//   absorbed reshape  [FC] -> [Reshape]          (MatMulAddFusion's post-Gemm Reshape, see below)
+//   split bias        [FC] -> [ElementWiseAdd]   (bias QNN FC cannot fold in, see split_gemm)
+//
+// Every link's output carries the plan's FC data type and chain encoding, which differ from the ONNX
+// output's whenever an output fix-up follows. The node is named after the node unit so the QNN graph
+// traces back to the ONNX Gemm.
+Ort::Status AddFcChainLink(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+                           const GemmPrecisionPlan& plan, const char* qnn_op_type,
+                           std::vector<std::string>&& input_names, const std::string& output_name,
+                           Qnn_TensorType_t output_tensor_type,
+                           const std::vector<uint32_t>& output_shape, bool do_op_validation) {
+  QnnTensorWrapper output_tensor(output_name, output_tensor_type, plan.fc_act_data_type,
+                                 plan.chain_quant_param.Copy(), std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)),
+                ("Failed to add Gemm FC-chain tensor " + output_name).c_str());
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, qnn_op_type),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
+                                                std::move(input_names), {output_name}, {}, do_op_validation),
+                ("Failed to add Gemm " + std::string(qnn_op_type) + " node.").c_str());
+  return Ort::Status();
+}
+
+// Requantizes the Gemm's int32 bias (input_names[2]) to `activation_scale`, the scale produced by the
+// widening Convert, replacing the tensor in place. The bias was quantized at
+// original_input_activation_scale * weight_scale, but HTP folds it into the FC accumulator at
+// activation_scale * weight_scale and ignores the declared encoding, so the data itself must move.
+Ort::Status RequantizeBias(QnnModelWrapper& qnn_model_wrapper, const GemmPrecisionPlan& plan,
+                           float activation_scale,
+                           /*in,out*/ std::vector<std::string>& input_names) {
+  const auto& bias_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[2]);
+  const Qnn_TensorType_t bias_tensor_type = bias_wrapper.GetTensorType();
+
+  // A NATIVE int32 bias is an intermediate from another op, which forces split_gemm: the bias lands
+  // on a separate ElementWiseAdd that honors its own encoding rather than being folded into the FC
+  // accumulator, so it needs no requantization.
+  if (bias_wrapper.GetTensorDataType() != QNN_DATATYPE_SFIXED_POINT_32 ||
+      bias_tensor_type == QNN_TENSOR_TYPE_NATIVE) {
+    return Ort::Status();
+  }
+
+  // Any other non-STATIC bias (i.e. a graph input) *is* handed to FC, which folds it at
+  // activation_scale * weight_scale and ignores the declared encoding — but it carries no client
+  // buffer to rescale. Reject instead of emitting a silently mis-scaled bias.
+  RETURN_IF_NOT(bias_tensor_type == QNN_TENSOR_TYPE_STATIC,
+                "QNN EP: mixed-precision (widening) Gemm requires a constant int32 bias; a graph-input "
+                "bias cannot be requantized for the converted activation scale.");
+  const auto& bias_qp = bias_wrapper.GetQnnQuantParams();
+  const auto& bias_dims = bias_wrapper.GetTensorDims();
+
+  std::vector<float> bias_scales;
+  RETURN_IF_ERROR(bias_qp.GetScales(bias_scales));
+  std::vector<int32_t> bias_offsets(bias_scales.size(), 0);
+
+  std::vector<float> weight_scales;
+  RETURN_IF_ERROR(plan.weight.quant_param.GetScales(weight_scales));
+
+  const Qnn_Tensor_t& qnn_bias = bias_wrapper.GetQnnTensor();
+  const Qnn_ClientBuffer_t& client_buf = GetQnnTensorClientBuf(qnn_bias);
+  std::vector<uint8_t> original_bias_data(
+      static_cast<const uint8_t*>(client_buf.data),
+      static_cast<const uint8_t*>(client_buf.data) + client_buf.dataSize);
+
+  std::vector<uint8_t> requantized_bias_data;
+  std::vector<float> new_bias_scales;
+  std::vector<int32_t> new_bias_offsets;
+  std::optional<int64_t> axis = bias_qp.IsPerChannel()
+                                    ? std::optional<int64_t>(0)
+                                    : std::nullopt;
+
+  RETURN_IF_ERROR(utils::RequantizeBiasTensor(
+      original_bias_data, bias_dims,
+      bias_scales, bias_offsets,
+      weight_scales, activation_scale,
+      QNN_DATATYPE_SFIXED_POINT_32,
+      requantized_bias_data, new_bias_scales, new_bias_offsets,
+      axis));
+
+  const std::string new_bias_name = utils::UniqueNameGenerator().New(input_names[2], "_requant");
+  QnnQuantParamsWrapper new_bias_qp;
+  if (bias_qp.IsPerChannel()) {
+    new_bias_qp = QnnQuantParamsWrapper::PerChannel(new_bias_scales, new_bias_offsets, /*axis*/ 0);
+  } else {
+    new_bias_qp = QnnQuantParamsWrapper::PerTensor(new_bias_scales[0], new_bias_offsets[0]);
+  }
+  QnnTensorWrapper new_bias_wrapper(new_bias_name, QNN_TENSOR_TYPE_STATIC,
+                                    QNN_DATATYPE_SFIXED_POINT_32,
+                                    std::move(new_bias_qp),
+                                    std::vector<uint32_t>(bias_dims),
+                                    std::move(requantized_bias_data));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(new_bias_wrapper)),
+                "Failed to add requantized bias tensor.");
+  input_names[2] = new_bias_name;
+  return Ort::Status();
+}
+
+// Re-expresses the input activation in the plan's FC data type, when the ONNX activation is not
+// already at it: a Convert to a wider quantized type, or a Dequantize to float. No-op otherwise, so
+// callers can invoke it unconditionally.
+Ort::Status FixUpInput(QnnModelWrapper& qnn_model_wrapper, const GemmPrecisionPlan& plan,
+                       /*in,out*/ std::vector<std::string>& input_names, bool do_op_validation) {
+  if (!plan.FixesUpInput()) {
+    return Ort::Status();
+  }
+
+  // input_names[0] is a Transpose output when transA=1, so its dims are the permuted ONNX dims.
+  // Read the shape from the staged wrapper rather than from the ONNX-side plan.in_act.
+  std::vector<uint32_t> fixed_up_shape = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDims();
+
+  if (IsFloatQnnDataType(plan.fc_act_data_type)) {
+    const std::string dq_output_name = utils::UniqueNameGenerator().New(input_names[0], "_dequantize");
+    RETURN_IF_ERROR(qnn_model_wrapper.AddDequantizeNode(input_names[0], dq_output_name, plan.fc_act_data_type,
+                                                        std::move(fixed_up_shape), do_op_validation));
+    input_names[0] = dq_output_name;
+    return Ort::Status();
+  }
+
+  ScaleOffset in_encoding = {};
+  RETURN_IF_ERROR(plan.in_act.quant_param.GetPerTensorScaleOffset(in_encoding.scale, in_encoding.offset));
+
+  const std::string convert_output_name =
+      utils::UniqueNameGenerator().New(input_names[0], "_convert_to_fc_type");
+  RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper, input_names[0], convert_output_name,
+                                         plan.in_act.qnn_data_type, plan.fc_act_data_type,
+                                         in_encoding.offset, in_encoding.scale,
+                                         fixed_up_shape, /*output_symmetric*/ false, do_op_validation));
+  input_names[0] = convert_output_name;
+
+  if (input_names.size() == 3) {
+    // The Convert re-expressed the same float range at FC's wider bit width, so the activation scale
+    // changed. FC folds the bias in at that derived scale, so the bias data must follow it. Mirrors
+    // InsertConvertOp's own derivation above.
+    ScaleOffset converted_in_encoding = {};
+    RETURN_IF_ERROR(utils::DeriveConvertQuantParams(plan.in_act.qnn_data_type, plan.fc_act_data_type,
+                                                    in_encoding.offset, in_encoding.scale,
+                                                    /*output_symmetric*/ false, converted_in_encoding.scale,
+                                                    converted_in_encoding.offset));
+    RETURN_IF_ERROR(RequantizeBias(qnn_model_wrapper, plan, converted_in_encoding.scale, input_names));
+  }
+  return Ort::Status();
+}
+
+// Replaces the quantized weight in input_names[1] with a statically dequantized float copy at the
+// plan's FC data type, so FC can run in float mode. No-op when FC runs quantized.
+Ort::Status DequantizeWeight(QnnModelWrapper& qnn_model_wrapper, const GemmPrecisionPlan& plan,
+                             /*in,out*/ std::vector<std::string>& input_names) {
+  if (!plan.DequantizesWeight()) {
+    return Ort::Status();
+  }
+
+  const Qnn_DataType_t fc_act_data_type = plan.fc_act_data_type;
+
+  const auto& weight_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]);
+  const Qnn_Tensor_t& qnn_weight = weight_wrapper.GetQnnTensor();
+  const Qnn_ClientBuffer_t& w_buf = GetQnnTensorClientBuf(qnn_weight);
+
+  // Use wrapper dims (post-transpose) and wrapper quant params (already transposed)
+  const auto& w_dims = weight_wrapper.GetTensorDims();
+  const auto& w_qp = weight_wrapper.GetQnnQuantParams();
+  std::vector<float> weight_scales;
+  RETURN_IF_ERROR(w_qp.GetScales(weight_scales));
+  std::vector<int32_t> weight_offsets(weight_scales.size(), 0);
+
+  size_t num_elements = 1;
+  for (auto d : w_dims) num_elements *= d;
+
+  std::vector<float> fp32_weights(num_elements);
+  std::optional<int64_t> axis = w_qp.IsPerChannel() ? std::optional<int64_t>(0) : std::nullopt;
+  RETURN_IF_ERROR(utils::DequantizePerChannel(
+      gsl::span<const uint8_t>(static_cast<const uint8_t*>(w_buf.data), w_buf.dataSize),
+      gsl::span<const uint32_t>(w_dims.data(), w_dims.size()),
+      weight_scales, weight_offsets,
+      fp32_weights, plan.weight.qnn_data_type, axis));
+
+  // Weights must match FC's float width, so they take the activation type: an fp16 FC's in[1] is
+  // fp16, an fp32 FC's is fp32 (see HtpOpDefSupplement, FullyConnected datatypes).
+  std::vector<uint8_t> float_bytes;
+  if (fc_act_data_type == QNN_DATATYPE_FLOAT_16) {
+    float_bytes.resize(num_elements * sizeof(uint16_t));
+    auto* fp16_dst = reinterpret_cast<uint16_t*>(float_bytes.data());
+    for (size_t i = 0; i < num_elements; ++i) {
+      const Ort::Float16_t fp16(fp32_weights[i]);
+      memcpy(&fp16_dst[i], &fp16.val, sizeof(uint16_t));
+    }
+  } else {
+    float_bytes.resize(num_elements * sizeof(float));
+    memcpy(float_bytes.data(), fp32_weights.data(), float_bytes.size());
+  }
+
+  const std::string float_weight_name = utils::UniqueNameGenerator().New(
+      input_names[1], fc_act_data_type == QNN_DATATYPE_FLOAT_16 ? "_fp16" : "_fp32");
+  QnnTensorWrapper float_weight_tensor(float_weight_name, QNN_TENSOR_TYPE_STATIC,
+                                       fc_act_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(w_dims.begin(), w_dims.end()),
+                                       std::move(float_bytes));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(float_weight_tensor)),
+                "Failed to add float weight tensor.");
+  input_names[1] = float_weight_name;
+  return Ort::Status();
+}
+
+// Re-encodes the FC chain's result into the ONNX output activation's type, when FC could not run at
+// that type directly. No-op otherwise, so callers can invoke it unconditionally.
+Ort::Status FixUpOutput(QnnModelWrapper& qnn_model_wrapper, const GemmPrecisionPlan& plan,
+                        const std::string& chain_output_name, const std::string& onnx_output_name,
+                        bool do_op_validation) {
+  if (!plan.FixesUpOutput()) {
+    return Ort::Status();
+  }
+
+  // The ONNX output is always the narrower of the two here: had it been float it would have set the FC
+  // precision itself and needed no fix-up. So the chain is either quantized (Convert, drop bits) or
+  // float (Quantize, back to the ONNX grid).
+  const char* qnn_op_type = IsFloatQnnDataType(plan.fc_act_data_type) ? QNN_OP_QUANTIZE : QNN_OP_CONVERT;
+  const Qnn_TensorType_t final_tensor_type = qnn_model_wrapper.GetTensorType(onnx_output_name);
+  QnnTensorWrapper final_output_tensor(onnx_output_name, final_tensor_type, plan.out_act.qnn_data_type,
+                                       plan.out_act.quant_param.Copy(),
+                                       std::vector<uint32_t>(plan.out_act.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_output_tensor)),
+                "Failed to add mixed-precision Gemm output tensor.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(onnx_output_name, qnn_op_type),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                qnn_op_type,
+                                                {chain_output_name},
+                                                {onnx_output_name},
+                                                {},
+                                                do_op_validation),
+                "Failed to add mixed-precision Gemm output node.");
+  return Ort::Status();
+}
+
 }  // namespace
 
 class GemmOpBuilder : public BaseOpBuilder {
@@ -71,6 +482,19 @@ class GemmOpBuilder : public BaseOpBuilder {
                                      const Ort::Logger& logger,
                                      std::vector<std::string>& input_names,
                                      bool do_op_validation) const ORT_MUST_USE_RESULT;
+
+  // Emits every node between the Gemm's inputs and `chain_output_name`: FC alone, FC+Reshape when the
+  // QDQ selector absorbed a post-Gemm Reshape, or FC+ElementWiseAdd when `split_gemm` says QNN FC
+  // cannot fold the bias in. Every link runs at the FC chain's type and encoding (see AddFcChainLink).
+  Ort::Status AddFcChain(QnnModelWrapper& qnn_model_wrapper,
+                         const OrtNodeUnit& node_unit,
+                         const OrtNodeAttrHelper& node_helper,
+                         const GemmPrecisionPlan& plan,
+                         std::vector<std::string>&& input_names,
+                         const std::string& chain_output_name,
+                         bool split_gemm,
+                         const Ort::Logger& logger,
+                         bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
 Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit) const {
@@ -199,6 +623,13 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          std::move(input_shape), std::move(unpacked_tensor));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
   }
+
+  // Bring FC's inputs to the precision it runs at (see GemmPrecisionPlan); both helpers are no-ops
+  // when nothing needs fixing up. The output side is handled by ProcessAttributesAndOutputs.
+  GemmPrecisionPlan plan;
+  RETURN_IF_ERROR(MakeGemmPrecisionPlan(qnn_model_wrapper, node_unit, plan));
+  RETURN_IF_ERROR(DequantizeWeight(qnn_model_wrapper, plan, input_names));
+  RETURN_IF_ERROR(FixUpInput(qnn_model_wrapper, plan, input_names, do_op_validation));
 
   return Ort::Status();
 }
@@ -340,10 +771,11 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
     offsets_qnn = std::move(onnx_offsets);
   }
 
-  QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
-                                                                              gsl::span<const float>(offsets_qnn),
-                                                                              bitwidth,
-                                                                              gsl::span<const uint32_t>(block_size_arr));
+  QnnQuantParamsWrapper bq_quant_params =
+      QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                          gsl::span<const float>(offsets_qnn),
+                                          bitwidth,
+                                          gsl::span<const uint32_t>(block_size_arr));
 
   // 2-D weight [N, K] with BW_FLOAT_BLOCK encoding.
   std::vector<uint32_t> weight_shape_2d = {static_cast<uint32_t>(N), static_cast<uint32_t>(K)};
@@ -418,6 +850,66 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
   return Ort::Status();
 }
 
+Ort::Status GemmOpBuilder::AddFcChain(QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnit& node_unit,
+                                      const OrtNodeAttrHelper& node_helper,
+                                      const GemmPrecisionPlan& plan,
+                                      std::vector<std::string>&& input_names,
+                                      const std::string& chain_output_name,
+                                      bool split_gemm,
+                                      const Ort::Logger& logger,
+                                      bool do_op_validation) const {
+  // APP_READ only when the chain ends on the node unit's own graph output; a generated name (the
+  // intermediate an output fix-up consumes, or a pre-bias FC result) is NATIVE.
+  const Qnn_TensorType_t chain_output_tensor_type = qnn_model_wrapper.GetTensorType(chain_output_name);
+
+  // MatMulAddFusion post-Gemm Reshape absorbed by the QDQ selector: FC (rank-2) followed by a QNN
+  // Reshape (rank-N). node_unit.Outputs()[0] already reflects the Reshape's rank-N shape and the
+  // terminal Q's encoding, so the output fix-up (if any) is appended after the Reshape.
+  if (node_unit.GetOutputReshapeNode() != nullptr) {
+    // Derive FC's rank-2 output shape [M, N] from the rank-2 input activation [M, K] and the
+    // weight [K, N] (transB=0 asserted for MatMulAddFusion pattern).
+    RETURN_IF_NOT(plan.in_act.shape.size() == 2,
+                  "QNN EP: absorbed-Reshape Gemm input activation must be rank-2 [M, K].");
+    RETURN_IF_NOT(plan.weight.shape.size() == 2, "QNN EP: absorbed-Reshape Gemm weight must be rank-2 [K, N].");
+    RETURN_IF_NOT(node_helper.Get("transB", static_cast<int64_t>(0)) == 0,
+                  "QNN EP: absorbed-Reshape Gemm only supports transB=0.");
+    RETURN_IF_NOT(node_helper.Get("transA", static_cast<int64_t>(0)) == 0,
+                  "QNN EP: absorbed-Reshape Gemm only supports transA=0.");
+    // fc_output_shape = [M, N]: with transA=0 the input activation is [M, K] so shape[0] == M.
+    const std::vector<uint32_t> fc_output_shape{plan.in_act.shape[0], plan.weight.shape[1]};
+
+    const std::string fc_output_name = utils::UniqueNameGenerator().New(chain_output_name, "_fc");
+    RETURN_IF_ERROR(AddFcChainLink(qnn_model_wrapper, node_unit, plan, QNN_OP_FULLY_CONNECTED,
+                                   std::move(input_names), fc_output_name, QNN_TENSOR_TYPE_NATIVE,
+                                   fc_output_shape, do_op_validation));
+    return AddFcChainLink(qnn_model_wrapper, node_unit, plan, QNN_OP_RESHAPE, {fc_output_name},
+                          chain_output_name, chain_output_tensor_type, plan.out_act.shape, do_op_validation);
+  }
+
+  if (split_gemm) {
+    // The pre-bias FC result carries the FC chain's type and encoding: a quantized intermediate
+    // needs a defined encoding, and the trailing ElementWiseAdd re-encodes to the same grid.
+    const std::string fc_output_name = utils::UniqueNameGenerator().New(chain_output_name, "_fc");
+    RETURN_IF_ERROR(AddFcChainLink(qnn_model_wrapper, node_unit, plan, QNN_OP_FULLY_CONNECTED,
+                                   {input_names[0], input_names[1]}, fc_output_name, QNN_TENSOR_TYPE_NATIVE,
+                                   plan.out_act.shape, do_op_validation));
+    return AddFcChainLink(qnn_model_wrapper, node_unit, plan, QNN_OP_ELEMENT_WISE_ADD,
+                          {fc_output_name, input_names[2]}, chain_output_name, chain_output_tensor_type,
+                          plan.out_act.shape, do_op_validation);
+  }
+
+  if (plan.FixesUpOutput()) {
+    // FC feeds the output fix-up, so it emits at the FC chain's type/encoding, not the ONNX output's.
+    return AddFcChainLink(qnn_model_wrapper, node_unit, plan, QNN_OP_FULLY_CONNECTED, std::move(input_names),
+                          chain_output_name, chain_output_tensor_type, plan.out_act.shape, do_op_validation);
+  }
+
+  // Nothing to fix up: the chain is a lone FC emitting the ONNX output tensor as-is.
+  return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {}, logger, do_op_validation,
+                        GetQnnOpType(node_unit.OpType()));
+}
+
 Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                        const OrtNodeUnit& node_unit,
                                                        std::vector<std::string>&& input_names,
@@ -464,67 +956,19 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return Ort::Status();
   }
 
-  // MatMulAddFusion post-Gemm Reshape absorbed by the QDQ selector: FC (rank-2, encoded) followed
-  // by a QNN Reshape (rank-N, same encoding). node_unit.Outputs()[0] already reflects the Reshape's
-  // rank-N shape and the terminal Q's encoding.
-  const OrtNode* absorbed_reshape = node_unit.GetOutputReshapeNode();
-  if (absorbed_reshape != nullptr) {
-    const std::string& final_output_name = node_unit.Outputs()[0].name;
-    TensorInfo final_output_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], final_output_info));
+  GemmPrecisionPlan plan;
+  RETURN_IF_ERROR(MakeGemmPrecisionPlan(qnn_model_wrapper, node_unit, plan));
 
-    // Derive FC's rank-2 output shape [M, N] from the rank-2 activation input [M, K] and the
-    // weight [K, N] (transB=0 asserted for MatMulAddFusion pattern).
-    TensorInfo act_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], act_info));
-    TensorInfo weight_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], weight_info));
-    RETURN_IF_NOT(act_info.shape.size() == 2, "QNN EP: absorbed-Reshape Gemm activation must be rank-2 [M, K].");
-    RETURN_IF_NOT(weight_info.shape.size() == 2, "QNN EP: absorbed-Reshape Gemm weight must be rank-2 [K, N].");
-    const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
-    RETURN_IF_NOT(trans_b == 0, "QNN EP: absorbed-Reshape Gemm only supports transB=0.");
-    const int64_t trans_a = node_helper.Get("transA", static_cast<int64_t>(0));
-    RETURN_IF_NOT(trans_a == 0, "QNN EP: absorbed-Reshape Gemm only supports transA=0.");
-    // fc_output_shape = [M, N]: with transA=0 the activation is [M, K] so act_info.shape[0] == M.
-    std::vector<uint32_t> fc_output_shape{act_info.shape[0], weight_info.shape[1]};
+  const std::string& org_output_name = node_unit.Outputs()[0].name;
 
-    const bool final_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+  // With an output fix-up the FC chain feeds it under an intermediate name; without one the chain
+  // produces the ONNX output tensor itself.
+  const std::string fc_chain_output_name = plan.FixesUpOutput()
+                                               ? utils::UniqueNameGenerator().New(org_output_name, "_pre_convert")
+                                               : org_output_name;
 
-    // FC intermediate tensor: rank-2 shape, same encoding as the final output.
-    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(final_output_name, "_fc");
-    QnnTensorWrapper fc_out_wrapper(fc_output_name, QNN_TENSOR_TYPE_NATIVE, final_output_info.qnn_data_type,
-                                    final_output_info.quant_param.Copy(), std::vector<uint32_t>(fc_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fc_out_wrapper)),
-                  "Failed to add FC output tensor for absorbed-Reshape Gemm.");
-
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_FULLY_CONNECTED,
-                                                  std::move(input_names),
-                                                  {fc_output_name},
-                                                  {},
-                                                  do_op_validation),
-                  "Failed to add FullyConnected node (absorbed-Reshape path).");
-
-    // Final Reshape tensor: rank-N shape, same encoding.
-    Qnn_TensorType_t final_tensor_type = final_is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper final_wrapper(final_output_name, final_tensor_type, final_output_info.qnn_data_type,
-                                   final_output_info.quant_param.Copy(),
-                                   std::vector<uint32_t>(final_output_info.shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_wrapper)),
-                  "Failed to add final Reshape output tensor for absorbed-Reshape Gemm.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_RESHAPE,
-                                                  {fc_output_name},
-                                                  {final_output_name},
-                                                  {},
-                                                  do_op_validation),
-                  "Failed to add Reshape node (absorbed-Reshape path).");
-    return Ort::Status();
-  }
-
-  // Non-BQ path: decompose Gemm into FullyConnected + Add when needed.
+  // QNN FC folds the bias in itself, except when the bias shape or tensor type rules it out; then the
+  // FC chain grows a trailing ElementWiseAdd.
   bool split_gemm = false;
   if (node_unit.Inputs().size() == 3 && beta != 0.0f) {
     auto& input_c = node_unit.Inputs()[2];
@@ -541,58 +985,10 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     split_gemm = split_gemm || qnn_model_wrapper.GetTensorType(input_c.name) == QNN_TENSOR_TYPE_NATIVE;
   }
 
-  if (split_gemm) {
-    // If split_gemm, input and output of Gemm must at least 2d.
-    const std::string& org_output_name = node_unit.Outputs()[0].name;
-    TensorInfo input_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
-    TensorInfo output_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
-    std::vector<uint32_t> output_shape = output_info.shape;
-    QnnQuantParamsWrapper op_output_quant_param = output_info.quant_param.Copy();
+  RETURN_IF_ERROR(AddFcChain(qnn_model_wrapper, node_unit, node_helper, plan, std::move(input_names),
+                             fc_chain_output_name, split_gemm, logger, do_op_validation));
 
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
-
-    // Create FullyConnected Node
-    std::vector<std::string> gemm_input_0_1;
-    gemm_input_0_1.push_back(input_names[0]);
-    gemm_input_0_1.push_back(input_names[1]);
-    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(org_output_name, "_fc");
-    QnnTensorWrapper fully_connected_output(fc_output_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
-                                            QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fully_connected_output)),
-                  "Failed to add FullyConnected output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_FULLY_CONNECTED,
-                                                  std::move(gemm_input_0_1),
-                                                  {fc_output_name},
-                                                  {},
-                                                  do_op_validation),
-                  "Failed to add FullyConnected node.");
-
-    // Create Add Node
-    Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper op_output_tensor_wrapper(org_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                              op_output_quant_param.Copy(), std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(op_output_tensor_wrapper)),
-                  "Failed to add ElementWiseAdd output tensor.");
-    std::string bias_name = input_names[2];
-
-    std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD);
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_node_name,
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_ADD,
-                                                  {fc_output_name, bias_name},
-                                                  {org_output_name},
-                                                  {},
-                                                  do_op_validation),
-                  "Failed to add ElementWiseAdd node.");
-  } else {
-    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
-                                   logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
-  }
-  return Ort::Status();
+  return FixUpOutput(qnn_model_wrapper, plan, fc_chain_output_name, org_output_name, do_op_validation);
 }
 
 void CreateGemmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
