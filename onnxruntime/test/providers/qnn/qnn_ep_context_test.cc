@@ -3302,9 +3302,8 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 // On SDK 2.48 the Graph Splittling config block is compiled out; the test still passes because
 // QnnContext_create succeeds without option 22.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
-  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#if !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38))
+  GTEST_SKIP() << "Graph splitting requires QNN API version >= 2.38. Skipping on this SDK build.";
 #else
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";

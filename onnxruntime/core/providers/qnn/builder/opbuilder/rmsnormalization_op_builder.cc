@@ -193,15 +193,13 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
     scale_info.shape = *squeezed_shape;
   }
 
-#if !defined(QNN_SDK_VERSION_MINOR) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 49)
-  // QNN SDK < 2.49 requires an explicit beta/bias input for QNN_OP_RMS_NORM on NPU.
-  // SDK 2.49+ accepts beta as optional, so the dummy tensor is only needed for older SDKs.
-  // Note: SDK 2.47 and 2.48 share the same QNN API version (2.36), so QNN_SDK_VERSION_MINOR
-  // derived from CMake is used here instead of QNN_API_VERSION_MINOR.
+#if !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38))
+  // QNN API < 2.38 (QAIRT < 2.49) requires an explicit beta/bias input for QNN_OP_RMS_NORM on NPU.
+  // QNN API 2.38+ accepts beta as optional, so the dummy tensor is only needed for older SDKs.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("RMSNorm node " + node_unit.Name() + ": adding dummy beta tensor (SDK < 2.49).").c_str());
+                ("RMSNorm node " + node_unit.Name() + ": adding dummy beta tensor (QNN API < 2.38).").c_str());
 
     // scale_info.shape is the post-squeeze shape, so beta inherits the OpDef-conformant rank.
     std::vector<uint32_t> beta_shape = scale_info.shape;
@@ -238,9 +236,9 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
 #else
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("RMSNorm node " + node_unit.Name() + ": skipping dummy beta tensor (SDK >= 2.49).").c_str());
+                ("RMSNorm node " + node_unit.Name() + ": skipping dummy beta tensor (QNN API >= 2.38).").c_str());
   }
-#endif  // !defined(QNN_SDK_VERSION_MINOR) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 49)
+#endif  // !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38))
 
   return Ort::Status();
 }

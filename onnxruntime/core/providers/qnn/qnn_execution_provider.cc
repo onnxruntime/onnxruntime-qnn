@@ -1289,8 +1289,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 #ifndef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting_) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_graph_splitting=1 was set but this build was compiled against QAIRT SDK < 2.49. "
-                "Graph splitting is not available and the option will be ignored.");
+                "enable_htp_graph_splitting=1 was set but this build was compiled against QNN API < 2.38 "
+                "(QAIRT SDK < 2.49). Graph splitting is not available and the option will be ignored.");
     enable_htp_graph_splitting_ = false;
   }
 #endif

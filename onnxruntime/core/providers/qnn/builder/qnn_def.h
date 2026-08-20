@@ -30,10 +30,9 @@ namespace qnn {
 #define QNN_SYSTEM_DLC_API_ENABLED
 #endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
 
-// HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
-// QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
+// HTP Graph Splitting (Graph Program Executor) requires QNN API 2.38+ (QAIRT 2.49+).
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
 #define QNN_HTP_GRAPH_SPLITTING_AVAILABLE
 #endif
 
