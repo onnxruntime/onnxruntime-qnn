@@ -708,15 +708,15 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
   Ort::SessionOptions qnn_so;
   qnn_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   RegisterQnnEpLibrary(registered_ep_device, qnn_so, kQnnExecutionProvider, provider_options);
-  // try {
+  try {
     ScopedOrtSession scoped_qnn_session(
         std::move(registered_ep_device),
         Ort::Session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), qnn_so));
     Ort::Session& qnn_session = scoped_qnn_session.session();
     ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, expected_ep_assignment));
-  // } catch (const Ort::Exception&) {
-    // *session_failed = true;
-  // }
+  } catch (const Ort::Exception&) {
+    *session_failed = true;
+  }
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
