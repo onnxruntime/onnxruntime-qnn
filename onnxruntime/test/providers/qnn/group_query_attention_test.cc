@@ -631,7 +631,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-#endif  // GQA HTP tests
+#endif  // (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 // === op_affinity EP-assignment gate tests ===
 // These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
