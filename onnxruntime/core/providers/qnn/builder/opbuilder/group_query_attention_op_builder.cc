@@ -62,8 +62,8 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   const size_t max_num_inputs = 14;
   const size_t max_num_outputs = 4;
 
-  for (size_t i = 10; i < std::min(num_inputs, max_num_inputs); i++) {
-    RETURN_IF(inputs[i].Exists(), "attention_bias, head_sink, k_scale, and v_scale inputs are not supported");
+  for (size_t i = 11; i < std::min(num_inputs, max_num_inputs); i++) {
+    RETURN_IF(inputs[i].Exists(), "head_sink, k_scale, and v_scale inputs are not supported");
   }
   RETURN_IF(num_inputs > max_num_inputs,
             ("More than " + std::to_string(max_num_inputs) + " inputs provided, which is unsupported").c_str());
@@ -129,7 +129,8 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       4u,  // past_value
       7u,  // cos_cache
       8u,  // sin_cache
-      9u   // position_ids
+      9u,  // position_ids
+      10u  // attention_bias
   };
   constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
 
