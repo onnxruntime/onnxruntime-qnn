@@ -993,7 +993,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_QDQFusion_ManyToOne) {
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_GeluFusion) {
 #if defined(_WIN32) && !defined(_M_ARM64)
   GTEST_SKIP() << "GeluFusion not supported on Windows x86 HTP simulation";
-#endif
+#else
   ScopedTempDir tmp;
   // Use the ONNX Gelu decomposition pattern (Mul/Div/Erf/Add) so the
   // GeluFusion node group fires. kMSDomain Gelu fails to finalize on HTP.
@@ -1035,6 +1035,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_GeluFusion) {
   auto j = ReadTraceJson(trace_file);
   ASSERT_GE(j["subgraph_traces"].size(), 1u);
   EXPECT_GT(j["subgraph_traces"][0]["op_mappings"].size(), 0u);
+#endif
 }
 
 // Test 1:N mapping on HTP.
@@ -1720,7 +1721,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_MixedEPContext_HTP_Phase2InferenceSu
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_GeluFusion) {
 #if defined(_WIN32) && !defined(_M_ARM64)
   GTEST_SKIP() << "GeluFusion not supported on Windows x86 HTP simulation";
-#endif
+#else
   ScopedTempDir tmp;
   // ONNX Gelu decomposition pattern: GeluFusion maps 5 ONNX ops → 1 QNN Gelu op.
   auto build_gelu = [](ModelTestBuilder& builder) {
@@ -1784,6 +1785,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_GeluFusion) {
   if (!found_fusion) {
     EXPECT_GT(op_mappings.size(), 0u) << "Should have at least one op mapping";
   }
+#endif
 }
 
 // Test N:M trace for ReshapeEinsumReshape fusion (3 ONNX ops → 3 QNN ops).
@@ -1793,7 +1795,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_GeluFusion) {
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_ReshapeEinsumReshape) {
 #if defined(_WIN32) && !defined(_M_ARM64)
   GTEST_SKIP() << "ReshapeEinsumReshape fusion not supported on Windows x86 HTP simulation";
-#endif
+#else
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ScopedTempDir tmp;
 
@@ -1860,6 +1862,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_ReshapeEinsumReshape) {
         << "Each N:M fusion entry should reference all 3 ONNX source ops "
            "(reshape1, einsum, reshape2)";
   }
+#endif
 }
 
 // ========================= Profiling + Tracing Combination Tests =========================
