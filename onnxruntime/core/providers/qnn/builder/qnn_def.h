@@ -44,8 +44,7 @@ namespace qnn {
 #define QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 #endif
 
-// GroupQueryAttention is available from QAIRT 2.48 (QNN opset 2.12).
-// QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
+// GroupQueryAttention is available from QAIRT 2.48
 #if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 48))
 #define QNN_GROUP_QUERY_ATTENTION_AVAILABLE
