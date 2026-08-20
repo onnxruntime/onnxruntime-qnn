@@ -1105,7 +1105,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                     logger_);
 
   // op_affinity: path to a JSON config gating which backend claims specific op types
-  static constexpr const char* kQnnOpAffinityKey = "op_affinity";
   std::string op_affinity_path;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
                                  FormatEPConfigKey(kQnnOpAffinityKey), "", op_affinity_path);
