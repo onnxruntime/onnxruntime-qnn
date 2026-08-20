@@ -1159,9 +1159,11 @@ class ZipUpleveler(ArtifactUpleveler):
         body = body.removesuffix("---").rstrip()
         return title, body
 
-    # Never published to GitHub Releases, even though they're valid upload candidates
-    # for the other destinations (Artifactory).
-    _GITHUB_EXCLUDED_SUFFIXES = ("-pdb.zip", "win-arm64ec.zip")
+    @property
+    def _github_excluded_suffixes(self) -> tuple[str, ...]:
+        """Filename suffixes never published to GitHub Releases, even though they're
+        valid upload candidates for the other destinations (Artifactory)."""
+        return ("-pdb.zip", "win-arm64ec.zip")
 
     def _upload_to_github(self, distribution_dir: str) -> None:
         """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
@@ -1171,7 +1173,7 @@ class ZipUpleveler(ArtifactUpleveler):
             for f in os.listdir(distribution_dir)
             if os.path.isfile(os.path.join(distribution_dir, f))
             if f.endswith(self.artifact_suffix)
-            if not f.endswith(self._GITHUB_EXCLUDED_SUFFIXES)
+            if not f.endswith(self._github_excluded_suffixes)
         ]
         if not files:
             raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")
