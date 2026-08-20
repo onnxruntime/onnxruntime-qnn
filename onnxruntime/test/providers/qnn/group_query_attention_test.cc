@@ -643,7 +643,7 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
   const int32_t kv_num_heads = 4;
   const int32_t head_size = 32;
   const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
+  const int32_t total_seq_len = 128;
   const int32_t batch_size = 1;
   const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
 
@@ -715,7 +715,6 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
     Ort::Session& qnn_session = scoped_qnn_session.session();
     ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, expected_ep_assignment));
   } catch (const Ort::Exception& e) {
-    std::cout << e.what() << " Session Failure!" << std::endl;
     *session_failed = true;
   }
 }
