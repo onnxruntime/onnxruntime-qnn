@@ -69,10 +69,11 @@ const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 // because kGenieBackendTypeName is also referenced from other call sites in this file.
 constexpr std::string_view kGenieBackendTypeName{"genie"};
 
+constexpr const char* kQnnOpAffinityKey = "op_affinity";
+
 // Best-effort mapping from a resolved backend library path to the QnnBackendType it will load.
 // Both the 'backend_type' and 'backend_path' provider options funnel into a single backend_path
-// string (ParseBackendTypeName turns the former into the latter), so matching on the path covers
-// both. Only the library filename is compared, so absolute paths work.
+// string (ParseBackendTypeName turns the former into the latter).
 static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::string& backend_path) {
   const std::string filename = std::filesystem::path(backend_path).filename().string();
 
