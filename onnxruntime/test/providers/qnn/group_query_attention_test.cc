@@ -21,6 +21,8 @@
 namespace onnxruntime {
 namespace test {
 
+#ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+
 template <typename T, typename M>
 static GetTestModelFn BuildGQATestCase(
     // Op Inputs
@@ -397,7 +399,7 @@ static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, 
   return path;
 }
 
-#if (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -631,7 +633,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-#endif  // (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_GROUP_QUERY_ATTENTION_AVAILABLE)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // === op_affinity EP-assignment gate tests ===
 // These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
@@ -757,7 +759,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_Sess
   ASSERT_TRUE(session_failed);
 }
 
-#if defined(_M_ARM64) && defined(QNN_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if defined(_M_ARM64)
 //
 // GPU tests:
 //
@@ -1909,8 +1911,8 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
 }
 
 #endif  // defined(_WIN32)
-#endif  // defined(_M_ARM64) && defined(QNN_GROUP_QUERY_ATTENTION_AVAILABLE) GPU tests
-
+#endif  // defined(_M_ARM64) GPU tests
+#endif  // QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 }  // namespace test
 }  // namespace onnxruntime
 #endif  // !defined(ORT_MINIMAL_BUILD)
