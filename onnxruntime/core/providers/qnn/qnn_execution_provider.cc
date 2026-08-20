@@ -69,6 +69,25 @@ const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 // because kGenieBackendTypeName is also referenced from other call sites in this file.
 constexpr std::string_view kGenieBackendTypeName{"genie"};
 
+// Best-effort mapping from a resolved backend library path to the QnnBackendType it will load.
+// Both the 'backend_type' and 'backend_path' provider options funnel into a single backend_path
+// string (ParseBackendTypeName turns the former into the latter), so matching on the path covers
+// both. Only the library filename is compared, so absolute paths work.
+static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::string& backend_path) {
+  const std::string filename = std::filesystem::path(backend_path).filename().string();
+
+  if (filename == kDefaultCpuBackendPath) {
+    return qnn::QnnBackendType::CPU;
+  }
+  if (filename == kDefaultGpuBackendPath) {
+    return qnn::QnnBackendType::GPU;
+  }
+  if (filename == kDefaultHtpBackendPath) {
+    return qnn::QnnBackendType::HTP;
+  }
+  return std::nullopt;
+}
+
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
@@ -1086,10 +1105,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                     logger_);
 
   // op_affinity: path to a JSON config gating which backend claims specific op types
+  static constexpr const char* kQnnOpAffinityKey = "op_affinity";
   std::string op_affinity_path;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                 FormatEPConfigKey("op_affinity"), "", op_affinity_path);
+                                 FormatEPConfigKey(kQnnOpAffinityKey), "", op_affinity_path);
   if (!op_affinity_path.empty()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                (std::string(kQnnOpAffinityKey) + ": " + op_affinity_path).c_str());
     try {
       model_settings_.op_affinity = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
     } catch (const std::exception& e) {
@@ -1097,6 +1119,17 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                             "': " + e.what();
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
       throw std::runtime_error(message);
+    }
+
+    // Reject a config that pins an op to a different non-CPU backend
+    if (const std::optional<qnn::QnnBackendType> session_backend = InferBackendTypeFromPath(backend_path);
+        session_backend.has_value()) {
+      const Ort::Status status = model_settings_.op_affinity.ValidateForSessionBackend(*session_backend);
+      if (!status.IsOK()) {
+        const std::string message = "Op Affinity validation failed: " + status.GetErrorMessage();
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+        throw std::runtime_error(message);
+      }
     }
   }
   // Check BF16 compatibility early
@@ -2090,7 +2123,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
 
   if (!rt.IsOK()) {
-    const std::string message = "Op Affinity validation failed " + rt.GetErrorMessage();
+    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
