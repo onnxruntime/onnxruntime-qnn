@@ -761,7 +761,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_Sess
   ASSERT_TRUE(session_failed);
 }
 
-#endif // QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif  // QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
 
 #if defined(_M_ARM64)
 //
