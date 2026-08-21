@@ -23,7 +23,7 @@ namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 
-#ifdef QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 template <typename T, typename M>
 static GetTestModelFn BuildGQATestCase(
@@ -756,7 +756,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_Sess
   ASSERT_TRUE(session_failed);
 }
 
-#endif  // QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif  // (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 #if defined(_M_ARM64)
 //
