@@ -44,11 +44,18 @@ namespace qnn {
 #define QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 #endif
 
-// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.37
+// RunGQAOpAffinityAssignmentCheck is available from QNN API 2.37
 // (QAIRT 2.48).
 #if QNN_API_VERSION_MAJOR > 2 || \
     (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37)
 #define QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
+// QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.37
+// (QAIRT 2.49).
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
 #endif
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
