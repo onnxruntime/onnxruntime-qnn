@@ -69,8 +69,8 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.48.40` |
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.26.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.49.40` |
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -183,7 +183,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"soc_model"`|Description|
 |---|---|
-|Model number (string)|The SoC model number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid values. Defaults to "0" (unknown). Accepts a comma-separated list of model numbers (e.g. `"60,88"`). Supplying more than one value enables [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
+|Model number (string)|The SoC model to target. Accepts a **numeric model ID** (e.g. `"69"`) or a **chip-family name string** (e.g. `"SM8750"`, case-insensitive) for a subset of well-known chips — note this list is not exhaustive and chips not recognised by name must use the numeric ID. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid numeric values. Defaults to `"0"` (unknown). Accepts a comma-separated list (e.g. `"43,69"`) to enable [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
 
 |`"htp_arch"`|Description|
 |---|---|
@@ -192,6 +192,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'69'|HTP v69.|
 |'73'|HTP v73.|
 |'75'|HTP v75.|
+|'79'|HTP v79.|
 |'81'|HTP v81.|
 
 Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
@@ -582,6 +583,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
+|ai.onnx:QLinearConv|All scale/zero-point inputs must be initializers; per-tensor activation/output quant; per-channel weight quant (1-D w_scale/w_zp) supported; input types int8 or uint8; optional int32 bias; 1D, 2D, and 3D convolution|
 |ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
 |ai.onnx:RandomNormalLike||
