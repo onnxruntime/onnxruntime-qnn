@@ -347,6 +347,23 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. Unsupported operators fall back to the CPU EP.|
 |'1'|Disable CPU EP fallback. Returns an error if any operator cannot be handled by QNN EP. Set via `session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1")`.|
 
+|`"op_affinity"`|Description|
+|---|---|
+|Path to a JSON config file (string)|Pins specific ONNX op types to a backend. See [Op Affinity](#op-affinity) below. Not set by default.|
+
+#### Op Affinity
+
+The `op_affinity` option points at a JSON config file that pins ONNX op types to a single backend:
+
+```json
+{ "op_type": { "GroupQueryAttention": "HTP" } }
+```
+
+- Backend names are case-insensitive (`"HTP"` == `"htp"`).
+- A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
+- Pinning an op type to a backend other than the one the session is running on fails session creation, since heterogeneous execution is not supported — except a `"cpu"` pin, which is a legitimate way to opt an op out of QNN EP (falls back to the CPU EP without failing the session).
+- On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`. This applies to the legacy built-in QNN EP path (`-e qnn -i ...`); when registering QNN EP via the plugin-EP path (`--plugin_eps`/`--plugin_ep_options`), provider options are passed through generically and are not subject to the built-in QNN EP's key allowlist.
+
 ### Flexible Context Binary (FCB) / multi-SoC EP context
 
 The Flexible Context Binary (FCB) feature packages one or more QNN context binaries into a single QNN DLC, so a single EPContext ONNX model can be deployed across multiple Snapdragon SoCs. It requires **QAIRT 2.48 or later (QNN API >= 2.37)**.
@@ -632,7 +649,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
 |com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU backend only; requires QAIRT SDK ≥ 2.48 (QNN opset 2.12); rotary_interleaved=0; no k_quant_type/v_quant_type|
+|com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49|
 |com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
