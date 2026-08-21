@@ -6,7 +6,7 @@
 
 #include "gtest/gtest.h"
 
-#if !defined(ORT_MINIMAL_BUILD)
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <filesystem>
 #include <fstream>
@@ -212,4 +212,4 @@ TEST(QnnUnit_OpAffinityMap, ValidateIsNoOpWhenUnconfigured) {
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD)
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
