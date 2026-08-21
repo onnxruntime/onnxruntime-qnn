@@ -13,7 +13,6 @@
 #include <utility>
 #include <vector>
 
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 #include "gtest/gtest.h"
