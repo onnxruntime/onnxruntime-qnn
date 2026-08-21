@@ -717,8 +717,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
                                          const std::vector<const OrtNode*>& dq_nodes,
                                          const std::vector<const OrtNode*>& q_nodes,
                                          int num_dq_inputs,
-                                         bool is_empty_q_nodes_allowed,
-                                         bool allow_missing_optional_outputs) const {
+                                         bool is_empty_q_nodes_allowed) const {
   if (num_dq_inputs == -1) {
     size_t num_inputs = 0;
     ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
@@ -742,28 +741,17 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   std::vector<const OrtValueInfo*> outputs(num_outputs);
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
-  // Walk the output slots. A missing optional output (e.g. GRU's optional Y or
-  // Y_h) is reported by ORT core as a nullptr OrtValueInfo* for that slot, and
-  // dereferencing it faults inside the ORT-core C API. Guard nullptr explicitly:
-  //  - allow_missing_optional_outputs == true  (GRU): skip the empty slot and
-  //    match only the present outputs against the Q nodes, so u8 fusion is still
-  //    selected for the outputs that do exist.
-  //  - allow_missing_optional_outputs == false (all other ops): an empty slot is
-  //    unexpected, so decline the group rather than dereference nullptr.
+  // Walk the output slots and validate them against the Q nodes.
   bool produces_graph_output = false;
-  size_t present_outputs = 0;
   size_t total_consumers = 0;
 
   for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
+    // An empty slot -- nullptr OrtValueInfo* from ORT core, e.g. GRU's optional Y / Y_h -- makes
+    // the group ill-formed; decline (also avoids the nullptr deref in the C API calls below).
     if (value_info == nullptr) {
-      if (allow_missing_optional_outputs) {
-        continue;
-      }
       return false;
     }
-
-    ++present_outputs;
 
     bool is_graph_output = false;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
@@ -776,7 +764,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
     total_consumers += num_consumers;
   }
 
-  return (present_outputs == q_nodes.size()) &&
+  return (num_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
@@ -1534,12 +1522,25 @@ bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
                                     const OrtNode* redundant_clip_node,
                                     const std::vector<const OrtNode*>& dq_nodes,
                                     const std::vector<const OrtNode*>& q_nodes) const {
-  // GRU has two optional outputs (Y, Y_h); a missing one is an empty output slot
-  // (nullptr OrtValueInfo*). Allow those to be skipped so the group is still
-  // selected for whichever output is present, and so we never deref nullptr.
+  // GRU has two optional outputs (Y, Y_h). CheckQDQNodes declines a group whose GRU exposes only
+  // one (an empty slot is ill-formed), so it runs fp32 instead of fusing to u8. Intentional: a
+  // Y_h-only u8 fold drifted ~8.8% on real silicon (v73) because the unrolled recurrence requantizes
+  // the hidden state at the single present output's tight scale, clipping wider intermediate states.
+  // Both-outputs is the shape customer models use. TODO: to allow missing-output u8, decouple the
+  // recurrence scale AND backfill the absent slot's quant encoding in gru_op_builder.cc (else its
+  // emitted u8 tensor carries an UNDEFINED encoding and crashes HTP finalize).
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
-                     static_cast<int>(dq_nodes.size()), /*is_empty_q_nodes_allowed=*/false,
-                     /*allow_missing_optional_outputs=*/true)) {
+                     static_cast<int>(dq_nodes.size()), /*is_empty_q_nodes_allowed=*/false)) {
+    return false;
+  }
+
+  // HTP cannot finalize a u8 LBR=0 GRU: during Graph Optimizations the gate-matmul activation is
+  // force-widened u8 -> QUint16Crouton, leaving no constructible q::ConvLayer_s1.opt -> error 1002
+  // (measured on real silicon v73 and v81). Decline so it runs fp (finalizes, as before this
+  // selector). LBR=1 (what customer models use) finalizes and stays accelerated. Remove once HTP
+  // registers a u8 kernel for the LBR=0 gate matmul.
+  OrtNodeAttrHelper node_helper(*node);
+  if (node_helper.Get("linear_before_reset", static_cast<int64_t>(0)) == 0) {
     return false;
   }
 
@@ -1558,39 +1559,19 @@ bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
   std::unordered_map<std::string, size_t> dq_output_to_index;
   for (size_t i = 0; i < dq_nodes.size(); ++i) {
     size_t output_count = 0;
-    auto* status = ort_api.Node_GetNumOutputs(dq_nodes[i], &output_count);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(dq_nodes[i], &output_count), ort_api);
     std::vector<const OrtValueInfo*> outputs(output_count);
-    status = ort_api.Node_GetOutputs(dq_nodes[i], outputs.data(), outputs.size());
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(dq_nodes[i], outputs.data(), outputs.size()), ort_api);
     const char* name = nullptr;
-    status = ort_api.GetValueInfoName(outputs[0], &name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(outputs[0], &name), ort_api);
     dq_output_to_index[std::string(name)] = i;
   }
 
   // Get GRU node inputs
   size_t num_inputs = 0;
-  auto* status = ort_api.Node_GetNumInputs(node, &num_inputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  status = ort_api.Node_GetInputs(node, inputs.data(), inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api);
 
   // Per-input data type constraints (index matches ONNX GRU input position)
   // Empty set means "skip this input" (not quantized)
@@ -1614,11 +1595,7 @@ bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
     }
 
     const char* input_name = nullptr;
-    status = ort_api.GetValueInfoName(value_info, &input_name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(value_info, &input_name), ort_api);
 
     auto it = dq_output_to_index.find(std::string(input_name));
     if (it == dq_output_to_index.end()) {

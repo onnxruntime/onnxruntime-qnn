@@ -401,16 +401,10 @@ static void RunHtpFp16GRUOpTest(const TestInputDef<float>& X_def,
 // HTP QDQ Tests
 // ============================================================
 
-// DISABLED on real HTP silicon: a u8 QDQ GRU with linear_before_reset=0 fails HTP graph
-// finalize with QNN error 1002. During "Graph Optimizations" HTP force-widens the GRU gate
-// matmul activation (ONNX GRU -> HTP q::ConvLayer_s1.opt) from u8 to QUint16Crouton (u16) via
-// ForceFormat_Crouton, leaving no constructible op (17 candidates declined). Measured on
-// v81 / arch 81 / QAIRT 2.48.40.260702 (AISW-197479). The ExpectedEPNodeAssignment::All
-// expectation only holds on x86 HTP emulation, where the u8->u16 widening does not fire -- that
-// is why this test is green in off-device CI but would fail on-device. linear_before_reset=1
-// finalizes cleanly (see GRU_QDQ_linear_before_reset below), matching what real customer models
-// use. Re-enable when HTP registers a u8 kernel for the LBR=0 gate matmul.
-TEST_F(QnnHTPBackendTests, DISABLED_GRU_QDQ_sanity_forward) {
+// u8 QDQ GRU, linear_before_reset=0. OrtGRUNodeGroupSelector declines LBR=0 (HTP can't finalize it:
+// the gate matmul is widened u8 -> QUint16Crouton -> Code 1002 on v73/v81), so it runs fp32 + Q/DQ.
+// This validates the LBR=0 decline + fp accuracy, not u8 HTP exec (genuine u8 = GRU_QDQ_linear_before_reset).
+TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -432,9 +426,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_GRU_QDQ_sanity_forward) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// seq_len=1 variant of GRU_QDQ_sanity_forward. Identical dims except seq_len 6->1.
-// Isolates whether seq_len (per-timestep unroll) is the 1002 finalize discriminator
-// for the no-MMI u8 case (AISW-197479). Prediction: seq=1 => no unroll => PASS.
+// seq_len=1 variant of GRU_QDQ_sanity_forward. seq=1 still 1002s as u8 LBR=0, so the per-timestep
+// unroll is not the discriminator -- linear_before_reset=0 is. Declined to fp, same as forward.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward_seq1) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -457,6 +450,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward_seq1) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_reverse) {
   std::string direction = "reverse";
   uint32_t num_direction = 1;
@@ -479,6 +473,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_reverse) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -501,6 +496,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_B) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -522,6 +518,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_B) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_H) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -543,6 +540,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_H) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -567,6 +565,8 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
                               QDQTolerance(0.004f));
 }
 
+// u16 QDQ GRU. Declined for two reasons -- LBR=0 (see GRU_QDQ_sanity_forward) and u16 X outside the
+// selector's UINT8-only in[0] allowlist -- so it runs fp. fp-path sanity check at u16 quant params.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -589,19 +589,10 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Y-only (has_Y=true, has_Y_h=false) — exercises the bidirectional Concat path for Y.
-//
-// DISABLED on real HTP silicon (AISW-197479). Two independent, LBR=0-specific reasons:
-//  1) Like DISABLED_GRU_QDQ_sanity_forward above, this is an LBR=0 u8 QDQ GRU, so during HTP finalize
-//     the gate matmul is force-widened u8 -> QUint16Crouton and no candidate kernel is constructible
-//     -> Code 1002. (ExpectedEPNodeAssignment::All only holds on x86 HTP emulation, where the widening
-//     does not fire, so this is green in off-device CI but 1002s on-device.)
-//  2) The missing optional output (Y_h) previously hard-crashed the process with 0xc0000005 before
-//     finalize: a nullptr output slot was dereferenced in the QDQ selector (CheckQDQNodes), and the
-//     GRU op-builder emitted a u8 tensor with an UNDEFINED quant encoding. Both crash sites are fixed
-//     (two-stage EP fix), so the test now fails cleanly with the catchable 1002 from (1) instead of
-//     crashing. Re-enable with the other LBR=0 u8 GRU tests when HTP registers a u8 LBR=0 gate kernel.
-TEST_F(QnnHTPBackendTests, DISABLED_GRU_QDQ_Y_only_bidirectional) {
+// Y-only GRU (Y_h absent). The selector requires BOTH outputs (CheckQDQNodes declines an empty slot),
+// so it runs fp. linear_before_reset=1 isolates the missing-output decline from the LBR=0 one. A Y-only
+// u8 fold was itself fine (~0.75% on v73); it is the Y_h-only mirror that drifted (see below).
+TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_only_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -620,15 +611,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_GRU_QDQ_Y_only_bidirectional) {
                               direction,                                                                               // direction
                               hidden_size,                                                                             // hidden_size
                               0,                                                                                       // layout
-                              ExpectedEPNodeAssignment::All);
+                              ExpectedEPNodeAssignment::All,
+                              1);  // LBR=1: isolates the missing-output decline from LBR (fp path)
 }
 
-// Y_h-only (has_Y=false, has_Y_h=true) — exercises the bidirectional Concat path for Y_h.
-// DISABLED for the same two LBR=0 reasons as DISABLED_GRU_QDQ_Y_only_bidirectional above:
-// the u8->QUint16Crouton gate-matmul widening -> Code 1002 on real silicon, plus the missing-optional-
-// output (Y here) 0xc0000005 crash that is now fixed (AISW-197479) so it 1002s cleanly. Re-enable when
-// HTP registers a u8 LBR=0 gate kernel.
-TEST_F(QnnHTPBackendTests, DISABLED_GRU_QDQ_Y_h_only_bidirectional) {
+// Y_h-only mirror of GRU_QDQ_Y_only_bidirectional; declined to fp by the same both-outputs rule
+// (LBR=1 isolates it from the LBR=0 decline). As a u8 fold this drifted ~8.8% on v73 -- HTP requantizes
+// the per-step recurrence at Y_h's tight final-step scale -- which is why missing-output u8 is deferred.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_h_only_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
   uint32_t batch_size = 3;
@@ -647,7 +637,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_GRU_QDQ_Y_h_only_bidirectional) {
                               direction,                                                                               // direction
                               hidden_size,                                                                             // hidden_size
                               0,                                                                                       // layout
-                              ExpectedEPNodeAssignment::All);
+                              ExpectedEPNodeAssignment::All,
+                              1);  // LBR=1: isolates the missing-output decline from LBR (fp path)
 }
 
 // layout=1: ORT CPU EP does not support batchwise layout, so session initialization throws.
@@ -692,14 +683,13 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_layout1_forward) {
 #endif
 }
 
-// linear_before_reset=1 is the config real customer models use; unlike LBR=0 it finalizes cleanly on
-// HTP (no u8->QUint16Crouton gate-matmul widening, so no Code 1002) and runs end-to-end on real silicon.
-// Tolerance is relaxed from the 0.4% default (1 int8 unit) to 3.0%: the u8 QDQ GRU's per-timestep
-// unrolled recurrence accumulates quantization error across the gate matmuls. Measured on v81 / arch 81 /
-// QAIRT 2.48.40.260702 (the test feeds the framework's fixed input seed 2345, so this is reproducible):
-// the max normalized error vs qdq@CPU_EP is 2.24% on output Y (element 67) and 1.96% on output Y_h. This
-// is intrinsic u8-vs-fp quantization drift on a recurrent op, not an EP bug; 3.0% clears the measured
-// 2.24% peak with headroom while still catching real regressions.
+// linear_before_reset=1: the config customer models use. Unlike LBR=0 it finalizes on HTP (no u8 ->
+// QUint16Crouton widening, no 1002) and runs genuine u8 on real silicon. Tolerance relaxed 0.4% -> 3.0%
+// because the per-timestep unrolled recurrence accumulates u8 quant drift; measured peak vs qdq@CPU_EP
+// = 2.24% (Y) on v81, seed 2345. Intrinsic quant drift, not an EP bug; 3.0% clears 2.24% with headroom.
+// The linux x86_64 HTP emulator's u8 GRU kernel is not bit-accurate to silicon and drifts further
+// (observed peak ~4.29% vs f32@CPU_EP), so relax to 6.0% there while keeping the tight 3.0% bound on
+// real silicon. TODO: Remove the platform-aware tolerance once the emulator u8 kernel matches silicon.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -709,6 +699,11 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+#if defined(__linux__) && defined(__x86_64__)
+  constexpr float kTolerance = 0.06f;
+#else
+  constexpr float kTolerance = 0.03f;
+#endif
   RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
@@ -720,8 +715,8 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
                               hidden_size,                                                                             // hidden_size
                               0,                                                                                       // layout
                               ExpectedEPNodeAssignment::All,
-                              1,                     // linear_before_reset
-                              QDQTolerance(0.03f));  // relaxed to 3.0%; see comment above
+                              1,  // linear_before_reset
+                              QDQTolerance(kTolerance));
 }
 
 // ============================================================

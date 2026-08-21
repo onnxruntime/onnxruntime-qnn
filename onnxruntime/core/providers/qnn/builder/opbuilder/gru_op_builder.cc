@@ -180,26 +180,13 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     }
   }
   std::vector<TensorInfo> output_tensor_infos(2);
-  size_t present_output = 2;  // index of a present ONNX output to source quant params from
   for (size_t i = 0; i < 2; i++) {
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_outputs[i], output_tensor_infos[i]));
-      if (present_output == 2) present_output = i;
     } else {
+      // Absent output: reachable only as fp (the QDQ selector declines missing-output GRUs), so the
+      // default UNDEFINED quant_param is valid and needs no backfill.
       output_tensor_infos[i].qnn_data_type = input_tensor_infos[0].qnn_data_type;
-    }
-  }
-  // An absent GRU output (Y-only or Y_h-only) still produces an internal per-step tensor: the
-  // recurrent hidden state fed to the next cell, or a dead Y branch hanging off the live cell.
-  // Emitting it as a quantized (u8/u16) tensor with the default UNDEFINED quant encoding is an
-  // invalid QNN graph that hard-crashes HTP finalize on real silicon (0xc0000005; AISW-197479).
-  // Backfill each absent slot's quant params from a present output so every emitted tensor carries
-  // a valid encoding. (For fp GRU the present slot is itself UNDEFINED, which is valid for float.)
-  if (present_output != 2) {
-    for (size_t i = 0; i < 2; i++) {
-      if (!(onnx_outputs.size() > i && onnx_outputs[i].Exists())) {
-        output_tensor_infos[i].quant_param = output_tensor_infos[present_output].quant_param.Copy();
-      }
     }
   }
 
