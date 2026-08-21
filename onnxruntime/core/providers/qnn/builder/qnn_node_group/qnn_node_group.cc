@@ -23,6 +23,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/rms_norm_fusion.h"
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -82,7 +83,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
     {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},
     {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
-    {"Mul", {ScaleSoftmaxFusion::TryFusion}},
+    {"Mul", {ScaleSoftmaxFusion::TryFusion, RmsNormFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
     {"Reshape", {Rank6ToRank5Fusion::TryFusion}},
