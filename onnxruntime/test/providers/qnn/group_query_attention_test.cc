@@ -22,6 +22,7 @@ namespace onnxruntime {
 namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+
 #ifdef QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
 
 template <typename T, typename M>
