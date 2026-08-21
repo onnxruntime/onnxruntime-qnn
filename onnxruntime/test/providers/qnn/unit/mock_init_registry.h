@@ -133,6 +133,32 @@ struct MockInitRegistry {
     }
     return Add(name, std::move(s));
   }
+  const OrtValueInfo* AddTensorFloat16(const std::string& name,
+                                       std::vector<int64_t> dims,
+                                       const std::vector<float>& data) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+    s.dims = std::move(dims);
+    s.raw_bytes.resize(data.size() * sizeof(Ort::Float16_t));
+    auto* dst = reinterpret_cast<Ort::Float16_t*>(s.raw_bytes.data());
+    for (size_t i = 0; i < data.size(); ++i) {
+      dst[i] = static_cast<Ort::Float16_t>(data[i]);
+    }
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddTensorBFloat16(const std::string& name,
+                                        std::vector<int64_t> dims,
+                                        const std::vector<float>& data) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16;
+    s.dims = std::move(dims);
+    s.raw_bytes.resize(data.size() * sizeof(Ort::BFloat16_t));
+    auto* dst = reinterpret_cast<Ort::BFloat16_t*>(s.raw_bytes.data());
+    for (size_t i = 0; i < data.size(); ++i) {
+      dst[i] = static_cast<Ort::BFloat16_t>(data[i]);
+    }
+    return Add(name, std::move(s));
+  }
   const OrtValueInfo* AddTensorUint8(const std::string& name,
                                      std::vector<int64_t> dims,
                                      const std::vector<uint8_t>& data) {
