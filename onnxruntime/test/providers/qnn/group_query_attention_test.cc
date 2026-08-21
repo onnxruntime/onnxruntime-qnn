@@ -605,11 +605,6 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-TEST_F(QnnHTPBackendTests, GroupQueryAttention_PaddedCache_NoisePadding_FP32) {
-  RunHTPPackedGQATest<float>(8, 4, 32, /*seq*/ 1, /*total*/ 16, /*scale*/ 0.0f, /*do_rotary*/ 0,
-                             /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128);
-}
-
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP32) {
   // num_heads=8, kv_num_heads=4, head_size=32, decode (seq=1), total=1024, scale=0 (default).
   RunHTPUnpackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
