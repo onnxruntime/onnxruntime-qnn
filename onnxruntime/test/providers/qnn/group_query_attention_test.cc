@@ -23,7 +23,7 @@ namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 
-#if (defined(__aarch64__) || defined(_M_ARM64)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if defined(_M_ARM64) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 template <typename T, typename M>
 static GetTestModelFn BuildGQATestCase(
@@ -401,7 +401,7 @@ static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, 
   return path;
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(_M_ARM64)
 //
 // HTP tests:
 //
@@ -630,7 +630,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(_M_ARM64)
 
 // === op_affinity EP-assignment gate tests ===
 // These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
@@ -756,7 +756,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_Sess
   ASSERT_TRUE(session_failed);
 }
 
-#endif  // (defined(__aarch64__) || defined(_M_ARM64)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#endif  // defined(_M_ARM64) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 #if defined(_M_ARM64)
 //
