@@ -69,7 +69,8 @@ class OrtNodeGroupSelector {
                      const std::vector<const OrtNode*>& dq_nodes,
                      const std::vector<const OrtNode*>& q_nodes,
                      int num_dq_inputs = -1,
-                     bool is_empty_q_nodes_allowed = false) const;
+                     bool is_empty_q_nodes_allowed = false,
+                     bool allow_missing_optional_outputs = false) const;
 };
 
 // Single DQ -> node that does not change data -> Q.
