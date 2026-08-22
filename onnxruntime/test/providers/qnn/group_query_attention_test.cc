@@ -148,7 +148,6 @@ static GetTestModelFn BuildGQATestCase(const GqaTestConfig<T, M>& config) {
   };
 }
 
-
 // === Shared model builder + backend-agnostic driver (used by HTP now, GPU after rebase) ===
 
 // Holds a shared-memory allocation plus the Ort::Value view over it, so GQA feeds
@@ -363,7 +362,6 @@ static void RunGQATest(const GqaTestConfig<T, M>& config) {
   ASSERT_NO_FATAL_FAILURE(CompareQnnVsCpuOutputs(cpu_session, helper.feeds_, output_names,
                                                  qnn_outputs, config.tensor_verifier));
 }
-
 
 class ScopedGqaOpAffinityConfig {
  public:
