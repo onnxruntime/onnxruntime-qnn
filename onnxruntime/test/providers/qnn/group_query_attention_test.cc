@@ -25,7 +25,7 @@ namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 
-#if defined(_M_ARM64) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 template <typename T, typename M>
 struct GqaTestConfig {
@@ -447,7 +447,9 @@ static void RunHTPPackedGQATest(int32_t num_heads,
   config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
   config.backend_name = "htp";
   config.tensor_verifier = ElementwiseAbsoluteVerifier{fp32_abs_err};
+#if !defined(__linux__)
   config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
 
   const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
   config.op_affinity_path = affinity_config.path().string();
@@ -495,7 +497,9 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
   config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
   config.backend_name = "htp";
   config.tensor_verifier = ElementwiseAbsoluteVerifier{fp32_abs_err};
+#if !defined(__linux__)
   config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
 
   const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
   config.op_affinity_path = affinity_config.path().string();
@@ -561,8 +565,6 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Rotary_FP32) {
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
-
-#endif  // defined(_M_ARM64)
 
 // === op_affinity EP-assignment gate tests ===
 // These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
@@ -674,7 +676,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_Sess
   ASSERT_TRUE(session_failed);
 }
 
-#endif  // defined(_M_ARM64) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#endif  // (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 #if defined(_M_ARM64)
 //
