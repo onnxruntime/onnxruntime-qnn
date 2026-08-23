@@ -1853,7 +1853,32 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
 
-    const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_config_pointer, nullptr};
+    QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
+    QnnContext_Config_t* reused_io_limit_config_pointer = nullptr;
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+    QnnHtpContext_CustomConfig_t reused_io_limit_custom_config;
+    if (reused_io_limit_mb_ > 0) {
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_INFO,
+                      ("Applying reused_io_limit_mb: " + std::to_string(reused_io_limit_mb_)).c_str());
+      reused_io_limit_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+      reused_io_limit_custom_config.reusedIoLimitMb = reused_io_limit_mb_;
+      reused_io_limit_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+      reused_io_limit_config.customConfig = &reused_io_limit_custom_config;
+      reused_io_limit_config_pointer = &reused_io_limit_config;
+    }
+#endif
+
+    std::vector<const QnnContext_Config_t*> context_configs_vec;
+    context_configs_vec.push_back(&qnn_context_config);
+    if (spill_fill_config_pointer != nullptr) {
+      context_configs_vec.push_back(spill_fill_config_pointer);
+    }
+    if (reused_io_limit_config_pointer != nullptr) {
+      context_configs_vec.push_back(reused_io_limit_config_pointer);
+    }
+    context_configs_vec.push_back(nullptr);
+    const QnnContext_Config_t** context_configs = context_configs_vec.data();
 
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
               "Invalid function pointer for contextCreateFromBinary.");
