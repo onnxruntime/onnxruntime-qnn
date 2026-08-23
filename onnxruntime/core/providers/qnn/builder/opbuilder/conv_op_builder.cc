@@ -1003,7 +1003,9 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   ORT_RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, type_proto, qnn_data_type));
 
-  const auto& output_name = outputs[0].node_arg.Name();
+  // Use original ONNX tensor name — ORT may have stripped _output/_output_N suffix
+  const std::string output_name = qnn_model_wrapper.GetOriginalOnnxName(
+      outputs[0].node_arg.Name());
   if (is_1d_conv) {
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     std::vector<uint32_t> output_shape_2d = {
@@ -1036,8 +1038,7 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
                                                          false,
                                                          is_graph_output));
   } else {
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(output_name);
     QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
                                           std::move(output_quantize_param), std::move(output_shape));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");

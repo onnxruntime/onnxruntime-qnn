@@ -185,9 +185,12 @@ static Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnnNodeG
       continue;  // Already handled this node unit
     }
 
-    std::unique_ptr<IQnnNodeGroup> fused_node_group = TryQnnFusions(qnn_model_wrapper, *node_unit,
-                                                                    node_to_node_unit, node_unit_to_qnn_node_group,
-                                                                    logger);
+    std::unique_ptr<IQnnNodeGroup> fused_node_group = nullptr;
+    if (!qnn_model_wrapper.IsSkipFusions()) {
+      fused_node_group = TryQnnFusions(qnn_model_wrapper, *node_unit,
+                                       node_to_node_unit, node_unit_to_qnn_node_group,
+                                       logger);
+    }
 
     if (fused_node_group) {
       const size_t index = qnn_node_groups.size();

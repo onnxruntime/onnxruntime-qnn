@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -105,8 +106,13 @@ class QNNExecutionProvider : public IExecutionProvider {
   bool context_cache_enabled_ = false;
   std::string context_cache_path_cfg_ = "";
   std::string context_node_name_prefix_ = "";
-  bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
+  bool disable_cpu_ep_fallback_ = false;
   bool qnn_context_embed_mode_ = true;
+  bool direct_dlc_mode_ = false;   // write DLC directly via IrGraphBuilder, skip EPContext
+  std::unordered_set<std::string> lora_updatable_tensors_;
+  // Map: ORT-internal tensor name → original ONNX tensor name
+  // ORT strips _output/_output_N suffix for single-output nodes; this restores them.
+  mutable std::unordered_map<std::string, std::string> onnx_tensor_name_map_;
   int32_t vtcm_size_in_mb_ = 0;
   bool enable_vtcm_backup_buffer_sharing_ = false;
   std::unique_ptr<onnxruntime::Model> qnn_ep_context_model_;

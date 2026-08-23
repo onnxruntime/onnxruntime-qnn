@@ -273,7 +273,9 @@ Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
   }
   const auto output_count = GetOutputCountQnnRequired(node_unit);
   for (size_t output_i = 0; output_i < output_count; ++output_i) {
-    const auto& output_name = outputs[output_i].node_arg.Name();
+    // Use original ONNX tensor name — ORT may have stripped _output/_output_N suffix
+    const auto& output_name = qnn_model_wrapper.GetOriginalOnnxName(
+        outputs[output_i].node_arg.Name());
 
     TensorInfo output_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_i], output_info));
@@ -329,7 +331,7 @@ Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
       output_info.qnn_data_type = supported_qnn_data_type;
       output_names.push_back(output_name);
     }
-    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(output_name);
     QnnTensorWrapper output_tensorwrapper(output_name,
                                           tensor_type,
                                           output_info.qnn_data_type,
