@@ -27,6 +27,14 @@ class OpAffinityMap {
 
   Ort::Status ValidateForSessionBackend(QnnBackendType session_backend) const;
 
+  // HACK: lets callers detect a specific op-type/backend pin so behavior unrelated to op
+  // affinity (e.g. HTP context-load memory limits) can be coupled to it. See usage in
+  // qnn_execution_provider.cc for why this exists and why it's a bad idea.
+  bool PinsOpToBackend(const std::string& op_type, QnnBackendType backend) const {
+    const auto it = op_to_backend_.find(op_type);
+    return it != op_to_backend_.end() && it->second == backend;
+  }
+
  private:
   std::unordered_map<std::string, QnnBackendType> op_to_backend_;  // op type -> its single backend
 };

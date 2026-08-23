@@ -1329,32 +1329,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
-  // Caps the IO buffer QNN reuses across contextCreateFromBinary calls (AOT context load).
-  // Mitigates NPU memory exhaustion on large AOT context binaries. 0 (default) leaves the
-  // SDK's own behavior unchanged. Requires QNN API version >= 2.37.
-  std::string reused_io_limit_mb_str;
-  GetSessionConfigEntryOrDefault(ort_api,
-                                 session_options_,
-                                 FormatEPConfigKey("reused_io_limit_mb"),
-                                 "0",
-                                 reused_io_limit_mb_str);
-  if (!reused_io_limit_mb_str.empty() && reused_io_limit_mb_str != "0") {
-    try {
-      reused_io_limit_mb_ = std::stoull(reused_io_limit_mb_str);
-    } catch (const std::exception&) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  ("Ignoring malformed reused_io_limit_mb: " + reused_io_limit_mb_str).c_str());
-    }
-#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
-    if (reused_io_limit_mb_ > 0) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "reused_io_limit_mb was set but this build was compiled against QAIRT SDK < 2.48. "
-                  "The option will be ignored.");
-      reused_io_limit_mb_ = 0;
-    }
-#endif
-  }
-
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -1423,7 +1397,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  qnn_backend_manager_->SetReusedIoLimitMb(reused_io_limit_mb_);
+  // HACK (demo only, do not ship): short-term unblock for AOT NPU memory exhaustion on
+  // GQA-on-HTP. Instead of exposing reused_io_limit_mb as its own provider option, silently
+  // hardcode it to 2MB whenever op_affinity has pinned GroupQueryAttention to HTP. See PR
+  // discussion for why this is a bad idea (shared-backend-manager races, no per-model
+  // override, silently-coupled unrelated subsystems).
+  if (model_settings_.op_affinity.PinsOpToBackend("GroupQueryAttention", qnn::QnnBackendType::HTP)) {
+    qnn_backend_manager_->SetReusedIoLimitMb(2);
+  }
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
