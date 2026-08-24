@@ -3110,7 +3110,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
         "",  // no file path needed for in-memory load
         fused_node_names[0],
         loaded_models,
-        0);
+        0,
+        *ep->io_dispatch_);
 
     if (!load_status.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL,
