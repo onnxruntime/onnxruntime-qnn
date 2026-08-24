@@ -196,6 +196,7 @@ Ort::Status ClipOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   float min_value = std::numeric_limits<float>::lowest();
   if (num_inputs > 1 && !inputs[1].name.empty()) {
     RETURN_IF_ERROR(ProcessClipMinMax(qnn_model_wrapper, inputs[1], min_value));
+    min_value = std::max(min_value, std::numeric_limits<float>::lowest());
   }
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), min_value,
                                       QNN_OP_RELU_MIN_MAX_PARAM_MIN_VALUE, param_tensor_names));
@@ -204,6 +205,7 @@ Ort::Status ClipOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   float max_value = std::numeric_limits<float>::max();
   if (num_inputs > 2 && !inputs[2].name.empty()) {
     RETURN_IF_ERROR(ProcessClipMinMax(qnn_model_wrapper, inputs[2], max_value));
+    max_value = std::min(max_value, std::numeric_limits<float>::max());
   }
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), max_value,
                                       QNN_OP_RELU_MIN_MAX_PARAM_MAX_VALUE, param_tensor_names));
