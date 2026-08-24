@@ -641,43 +641,6 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                      false,
                                                      is_graph_output));
   } else {
-    // 1. Add MatMul as Conv2d with default stride/pad amount.
-    std::vector<std::string> param_tensor_names;
-
-    std::vector<uint32_t> stride = {1, 1};
-    QnnParamWrapper stride_param_wrapper(node_unit.Index(),
-                                         node_unit.Name(),
-                                         QNN_OP_CONV_2D_PARAM_STRIDE,
-                                         {2},
-                                         std::move(stride));
-    param_tensor_names.push_back(stride_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(stride_param_wrapper));
-
-    std::vector<uint32_t> pad_amount = {0, 0, 0, 0};
-    QnnParamWrapper pad_amount_param_wrapper(node_unit.Index(),
-                                             node_unit.Name(),
-                                             QNN_OP_CONV_2D_PARAM_PAD_AMOUNT,
-                                             {2, 2},
-                                             std::move(pad_amount));
-    param_tensor_names.push_back(pad_amount_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param_wrapper));
-
-    std::vector<uint32_t> dilation = {1, 1};
-    QnnParamWrapper dilation_param_wrapper(node_unit.Index(),
-                                           node_unit.Name(),
-                                           QNN_OP_CONV_2D_PARAM_DILATION,
-                                           {2},
-                                           std::move(dilation));
-    param_tensor_names.push_back(dilation_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(dilation_param_wrapper));
-
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                                           node_unit.Index(),
-                                           node_unit.Name(),
-                                           1,
-                                           QNN_OP_CONV_2D_PARAM_GROUP,
-                                           param_tensor_names));
-
     // Input originally having 3D shape is guaranteed in IsOpSupported.
     RETURN_IF_NOT(output_info.shape.size() == 3, "Unexpected MatMulNBits output rank.");
     std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
@@ -697,23 +660,21 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                                    : output_info.quant_param.Copy();
 
     const std::string conv2d_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
-    QnnTensorWrapper conv2d_output_tensor_wrapper(conv2d_output_name,
-                                                  QNN_TENSOR_TYPE_NATIVE,
-                                                  conv2d_output_dtype,
-                                                  std::move(conv2d_output_qparam),
-                                                  std::vector<uint32_t>(conv2d_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv2d_output_tensor_wrapper)),
-                  "Failed to add Conv2d output tensor.");
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CONV_2D,
-                                                  std::move(input_names),
-                                                  {conv2d_output_name},
-                                                  std::move(param_tensor_names),
-                                                  do_op_validation),
-                  "Failed to add Conv2d node.");
+    // 1. BW_FLOAT_BLOCK, LPBQ (BLOCKWISE_EXPANSION) and native BQ(BLOCK) use
+    // AddConv2DNodeforBQLowering for the Conv2D node.
+    // LPBQ and native BQ(BLOCK): Conv2D outputs directly in target dtype (INT16).
+    // BW_FLOAT_BLOCK: Conv2D outputs FP16, then Cast/Quantize is applied below.
+    RETURN_IF_ERROR(bq::AddConv2DNodeforBQLowering(qnn_model_wrapper, node_unit,
+                                                   std::move(input_names),
+                                                   conv2d_output_name,
+                                                   conv2d_output_shape,
+                                                   conv2d_output_dtype,
+                                                   conv2d_output_qparam,
+                                                   /*is_graph_output=*/false,
+                                                   do_op_validation));
 
+    // BwFloatBlock post-processing: Cast or Quantize the FP16 Conv2D output.
     std::string reshape_input_name = conv2d_output_name;
     if (output_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
       // 2. Workaround: Add post-Cast to cast float16 back to float32 to pass HTP validation.
@@ -727,7 +688,6 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                     output_info.quant_param.Copy(),
                                                     std::vector<uint32_t>(conv2d_output_shape),
                                                     do_op_validation));
-
       reshape_input_name = cast_output_name;
     } else if (utils::IsQuant16bit(output_info.qnn_data_type) && is_bw_float_block) {
       // 2. Add Quantize to FP16 → UINT16/INT16 (only needed when the kernel computed in FP16).
@@ -741,7 +701,6 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                        output_info.quant_param.Copy(),
                                                        std::vector<uint32_t>(conv2d_output_shape),
                                                        do_op_validation));
-
       reshape_input_name = q_output_name;
     }
 
