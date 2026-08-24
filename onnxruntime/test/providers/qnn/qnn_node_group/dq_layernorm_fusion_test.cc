@@ -137,7 +137,7 @@ GetTestModelFn BuildDQLayerNormSignFixupTestCase(bool x_signed, bool scale_signe
         }
         builder.MakeInitializer<uint8_t>("bias_q", {C}, bias_q_values);
         builder.AddDequantizeLinearNode<uint8_t>("dq_bias", "bias_q", kBiasScale, static_cast<uint8_t>(128),
-                                                  "bias_f32");
+                                                 "bias_f32");
       }
     }
 

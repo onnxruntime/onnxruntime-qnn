@@ -109,9 +109,10 @@ std::unique_ptr<IQnnNodeGroup> DQLayerNormFusion::TryFusion(
   }
   const size_t input_rank = x_shape.size();
 
-  // QNN LayerNorm on HTP only supports normalization along the last axis. The default op-builder
-  // path enforces this too, but since this fusion claims the whole NodeUnit before that path ever
-  // runs, it must re-check the restriction itself.
+  // QNN LayerNorm on HTP only supports normalization along the last axis.
+  // LayerNormalizationOpBuilder::IsOpSupported enforces this for NPU backends, but since this
+  // fusion claims the whole NodeUnit before that op-builder's IsOpSupported ever runs, it must
+  // re-check the restriction itself.
   {
     OrtNodeAttrHelper attrs(layer_norm_node_unit);
     int64_t axis = attrs.Get("axis", static_cast<int64_t>(-1));
