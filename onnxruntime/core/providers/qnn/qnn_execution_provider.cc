@@ -44,6 +44,7 @@
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/htp_usr_drv_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -67,6 +68,26 @@ const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 // File-scope (unlike the other backend type name constants defined inside ParseBackendTypeName)
 // because kGenieBackendTypeName is also referenced from other call sites in this file.
 constexpr std::string_view kGenieBackendTypeName{"genie"};
+
+constexpr const char* kQnnOpAffinityKey = "op_affinity";
+
+// Best-effort mapping from a resolved backend library path to the QnnBackendType it will load.
+// Both the 'backend_type' and 'backend_path' provider options funnel into a single backend_path
+// string (ParseBackendTypeName turns the former into the latter).
+static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::string& backend_path) {
+  const std::string filename = std::filesystem::path(backend_path).filename().string();
+
+  if (filename == kDefaultCpuBackendPath) {
+    return qnn::QnnBackendType::CPU;
+  }
+  if (filename == kDefaultGpuBackendPath) {
+    return qnn::QnnBackendType::GPU;
+  }
+  if (filename == kDefaultHtpBackendPath) {
+    return qnn::QnnBackendType::HTP;
+  }
+  return std::nullopt;
+}
 
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
@@ -1083,6 +1104,34 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                     FormatEPConfigKey("htp_bf16_enable"),
                                                     false,
                                                     logger_);
+
+  // op_affinity: path to a JSON config gating which backend claims specific op types
+  std::string op_affinity_path;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey(kQnnOpAffinityKey), "", op_affinity_path);
+  if (!op_affinity_path.empty()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                (std::string(kQnnOpAffinityKey) + ": " + op_affinity_path).c_str());
+    try {
+      model_settings_.op_affinity = qnn::OpAffinityMap::FromConfigFile(std::filesystem::path(op_affinity_path));
+    } catch (const std::exception& e) {
+      std::string message = "Failed to load op_affinity config file '" + op_affinity_path +
+                            "': " + e.what();
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+      throw std::runtime_error(message);
+    }
+
+    // Reject a config that pins an op to a different non-CPU backend
+    if (const std::optional<qnn::QnnBackendType> session_backend = InferBackendTypeFromPath(backend_path);
+        session_backend.has_value()) {
+      const Ort::Status status = model_settings_.op_affinity.ValidateForSessionBackend(*session_backend);
+      if (!status.IsOK()) {
+        const std::string message = "Op Affinity validation failed: " + status.GetErrorMessage();
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+        throw std::runtime_error(message);
+      }
+    }
+  }
   // Check BF16 compatibility early
   if (model_settings_.htp_bf16_enable) {
     // Check SoC model
@@ -2059,6 +2108,22 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   if (!rt.IsOK()) {
     const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
+  }
+
+  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
+  // so HTP sessions default to keeping GQA on CPU
+  // -- users can opt into HTP via the op_affinity config once they've validated it.
+  const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
+  if (resolved_backend == qnn::QnnBackendType::HTP) {
+    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+  }
+
+  rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
+
+  if (!rt.IsOK()) {
+    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
