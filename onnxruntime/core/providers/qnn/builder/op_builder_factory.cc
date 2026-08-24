@@ -58,6 +58,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("GlobalAveragePool", *this);
   CreatePoolOpBuilder("GlobalMaxPool", *this);
   CreatePoolOpBuilder("MaxPool", *this);
+  CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
   CreateQuickGeluOpBuilder("QuickGelu", *this);
   CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);
