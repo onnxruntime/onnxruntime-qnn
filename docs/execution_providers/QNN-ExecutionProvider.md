@@ -1748,7 +1748,7 @@ QNN EP supports two generations:
 | Encoding update | All encodings updated per switch | Configurable: none / adapter-only / all / float-only |
 | Alpha | Scalar | Vector (`lora_alpha` graph input) |
 | Optimization modes | — | No-Updateable, All-Updateable, Float-Only, Hot Switch, Grouped LoRA |
-| QAIRT preparation | [QAIRT LoRA tutorials](https://docs.qualcomm.com/doc/80-63442-10/topic/general_tutorials.html#lora-low-rank-adaptation) (covers both versions) ||
+| QAIRT preparation | [LoRA v2](https://docs.qualcomm.com/doc/80-63442-10/topic/lora_v2_0_overview.html) | [LoRA v3](https://docs.qualcomm.com/doc/80-63442-10/topic/lora_v3_overview.html) |
 
 ### Offline preparation
 
@@ -1771,11 +1771,13 @@ The `qnn.lora_config` run-option format is identical for both versions — one l
 
 To switch adapters, pass a different `qnn.lora_config` file to each `session.run(...)` via `RunOptions`. The base model does not need to be reloaded.
 
-**LoRAv3 only — `lora_alpha` input.** LoRAv3 models expose a vector `lora_alpha` graph input that scales each adapter's contribution. The dtype depends on which wrapper ONNX you load:
+**LoRAv3 model input — executor usage.** LoRAv3 models may expose a vector `lora_alpha` graph input that scales each adapter's contribution. This is a model input, not a `qnn.lora_config` setting or a general `--lora-alpha` ORT executor option. ORT applications must provide it through the normal input feed passed to `session.run()`; command-line executors such as `onnxruntime_perf_test` must use their normal model-input mechanism. The dtype depends on which wrapper ONNX you load:
 * `*_qnn_ctx_fp32_io.onnx` (recommended) — session input is float32; a `QuantizeLinear` node quantizes on the fly. Feed real values in `[0.0, 1.0]`.
-* `*_qnn_ctx.onnx` (quantized IO) — session input matches the QNN graph directly (e.g. `uint16`). Feed pre-quantized codes (`0` = off, `iinfo(dtype).max` = on); the encoding scale is not exposed via ORT.
+* `*_qnn_ctx.onnx` (quantized IO) — session input matches the QNN graph directly (e.g. `uint16`). For each adapter slot, "off" means that adapter contributes nothing to the output (`lora_alpha = 0`), while "on" means that adapter contributes at full scale (`lora_alpha = 1.0`). Feed the corresponding pre-quantized integer codes: `0` means off and `numpy.iinfo(dtype).max` means on, where `numpy.iinfo(dtype).max` is the largest value representable by the input integer dtype (for example, `65535` for `uint16`). The encoding scale is not exposed via ORT, so floating-point alpha values cannot be converted automatically for this wrapper.
 
-**Real inputs are required to see adapter differences.** With zero token embeddings and `lora_alpha=0` the LoRA branch contributes nothing, so every adapter produces identical output. Provide real inputs (ONNX test-data `input_*.pb` or QNN net-run `input_list.txt` + `.raw`) and a non-zero `lora_alpha`.
+**Sample script usage.** [qcom/samples/test_lora.py](../../qcom/samples/test_lora.py) adds the `--lora-alpha` option for setting this model input and the `--input-dir` option for loading real inputs. It accepts ONNX test-data `input_*.pb` or translates a QNN net-run directory (`input_list.txt` plus `.raw` files) into the ORT input feed. These are conveniences provided by the sample script; those files and command-line options are not consumed directly by ORT.
+
+With zero token embeddings and `lora_alpha=0`, the LoRA branch contributes nothing, so every adapter produces identical output. Provide real model inputs and a non-zero `lora_alpha` to observe adapter differences.
 
 **Disable ORT's CPU-EP fallback** after session creation for all EPContext workflows:
 ```python
@@ -1828,4 +1830,3 @@ python test_lora.py --onnx model_ctx.onnx --grouped-switch configs_grouped/
 ```
 
 Use `*_qnn_ctx_fp32_io.onnx` to pass real-valued `--lora-alpha` in `[0.0, 1.0]`. See the script header for the full flag reference.
-
