@@ -59,7 +59,7 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) 
+- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - A single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
 - Archives (`.zip` and `.tgz`)
   - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Windows and Linux hosts and targets.
@@ -226,8 +226,8 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 |`"enable_block_quant_weight_optimization"`|Description|
 |---|---|
-|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
-|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+|'0'|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|'1'|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
