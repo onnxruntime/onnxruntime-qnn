@@ -9,7 +9,7 @@ from typing import Any
 
 from ..task import RunExecutablesTask
 from ..typing import TargetPyVersionT
-from ..util import DEFAULT_PYTHON_LINUX
+from ..util import DEFAULT_PYTHON_LINUX, REPO_ROOT
 
 DOCKER_BUILD_USER = "ortqnnep"
 DOCKER_REPO_ROOT = Path("/ort")
@@ -97,6 +97,13 @@ class DockerBuildAndTestTask(DockerRunTask):
         # deferred to avoid circular import
         from ..tools import get_package_dir, get_tools_dir  # noqa:PLC0415
 
+        # Redirect Python's tempfile to the repo volume (/local/mnt) so wheel packaging
+        # doesn't write to the container's /tmp, which lands on docker's data-root on /var
+        # (only ~1 GB free on CI runners).
+        host_docker_tmp = REPO_ROOT / "build" / "_docker_tmp"
+        host_docker_tmp.mkdir(parents=True, exist_ok=True)
+        docker_tmp = str(DOCKER_REPO_ROOT / "build" / "_docker_tmp")
+
         cmd = [
             str(DEFAULT_PYTHON_LINUX),
             str(DOCKER_REPO_ROOT / "qcom" / "build_and_test.py"),
@@ -116,6 +123,9 @@ class DockerBuildAndTestTask(DockerRunTask):
             "ORT_BUILD_PACKAGE_CACHE_PATH": "/ort_caches/packages",
             "ORT_BUILD_TOOLS_PATH": "/ort_caches/tools",
             "ORT_BUILD_PRUNE_PACKAGES": "0",
+            "TMPDIR": docker_tmp,
+            "TEMP": docker_tmp,
+            "TMP": docker_tmp,
         }
 
         if qairt_sdk_root is not None:
