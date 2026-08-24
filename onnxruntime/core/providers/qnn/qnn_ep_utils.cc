@@ -69,21 +69,16 @@ std::optional<ONNXTensorElementDataType> GetNodeOutputDataType(const OrtNode* no
   return GetDataTypeFromValueInfo(ort_api, outputs[index]);
 }
 
-// 1.4 (rank, dim[0]) for a ValueInfo. Returns false on API failure.
-bool GetValueInfoRankAndFirstDim(const OrtApi& ort_api, const OrtValueInfo* value_info,
-                                 size_t& rank, int64_t& first_dim) {
+// 1.4 Shape for a ValueInfo. Returns false on API failure.
+bool GetValueInfoShape(const OrtApi& ort_api, const OrtValueInfo* value_info, std::vector<int64_t>& shape) {
   const OrtTypeInfo* type_info = nullptr;
   if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) return false;
   const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
   if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr || tensor_info == nullptr) return false;
+  size_t rank = 0;
   if (ort_api.GetDimensionsCount(tensor_info, &rank) != nullptr) return false;
-  first_dim = 0;
-  if (rank >= 1) {
-    std::vector<int64_t> dims(rank);
-    if (ort_api.GetDimensions(tensor_info, dims.data(), rank) != nullptr) return false;
-    first_dim = dims[0];
-  }
-  return true;
+  shape.resize(rank);
+  return rank == 0 || ort_api.GetDimensions(tensor_info, shape.data(), rank) == nullptr;
 }
 
 // =============================================================================
@@ -311,18 +306,12 @@ bool IsGemmWeightBlockQuantized(const OrtApi& ort_api, const OrtValueInfo* weigh
   if (ort_api.Node_GetNumInputs(dq, &dq_num_inputs) != nullptr || dq_num_inputs < 2) return false;
   std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
   if (ort_api.Node_GetInputs(dq, dq_inputs.data(), dq_inputs.size()) != nullptr) return false;
-  size_t scale_rank = 0;
-  int64_t scale_dim0 = 0;
-  if (!GetValueInfoRankAndFirstDim(ort_api, dq_inputs[1], scale_rank, scale_dim0)) return false;
-  return scale_rank == 2;
+  std::vector<int64_t> scale_shape;
+  return GetValueInfoShape(ort_api, dq_inputs[1], scale_shape) && scale_shape.size() == 2;
 }
 
-// 3b.0 Split_gemm guard for the absorb-Reshape path.
-//   Reject when the vanilla Gemm builder would have split into FC + Add:
-//     - transB != 0                         (builder hard-asserts transB=0)
-//     - bias is 2-D with shape[0] != 1      (broadcast-bias split)
-//     - bias is produced by another op      (NATIVE bias split)
-//   Also reject block-quantized weight — handled by the BQ builder path.
+// 3b.0 Guard for the absorb-Reshape path. Reject configurations that require another builder path:
+// transposed B, non-FC bias shapes, NATIVE bias, and BQ weight.
 bool IsGemmSafeForAbsorbedReshape(const OrtApi& ort_api, const OrtNode* gemm_node) {
   OrtNodeAttrHelper attrs(*gemm_node);
   if (attrs.Get("transB", static_cast<int64_t>(0)) != 0) return false;
@@ -332,22 +321,35 @@ bool IsGemmSafeForAbsorbedReshape(const OrtApi& ort_api, const OrtNode* gemm_nod
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
   if (ort_api.Node_GetInputs(gemm_node, inputs.data(), inputs.size()) != nullptr) return false;
-  if (num_inputs >= 2 && IsGemmWeightBlockQuantized(ort_api, inputs[1])) return false;
+  if (num_inputs < 2 || inputs[1] == nullptr || IsGemmWeightBlockQuantized(ort_api, inputs[1])) return false;
 
-  if (num_inputs < 3) return true;  // No bias → split_gemm never triggers.
+  if (num_inputs < 3) return true;  // No bias requires no separate Add.
 
   const OrtValueInfo* bias_vi = inputs[2];
   if (bias_vi == nullptr) return true;
 
-  // 3b.0.1 Shape gate: reject 2-D bias with shape[0] != 1.
-  size_t bias_rank = 0;
-  int64_t bias_dim0 = 0;
-  if (!GetValueInfoRankAndFirstDim(ort_api, bias_vi, bias_rank, bias_dim0)) return false;
-  if (bias_rank == 2 && bias_dim0 != 1) return false;
+  const float beta = attrs.Get("beta", 1.0f);
+  if (beta == 0.0f) return true;
+
+  // 3b.0.1 Shape gate: scalar C for N=1, C=[N], or C=[1,N] can be passed to FullyConnected.
+  std::vector<int64_t> weight_shape;
+  std::vector<int64_t> bias_shape;
+  if (!GetValueInfoShape(ort_api, inputs[1], weight_shape) ||
+      !GetValueInfoShape(ort_api, bias_vi, bias_shape) ||
+      weight_shape.size() != 2) {
+    return false;
+  }
+  for (int64_t dim : weight_shape) {
+    if (dim < 0) return false;
+  }
+  for (int64_t dim : bias_shape) {
+    if (dim < 0) return false;
+  }
+  if (!qnn::utils::IsCompatibleFcBiasShape(bias_shape, weight_shape[1])) return false;
 
   // 3b.0.2 NATIVE-bias gate: walk through a DQ (if any) to the true producer. If that
   //         producer is another op, the bias is NATIVE (intermediate) and the builder
-  //         would have split_gemm'd.
+  //         would require a separate Add.
   const OrtNode* bias_producer = nullptr;
   if (ort_api.ValueInfo_GetValueProducer(bias_vi, &bias_producer, nullptr) != nullptr) return false;
   if (bias_producer == nullptr) return true;  // graph input / initializer

@@ -588,6 +588,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
   ASSERT_NE(manager, nullptr);
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
   auto setup_status = manager->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
   ASSERT_TRUE(setup_status.IsOK()) << "SetupBackend with QnnSystem failed: " << setup_status.GetErrorMessage();
 
@@ -595,7 +596,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
                       0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
   auto status = manager->LoadCachedQnnContextFromBuffer(
-      garbage, sizeof(garbage), "", "test_node", qnn_models, 0);
+      garbage, sizeof(garbage), "", "test_node", qnn_models, 0, dummy_io_dispatch);
   EXPECT_FALSE(status.IsOK());
 }
 

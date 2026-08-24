@@ -527,7 +527,7 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   return Ort::Status();
 }
 
-Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
+Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
@@ -553,7 +553,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
       // Use the unified file I/O helper instead of duplicating the read logic.
       std::vector<char> buffer;
-      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer));
+      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer, io_dispatch));
 
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
@@ -802,7 +802,8 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 }
 
 Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
-                                   const Ort::Logger& logger) {
+                                   const Ort::Logger& logger,
+                                   const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
@@ -830,7 +831,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                   "SSR recovery: context was already freed by another QnnModel in the same context, "
                   "recovering proactively.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
     }
   }
 
@@ -843,7 +844,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
