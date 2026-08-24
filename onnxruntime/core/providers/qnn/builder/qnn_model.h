@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
@@ -61,7 +62,15 @@ class QnnModel {
 
   Ort::Status SetupQnnInputOutput(const Ort::Logger& logger);
 
-  Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
+  // Apply runtime-settable HTP graph configs (currently fp16 clamp overflow) on an already
+  // finalized graph loaded from a context binary, via QnnGraph_setConfig. Only options confirmed
+  // settable on a finalized graph belong here; compile-time-only options must stay in
+  // QnnEp::InitQnnHtpGraphConfigs. No-op when the backend is not HTP or nothing applies.
+  Ort::Status ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs, const Ort::Logger& logger);
+
+  Ort::Status ExecuteGraph(OrtKernelContext* context,
+                           const Ort::Logger& logger,
+                           const qnn::EpContextIoDispatch& io_dispatch);
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = graph_outputs_.tensors.find(name);
@@ -145,10 +154,31 @@ class QnnModel {
 
   const std::string& Name() const { return graph_info_->Name(); }
 
+  // Store info needed to reload the QNN context from disk after an SSR.
+  // Only applicable to embed_mode=0 (external context binary file); the filepath is empty
+  // for embed_mode=1, which disables SSR recovery for that model.
+  void SetContextRecoveryInfo(std::string filepath, int64_t max_spill_fill_size,
+                              ContextPriority context_priority) {
+    context_bin_filepath_ = std::move(filepath);
+    max_spill_fill_size_ = max_spill_fill_size;
+    context_priority_ = context_priority;
+  }
+
+  // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
+  // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
+  Ort::Status RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch);
+
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& logger);
+
+  // Bind ORT tensors to QNN tensors and execute the graph once.
+  // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
+  // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
+  Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
+                                  const Ort::Logger& logger,
+                                  Qnn_ErrorHandle_t& execute_status);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
@@ -180,6 +210,15 @@ class QnnModel {
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
   const ApiPtrs api_ptrs_;
+
+  // SSR recovery state (embed_mode=0 only). An empty filepath disables recovery.
+  std::string context_bin_filepath_;
+  int64_t max_spill_fill_size_ = 0;
+  ContextPriority context_priority_ = ContextPriority::NORMAL;
+
+  // Runtime graph configs recorded by ApplyRuntimeGraphConfigs for re-application after an SSR
+  // re-retrieves the graph handle. See the single-call contract in the .cc.
+  HtpGraphConfigs_t runtime_graph_configs_;
 };
 
 }  // namespace qnn

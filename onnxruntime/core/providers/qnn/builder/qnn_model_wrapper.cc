@@ -306,7 +306,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("BF16: Adding Cast op " + input_name + " -> " + cast_output_name).c_str());
 
-        QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+        QnnOpProperty cast_op(MakeUniqueQnnNodeName(cast_output_name),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW,
+                              QNN_OP_CAST,
                               std::vector<std::string>{input_name},
                               std::vector<std::string>{cast_output_name},
                               std::vector<std::string>{});
@@ -328,7 +330,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("BF16: Adding Cast op for static tensor " + input_name + " -> " + cast_output_name).c_str());
-        QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+        QnnOpProperty cast_op(MakeUniqueQnnNodeName(cast_output_name),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW,
+                              QNN_OP_CAST,
                               std::vector<std::string>{input_name},
                               std::vector<std::string>{cast_output_name},
                               std::vector<std::string>{});
@@ -513,12 +517,13 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     return validation_status.IsOK();
   } else {
     // Standard execution - just add the node to the op list
-    QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
+    const std::string unique_node_name = MakeUniqueQnnNodeName(qnn_node_name);
+    QnnOpProperty qnn_op(unique_node_name, package_name, qnn_node_type,
                          std::move(input_names), std::move(output_names), std::move(param_tensor_names));
     qnn_op_property_list_.push_back(std::move(qnn_op));
 
     if (op_trace_collector_) {
-      op_trace_collector_->RecordOpMapping(qnn_node_name, qnn_node_type,
+      op_trace_collector_->RecordOpMapping(unique_node_name, qnn_node_type,
                                            qnn_op_property_list_.back().GetOutputNames());
     }
 
@@ -575,7 +580,7 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
                 ("[BF16] Adding " + std::to_string(graph_output_cast_ops.size()) + "output cast operations").c_str());
     for (size_t i = 0; i < graph_output_cast_ops.size(); ++i) {
       const auto& [bf16_name, fp32_name] = graph_output_cast_ops[i];
-      std::string cast_node_name = bf16_name;
+      std::string cast_node_name = MakeUniqueQnnNodeName(bf16_name);
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_VERBOSE,
                   ("[BF16] Adding output Cast op: " + cast_node_name + " (" + bf16_name + " -> " + fp32_name + ")")
@@ -600,6 +605,25 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
   }
 
   return true;
+}
+
+std::string QnnModelWrapper::MakeUniqueQnnNodeName(const std::string& requested_name) {
+  if (qnn_node_names_.insert(requested_name).second) {
+    return requested_name;
+  }
+
+  // requested_name already occupies one entry, so one suffix in this range is free.
+  const size_t max_suffix = qnn_node_names_.size() + 1;
+  for (size_t suffix = 2; suffix <= max_suffix; ++suffix) {
+    std::string unique_name = requested_name + "_" + std::to_string(suffix);
+    if (qnn_node_names_.insert(unique_name).second) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Renamed duplicate QNN node " + requested_name + " to " + unique_name).c_str());
+      return unique_name;
+    }
+  }
+
+  ORT_CXX_API_THROW("Failed to allocate a unique QNN node name.", ORT_EP_FAIL);
 }
 
 // Register graph inputs/outputs in ONNX declaration order. This ensures DLC

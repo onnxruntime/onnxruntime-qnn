@@ -789,7 +789,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8F32) {
 TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "Skipped on x86_64 simulator due to flaky behavior";
-#endif
+#else
   constexpr int64_t batch = 1;
   constexpr int64_t channels = 4;
   constexpr int64_t H = 2;
@@ -812,6 +812,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
   RunBatchNormQDQTest<uint16_t, uint8_t>(input_def, scale_def, bias_def,
                                          ExpectedEPNodeAssignment::All,
                                          QDQTolerance(0.008f));
+#endif
 }
 
 // Test BatchNorm with near-zero variance channels (U8 input). When gamma/sqrt(var+eps) produces
