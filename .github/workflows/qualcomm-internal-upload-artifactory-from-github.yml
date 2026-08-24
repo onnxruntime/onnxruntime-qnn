@@ -262,23 +262,56 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Download NuGet from Artifactory
+      - name: Download Windows x86_64 NuGet from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-nuget
+
+      - name: Download Windows ARM64 (ARM64x) NuGet from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64x-py3.11-nuget
+
+      - name: Merge Windows x86_64 and Windows ARM64 (ARM64x) NuGet packages into single NuGet package
+        shell: powershell
+        run: |
+          $mergeDir = "${{ github.workspace }}\build\merged-nuget"
+          $mergedOut = "$mergeDir\output"
+          $arm64Dir = "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist"
+          $x64Dir = "${{ github.workspace }}\build\windows-x86_64\Release\dist"
+
+          Remove-Item -Path $mergeDir -Recurse -Force -ErrorAction SilentlyContinue
+
+          New-Item -ItemType Directory -Force -Path "$mergeDir\input\x64" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$mergeDir\input\arm64x" | Out-Null
+          New-Item -ItemType Directory -Force -Path $mergedOut | Out-Null
+
+          $x64Pkg = Get-ChildItem -Path $x64Dir -Filter "*.nupkg" | Select-Object -First 1
+          $arm64xPkg = Get-ChildItem -Path $arm64Dir -Filter "*.nupkg" | Select-Object -First 1
+
+          Copy-Item $x64Pkg.FullName -Destination "$mergeDir\input\x64" -Force
+          Copy-Item $arm64xPkg.FullName -Destination "$mergeDir\input\arm64x" -Force
+
+          # Remove the per-arch source packages so only the merged package remains under build/.
+          Remove-Item -Path $x64Pkg.FullName -Force
+          Remove-Item -Path $arm64xPkg.FullName -Force
+
+          python.exe "${{ github.workspace }}\tools\nuget\merge_qnn_nupkgs.py" --input_dir "$mergeDir\input" --output_dir $mergedOut
+
+          Remove-Item -Path "$mergeDir\input" -Recurse -Force
 
       - name: Verify NuGet artifact
         shell: powershell
         run: |
           $count = (Get-ChildItem -Path "${{ github.workspace }}\build" -Recurse -Filter "*.nupkg").Count
           Write-Host "Found $count NuGet package(s)"
-          if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
+          if ($count -ne 1) { Write-Error "Expected 1 merged NuGet package, found $count"; exit 1 }
 
       - name: Prepare Windows NuGet libs for signing
         shell: powershell
         run: |
           .\qcom\scripts\signing\prepare_nuget_for_signing.ps1 `
-            -NuGetDirectory "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" `
+            -NuGetDirectory "${{ github.workspace }}\build\merged-nuget\output" `
             -OutputDirectory "${{ github.workspace }}\build\dist\output"
 
       - name: Upload unsigned Windows NuGet libs to Artifactory
@@ -296,7 +329,7 @@ jobs:
           "@ | Set-Content -Path $netrcFile
           icacls $netrcFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
 
-          $pkg = Get-ChildItem -Path "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" -Filter "*.nupkg" | Select-Object -First 1
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\build\merged-nuget\output" -Filter "*.nupkg" | Select-Object -First 1
           $version = $pkg.BaseName -replace '^Qualcomm\.ML\.OnnxRuntime\.QNN\.' -replace '\.nupkg$' -replace '-', ''
 
           .\qcom\scripts\signing\upload_unsigned_to_artifactory.ps1 `
@@ -324,7 +357,7 @@ jobs:
           uv pip install -r .\qcom\requirements.txt
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
-            -InputDir "${{ github.workspace }}\build\windows-arm64x\Release"
+            -InputDir "${{ github.workspace }}\build\merged-nuget\output"
 
   upload-zip-workflow:
     name: "Upload Zip artifacts to Artifactory"

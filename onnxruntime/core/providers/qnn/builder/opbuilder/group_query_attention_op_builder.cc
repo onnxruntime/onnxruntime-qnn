@@ -13,7 +13,7 @@
 namespace onnxruntime {
 namespace qnn {
 
-// GQA not available until opset version 2.12.0 (QAIRT 2.48). TODO: Remove this check once the EP uplevels to 2.48.
+// GQA not available until opset version 2.12.0 (QAIRT 2.48)
 #if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
 class GroupQueryAttentionOpBuilder : public BaseOpBuilder {
  public:
@@ -43,8 +43,10 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
-  RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
-                "GroupQueryAttention is only supported with the GPU backend");
+  auto backend_type = qnn_model_wrapper.GetQnnBackendType();
+
+  RETURN_IF_NOT(IsGpuBackend(backend_type) || backend_type == QnnBackendType::HTP,
+                "GroupQueryAttention is only supported with the GPU and HTP backends");
 
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();
@@ -131,15 +133,31 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       8u,  // sin_cache
       9u   // position_ids
   };
+  constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
 
-  for (const auto onnx_idx : qnn_idx_to_onnx) {
+  for (size_t qnn_idx = 0; qnn_idx < qnn_idx_to_onnx.size(); ++qnn_idx) {
+    const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
     if (onnx_inputs.size() > onnx_idx && onnx_inputs[onnx_idx].Exists()) {
-      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
+      // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
+      // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
+      if (qnn_idx == kQnnTotalSeqLenIdx) {
+        const std::string& input_name = onnx_inputs[onnx_idx].name;
+        if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
+          TensorInfo tensor_info = {};
+          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[onnx_idx], tensor_info));
+          tensor_info.shape = {};  // override to 0D scalar
+          QnnTensorWrapper tensor_wrapper;
+          RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
+          RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)), "Failed to add tensor.");
+        }
+        input_names.push_back(input_name);
+      } else {
+        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
+      }
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       input_names.emplace_back(null_tensor_name);
-      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
-                                           QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+      QnnTensorWrapper null_tensor_wrapper = QnnTensorWrapper::MakeNull(null_tensor_name);
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
                     ("Failed to add null tensor: " + null_tensor_name).c_str());
     }
@@ -184,7 +202,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
                                param_names));
 
   // do_rotary
-  const int64_t do_rotary = node_helper.Get("do_rotary", 0ll);
+  const int64_t do_rotary = node_helper.Get("do_rotary", static_cast<int64_t>(0));
   const uint32_t do_rotary_u32 = SafeInt<uint32_t>(do_rotary);
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
@@ -201,8 +219,15 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   const size_t head_size = output_tensor_info.shape[2] / num_heads.value();
   RETURN_IF(head_size == 0, "head_size can't be zero!");
 
-  const float scale_default = 1.0f / std::sqrtf(static_cast<float>(head_size));
-  const float scale = node_helper.Get("scale", scale_default);
+  const float scale_default = 1.0f / std::sqrt(static_cast<float>(head_size));
+  // ONNX GroupQueryAttention treats scale == 0 as "use the default", i.e. 1/sqrt(head_size).
+  // node_helper.Get() only falls back to the default when the attribute is absent, so handle the
+  // explicit 0.0 case here as well; otherwise QNN GQA computes QK^T * 0 and the softmax degenerates
+  // to a uniform distribution (output becomes the mean of value).
+  float scale = node_helper.Get("scale", scale_default);
+  if (scale == 0.0f) {
+    scale = scale_default;
+  }
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
                                node_unit.Name(),
@@ -231,8 +256,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       output_names.emplace_back(null_tensor_name);
-      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
-                                           QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+      QnnTensorWrapper null_tensor_wrapper = QnnTensorWrapper::MakeNull(null_tensor_name);
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
                     ("Failed to add null tensor: " + null_tensor_name).c_str());
     }

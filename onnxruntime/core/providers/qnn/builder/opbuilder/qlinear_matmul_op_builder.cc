@@ -32,12 +32,6 @@ static constexpr size_t kIdxBZeroPoint = 5;
 static constexpr size_t kIdxYScale = 6;
 static constexpr size_t kIdxYZeroPoint = 7;
 
-namespace {
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-}  // namespace
-
 /**
  * Translates ONNX QLinearMatMul into a QNN MatMul or FullyConnected node.
  *
@@ -108,37 +102,10 @@ class QLinearMatMulOpBuilder : public BaseOpBuilder {
 Ort::Status QLinearMatMulOpBuilder::ReadScaleAsFloat32(const QnnModelWrapper& qnn_model_wrapper,
                                                        const OrtValueInfo* scale_tensor,
                                                        float& out_scale) {
-  RETURN_IF(scale_tensor == nullptr, "QLinearMatMul: scale initializer is null.");
-
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(scale_tensor, &type_info));
-  const OrtTensorTypeAndShapeInfo* tinfo = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tinfo));
-  ONNXTensorElementDataType dtype = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tinfo, &dtype));
-
-  std::vector<uint8_t> raw;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_tensor, raw));
-
-  if (dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    RETURN_IF(raw.size() < sizeof(float), "QLinearMatMul: scale tensor has insufficient bytes for float32.");
-    memcpy(&out_scale, raw.data(), sizeof(float));
-  } else if (dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-    RETURN_IF(raw.size() < sizeof(uint16_t), "QLinearMatMul: scale tensor has insufficient bytes for float16.");
-    uint16_t fp16_bits = 0;
-    memcpy(&fp16_bits, raw.data(), sizeof(uint16_t));
-    out_scale = Ort::Float16_t::FromBits(fp16_bits).ToFloat();
-  } else if (dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
-    RETURN_IF(raw.size() < sizeof(uint16_t), "QLinearMatMul: scale tensor has insufficient bytes for bfloat16.");
-    uint16_t bf16_bits = 0;
-    memcpy(&bf16_bits, raw.data(), sizeof(uint16_t));
-    out_scale = Ort::BFloat16_t::FromBits(bf16_bits).ToFloat();
-  } else {
-    return MAKE_EP_FAIL("QLinearMatMul: scale must be float32, float16, or bfloat16.");
-  }
-
+  std::vector<float> scales;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(scale_tensor, scales));
+  RETURN_IF(scales.empty(), "QLinearMatMul: scale initializer unpacked to empty vector.");
+  out_scale = scales[0];
   return Ort::Status();
 }
 
@@ -182,7 +149,7 @@ Ort::Status QLinearMatMulOpBuilder::BuildQuantParam(const QnnModelWrapper& qnn_m
   RETURN_IF_ERROR(ReadZeroPointAsInt32(qnn_model_wrapper, zp_tensor, zero_point));
 
   // UnpackZeroPoints already returns -zp (QNN offset convention); pass through directly.
-  out_quant_param = QnnQuantParamsWrapper(scale, zero_point);
+  out_quant_param = QnnQuantParamsWrapper::PerTensor(scale, zero_point);
   return Ort::Status();
 }
 
@@ -251,8 +218,8 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
   // per-channel quantized with rank > 2.
   use_fully_connected = use_fully_connected && !(quant_a.IsPerChannel() && shape_a.size() > 2);
   // Don't use FullyConnected if both inputs are dynamic and 16-bit quantized (QNN validation fails).
-  use_fully_connected = use_fully_connected && !(IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
-                                                 IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
+  use_fully_connected = use_fully_connected && !(utils::IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
+                                                 utils::IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
   return use_fully_connected;
 #endif
 }

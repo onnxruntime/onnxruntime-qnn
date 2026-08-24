@@ -385,7 +385,7 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
     int32_t ln_offset = 0;
     RETURN_IF_ERROR(utils::GetQuantParams(-ln_abs_max, ln_abs_max, x_qnn_data_type,
                                           ln_scale, ln_offset, /*symmetric=*/false));
-    ln_intermediate_qp = QnnQuantParamsWrapper(ln_scale, ln_offset);
+    ln_intermediate_qp = QnnQuantParamsWrapper::PerTensor(ln_scale, ln_offset);
   } else {
     // FP path
     ln_intermediate_qp = final_output_info.quant_param.Copy();
@@ -595,16 +595,12 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
                     "Failed to add decomposed Mul output tensor.");
     }
     std::string mul_node_name = utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_mul");
-    std::vector<std::string> mul_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), mul_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, mul_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(mul_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY,
+                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {current, mul_scale_name},
                                                   {mul_out_name},
-                                                  std::move(mul_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Failed to add decomposed Mul node.");
     current = mul_out_name;
@@ -687,16 +683,12 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_out_tensor)),
                   "Failed to add decomposed Add output tensor.");
     std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_add");
-    std::vector<std::string> add_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), add_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY,
+                                                  QNN_OP_ELEMENT_WISE_ADD,
                                                   {current, bias_name},
                                                   {final_output_name},
-                                                  std::move(add_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Failed to add decomposed Add node.");
   }
