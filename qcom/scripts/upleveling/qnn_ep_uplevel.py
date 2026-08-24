@@ -1129,7 +1129,9 @@ class ZipUpleveler(ArtifactUpleveler):
         """Return (title, body) from the first section of docs/release-notes.md.
 
         title — text of the first H1 line (without the leading '# ').
-        body  — all lines after that H1 up to (not including) the next H1.
+        body  — all lines after that H1 up to (not including) the next H1. release-notes.md
+                separates sections with a "---" / blank / "---" pair before the next H1;
+                the second one is dropped so the notes end with a single horizontal rule.
         Both are empty strings if the file is missing or has no H1.
         """
         notes_path = _REPO_ROOT / "docs" / "release-notes.md"
@@ -1153,7 +1155,15 @@ class ZipUpleveler(ArtifactUpleveler):
             elif in_section:
                 body_lines.append(stripped)
 
-        return title, "\n".join(body_lines).strip()
+        body = "\n".join(body_lines).strip()
+        body = body.removesuffix("---").rstrip()
+        return title, body
+
+    @property
+    def _github_excluded_suffixes(self) -> tuple[str, ...]:
+        """Filename suffixes never published to GitHub Releases, even though they're
+        valid upload candidates for the other destinations (Artifactory)."""
+        return ("-pdb.zip", "win-arm64ec.zip")
 
     def _upload_to_github(self, distribution_dir: str) -> None:
         """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
@@ -1161,7 +1171,9 @@ class ZipUpleveler(ArtifactUpleveler):
         files = [
             os.path.join(distribution_dir, f)
             for f in os.listdir(distribution_dir)
-            if os.path.isfile(os.path.join(distribution_dir, f)) and f.endswith(self.artifact_suffix)
+            if os.path.isfile(os.path.join(distribution_dir, f))
+            if f.endswith(self.artifact_suffix)
+            if not f.endswith(self._github_excluded_suffixes)
         ]
         if not files:
             raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")

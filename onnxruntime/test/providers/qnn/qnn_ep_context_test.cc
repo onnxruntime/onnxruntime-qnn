@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 
+#include <cmath>
 #include <filesystem>
 #include <string>
 
@@ -3452,6 +3453,107 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
   ASSERT_EQ(std::remove(qnn_ctx_binary_file_name1.c_str()), 0);
 #endif
 }
+
+// Builds a simple fp16 Conv graph (float I/O; enable_htp_fp16_precision runs it in fp16 on HTP).
+// Verifies that enable_htp_fp16_clamp_overflow is applied on the EPContext (context-binary) path.
+// The option is a runtime graph config applied via graphSetConfig after the graph is restored
+// from the binary (QnnModel::ApplyRuntimeGraphConfigs). Input and weight values of 300.0f ensure
+// the Conv accumulator reliably overflows fp16 max (~65504): without the clamp the output is NaN;
+// with it the output saturates to fp16-max (finite), making the isfinite assertion a real fence.
+// Requires QAIRT >= 2.49 (QNN API >= 2.38) for the clamp option to be effective; the overflow
+// → NaN behavior only manifests on HTP arch v79+ (Glymur/SM8850 and later).
+#ifdef QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["enable_htp_fp16_clamp_overflow"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  ModelTestBuilder helper;
+  BuildFp16ClampOverflowConvTestCase()(helper);
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string context_model_file = "./testdata/qnn_ctx_fp16_clamp_overflow_test.onnx";
+  std::remove(context_model_file.c_str());
+
+  // Phase 1: generate the EPContext model + binary (compose/finalize path).
+  ONNX_NAMESPACE::ModelProto ctx_model_proto;
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+    ASSERT_TRUE(std::filesystem::exists(context_model_file.c_str()));
+
+    std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << context_model_file;
+    ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << context_model_file;
+  }
+
+  // Phase 2: reload from the generated context model (binary-load path, where
+  // ApplyRuntimeGraphConfigs sets the fp16-clamp graph config), then run and check finite output.
+  {
+    Ort::SessionOptions so2;
+    so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    // Same provider_options as Phase 1: enable_htp_fp16_clamp_overflow must be set so
+    // ApplyRuntimeGraphConfigs fires on the binary-load path inside CompileContextModel.
+    RegisterQnnEpLibrary(registered_ep_device, so2, kQnnExecutionProvider, provider_options);
+
+    std::string ctx_model_data;
+    ctx_model_proto.SerializeToString(&ctx_model_data);
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so2));
+
+    std::vector<float> input_value(32, 300.0f);
+    std::vector<int64_t> input_dim{1, 2, 4, 4};
+    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<Ort::Value> ort_inputs;
+    ort_inputs.push_back(Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                  input_dim.data(), input_dim.size()));
+    const char* input_names_c[] = {"input"};
+    const char* output_names_c[] = {"output"};
+
+    auto ort_outputs = scoped.session().Run(Ort::RunOptions{}, input_names_c, ort_inputs.data(), ort_inputs.size(),
+                                            output_names_c, 1);
+
+    ASSERT_EQ(ort_outputs.size(), 1u);
+    const float* out_data = ort_outputs[0].GetTensorData<float>();
+    const size_t out_count = ort_outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    for (size_t i = 0; i < out_count; ++i) {
+      EXPECT_TRUE(std::isfinite(out_data[i])) << "Output element " << i << " is not finite: " << out_data[i];
+    }
+  }
+
+  CleanUpCtxFile(context_model_file);
+}
+#endif  // QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
