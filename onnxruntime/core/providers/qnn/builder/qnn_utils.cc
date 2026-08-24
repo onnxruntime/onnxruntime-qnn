@@ -2001,6 +2001,150 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   return Ort::Status();
 }
 
+Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
+                                   const Ort::Logger& logger,
+                                   const OrtNodeUnitIODef& bias_def,
+                                   const TensorInfo& bias_info,
+                                   gsl::span<const float> weights_scales,
+                                   float activation_scale,
+                                   std::vector<std::string>& input_names,
+                                   bool& was_requantized) {
+  was_requantized = false;
+  int32_t bias_quant_axis = 0;
+  std::vector<float> current_scales;
+  std::vector<int32_t> current_offsets;
+  RETURN_IF_ERROR(GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales,
+                                               current_offsets, bias_quant_axis));
+
+  const size_t num_channels = current_scales.size();
+  bool needs_requantization = false;
+  for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
+    const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
+    if (current_offsets[i] != 0 ||
+        !CheckBiasScaleMatch(current_scales[i], w, activation_scale, 1e-5f)) {
+      needs_requantization = true;
+    }
+  }
+
+  if (!needs_requantization) {
+    return Ort::Status();  // Scales already match; caller processes bias normally.
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Requantizing bias " + bias_def.name).c_str());
+
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+
+  std::vector<uint8_t> new_bias_data;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  const auto axis_opt = (num_channels > 1) ? std::optional<int64_t>(bias_quant_axis) : std::nullopt;
+  RETURN_IF_ERROR(RequantizeBiasTensor(
+      original_bias_data, bias_info.shape, current_scales, current_offsets,
+      weights_scales, activation_scale, bias_info.qnn_data_type,
+      new_bias_data, new_scales, new_offsets, axis_opt));
+
+  QnnQuantParamsWrapper new_quant_params = (new_scales.size() == 1)
+                                               ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
+                                               : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
+
+  const std::string rq_bias_name = UniqueNameGenerator().New(bias_def.name, "_rq");
+  QnnTensorWrapper bias_wrapper(rq_bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
+                                std::move(new_quant_params), std::vector<uint32_t>(bias_info.shape),
+                                std::move(new_bias_data));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_wrapper)),
+                "Failed to add requantized bias tensor.");
+  input_names.push_back(rq_bias_name);
+  was_requantized = true;
+  return Ort::Status();
+}
+
+Ort::Status QuantizeFloatBias(QnnModelWrapper& qnn_model_wrapper,
+                              const Ort::Logger& logger,
+                              const OrtNodeUnitIODef& bias_def,
+                              const TensorInfo& bias_info,
+                              gsl::span<const float> weights_scales,
+                              float activation_scale,
+                              std::vector<std::string>& input_names) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Quantizing float bias " + bias_def.name + " using activation_scale * weight_scale[c]").c_str());
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+  const size_t num_channels = bias_info.shape[0];
+  RETURN_IF_NOT(original_bias_data.size() == num_channels * sizeof(float),
+                "Unexpected bias data size for float bias quantization");
+  std::vector<uint8_t> new_bias_data;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  RETURN_IF_ERROR(QuantizeFloatBiasTensor(
+      gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels),
+      weights_scales, activation_scale, new_bias_data, new_scales, new_offsets));
+
+  constexpr int32_t bias_quant_axis = 0;
+  QnnQuantParamsWrapper new_quant_params = (new_scales.size() == 1)
+                                               ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
+                                               : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
+
+  const std::string q_bias_name = UniqueNameGenerator().New(bias_def.name, "_q");
+  QnnTensorWrapper bias_wrapper(q_bias_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,
+                                std::move(new_quant_params), std::vector<uint32_t>(bias_info.shape),
+                                std::move(new_bias_data));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_wrapper)),
+                "Failed to add quantized float bias tensor.");
+  input_names.push_back(q_bias_name);
+  return Ort::Status();
+}
+
+Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
+                                      const Ort::Logger& logger,
+                                      const OrtNodeUnitIODef& bias_def,
+                                      const QnnQuantParamsWrapper& act_quant_param,
+                                      const QnnQuantParamsWrapper& weight_quant_param,
+                                      std::vector<std::string>& input_names,
+                                      bool& was_handled) {
+  was_handled = false;
+
+  TensorInfo bias_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
+
+  if (!bias_info.is_initializer) {
+    return Ort::Status();  // Non-initializer: caller handles normally.
+  }
+
+  if (!act_quant_param.IsQuantized() || !weight_quant_param.IsQuantized()) {
+    return Ort::Status();  // Not quantized: caller handles normally.
+  }
+
+  RETURN_IF_NOT(act_quant_param.IsPerTensor(/*include_bw*/ true),
+                "Activation must be per-tensor quantized for quantized-domain bias processing");
+
+  const auto& act_qp = act_quant_param.Get();
+  const float activation_scale = (act_qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET)
+                                     ? act_qp.scaleOffsetEncoding.scale
+                                     : act_qp.bwScaleOffsetEncoding.scale;
+  std::vector<float> weights_scales;
+  RETURN_IF_ERROR(GetWeightQuantScales(weight_quant_param, weights_scales));
+  RETURN_IF(weights_scales.empty(), "No weight scales found for bias quantization");
+
+  if (bias_info.quant_param.IsQuantized()) {
+    bool was_requantized = false;
+    RETURN_IF_ERROR(RequantizeBiasIfNeeded(qnn_model_wrapper, logger, bias_def, bias_info,
+                                           weights_scales, activation_scale, input_names,
+                                           was_requantized));
+    if (was_requantized) {
+      was_handled = true;
+    }
+    // If not requantized, scales already match: caller processes bias normally.
+    return Ort::Status();
+  } else {
+    // Float bias: quantize using activation_scale * weight_scale[c].
+    RETURN_IF_ERROR(QuantizeFloatBias(qnn_model_wrapper, logger, bias_def, bias_info,
+                                      weights_scales, activation_scale, input_names));
+    was_handled = true;
+    return Ort::Status();
+  }
+}
+
 bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
                                     int64_t bits) {
   std::vector<uint8_t> per_block_uint8_zp;
