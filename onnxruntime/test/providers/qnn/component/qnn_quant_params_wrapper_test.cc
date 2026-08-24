@@ -24,8 +24,8 @@
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
 
-#include "test/providers/qnn/unit/mock_init_registry.h"
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/mock_init_registry.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {

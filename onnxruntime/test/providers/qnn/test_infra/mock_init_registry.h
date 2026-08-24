@@ -9,7 +9,7 @@
 // QnnModelWrapper::UnpackInitializerData.
 //
 // Usage:
-//   QnnModelWrapperTestContext ctx;
+//   OpBuilderTestContext ctx;
 //   auto& reg = g_mock_init_reg;
 //   reg.clear();
 //   auto scale_vi = reg.AddScalarFloat("scale", 0.1f);
@@ -48,7 +48,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -117,6 +117,76 @@ struct MockInitRegistry {
     s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
     s.raw_bytes.resize(sizeof(int32_t));
     std::memcpy(s.raw_bytes.data(), &value, sizeof(int32_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarInt8(const std::string& name, int8_t value) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+    s.raw_bytes.resize(sizeof(int8_t));
+    std::memcpy(s.raw_bytes.data(), &value, sizeof(int8_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarInt16(const std::string& name, int16_t value) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+    s.raw_bytes.resize(sizeof(int16_t));
+    std::memcpy(s.raw_bytes.data(), &value, sizeof(int16_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarInt64(const std::string& name, int64_t value) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
+    s.raw_bytes.resize(sizeof(int64_t));
+    std::memcpy(s.raw_bytes.data(), &value, sizeof(int64_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarUint32(const std::string& name, uint32_t value) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32;
+    s.raw_bytes.resize(sizeof(uint32_t));
+    std::memcpy(s.raw_bytes.data(), &value, sizeof(uint32_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarUint64(const std::string& name, uint64_t value) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64;
+    s.raw_bytes.resize(sizeof(uint64_t));
+    std::memcpy(s.raw_bytes.data(), &value, sizeof(uint64_t));
+    return Add(name, std::move(s));
+  }
+  // Float16: pass the raw 16-bit IEEE 754 half-precision pattern as uint16_t
+  // (callers can use Ort::Float16_t::FromBits or compute directly).
+  const OrtValueInfo* AddScalarFloat16(const std::string& name, uint16_t fp16_bits) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+    s.raw_bytes.resize(sizeof(uint16_t));
+    std::memcpy(s.raw_bytes.data(), &fp16_bits, sizeof(uint16_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarFixedPoint8(const std::string& name,
+                                           ONNXTensorElementDataType elem_type,
+                                           uint8_t raw) {
+    MockInitSpec s;
+    s.elem_type = elem_type;
+    s.raw_bytes = {raw};
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarFixedPoint16(const std::string& name,
+                                            ONNXTensorElementDataType elem_type,
+                                            uint16_t raw) {
+    MockInitSpec s;
+    s.elem_type = elem_type;
+    s.raw_bytes.resize(sizeof(uint16_t));
+    std::memcpy(s.raw_bytes.data(), &raw, sizeof(uint16_t));
+    return Add(name, std::move(s));
+  }
+  const OrtValueInfo* AddScalarFixedPoint32(const std::string& name,
+                                            ONNXTensorElementDataType elem_type,
+                                            uint32_t raw) {
+    MockInitSpec s;
+    s.elem_type = elem_type;
+    s.raw_bytes.resize(sizeof(uint32_t));
+    std::memcpy(s.raw_bytes.data(), &raw, sizeof(uint32_t));
     return Add(name, std::move(s));
   }
 
