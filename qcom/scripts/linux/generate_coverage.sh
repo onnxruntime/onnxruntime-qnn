@@ -363,7 +363,7 @@ log_info "README       : ${output_dir}/README.md"
 if [ "${snapshot_exit}" -ne 0 ]; then
     log_warn "snapshot phase exited ${snapshot_exit} — graph-structure drift detected."
     log_warn "This is NON-gating. Run run_snapshot_accuracy.sh to verify numerical correctness,"
-    log_warn "and --update-goldens once the new structure is accepted."
+    log_warn "and --generate-goldens once the new structure is accepted."
 fi
 
 if [ "${comp_exit}" -ne 0 ] && [ "${accuracy_exit}" -ne 0 ]; then

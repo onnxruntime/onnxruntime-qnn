@@ -39,14 +39,13 @@ namespace onnxruntime {
 namespace test {
 
 // Backend the snapshot / accuracy side initializes. QnnCpu is no longer
-// shipped with the QNN EP wheel, so every case runs on HTP now — the CPU
-// enum variant is kept only for source compatibility with older integration
-// cases and for helpers that still branch on it (dlopen guard, skip logic).
-// Any new spec should use HTP. HTP accepts fp32/fp16/u8/u16/int32 for
-// ReluMinMax and supports rank up to 5 for RELUMINMAX (see
-// HtpOpDefSupplement.html: `ElementWiseNeuron` FP16-config section).
-enum class SnapshotBackend { CPU,
-                             HTP };
+// shipped with the QNN EP wheel, so every case runs on HTP. Kept as an enum
+// (rather than removed outright) so the per-spec `snapshot_backend` /
+// `accuracy_backend` fields stay in place for future backend flexibility.
+// HTP accepts fp32/fp16/u8/u16/int32 for ReluMinMax and supports rank up to 5
+// for RELUMINMAX (see HtpOpDefSupplement.html: `ElementWiseNeuron`
+// FP16-config section).
+enum class SnapshotBackend { HTP };
 
 // ---------- Group A: plain dtype data, optional float min/max ----------
 //
@@ -81,7 +80,7 @@ inline const ClipSpec kClipFp32Spec = {
 inline const ClipSpec kClip4DFp32DefaultMinMaxSpec = {
     "Clip_4D_f32_DefaultMinMax",
     SnapshotBackend::HTP,
-    SnapshotBackend::HTP,  // was CPU; QnnCpu backend dropped from wheel — HTP supports fp32 ReluMinMax rank<=5 (HtpOpDefSupplement)
+    SnapshotBackend::HTP,  // HTP supports fp32 ReluMinMax rank<=5 (HtpOpDefSupplement)
     ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
     {1, 3, 4, 4},
     std::nullopt,
@@ -90,7 +89,7 @@ inline const ClipSpec kClip4DFp32DefaultMinMaxSpec = {
 inline const ClipSpec kClip5DFp32Spec = {
     "Clip_5D_f32",
     SnapshotBackend::HTP,
-    SnapshotBackend::HTP,  // was CPU; QnnCpu dropped, HTP ReluMinMax supports rank 5 (HtpOpDefSupplement)
+    SnapshotBackend::HTP,  // HTP ReluMinMax supports rank 5 (HtpOpDefSupplement)
     ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
     {1, 1, 3, 4, 4},
     -5.0f,

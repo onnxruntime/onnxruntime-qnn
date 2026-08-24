@@ -192,21 +192,8 @@ if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
         target_ops="${filter_groups}"
     else
         # Derive all groups from the JSON output (all snapshot suites that ran).
-        target_ops=$(python3 -c "
-import json, sys, re
-
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-
-ops = set()
-pattern = re.compile(r'^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$')
-for suite in data.get('testsuites', []):
-    m = pattern.match(suite['name'])
-    if m:
-        ops.add(m.group(1))
-
-print(','.join(sorted(ops)))
-" "${snapshot_json}" 2>/dev/null) || true
+        target_ops=$(python3 "${REPO_ROOT}/qcom/scripts/linux/extract_snapshot_groups.py" \
+            "${snapshot_json}" 2>/dev/null) || true
     fi
     if [ "${generate_goldens}" = true ]; then
         log_info "Goldens updated. Verifying accuracy for: ${target_ops}"
@@ -228,22 +215,8 @@ else
         exit 99
     fi
 
-    target_ops=$(python3 -c "
-import json, sys, re
-
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-
-ops = set()
-pattern = re.compile(r'^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$')
-for suite in data.get('testsuites', []):
-    if suite.get('failures', 0) > 0 or suite.get('errors', 0) > 0:
-        m = pattern.match(suite['name'])
-        if m:
-            ops.add(m.group(1))
-
-print(','.join(sorted(ops)))
-" "${snapshot_json}" 2>/dev/null) || true
+    target_ops=$(python3 "${REPO_ROOT}/qcom/scripts/linux/extract_snapshot_groups.py" \
+        "${snapshot_json}" --failures-only 2>/dev/null) || true
 
     if [ -z "${target_ops}" ]; then
         log_err "Snapshot tests exited ${snapshot_exit} but no group failures could be extracted."

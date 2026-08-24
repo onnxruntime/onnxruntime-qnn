@@ -52,7 +52,6 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -150,42 +149,8 @@ inline void AssertSessionSnapshotJson(
   nlohmann::json graph = nlohmann::json::parse(raw_json);
   NormalizeQnnJSONGraph(graph);
 
-  const std::string current = graph.dump(2) + "\n";    // Match AssertSnapshotJson formatting.
-  const std::string golden_root = GetGoldenRootDir();  // "" == golden store absent
-  const bool have_root = !golden_root.empty();
-  const std::string golden_dir = golden_root + "/" + golden_subdir;
-  const std::string golden_path = golden_dir + "/" + golden_basename + ".json";
-
-  const char* update_env = std::getenv("QNN_UT_SNAPSHOT_GOLDEN_UPDATE");
-  bool update = (update_env != nullptr && std::string(update_env) == "1");
-
-  if (update) {
-    ASSERT_TRUE(have_root)
-        << "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 but QNN_UT_SNAPSHOT_GOLDEN_DIR is unset — "
-           "nowhere to write goldens.";
-    std::filesystem::create_directories(golden_dir);
-    std::ofstream out(golden_path);
-    ASSERT_TRUE(out.is_open()) << "Failed to open golden file for writing: " << golden_path;
-    out << current;
-    out.close();
-    GTEST_SKIP() << "Session-snapshot golden updated: " << golden_path;
-    return;
-  }
-
-  // Absent golden store (or missing file) is not a failure: the gate treats it
-  // as "run accuracy instead". [QNN_GOLDEN_ABSENT] is an inert marker here.
-  std::ifstream in;
-  if (have_root) in.open(golden_path);
-  if (!have_root || !in.is_open()) {
-    GTEST_SKIP() << "[QNN_GOLDEN_ABSENT] op=" << golden_subdir
-                 << " name=" << golden_basename;
-    return;
-  }
-  std::string expected((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  EXPECT_EQ(current, expected)
-      << "[QNN_SNAPSHOT_DRIFT] name=" << golden_basename
-      << "\nSession-snapshot diff detected. Regenerate with "
-         "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1.";
+  const std::string current = graph.dump(2) + "\n";  // Match AssertSnapshotJson formatting.
+  CompareOrWriteGolden(current, golden_basename, golden_subdir, "Session-snapshot");
 }
 
 }  // namespace test

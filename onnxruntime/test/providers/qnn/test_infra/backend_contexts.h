@@ -4,12 +4,13 @@
 // Backend / wrapper test contexts for QNN EP function-level unit tests.
 //
 //   OpBuilderTestContext       — stub-backed wrapper context (no live backend)
-//   QnnRealCpuBackendContext         — dlopen-based libQnnCpu, exposes interface + backend handle
-//   QnnRealCpuBackendManagerContext  — full CPU backend via QnnBackendManager (has context handle)
 //   QnnRealHtpBackendManagerContext  — full HTP backend via QnnBackendManager (has context handle)
 //
-// The Manager variants give a usable Qnn_ContextHandle_t suitable for
-// CreateQnnGraph + ComposeQnnGraph (Path E1 JSON snapshot tests).
+// QnnRealHtpBackendManagerContext gives a usable Qnn_ContextHandle_t suitable
+// for CreateQnnGraph + ComposeQnnGraph (Path E1 JSON snapshot tests).
+//
+// No CPU-backend context: QnnCpu (libQnnCpu.so) is no longer shipped with the
+// QNN EP wheel.
 
 #pragma once
 
@@ -19,10 +20,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#ifndef _WIN32
-#include <dlfcn.h>
-#endif
 
 #include "QnnInterface.h"
 #include "HTP/QnnHtpDevice.h"
@@ -126,146 +123,12 @@ struct OpBuilderTestContext {
   }
 };
 
-// Context for tests that need a real QNN CPU backend (e.g., ValidateQnnNode).
-// Loads libQnnCpu.so at construction time via dlopen and creates a live backend handle.
-// Use IsValid() before calling — if the library cannot be loaded the context is a no-op
-// and GTest tests should call GTEST_SKIP() rather than FAIL().
-//
-// Usage:
-//   QnnRealCpuBackendContext backend;
-//   if (!backend.IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-//   ctx.qnn_interface  = backend.qnn_interface;
-//   ctx.backend_handle = backend.backend_handle;
-struct QnnRealCpuBackendContext {
-  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t backend_handle = nullptr;
-
-  QnnRealCpuBackendContext() {
-#ifndef _WIN32
-    lib_handle_ = ::dlopen("libQnnCpu.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!lib_handle_) return;
-
-    using GetProvidersFn = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
-    auto get_providers = reinterpret_cast<GetProvidersFn>(
-        ::dlsym(lib_handle_, "QnnInterface_getProviders"));
-    if (!get_providers) return;
-
-    const QnnInterface_t** providers = nullptr;
-    uint32_t count = 0;
-    if (get_providers(&providers, &count) != QNN_SUCCESS || count == 0 || !providers) return;
-
-    qnn_interface = providers[0]->QNN_INTERFACE_VER_NAME;
-    if (!qnn_interface.backendCreate) return;
-
-    if (qnn_interface.backendCreate(nullptr, nullptr, &backend_handle) != QNN_BACKEND_NO_ERROR) {
-      backend_handle = nullptr;
-      return;
-    }
-    initialized_ = true;
-#endif
-  }
-
-  ~QnnRealCpuBackendContext() {
-#ifndef _WIN32
-    if (initialized_ && qnn_interface.backendFree) {
-      qnn_interface.backendFree(backend_handle);
-    }
-    if (lib_handle_) ::dlclose(lib_handle_);
-#endif
-  }
-
-  bool IsValid() const { return initialized_; }
-
-  // Non-copyable / non-movable — holds raw lib handle and backend handle.
-  QnnRealCpuBackendContext(const QnnRealCpuBackendContext&) = delete;
-  QnnRealCpuBackendContext& operator=(const QnnRealCpuBackendContext&) = delete;
-
- private:
-  void* lib_handle_ = nullptr;
-  bool initialized_ = false;
-};
-
-// Context for tests that need a real QNN CPU backend with a live context handle
-// suitable for ComposeQnnGraph (Path E1 JSON snapshot tests).
-//
-// Drives ORT's `qnn::QnnBackendManager` to create the backend AND a usable
-// context. Output is the in-memory `QnnJSONGraph` populated by
-// ComposeQnnGraph(true) (read via wrapper.GetQnnJSONGraph()).
-//
-// Usage:
-//   QnnRealCpuBackendManagerContext cpu;
-//   if (!cpu.IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-//   auto wrapper = MakeSnapshotWrapperJson(ctx, cpu, {"in"}, {"out"});
-//   ... drive op-builder ...
-//   wrapper->ComposeQnnGraph(/*build_json_qnn_graph=*/true);
-//   AssertSnapshotJson(*wrapper, "MyTest", "builder/opbuilder/clip");
-struct QnnRealCpuBackendManagerContext {
-  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t backend_handle = nullptr;
-  Qnn_ContextHandle_t context_handle = nullptr;
-
-  QnnRealCpuBackendManagerContext() {
-#ifndef _WIN32
-    qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnCpu.so";
-    cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
-    cfg.profiling_level = qnn::ProfilingLevel::OFF;
-    cfg.context_priority = qnn::ContextPriority::NORMAL;
-    cfg.device_id = 0;
-    cfg.htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
-    cfg.soc_model = 0;
-    cfg.skip_qnn_version_check = true;
-
-    ApiPtrs api_ptrs{stub_ort_api_, stub_ep_api_, stub_editor_api_};
-    manager_ = qnn::QnnBackendManager::Create(cfg, api_ptrs, ort_logger_);
-    if (!manager_) return;
-
-    std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    auto status = manager_->SetupBackend(/*load_from_cached_context=*/false,
-                                         /*need_load_system_lib=*/false,
-                                         /*share_ep_contexts=*/false,
-                                         /*htp_share_resource_optimization=*/-1,
-                                         /*enable_file_mapped_weights=*/false,
-                                         /*rpcmem_library=*/nullptr,
-                                         dummy_map);
-    if (!status.IsOK()) {
-      manager_.reset();
-      return;
-    }
-
-    qnn_interface = manager_->GetQnnInterface();
-    backend_handle = manager_->GetQnnBackendHandle();
-    context_handle = manager_->GetQnnContext(0);
-    initialized_ = true;
-#endif
-  }
-
-  ~QnnRealCpuBackendManagerContext() = default;
-
-  bool IsValid() const { return initialized_; }
-
-  QnnRealCpuBackendManagerContext(const QnnRealCpuBackendManagerContext&) = delete;
-  QnnRealCpuBackendManagerContext& operator=(const QnnRealCpuBackendManagerContext&) = delete;
-
- private:
-  bool initialized_ = false;
-
-  // Lifetimes: manager_ stores api_ptrs by reference, so these must outlive manager_.
-  OrtApi stub_ort_api_{};
-  OrtEpApi stub_ep_api_{};
-  OrtModelEditorApi stub_editor_api_{};
-  Ort::Logger ort_logger_{MakeNullLogger()};
-
-  std::shared_ptr<qnn::QnnBackendManager> manager_;
-};
-
 // Context for tests that need a real QNN HTP backend with a live context handle
-// suitable for ComposeQnnGraph. Use this when the dtype under test is HTP-only
-// (FP16, U16 / U8 mixed quantization) and libQnnCpu would reject the op
-// (graphAddNode rc 3110).
+// suitable for ComposeQnnGraph. This is the only real-backend context in this
+// header — QnnCpu (libQnnCpu.so) is no longer shipped with the QNN EP wheel.
 //
 // Note: HTP triggers `ProcessBF16Conversions` for FP32 tensors, which inserts
-// Convert ops and mutates the op list. Use the CPU variant for FP32 cases.
+// Convert ops and mutates the op list. FP32 golden JSON must reflect this.
 //
 // Usage:
 //   QnnRealHtpBackendManagerContext htp;

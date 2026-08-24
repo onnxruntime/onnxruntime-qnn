@@ -45,12 +45,10 @@ namespace test {
 
 namespace {
 
-ProviderOptions MakeAccuracyProviderOptions(SnapshotBackend backend) {
+ProviderOptions MakeAccuracyProviderOptions([[maybe_unused]] SnapshotBackend backend) {
   ProviderOptions po;
-  po["backend_type"] = (backend == SnapshotBackend::CPU) ? "cpu" : "htp";
-  if (backend == SnapshotBackend::HTP) {
-    po["offload_graph_io_quantization"] = "0";
-  }
+  po["backend_type"] = "htp";
+  po["offload_graph_io_quantization"] = "0";
   return po;
 }
 

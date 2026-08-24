@@ -5,10 +5,10 @@
 //
 // Usage in snapshot tests:
 //
-//   QnnRealCpuBackendManagerContext cpu;
-//   if (!cpu.IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
+//   QnnRealHtpBackendManagerContext htp;
+//   if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
 //   OpBuilderTestContext ctx;
-//   auto wrapper = MakeSnapshotWrapperJson(ctx, cpu, {"data"}, {"output"});
+//   auto wrapper = MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
 //   ASSERT_TRUE(builder->AddToModelBuilder(*wrapper, node_unit, ctx.ort_logger, false).IsOK());
 //   ASSERT_TRUE(wrapper->ComposeQnnGraph(/*build_json_qnn_graph=*/true));
 //   AssertSnapshotJson(*wrapper, "Clip_f32_DefaultMinMax_Rank4");
@@ -28,9 +28,6 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <algorithm>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -72,60 +69,17 @@ inline std::unique_ptr<qnn::QnnModelWrapper> MakeSnapshotWrapper(
 }
 
 // ---------------------------------------------------------------------------
-// MakeSnapshotWrapperJson
-//
-// Like MakeSnapshotWrapper but wires up QnnRealCpuBackendManagerContext (real
-// CPU backend) and calls CreateQnnGraph so ComposeQnnGraph can be called.
-// Use with AssertSnapshotJson — call wrapper->ComposeQnnGraph(true) before
-// asserting.
-//
-// The wrapper is constructed with backend_type=CPU so HTP-specific
-// transforms (BF16 conversion etc.) do not rewrite the op list.
-// Returns nullptr if graph initialization fails.
-// ---------------------------------------------------------------------------
-inline std::unique_ptr<qnn::QnnModelWrapper> MakeSnapshotWrapperJson(
-    OpBuilderTestContext& ctx,
-    const QnnRealCpuBackendManagerContext& cpu,
-    std::vector<std::string> input_names,
-    std::vector<std::string> output_names) {
-  // Reset the process-singleton name counter so generated node/tensor names
-  // are stable across test orderings (otherwise EP appends `_N` to dedupe
-  // and snapshots accumulate counter drift).
-  qnn::utils::UniqueNameGenerator().Reset();
-
-  ctx.qnn_interface = cpu.qnn_interface;
-  ctx.backend_handle = cpu.backend_handle;
-
-  for (size_t i = 0; i < input_names.size(); ++i) {
-    ctx.input_info.names.push_back(input_names[i]);
-    ctx.input_info.indices[input_names[i]] = i;
-  }
-  for (size_t i = 0; i < output_names.size(); ++i) {
-    ctx.output_info.names.push_back(output_names[i]);
-    ctx.output_info.indices[output_names[i]] = i;
-  }
-
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::CPU);
-
-  if (!wrapper->CreateQnnGraph(cpu.context_handle, "test_graph", nullptr)) {
-    return nullptr;
-  }
-  return wrapper;
-}
-
-// ---------------------------------------------------------------------------
 // MakeSnapshotWrapperHtpJson
 //
-// Like MakeSnapshotWrapperJson but uses QnnRealHtpBackendManagerContext (real
-// HTP backend). For test cases whose dtypes (FP16, U16 quantization, U8/U16
-// mixed) are not supported by libQnnCpu — graphAddNode would otherwise reject
-// with rc 3110.
+// Wires up QnnRealHtpBackendManagerContext (real HTP backend) and calls
+// CreateQnnGraph so ComposeQnnGraph can be called. Use with AssertSnapshotJson
+// — call wrapper->ComposeQnnGraph(true) before asserting.
 //
-// Note: backend_type=HTP triggers BF16 conversion ONLY for FP32 input tensors
-// (qnn_model_wrapper.cc:278). FP16 / U16 graphs are unaffected — op list
-// stays clean. Do NOT use this for FP32 cases (CPU variant is the right
-// choice there to avoid unnecessary BF16 cast insertion).
+// Note: backend_type=HTP triggers BF16 conversion for FP32 input tensors
+// (qnn_model_wrapper.cc:278), which inserts Convert ops into the op list.
+// FP16 / U16 graphs are unaffected. FP32 golden JSON must reflect the
+// inserted Convert ops since there is no CPU-backend alternative anymore.
+// Returns nullptr if graph initialization fails.
 // ---------------------------------------------------------------------------
 inline std::unique_ptr<qnn::QnnModelWrapper> MakeSnapshotWrapperHtpJson(
     OpBuilderTestContext& ctx,
@@ -184,48 +138,12 @@ inline void AssertSnapshotJson(qnn::QnnModelWrapper& wrapper,
         << "\nPass golden_subdir explicitly to override.";
   }
 
-  const std::string golden_root = GetGoldenRootDir();  // "" == golden store absent
-  const bool have_root = !golden_root.empty();
-  const std::string golden_dir = golden_root + "/" + golden_subdir;
-  const std::string golden_path = golden_dir + "/" + golden_basename + ".json";
-
   // Copy so normalization does not mutate wrapper-owned state (Finalize returns const ref).
   nlohmann::json graph = wrapper.GetQnnJSONGraph();
   NormalizeQnnJSONGraph(graph);
   const std::string current = graph.dump(2) + "\n";  // 2-space indent + trailing newline.
 
-  const char* update_env = std::getenv("QNN_UT_SNAPSHOT_GOLDEN_UPDATE");
-  bool update = (update_env != nullptr && std::string(update_env) == "1");
-
-  if (update) {
-    ASSERT_TRUE(have_root)
-        << "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 but QNN_UT_SNAPSHOT_GOLDEN_DIR is unset — "
-           "nowhere to write goldens.";
-    std::filesystem::create_directories(golden_dir);
-    std::ofstream out(golden_path);
-    ASSERT_TRUE(out.is_open()) << "Failed to open golden file for writing: " << golden_path;
-    out << current;
-    out.close();
-    GTEST_SKIP() << "Golden updated: " << golden_path;
-    return;
-  }
-
-  // Absent golden store (or missing file) is not a failure: the gate treats it
-  // as "run accuracy instead". The [QNN_GOLDEN_ABSENT] tag is an inert marker
-  // here; only the CI gate parses it.
-  std::ifstream in;
-  if (have_root) in.open(golden_path);
-  if (!have_root || !in.is_open()) {
-    GTEST_SKIP() << "[QNN_GOLDEN_ABSENT] op=" << golden_subdir
-                 << " name=" << golden_basename;
-    return;
-  }
-  std::string expected((std::istreambuf_iterator<char>(in)),
-                       std::istreambuf_iterator<char>());
-  EXPECT_EQ(current, expected)
-      << "[QNN_SNAPSHOT_DRIFT] name=" << golden_basename
-      << "\nJSON snapshot diff detected. Regenerate with "
-         "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1.";
+  CompareOrWriteGolden(current, golden_basename, golden_subdir, "JSON snapshot");
 }
 
 }  // namespace test

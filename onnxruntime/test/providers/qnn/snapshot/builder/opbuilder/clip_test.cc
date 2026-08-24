@@ -62,9 +62,10 @@ namespace test {
 //                                   (only path that exercises Path A —
 //                                   clip_op_builder.cc:45-52 folded fallback)
 //
-// Every case runs on HTP by default — QnnCpu is no longer shipped with the
-// QNN EP wheel. The CPU branch is kept only for helpers that still guard on
-// the enum (dlopen skip logic); new specs should always pick HTP.
+// Every case runs on HTP — QnnCpu is no longer shipped with the QNN EP
+// wheel. The `SnapshotBackend` enum is kept (with only HTP as a value) so
+// per-spec `snapshot_backend` / `accuracy_backend` fields stay in place for
+// future backend flexibility.
 //
 // Group B (default-min/max QDQ) is covered by the session-snapshot tier
 // (session_snapshot/builder/opbuilder/clip_test.cc), not here.
@@ -105,26 +106,21 @@ void RegisterQuantScalar(const std::string& name,
   }
 }
 
-// Build a wrapper backed by a real CPU or HTP backend. GTEST_SKIP is invoked
-// when the backend library is unavailable. Inlined into each Run* helper
-// (cannot be extracted into a non-void function — GTEST_SKIP only works in
+// Build a wrapper backed by a real HTP backend. GTEST_SKIP is invoked when
+// the backend library is unavailable. Inlined into each Run* helper (cannot
+// be extracted into a non-void function — GTEST_SKIP only works in
 // void-returning callers).
+//
+// `backend` is currently always SnapshotBackend::HTP (QnnCpu is no longer
+// shipped with the wheel) but is threaded through from the spec for
+// interface stability if another backend is reintroduced later.
 //
 // Pattern (callers):
 //   OpBuilderTestContext ctx;
 //   ... mock registry setup if needed ...
-//   std::optional<QnnRealCpuBackendManagerContext> cpu;
-//   std::optional<QnnRealHtpBackendManagerContext> htp;
-//   std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-//   if (backend == SnapshotBackend::CPU) {
-//     cpu.emplace();
-//     if (!cpu->IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-//     wrapper = MakeSnapshotWrapperJson(ctx, *cpu, {"data"}, {"output"});
-//   } else {
-//     htp.emplace();
-//     if (!htp->IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
-//     wrapper = MakeSnapshotWrapperHtpJson(ctx, *htp, {"data"}, {"output"});
-//   }
+//   QnnRealHtpBackendManagerContext htp;
+//   if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+//   auto wrapper = MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
 //   ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph";
 
 // Group A: Plain dtype data, optional float min/max scalar input(s).
@@ -134,7 +130,7 @@ void RegisterQuantScalar(const std::string& name,
 // (INT32 truncates, FP16 rounds via Ort::Float16_t). Mirrors the integration-tier
 // `Clip_*` graph structure so snapshot ↔ accuracy ↔ integration test the same
 // graph.
-void RunClipSnapshot(SnapshotBackend backend,
+void RunClipSnapshot([[maybe_unused]] SnapshotBackend backend,
                      ONNXTensorElementDataType dtype,
                      std::vector<int64_t> shape,
                      std::optional<float> min_val,
@@ -172,18 +168,10 @@ void RunClipSnapshot(SnapshotBackend backend,
 
   OpBuilderTestContext ctx;
   SetupMockInitRegistryStubs(ctx);
-  std::optional<QnnRealCpuBackendManagerContext> cpu;
-  std::optional<QnnRealHtpBackendManagerContext> htp;
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-  if (backend == SnapshotBackend::CPU) {
-    cpu.emplace();
-    if (!cpu->IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-    wrapper = MakeSnapshotWrapperJson(ctx, *cpu, {"data"}, {"output"});
-  } else {
-    htp.emplace();
-    if (!htp->IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
-    wrapper = MakeSnapshotWrapperHtpJson(ctx, *htp, {"data"}, {"output"});
-  }
+  QnnRealHtpBackendManagerContext htp;
+  if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+  std::unique_ptr<qnn::QnnModelWrapper> wrapper =
+      MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
   ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph for snapshot test";
 
   auto data = MakeMockIODef("data", dtype, shape);
@@ -209,7 +197,7 @@ void RunClipSnapshot(SnapshotBackend backend,
 
 // Group B+C: QDQ data + optional float min/max scalars.
 // Pass nullopt for both min_val and max_val to test default min/max (Group B).
-void RunClipSnapshotQDQFloatMinMax(SnapshotBackend backend,
+void RunClipSnapshotQDQFloatMinMax([[maybe_unused]] SnapshotBackend backend,
                                    ONNXTensorElementDataType qdq_dtype,
                                    QdqDataSpec data,
                                    std::vector<int64_t> shape,
@@ -226,18 +214,10 @@ void RunClipSnapshotQDQFloatMinMax(SnapshotBackend backend,
 
   OpBuilderTestContext ctx;
   SetupMockInitRegistryStubs(ctx);
-  std::optional<QnnRealCpuBackendManagerContext> cpu;
-  std::optional<QnnRealHtpBackendManagerContext> htp;
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-  if (backend == SnapshotBackend::CPU) {
-    cpu.emplace();
-    if (!cpu->IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-    wrapper = MakeSnapshotWrapperJson(ctx, *cpu, {"data"}, {"output"});
-  } else {
-    htp.emplace();
-    if (!htp->IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
-    wrapper = MakeSnapshotWrapperHtpJson(ctx, *htp, {"data"}, {"output"});
-  }
+  QnnRealHtpBackendManagerContext htp;
+  if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+  std::unique_ptr<qnn::QnnModelWrapper> wrapper =
+      MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
   ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph for snapshot test";
 
   auto data_iodef = MakeMockQDQIODef("data", qdq_dtype, shape, data_scale_vi, data_zp_vi);
@@ -263,7 +243,7 @@ void RunClipSnapshotQDQFloatMinMax(SnapshotBackend backend,
 }
 
 // Group D: QDQ data + quantized min/max scalars (each with own scale/zp).
-void RunClipSnapshotQDQQuantMinMax(SnapshotBackend backend,
+void RunClipSnapshotQDQQuantMinMax([[maybe_unused]] SnapshotBackend backend,
                                    ONNXTensorElementDataType qdq_dtype,
                                    QdqDataSpec data,
                                    std::vector<int64_t> shape,
@@ -294,18 +274,10 @@ void RunClipSnapshotQDQQuantMinMax(SnapshotBackend backend,
 
   OpBuilderTestContext ctx;
   SetupMockInitRegistryStubs(ctx);
-  std::optional<QnnRealCpuBackendManagerContext> cpu;
-  std::optional<QnnRealHtpBackendManagerContext> htp;
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-  if (backend == SnapshotBackend::CPU) {
-    cpu.emplace();
-    if (!cpu->IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-    wrapper = MakeSnapshotWrapperJson(ctx, *cpu, {"data"}, {"output"});
-  } else {
-    htp.emplace();
-    if (!htp->IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
-    wrapper = MakeSnapshotWrapperHtpJson(ctx, *htp, {"data"}, {"output"});
-  }
+  QnnRealHtpBackendManagerContext htp;
+  if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+  std::unique_ptr<qnn::QnnModelWrapper> wrapper =
+      MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
   ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph for snapshot test";
 
   auto data_iodef = MakeMockQDQIODef("data", qdq_dtype, shape, data_scale_vi, data_zp_vi);
@@ -341,7 +313,7 @@ void RunClipSnapshotQDQQuantMinMax(SnapshotBackend backend,
 // with the pre-computed fp32 value. This drives ClipOpBuilder into the
 // `!input_info.is_initializer` branch (clip_op_builder.cc:45-52) which
 // no other snapshot group can reach.
-void RunClipSnapshotFoldedConst(SnapshotBackend backend,
+void RunClipSnapshotFoldedConst([[maybe_unused]] SnapshotBackend backend,
                                 const std::vector<int64_t>& data_shape,
                                 float min_fp32_value,
                                 float max_fp32_value,
@@ -353,18 +325,10 @@ void RunClipSnapshotFoldedConst(SnapshotBackend backend,
 
   OpBuilderTestContext ctx;
   SetupMockInitRegistryStubs(ctx);
-  std::optional<QnnRealCpuBackendManagerContext> cpu;
-  std::optional<QnnRealHtpBackendManagerContext> htp;
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-  if (backend == SnapshotBackend::CPU) {
-    cpu.emplace();
-    if (!cpu->IsValid()) GTEST_SKIP() << "libQnnCpu.so not available";
-    wrapper = MakeSnapshotWrapperJson(ctx, *cpu, {"data"}, {"output"});
-  } else {
-    htp.emplace();
-    if (!htp->IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
-    wrapper = MakeSnapshotWrapperHtpJson(ctx, *htp, {"data"}, {"output"});
-  }
+  QnnRealHtpBackendManagerContext htp;
+  if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+  std::unique_ptr<qnn::QnnModelWrapper> wrapper =
+      MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
   ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph for snapshot test";
 
   // Register min/max as folded static fp32 scalars — mirrors the end-state
