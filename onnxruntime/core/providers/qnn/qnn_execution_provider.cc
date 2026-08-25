@@ -3067,7 +3067,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // After compilation timing: reload compiled context for multi-PD inference if requested.
   // Runs after the timing window intentionally — reload is post-compile work.
   if (ep->prepare_and_load_) {
-    RETURN_IF_NOT_NULL(ReloadCompiledContext(ep, graphs, fused_nodes, count));
+    RETURN_IF_NOT_NULL(ep->ReloadCompiledContext(graphs, fused_nodes, count));
   }
 
   // Clean up transient GetCapability→Compile state.
@@ -3084,29 +3084,28 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   return nullptr;
 }
 
-OrtStatus* QnnEp::ReloadCompiledContext(QnnEp* ep,
-                                        const OrtGraph** graphs,
+OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
                                         const OrtNode** fused_nodes,
                                         size_t count) {
-  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
               "prepare_and_load mode: reloading compiled context for multi-PD inference.");
 
   // 1. Extract the compiled context binary (while compile context is still alive).
   //    Wrap immediately in unique_ptr so the buffer is freed on all return paths (RAII).
   uint64_t buffer_size = 0;
   unsigned char* raw_context_buffer = nullptr;
-  Ort::Status get_buf_status = ep->qnn_backend_manager_->GetContextBinaryBuffer(
+  Ort::Status get_buf_status = qnn_backend_manager_->GetContextBinaryBuffer(
       /*is_multi_soc_buffer=*/false, &raw_context_buffer, buffer_size);
   if (!get_buf_status.IsOK()) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
-                                    ("prepare_and_load: Failed to extract context binary buffer: " +
-                                     std::string(get_buf_status.GetErrorMessage()))
-                                        .c_str());
+    return ort_api.CreateStatus(ORT_EP_FAIL,
+                                ("prepare_and_load: Failed to extract context binary buffer: " +
+                                 std::string(get_buf_status.GetErrorMessage()))
+                                    .c_str());
   }
   std::unique_ptr<unsigned char[]> context_buffer(raw_context_buffer);
   if (buffer_size == 0) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
-                                    "prepare_and_load: Context binary buffer is empty.");
+    return ort_api.CreateStatus(ORT_EP_FAIL,
+                                "prepare_and_load: Context binary buffer is empty.");
   }
 
   // 2. Collect fused node names before clearing models.
@@ -3114,41 +3113,41 @@ OrtStatus* QnnEp::ReloadCompiledContext(QnnEp* ep,
   fused_node_names.reserve(count);
   for (size_t i = 0; i < count; ++i) {
     const char* node_name = nullptr;
-    auto st = ep->ort_api.Node_GetName(fused_nodes[i], &node_name);
+    auto st = ort_api.Node_GetName(fused_nodes[i], &node_name);
     if (st != nullptr) {
-      ep->ort_api.ReleaseStatus(st);
-      return ep->ort_api.CreateStatus(ORT_EP_FAIL, "prepare_and_load: Failed to get fused node name.");
+      ort_api.ReleaseStatus(st);
+      return ort_api.CreateStatus(ORT_EP_FAIL, "prepare_and_load: Failed to get fused node name.");
     }
     fused_node_names.emplace_back(node_name);
   }
 
   // 3. Clear compile-time QNN models (drops compile-time graph handles).
-  ep->qnn_models_.clear();
+  qnn_models_.clear();
 
   // 4. Release the compile-time QNN context (frees single-PD HW allocation).
-  Ort::Status release_status = ep->qnn_backend_manager_->ReleaseContext();
+  Ort::Status release_status = qnn_backend_manager_->ReleaseContext();
   if (!release_status.IsOK()) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
-                                    ("prepare_and_load: ReleaseContext failed: " +
-                                     std::string(release_status.GetErrorMessage()))
-                                        .c_str());
+    return ort_api.CreateStatus(ORT_EP_FAIL,
+                                ("prepare_and_load: ReleaseContext failed: " +
+                                 std::string(release_status.GetErrorMessage()))
+                                    .c_str());
   }
 
   // 5. Load from the in-memory binary buffer via AOT path (multi-PD).
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> loaded_models;
-  Ort::Status load_status = ep->qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+  Ort::Status load_status = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
       reinterpret_cast<char*>(context_buffer.get()),
       buffer_size,
       "",  // no file path needed for in-memory load
       fused_node_names[0],
       loaded_models,
       0,
-      *ep->io_dispatch_);
+      *io_dispatch_);
   if (!load_status.IsOK()) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
-                                    ("prepare_and_load: Failed to reload context: " +
-                                     std::string(load_status.GetErrorMessage()))
-                                        .c_str());
+    return ort_api.CreateStatus(ORT_EP_FAIL,
+                                ("prepare_and_load: Failed to reload context: " +
+                                 std::string(load_status.GetErrorMessage()))
+                                    .c_str());
   }
 
   // 6. Wire up loaded models: SetGraphInputOutputInfo + SetupQnnInputOutput.
@@ -3162,29 +3161,29 @@ OrtStatus* QnnEp::ReloadCompiledContext(QnnEp* ep,
       if (loaded_models.size() == 1 && count == 1) {
         model_it = loaded_models.begin();
       } else {
-        return ep->ort_api.CreateStatus(ORT_EP_FAIL,
-                                        ("prepare_and_load: No loaded model found for fused node: " +
-                                         fused_node_name)
-                                            .c_str());
+        return ort_api.CreateStatus(ORT_EP_FAIL,
+                                    ("prepare_and_load: No loaded model found for fused node: " +
+                                     fused_node_name)
+                                        .c_str());
       }
     }
 
     auto qnn_model = std::move(model_it->second);
     loaded_models.erase(model_it);
 
-    const auto& onnx_input_names = ep->onnx_graph_io_names_->first;
-    const auto& onnx_output_names = ep->onnx_graph_io_names_->second;
+    const auto& onnx_input_names = onnx_graph_io_names_->first;
+    const auto& onnx_output_names = onnx_graph_io_names_->second;
 
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(
-        qnn::QnnModelContext{*graphs[graph_idx], *fused_nodes[graph_idx], ep->logger_,
+        qnn::QnnModelContext{*graphs[graph_idx], *fused_nodes[graph_idx], logger_,
                              &onnx_input_names, &onnx_output_names,
                              nullptr, nullptr, nullptr, std::string{}}));
-    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
 
-    ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+    qnn_models_.emplace(fused_node_name, std::move(qnn_model));
   }
 
-  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
               "prepare_and_load mode: context reload complete. Session is ready for inference.");
   return nullptr;
 }
