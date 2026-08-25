@@ -371,6 +371,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
 
+  // Caps the IO buffer QNN reuses across contextCreateFromBinary calls (AOT context load).
+  // 0 (default) leaves the SDK's own behavior unchanged.
+  void SetReusedIoLimitMb(uint64_t reused_io_limit_mb) { reused_io_limit_mb_ = reused_io_limit_mb; }
+  uint64_t GetReusedIoLimitMb() const { return reused_io_limit_mb_; }
+
   Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }
@@ -813,6 +818,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
   int htp_share_resource_optimization_ = -1;
+  uint64_t reused_io_limit_mb_ = 0;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;

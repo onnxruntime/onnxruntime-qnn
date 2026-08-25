@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1353,6 +1354,28 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
+  // Caps the IO buffer QNN reuses across contextCreateFromBinary calls (AOT context load).
+  // Mitigates NPU memory exhaustion on large AOT context binaries. 0 (default) leaves the
+  // SDK's own behavior unchanged.
+  std::string reused_io_limit_mb_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("htp_reused_io_limit_mb"),
+                                 "0",
+                                 reused_io_limit_mb_str);
+  if (!reused_io_limit_mb_str.empty() && reused_io_limit_mb_str != "0") {
+    uint64_t parsed_reused_io_limit_mb = 0;
+    const char* begin = reused_io_limit_mb_str.data();
+    const char* end = begin + reused_io_limit_mb_str.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed_reused_io_limit_mb);
+    if (ec == std::errc{} && ptr == end) {
+      reused_io_limit_mb_ = parsed_reused_io_limit_mb;
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("Ignoring malformed htp_reused_io_limit_mb: " + reused_io_limit_mb_str).c_str());
+    }
+  }
+
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -1420,6 +1443,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
+
+  qnn_backend_manager_->SetReusedIoLimitMb(reused_io_limit_mb_);
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());

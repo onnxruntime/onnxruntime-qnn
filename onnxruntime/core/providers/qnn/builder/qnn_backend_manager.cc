@@ -1300,6 +1300,20 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     spill_cfg->customConfig = spill_custom;
   }
 
+  if (reused_io_limit_mb_ > 0) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_INFO,
+                    ("Applying reused_io_limit_mb: " + std::to_string(reused_io_limit_mb_)).c_str());
+    gsl::not_null<QnnHtpContext_CustomConfig_t*> reused_io_limit_custom_config =
+        configs_builder.PushCustomConfig();
+    reused_io_limit_custom_config->option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+    reused_io_limit_custom_config->reusedIoLimitMb = reused_io_limit_mb_;
+
+    gsl::not_null<QnnContext_Config_t*> reused_io_limit_config = configs_builder.PushConfig();
+    reused_io_limit_config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    reused_io_limit_config->customConfig = reused_io_limit_custom_config;
+  }
+
   return Ort::Status();
 }
 
