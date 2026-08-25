@@ -15,6 +15,7 @@
 #include "HTP/QnnHtpGraph.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -225,6 +226,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool prepare_only_ = false;
+  bool prepare_and_load_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
@@ -315,6 +317,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
   mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
+
+  // Owns the App-provided EPContext read/write callbacks.
+  // On pre-v28 ORT it degrades to a no-op stub with HasReadCallback() / HasWriteCallback() returning false.
+  std::unique_ptr<qnn::EpContextIoDispatch> io_dispatch_;
 };
 
 }  // namespace onnxruntime

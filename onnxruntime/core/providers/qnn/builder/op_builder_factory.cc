@@ -13,6 +13,7 @@ namespace qnn {
 OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
+  CreateArrayFeatureExtractorOpBuilder("ArrayFeatureExtractor", *this);
   CreateAttentionOpBuilder("Attention", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateBernoulliOpBuilder("Bernoulli", *this);
@@ -57,6 +58,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("GlobalAveragePool", *this);
   CreatePoolOpBuilder("GlobalMaxPool", *this);
   CreatePoolOpBuilder("MaxPool", *this);
+  CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
   CreateQuickGeluOpBuilder("QuickGelu", *this);
   CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);

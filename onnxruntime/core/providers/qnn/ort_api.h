@@ -29,6 +29,32 @@
 // Public headers from ORT Core
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
+
+// EPContext encryption callbacks were added at ORT API v28.
+#if ORT_API_VERSION >= 28
+#define ORT_API_HAS_EPCONTEXT_ENCRYPTION 1
+#else
+#define ORT_API_HAS_EPCONTEXT_ENCRYPTION 0
+#endif
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+#include "onnxruntime_experimental_c_api.h"
+#include "onnxruntime_experimental_cxx_api.h"
+#else
+// Forward-declare v28 typedefs so QNN EP signatures that mention them still compile
+// against pre-v28 ORT headers. Bodies gated on ORT_API_HAS_EPCONTEXT_ENCRYPTION supply
+// the real definitions; the pointers are only ever dereferenced on the v28+ path.
+extern "C" {
+struct OrtEpContextConfig;
+typedef struct OrtEpContextConfig OrtEpContextConfig;
+typedef OrtStatus*(ORT_API_CALL* OrtWriteNamedBufferFunc)(void* state, const char* name,
+                                                          const void* buffer, size_t buffer_num_bytes);
+typedef OrtStatus*(ORT_API_CALL* OrtReadNamedBufferFunc)(void* state, const char* name,
+                                                         OrtAllocator* allocator,
+                                                         void** buffer, size_t* data_size);
+}
+#endif  // ORT_API_HAS_EPCONTEXT_ENCRYPTION
+
 #include "onnxruntime_run_options_config_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
@@ -262,6 +288,11 @@ struct OrtNodeGroup {
   std::vector<const OrtNode*> q_nodes;
   const OrtNode* target_node;
   const OrtNode* redundant_clip_node{nullptr};
+  // MatMulAddFusion sandwiches a rank-2 Gemm between a pre-Reshape (rank-N -> rank-2 in front of
+  // DQ_act) and a post-Reshape (rank-2 -> rank-N behind Gemm's output). When the terminal Q sits on
+  // the far side of the post-Reshape, absorb the Reshape so the group's output IODef inherits Q's
+  // encoding; the op builder then emits FC (rank-2, encoded) + Reshape (rank-N, encoded).
+  const OrtNode* output_reshape_node{nullptr};
 };
 
 }  // namespace QDQ
@@ -308,11 +339,15 @@ class OrtNodeUnit {
 
   const OrtNode& GetNode() const noexcept { return *target_node_; }
   const OrtNode* GetRedundantClipNode() const noexcept { return redundant_clip_node_; }
+  const OrtNode* GetOutputReshapeNode() const noexcept { return output_reshape_node_; }
   const std::vector<const OrtNode*>& GetDQNodes() const noexcept { return dq_nodes_; }
   const std::vector<const OrtNode*>& GetQNodes() const noexcept { return q_nodes_; }
   std::vector<const OrtNode*> GetAllNodesInGroup() const noexcept {
     std::vector<const OrtNode*> all_nodes = dq_nodes_;
     all_nodes.push_back(target_node_);
+    if (output_reshape_node_) {
+      all_nodes.push_back(output_reshape_node_);
+    }
     if (redundant_clip_node_) {
       all_nodes.push_back(redundant_clip_node_);
     }
@@ -332,6 +367,7 @@ class OrtNodeUnit {
   const std::vector<const OrtNode*> dq_nodes_;  // dq nodes for this NodeUnit, not necessarily all inputs
   const OrtNode* target_node_;
   const OrtNode* redundant_clip_node_ = nullptr;  // Optional redundant clip node for the QDQ group, nullptr if not present.
+  const OrtNode* output_reshape_node_ = nullptr;  // Optional post-Gemm Reshape absorbed by MatMulAddFusion, nullptr if not present.
   const std::vector<const OrtNode*> q_nodes_;     // q-nodes for this NodeUnit. not necessarily all outputs
   const Type type_;
 
