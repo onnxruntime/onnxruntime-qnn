@@ -4,7 +4,6 @@
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "test/unittest_util/model_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
