@@ -235,6 +235,18 @@ TEST_F(QnnHTPBackendTests, SliceU8_NoSteps) {
                            TestInputDef<int64_t>(/*is_optional*/ true),  // steps
                            ExpectedEPNodeAssignment::All);
 }
+
+// Check that QNN supports Slice with bool data input on HTP.
+// StridedSlice on HTP BE doesn't support BOOL input/output directly, so QNN EP wraps it with
+// Cast(BOOL->UINT8) -> StridedSlice(UINT8) -> Cast(UINT8->BOOL).
+TEST_F(QnnHTPBackendTests, SliceBoolOnHTP) {
+  RunSliceNonQDQOnHTP<bool>(TestInputDef<bool>({2, 4}, false, {true, false, true, false, true, false, true, false}),
+                            TestInputDef<int64_t>({2}, true, {1, 0}),  // starts
+                            TestInputDef<int64_t>({2}, true, {2, 4}),  // ends
+                            TestInputDef<int64_t>({2}, true, {0, 1}),  // axes
+                            TestInputDef<int64_t>({2}, true, {1, 1}),  // steps
+                            ExpectedEPNodeAssignment::All);
+}
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

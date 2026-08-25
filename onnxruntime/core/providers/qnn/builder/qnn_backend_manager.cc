@@ -24,6 +24,7 @@
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -303,7 +304,7 @@ void QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
 }
 
 Ort::Status QnnBackendManager::LoadBackend() {
-  if (backend_lib_handle_) {
+  if (backend_lib_loaded_) {
     // Backend already loaded
     return Ort::Status();
   }
@@ -344,6 +345,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                           QNN_API_VERSION_PATCH},
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  htp_power_config_manager_.Init(qnn_interface_);
   backend_id_ = backend_interface_provider->backendId;
   core_api_version_ = backend_interface_provider->apiVersion.coreApiVersion;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
@@ -357,6 +359,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
       << " backend id: " << backend_id_;
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
 
+  backend_lib_loaded_ = true;
   return Ort::Status();
 }
 
@@ -411,6 +414,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
        QNN_API_VERSION_PATCH},
       &serializer_interface_provider)));
   qnn_interface_ = serializer_interface_provider->QNN_INTERFACE_VER_NAME;  // NOTE: QnnSaver/Ir will provide the interfaces
+  htp_power_config_manager_.Init(qnn_interface_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   Qnn_Version_t serializer_interface_version = GetQnnInterfaceApiVersion(serializer_interface_provider);
@@ -1252,7 +1256,18 @@ Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
 }
 
 Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                                     std::vector<char>& buffer) {
+                                                     std::vector<char>& buffer,
+                                                     const qnn::EpContextIoDispatch& io_dispatch) {
+  if (io_dispatch.HasReadCallback()) {
+    const std::string filename = std::filesystem::path(context_bin_filepath).filename().string();
+    RETURN_IF_ERROR(io_dispatch.Read(filename, buffer));
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    ("EPContext binary decrypted via App read callback: " + filename +
+                     " (" + std::to_string(buffer.size()) + " bytes)")
+                        .c_str());
+    return Ort::Status();
+  }
+
   size_t buffer_size;
   RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
 
@@ -1269,9 +1284,8 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-    bool enable_htp_graph_splitting,
-    uint32_t graphsplitter_num_prepare_threads,
-    uint32_t graph_splitting_kway_partitions) {
+    const qnn::EpContextIoDispatch& io_dispatch,
+    bool enable_htp_graph_splitting) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
@@ -1309,14 +1323,11 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   if (enable_htp_graph_splitting) {
     graph_splitting_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
     graph_splitting_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
-    graph_splitting_custom_config_vtcm.graphSplittingConfigs.numPrepareThreads = graphsplitter_num_prepare_threads;
     context_config_graph_splitting_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_graph_splitting_vtcm.customConfig = &graph_splitting_custom_config_vtcm;
   }
 #else
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
-  ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
-  ORT_UNUSED_PARAMETER(graph_splitting_kway_partitions);
 #endif
 
   std::vector<const QnnContext_Config_t*> configs_vec;
@@ -1333,28 +1344,6 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #endif
   configs_vec.push_back(nullptr);
 
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting) {
-    if (graph_splitting_kway_partitions > 0) {
-      const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
-#ifdef _WIN32
-      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
-      _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
-#else
-      setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
-#endif
-    } else {
-      // kway_partitions=0: unset so a stale value from a prior session does not persist.
-#ifdef _WIN32
-      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", nullptr);
-      _putenv("GPE_KWAY_PARTITIONS=");
-#else
-      unsetenv("GPE_KWAY_PARTITIONS");
-#endif
-    }
-  }
-#endif
-
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   if (file_mapped_weights_enabled_ && file_mapper_) {
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
@@ -1366,12 +1355,13 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     }
   }
 #endif
-  return CreateContextFromListAsync(configs_vec.data(), context_bin_map);
+  return CreateContextFromListAsync(configs_vec.data(), context_bin_map, io_dispatch);
 }
 
 Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                                           std::unordered_map<std::string,
-                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          const qnn::EpContextIoDispatch& io_dispatch) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
@@ -1384,7 +1374,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     auto context_bin_filepath = it.first;
 
     std::vector<char> buffer;
-    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer));
+    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer, io_dispatch));
 
     size_t buffer_size = buffer.size();
     buffer_list.push_back(std::move(buffer));
@@ -1522,9 +1512,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
                                              bool enable_htp_extended_udma_mode,
                                              bool enable_htp_prepare_only,
                                              bool enable_htp_ref_weight_sharing,
-                                             bool enable_htp_graph_splitting,
-                                             uint32_t graphsplitter_num_prepare_threads,
-                                             uint32_t graph_splitting_kway_partitions) {
+                                             bool enable_htp_graph_splitting) {
   if (true == context_created_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
@@ -1578,14 +1566,11 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   if (enable_htp_graph_splitting) {
     graph_splitting_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
     graph_splitting_custom_config.graphSplittingConfigs.graphSplittingEnabled = true;
-    graph_splitting_custom_config.graphSplittingConfigs.numPrepareThreads = graphsplitter_num_prepare_threads;
     context_config_graph_splitting.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_graph_splitting.customConfig = &graph_splitting_custom_config;
   }
 #else
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
-  ORT_UNUSED_PARAMETER(graphsplitter_num_prepare_threads);
-  ORT_UNUSED_PARAMETER(graph_splitting_kway_partitions);
 #endif
 
   std::vector<const QnnContext_Config_t*> npu_context_configs_vec;
@@ -1624,36 +1609,6 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   if (qnn_serializer_config_ && !qnn_serializer_config_->SupportsArbitraryGraphConfigs()) {
     configs = nullptr;
   }
-
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting) {
-    if (graph_splitting_kway_partitions > 0) {
-      const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
-#ifdef _WIN32
-      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
-      _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before QnnContext_create.").c_str());
-#else
-      setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before QnnContext_create.").c_str());
-#endif
-    } else {
-      // kway_partitions=0: unset so a stale value from a prior session does not persist.
-#ifdef _WIN32
-      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", nullptr);
-      _putenv("GPE_KWAY_PARTITIONS=");
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before QnnContext_create.");
-#else
-      unsetenv("GPE_KWAY_PARTITIONS");
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before QnnContext_create.");
-#endif
-    }
-  }
-#endif
 
   Qnn_ContextHandle_t context = nullptr;
   Qnn_ErrorHandle_t result = 0;
@@ -1788,6 +1743,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     std::string node_name,
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
     int64_t max_spill_fill_size,
+    const qnn::EpContextIoDispatch& io_dispatch,
     bool is_multi_soc_buffer) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
@@ -1949,11 +1905,13 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("Failed to create context with file mapping enabled. Error: " + QnnErrorHandleToString(rt) + ", Code : " + std::to_string(rt) + ". Retrying with feature disabled.").c_str());
 
         // Read context bin from file since file mapping has failed
-        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, backup_buffer));
+        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, backup_buffer, io_dispatch));
 
         bin_buffer = static_cast<void*>(backup_buffer.data());
       }
     }
+#else
+  ORT_UNUSED_PARAMETER(io_dispatch);
 #endif
     if (!use_file_mapping || rt != QNN_SUCCESS) {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
@@ -2020,14 +1978,22 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool enable_file_mapped_weights,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+    const qnn::EpContextIoDispatch& io_dispatch,
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
-    bool enable_htp_graph_splitting,
-    uint32_t graphsplitter_num_prepare_threads,
-    uint32_t graph_splitting_kway_partitions) {
+    bool enable_htp_graph_splitting) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
+
+    // Shared manager: file_mapped_weights_enabled_ was latched by an earlier session and
+    // wouldn't otherwise see this session's read callback.
+    if (file_mapped_weights_enabled_ && io_dispatch.HasReadCallback()) {
+      file_mapped_weights_enabled_ = false;
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      "EPContext read callback registered on a session reusing an already-set-up "
+                      "backend manager; disabling file mapping for this session.");
+    }
 
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
@@ -2036,9 +2002,8 @@ Ort::Status QnnBackendManager::SetupBackend(
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                           enable_htp_graph_splitting,
-                                                           graphsplitter_num_prepare_threads,
-                                                           graph_splitting_kway_partitions);
+                                                           io_dispatch,
+                                                           enable_htp_graph_splitting);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2057,36 +2022,6 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   htp_share_resource_optimization_ = htp_share_resource_optimization;
-
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting) {
-    if (graph_splitting_kway_partitions > 0) {
-      const std::string kway_str = std::to_string(graph_splitting_kway_partitions);
-#ifdef _WIN32
-      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", kway_str.c_str());
-      _putenv_s("GPE_KWAY_PARTITIONS", kway_str.c_str());
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before LoadBackend.").c_str());
-#else
-      setenv("GPE_KWAY_PARTITIONS", kway_str.c_str(), 1);
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      ("GPE_KWAY_PARTITIONS set to " + kway_str + " before LoadBackend.").c_str());
-#endif
-    } else {
-      // kway_partitions=0: unset so a stale value from a prior session does not persist.
-#ifdef _WIN32
-      SetEnvironmentVariableA("GPE_KWAY_PARTITIONS", nullptr);
-      _putenv("GPE_KWAY_PARTITIONS=");
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before LoadBackend.");
-#else
-      unsetenv("GPE_KWAY_PARTITIONS");
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                      "GPE_KWAY_PARTITIONS unset (kway_partitions=0) before LoadBackend.");
-#endif
-    }
-  }
-#endif
 
   auto status = Ort::Status();
   if (!qnn_serializer_config_) {
@@ -2217,16 +2152,13 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                               enable_htp_graph_splitting,
-                                                               graphsplitter_num_prepare_threads,
-                                                               graph_splitting_kway_partitions)
+                                                               io_dispatch,
+                                                               enable_htp_graph_splitting)
                  : CreateContext(enable_htp_weight_sharing,
                                  enable_htp_extended_udma_mode,
                                  enable_htp_prepare_only,
                                  false /*enable_htp_ref_weight_sharing*/,
-                                 enable_htp_graph_splitting,
-                                 graphsplitter_num_prepare_threads,
-                                 graph_splitting_kway_partitions);
+                                 enable_htp_graph_splitting);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
@@ -2318,9 +2250,7 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                                                      bool enable_htp_extended_udma_mode,
                                                      bool enable_htp_prepare_only,
                                                      bool enable_htp_ref_weight_sharing,
-                                                     bool enable_htp_graph_splitting,
-                                                     uint32_t graphsplitter_num_prepare_threads,
-                                                     uint32_t graph_splitting_kway_partitions) {
+                                                     bool enable_htp_graph_splitting) {
   RETURN_IF_NOT(backend_partial_setup_completed_, "QNN backend manager must be partially setup first.");
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager completely setup already.");
@@ -2341,9 +2271,7 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                            enable_htp_extended_udma_mode,
                            enable_htp_prepare_only,
                            enable_htp_ref_weight_sharing,
-                           enable_htp_graph_splitting,
-                           graphsplitter_num_prepare_threads,
-                           graph_splitting_kway_partitions);
+                           enable_htp_graph_splitting);
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN context created.");
@@ -2360,9 +2288,21 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
   return status;
 }
 
-Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
-                                                   uint32_t core_id,
-                                                   uint32_t& htp_power_config_id) {
+Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
+  RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
+  htp_power_config_manager_.CreateTimerThread(htp_power_config_id);
+  return Ort::Status();
+}
+
+void QnnBackendManager::DeInitializePerfTimer() {
+  htp_power_config_manager_.ReleaseTimerThread();
+}
+
+void QnnBackendManager::DropBoostedPowerConfigId(uint32_t htp_power_config_id) {
+  htp_power_config_manager_.DropBoostedPowerConfigId(htp_power_config_id);
+}
+
+Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
   // create an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
@@ -2382,26 +2322,6 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                                  HtpPerformanceMode htp_performance_mode,
-                                                  uint32_t rpc_polling_time,
-                                                  uint32_t rpc_control_latency) {
-  // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
-  // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
-  // set an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
-  RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
-  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time, *logger_ptr_));
-  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency, *logger_ptr_));
-  RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(htp_performance_mode,
-                                                                  htp_power_config_client_id,
-                                                                  *logger_ptr_));
-  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_client_id,
-                                                           GetQnnInterface(),
-                                                           *logger_ptr_));
-
-  return Ort::Status();
-}
-
 Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run) {
   PerThreadHtpPowerConfigs_t htp_power_configs;
   if (!GetPerThreadHtpPowerConfigMapping(thread_id, htp_power_configs)) {
@@ -2410,29 +2330,23 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
 
   auto htp_power_config_id = htp_power_configs.power_config_id;
   if (pre_run) {
+    // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.pre_run_perf_mode,
-                                                                      htp_power_config_id,
-                                                                      *logger_ptr_));
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_START, config, *logger_ptr_));
+    } else if (htp_power_configs.default_perf_mode.has_value()) {
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_START, config, *logger_ptr_));
     }
-
-    if (htp_power_configs.rpc_control_latency.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(*htp_power_configs.rpc_control_latency,
-                                                                     *logger_ptr_));
+  } else {
+    if (htp_power_configs.post_run_perf_mode.has_value()) {
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
+    } else if (htp_power_configs.default_perf_mode.has_value()) {
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
     }
-
-    if (htp_power_configs.rpc_polling_time.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(*htp_power_configs.rpc_polling_time,
-                                                                  *logger_ptr_));
-    }
-  } else if (htp_power_configs.post_run_perf_mode.has_value()) {
-    RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.post_run_perf_mode,
-                                                                    htp_power_config_id,
-                                                                    *logger_ptr_));
   }
-
-  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_id, GetQnnInterface(), *logger_ptr_));
-
   return Ort::Status();
 }
 
@@ -2467,7 +2381,7 @@ void QnnBackendManager::RemovePerThreadHtpPowerConfigMapping(const std::thread::
   per_thread_power_configs_.erase(thread_id);
 }
 
-Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config_id) {
+Ort::Status QnnBackendManager::DestroyHtpPowerConfigId(uint32_t htp_power_config_id) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
   RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
@@ -2514,6 +2428,15 @@ Ort::Status QnnBackendManager::TerminateQnnLog() {
 void QnnBackendManager::ReleaseResources() {
   // Each sub-function guards against releasing resources that were never created,
   // so all calls are safe regardless of how far setup progressed.
+
+  // Tear down the HTP release timer FIRST. Its callback drives the QNN device
+  // (SetPowerConfig), so it must be joined before the device/context is released
+  // to avoid the callback touching freed QNN handles. Tying timer teardown to the
+  // manager's lifetime (rather than to an individual QnnEp destructor) is also
+  // what makes a shared manager safe: the timer now dies with the manager (the
+  // last session out), not when the first sharing session is destroyed.
+  DeInitializePerfTimer();
+
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
@@ -2578,6 +2501,7 @@ void QnnBackendManager::ReleaseResources() {
     validator_backend_lib_handle_ = nullptr;
   }
 
+  backend_lib_loaded_ = false;
   backend_partial_setup_completed_ = false;
   backend_setup_completed_ = false;
 }
@@ -3144,7 +3068,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
     return Ort::Status();
   }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
   RETURN_IF(qnn_interface_.deviceGetPlatformInfo == nullptr || qnn_interface_.deviceFreePlatformInfo == nullptr,
             "Failed to get valid QnnDevice function pointers.");
 
@@ -3189,7 +3113,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
   if (htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
     htp_arch_internal_ = htp_arch_;
   }
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
 
   return Ort::Status();
 }

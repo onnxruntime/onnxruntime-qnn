@@ -1235,6 +1235,27 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
   return Ort::Status();
 }
 
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes) {
+  // The masks keep this well-defined for any input byte, and idempotent: SignExtendLower*Bits()
+  // left-shifts its argument, so it needs a byte holding nothing above the sub-byte element.
+  switch (onnx_data_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+      for (uint8_t& byte : bytes) {
+        byte = static_cast<uint8_t>(Int4x2::SignExtendLower4Bits(static_cast<std::byte>(byte & 0x0F)));
+      }
+      break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
+      for (uint8_t& byte : bytes) {
+        byte = static_cast<uint8_t>(Int2x4::SignExtendLower2Bits(static_cast<std::byte>(byte & 0x03)));
+      }
+      break;
+    default:
+      // UINT4/UINT2 hold their value in the masked byte; nothing else was ever masked.
+      break;
+  }
+}
+
 Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
                                           gsl::span<const int32_t> bq_offsets,
                                           uint32_t num_blocks_per_channel,
@@ -1999,6 +2020,31 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   }
 
   return Ort::Status();
+}
+
+bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
+                                    int64_t bits) {
+  std::vector<uint8_t> per_block_uint8_zp;
+  const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
+  if (zp_tensor_proto == nullptr) {
+    return false;  // zero_points tensor exists but is not a constant initializer.
+  }
+  auto status = qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp);
+  if (!status.IsOK()) {
+    return false;
+  }
+  // Build the expected packed byte: pack (8/bits) copies of 2^(bits-1) into one byte.
+  // e.g., bits=2: sym_zp=2 (0b10),   elems_per_byte=4 -> expected=0b10101010
+  //       bits=4: sym_zp=8 (0b1000), elems_per_byte=2 -> expected=0b10001000
+  //       bits=8: sym_zp=128,        elems_per_byte=1 -> expected=0b10000000
+  const int64_t elems_per_byte = 8 / bits;
+  const uint8_t sym_zp = static_cast<uint8_t>(1u << (bits - 1));
+  uint8_t expected_packed = 0;
+  for (int64_t i = 0; i < elems_per_byte; ++i) {
+    expected_packed |= static_cast<uint8_t>(sym_zp << (bits * i));
+  }
+  return std::all_of(per_block_uint8_zp.begin(), per_block_uint8_zp.end(),
+                     [expected_packed](uint8_t zp) { return zp == expected_packed; });
 }
 
 }  // namespace utils

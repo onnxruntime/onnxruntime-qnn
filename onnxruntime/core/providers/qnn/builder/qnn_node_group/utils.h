@@ -4,7 +4,9 @@
 #pragma once
 
 #include <gsl/gsl>
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -102,6 +104,60 @@ bool IsScalarConstantApprox(const QnnModelWrapper& qnn_model_wrapper,
                             const std::string& input_name,
                             float expected,
                             float tol = 1e-3f);
+
+/// <summary>
+/// Returns true when a Reshape from `input_shape` to `output_shape` is structurally
+/// equivalent to a Transpose: both shapes have the same rank, all dims are static and
+/// non-negative, and the sequence of non-1 dims is identical (same values in the same
+/// order). Size-1 dims are free to appear anywhere.
+///
+/// Defined inline so consumers (including out-of-EP unit tests) do not need to link
+/// against the QNN EP module to use it.
+/// </summary>
+inline bool IsReshapePermutable(const std::vector<int64_t>& input_shape,
+                                const std::vector<int64_t>& output_shape) {
+  if (input_shape.size() != output_shape.size()) {
+    return false;
+  }
+  const auto is_negative = [](int64_t d) { return d < 0; };
+  if (std::any_of(input_shape.begin(), input_shape.end(), is_negative) ||
+      std::any_of(output_shape.begin(), output_shape.end(), is_negative)) {
+    return false;
+  }
+
+  const auto is_non_one = [](int64_t d) { return d != 1; };
+  std::vector<int64_t> input_non_one;
+  std::vector<int64_t> output_non_one;
+  std::copy_if(input_shape.begin(), input_shape.end(), std::back_inserter(input_non_one), is_non_one);
+  std::copy_if(output_shape.begin(), output_shape.end(), std::back_inserter(output_non_one), is_non_one);
+  return input_non_one == output_non_one;
+}
+
+/// <summary>
+/// Precondition: IsReshapePermutable(input_shape, output_shape) is true. Fills `perm` so
+/// that output_shape[i] == input_shape[perm[i]]. Non-1 dims are matched left-to-right
+/// (preserving their relative order); size-1 dims greedily take the next unused slot.
+///
+/// Defined inline so consumers (including out-of-EP unit tests) do not need to link
+/// against the QNN EP module to use it.
+/// </summary>
+inline void ComputeReshapePerm(const std::vector<int64_t>& input_shape,
+                               const std::vector<int64_t>& output_shape,
+                               std::vector<int64_t>& perm) {
+  const size_t rank = input_shape.size();
+  perm.assign(rank, -1);
+  std::vector<bool> used(rank, false);
+  for (size_t i = 0; i < rank; ++i) {
+    const int64_t target = output_shape[i];
+    for (size_t j = 0; j < rank; ++j) {
+      if (!used[j] && input_shape[j] == target) {
+        perm[i] = static_cast<int64_t>(j);
+        used[j] = true;
+        break;
+      }
+    }
+  }
+}
 
 }  // namespace qnn
 }  // namespace onnxruntime

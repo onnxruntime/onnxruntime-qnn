@@ -1016,6 +1016,53 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
 }
 
+// Builds: weight_q (int4 init) -> per-channel DQ -> Conv. QNN cannot represent a standalone
+// per-channel DQ, so it is folded to an fp32 static by decoding the initializer's bytes as int8.
+// Weights span the negative INT4 range, which a sign-handling regression would decode as q + 16.
+static GetTestModelFn BuildPerChannelInt4DQConstWeightConvTestCase(const std::vector<float>& scales) {
+  return [scales](ModelTestBuilder& builder) {
+    constexpr int64_t out_ch = 2;
+    constexpr int64_t in_ch = 3;
+    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
+    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
+    const std::vector<int8_t> weight_values{-8, -7, -1, 1, 5, 7};
+
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
+
+    std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(weight_values.size()));
+    for (size_t i = 0; i < weight_values.size(); ++i) {
+      weight_data[i >> 1].SetElem(i & 1, weight_values[i]);
+    }
+    builder.MakeInitializer<Int4x2>("weight_q", weight_shape, weight_data);
+    builder.MakeInitializer<float>("weight_scale", {out_ch}, scales);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+    builder.AddNode("WeightDQ", "DequantizeLinear", {"weight_q", "weight_scale"}, {"weight_dq"},
+                    kOnnxDomain, axis_attrs);
+
+    builder.MakeOutput("output");
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+    builder.AddNode("Conv", "Conv", {"input", "weight_dq"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt4DQConstWeight_SignRegression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelInt4DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f}),
+                  provider_options,
+                  /*opset*/ 21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+}
+
 // Tests for reuse_sparse_indices parameter (always false, verifies the parameter is accepted by QNN without errors).
 // Conv2d: reuse_sparse_indices should be added to the QNN node parameters.
 TEST_F(QnnCPUBackendTests, Conv2D_ReuseSparseIndices) {
@@ -1189,6 +1236,46 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
                       /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
                   provider_options,
                   /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// Smoke test for the enable_htp_fp16_clamp_overflow HTP option.
+// The option is compiled unconditionally: on QAIRT < 2.49 the EP logs a warning
+// and ignores it (see qnn_execution_provider.cc), so this degrades to a plain
+// fp16 Conv smoke test; on QAIRT >= 2.49 it exercises the clamp-overflow path.
+TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["enable_htp_fp16_clamp_overflow"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  auto input_def = TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 32));
+  auto weights_def = TestInputDef<float>({2, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 1.0f, 16));
+  auto bias_def = TestInputDef<float>({2}, true, {1.0f, -1.0f});
+
+  RunQnnModelTest(BuildF32ConvTestCase("Conv", input_def, weights_def, bias_def,
+                                       {1, 1},        // strides
+                                       {0, 0, 0, 0},  // pads
+                                       {1, 1},        // dilations
+                                       1),            // group
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
+}
+
+TEST_F(QnnHTPBackendTests, Convf32_PerChannelInt4DQConstWeight_SignRegression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelInt4DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f}),
+                  provider_options,
+                  /*opset*/ 21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 

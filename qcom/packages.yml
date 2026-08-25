@@ -148,9 +148,9 @@ nuget_windows_x86_64:
   md5: c51179f8b404bbf7f7b8e457240cc09d
   is_installer: false
 onnx_models:
-  version: 2026-06-23
+  version: 2025-10-02
   url: http://ort-ep-win-01.na.qualcomm.com:8000/onnx-models/onnx-models-{version}.tar.gz
-  sha256: 241b8e05421cf85c93d0c920ba4936c526d78aec0e6d98c29ec5b9ef864440fc
+  sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
 ort_prebuilt_windows_x64: &ort_prebuilt_common
   version: 1.27.0
@@ -209,9 +209,9 @@ python_314_windows_arm64:
   version: 3.14.3
   md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
-  version: 2.48.40.260702
+  version: 2.49.40.260810
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
-  sha256: 72bf9fbb177e65d05483b5cfc1e10a2864307fb031bcd7b9943b9c32693757b8
+  sha256: 8b1e00d03806b026c41dbc51aec40d6b6c684fff34806409dc2283d00926629a
   content_root: qairt/{version}
   bindir: bin
 qualcomm_device_cloud_sdk:

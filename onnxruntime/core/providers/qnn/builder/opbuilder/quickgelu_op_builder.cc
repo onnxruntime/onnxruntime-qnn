@@ -85,16 +85,12 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 
     // Step 1: Create Mul node for alpha * x
     std::string alpha_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul");
-    std::vector<std::string> alpha_mul_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), alpha_mul_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, alpha_mul_param_names));
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(alpha_mul_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY,
+                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {alpha_tensor_name, input_name},
                                                   {alpha_mul_output_name},
-                                                  std::move(alpha_mul_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Failed to create alpha_mul node.");
   }
@@ -116,37 +112,25 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
                 "Failed to add output tensor.");
 
-  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x). Sigmoid maps to
-  // QNN_OP_ELEMENT_WISE_NEURON with the mandatory 'operation' scalar param set to SIGMOID.
+  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x).
   std::string sigmoid_node_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid");
-  Qnn_Scalar_t sigmoid_op_scalar = QNN_SCALAR_INIT;
-  sigmoid_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  sigmoid_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_SIGMOID;
-  QnnParamWrapper sigmoid_op_param(node_unit.Index(), sigmoid_node_name,
-                                   QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, sigmoid_op_scalar);
-  std::string sigmoid_op_param_name = sigmoid_op_param.GetParamTensorName();
-  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(sigmoid_op_param)), "Failed to add operation param.");
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sigmoid_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_NEURON,
+                                                QNN_OP_SIGMOID,
                                                 {sigmoid_input_name},
                                                 {sigmoid_output_name},
-                                                {sigmoid_op_param_name},
+                                                {},
                                                 do_op_validation),
                 "Failed to create sigmoid node.");
 
   // Step 3: Create Mul node for x * sigmoid(alpha * x) or x * sigmoid(x)
   std::string final_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul");
-  std::vector<std::string> final_mul_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), final_mul_name,
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, final_mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(final_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                 {input_name, sigmoid_output_name},
                                                 {output_name},
-                                                std::move(final_mul_param_names),
+                                                {},
                                                 do_op_validation),
                 "Failed to create final_mul node.");
 

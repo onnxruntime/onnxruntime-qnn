@@ -15,6 +15,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -40,6 +41,7 @@ struct ModelSettings {
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
   bool enable_htp_monolithic_lstm = false;
+  OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 
 class QnnModelWrapper {
@@ -575,6 +577,10 @@ class QnnModelWrapper {
 
   bool ProcessBF16Conversions(std::vector<QnnOpProperty>& final_ops);
 
+  // QNN requires node names to be unique within a graph. Reserve names here,
+  // where every composed QNN node is collected.
+  std::string MakeUniqueQnnNodeName(const std::string& requested_name);
+
   const std::string* GetTensorNameOverride(const std::string& internal) const;
 
   const OrtGraph& ort_graph_;
@@ -595,6 +601,7 @@ class QnnModelWrapper {
   // All QnnParamWrapper for the graph
   std::unordered_map<std::string, QnnParamWrapper> model_params_map_;
   std::vector<QnnOpProperty> qnn_op_property_list_;
+  std::unordered_set<std::string> qnn_node_names_;
   // <tensor_name, qnn_tensor_id> -- stores the QNN-assigned ID once the tensor is created
   // it includes normal qnn_tensors and qnn_tensors inside param_tensors
   std::unordered_map<std::string, uint32_t> qnn_tensor_id_map_;

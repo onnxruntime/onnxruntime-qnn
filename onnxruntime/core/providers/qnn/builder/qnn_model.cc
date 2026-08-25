@@ -9,9 +9,11 @@
 #include <thread>
 
 #include "HTP/QnnHtpContext.h"
+#include "HTP/QnnHtpGraph.h"
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -440,6 +442,60 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
   return Ort::Status();
 }
 
+Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
+                                               const Ort::Logger& logger) {
+  // Caches configs for re-application after an SSR event re-retrieves the graph handle.
+  // Each call overwrites runtime_graph_configs_; RecoverFromSSR always re-applies the most
+  // recently cached value. Normal usage calls this once at session creation, but correctness
+  // does not depend on that.
+  runtime_graph_configs_ = configs;
+
+  if (qnn_backend_type_ != QnnBackendType::HTP || graph_info_ == nullptr) {
+    return Ort::Status();
+  }
+
+  // Build the runtime-settable subset of graph configs using the same builder pattern as
+  // QnnEp::InitQnnHtpGraphConfigs. Only add options confirmed settable on a finalized graph;
+  // a compile-time-only option here would come back as QNN_GRAPH_ERROR_GRAPH_FINALIZED.
+  QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  if (configs.enable_htp_fp16_clamp_overflow) {
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> cc = builder.PushCustomConfig();
+    cc->option = QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW;
+    cc->fp16ClampOverflow = true;
+    gsl::not_null<QnnGraph_Config_t*> gc = builder.PushConfig();
+    gc->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    gc->customConfig = cc;
+  }
+  // NOTE: future runtime-settable options append their own guarded block here.
+#endif
+
+  const QnnGraph_Config_t** graph_configs = builder.GetQnnConfigs();
+  if (graph_configs == nullptr) {
+    return Ort::Status();  // Nothing runtime-applicable was requested.
+  }
+
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+  RETURN_IF(nullptr == qnn_interface.graphSetConfig,
+            "Invalid function pointer for graphSetConfig; cannot apply runtime graph configs.");
+  Qnn_ErrorHandle_t rt = qnn_interface.graphSetConfig(graph_info_->Graph(), graph_configs);
+  if (QNN_SUCCESS != rt) {
+    // QNN_GRAPH_ERROR_GRAPH_FINALIZED here means an option in the set is not runtime-settable
+    // on this SDK and must move back to compile-time wiring in InitQnnHtpGraphConfigs.
+    const std::string message = "Failed to apply runtime graph configs for graph: " +
+                                graph_info_->Name() + ". " +
+                                utils::FormatQnnError(qnn_interface, rt);
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return MAKE_EP_FAIL(message.c_str());
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Applied runtime graph configs for graph: " + graph_info_->Name()).c_str());
+  return Ort::Status();
+}
+
 static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
                                                        const Ort::Logger& logger,
                                                        QnnBackendManager& qnn_backend_manager,
@@ -474,7 +530,7 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   return Ort::Status();
 }
 
-Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
+Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
@@ -500,7 +556,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
       // Use the unified file I/O helper instead of duplicating the read logic.
       std::vector<char> buffer;
-      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer));
+      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer, io_dispatch));
 
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
@@ -554,7 +610,10 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
   graph_info_->ResetHandles(new_graph, new_context);
 
   // Re-build the tensor I/O metadata against the new graph handles.
-  return SetupQnnInputOutput(logger);
+  RETURN_IF_ERROR(SetupQnnInputOutput(logger));
+
+  // The freshly retrieved graph handle does not carry runtime graph configs, so re-apply them.
+  return ApplyRuntimeGraphConfigs(runtime_graph_configs_, logger);
 }
 
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
@@ -681,6 +740,31 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
   auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
 
   auto thread_id = std::this_thread::get_id();
+
+  // SetPerThreadHtpPowerConfigs(true) issues SetState(RUN_START), which increments
+  // inflight_run_count_ under state_mutex_ *before* dispatching to the perf setter.
+  // If that pre-run call fails after the increment, or an exception unwinds before
+  // the paired RUN_DONE runs, the count leaks. A leaked count permanently gates the
+  // release timer (its TIMEOUT relax is skipped unless inflight_run_count_ == 0),
+  // pinning the HTP boosted for the rest of the session. Establish the RUN_DONE
+  // scope guard *before* the RUN_START call so it fires on every exit path,
+  // including a failing pre-run call. SetState(RUN_DONE) clamps the counter at 0,
+  // so an unpaired relax (e.g. a RUN_START rejected before it incremented) is
+  // harmless. The compile path already gets this guarantee via HtpPowerStateGuard;
+  // this brings the per-inference hot path to parity.
+  bool run_done_handled = false;
+  auto power_relax = gsl::finally([&]() {
+    if (run_done_handled) {
+      return;
+    }
+    // A scope-exit callback must not throw/return, so log rather than propagate.
+    Ort::Status relax_status = qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false);
+    if (!relax_status.IsOK()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Post-run HTP power relax failed on scope exit: " + relax_status.GetErrorMessage()).c_str());
+    }
+  });
+
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
   execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
@@ -699,7 +783,18 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
   }
 #endif
 
-  RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
+  // Relax on the normal path first to preserve the original relax -> extract-profiling
+  // order, then mark handled so the scope guard above becomes a no-op. Log instead of
+  // early-returning on failure: the RUN_DONE decrement already happened inside SetState
+  // (before its dispatch), and returning here would needlessly skip profiling extraction.
+  {
+    Ort::Status relax_status = qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false);
+    run_done_handled = true;
+    if (!relax_status.IsOK()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  ("Post-run HTP power relax failed: " + relax_status.GetErrorMessage()).c_str());
+    }
+  }
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -710,7 +805,8 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 }
 
 Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
-                                   const Ort::Logger& logger) {
+                                   const Ort::Logger& logger,
+                                   const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
@@ -738,7 +834,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                   "SSR recovery: context was already freed by another QnnModel in the same context, "
                   "recovering proactively.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
     }
   }
 
@@ -751,12 +847,12 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
       if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
-        return Ort::Status("NPU crashed again after SSR recovery.", ORT_ENGINE_ERROR);
+        return Ort::Status("NPU crashed again after SSR recovery.", QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }
       if (QNN_GRAPH_NO_ERROR == execute_status) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
@@ -769,7 +865,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
              " (no context binary on disk — JIT or embed_mode=1). Error code: "
           << execute_status;
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-      return Ort::Status(oss.str().c_str(), ORT_ENGINE_ERROR);
+      return Ort::Status(oss.str().c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
     }
   } else if (QNN_GRAPH_NO_ERROR != execute_status) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +
