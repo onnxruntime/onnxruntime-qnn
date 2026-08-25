@@ -178,7 +178,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedMode) {
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   EXPECT_TRUE(QnnMockSSR_WasFileMappingUsedForRecovery())
       << "SSR recovery should have used contextCreateFromBinaryWithCallback (file mapping) "
-         "but it did not. Check CreateContextFromFilePath in qnn_backend_manager.cc.";
+         "but it did not. Check ReloadContextForSSR in qnn_backend_manager.cc.";
 #endif
 
   CleanUpCtxFile(context_model_file);
@@ -191,7 +191,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedMode) {
 // Because producing an actual pre-3.3.3 binary is not feasible in these tests, we use
 // QnnMockSSR_SetSimulateOldBlobVersion(true) to make the mock reject the callback API with
 // QNN_COMMON_ERROR_NOT_SUPPORTED, which exercises the same reactive-fallback branch of
-// CreateContextFromFilePath.  The test asserts:
+// ReloadContextForSSR.  The test asserts:
 //   (a) WasFileMappingUsedForRecovery() == false  (callback API was not successfully used)
 //   (b) session outputs match the CPU reference  (direct-read fallback produced a working context)
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeFileMappingRejected) {

@@ -1281,10 +1281,10 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& context_bin_filepath,
-                                                         int64_t max_spill_fill_size,
-                                                         Qnn_ContextHandle_t& new_context,
-                                                         const qnn::EpContextIoDispatch& io_dispatch) {
+Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bin_filepath,
+                                                   int64_t max_spill_fill_size,
+                                                   Qnn_ContextHandle_t& new_context,
+                                                   const qnn::EpContextIoDispatch& io_dispatch) {
   QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
 
