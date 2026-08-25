@@ -16,7 +16,6 @@
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 PATTERN = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
