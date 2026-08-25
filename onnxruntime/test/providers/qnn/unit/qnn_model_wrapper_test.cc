@@ -336,10 +336,10 @@ TEST(QnnUnit_ModelWrapperTest, AddReshapeNode_PerChannelQuant_ReturnsError) {
 
   std::vector<float> scales{1.0f, 2.0f};
   std::vector<int32_t> offsets{0, 0};
-  qnn::QnnQuantParamsWrapper per_channel_quant(
+  qnn::QnnQuantParamsWrapper per_channel_quant = qnn::QnnQuantParamsWrapper::PerChannel(
       gsl::make_span(scales.data(), scales.size()),
       gsl::make_span(offsets.data(), offsets.size()),
-      /*axis=*/0, /*is_int4=*/false);
+      /*axis=*/0);
 
   Ort::Status status = wrapper->AddReshapeNode(
       "in", "out", {2u}, {2u},
@@ -400,10 +400,10 @@ TEST(QnnUnit_ModelWrapperTest, AddTransposeNode_PerChannelQuant_ReturnsError) {
 
   std::vector<float> scales{1.0f, 2.0f};
   std::vector<int32_t> offsets{0, 0};
-  qnn::QnnQuantParamsWrapper per_channel_quant(
+  qnn::QnnQuantParamsWrapper per_channel_quant = qnn::QnnQuantParamsWrapper::PerChannel(
       gsl::make_span(scales.data(), scales.size()),
       gsl::make_span(offsets.data(), offsets.size()),
-      /*axis=*/0, /*is_int4=*/false);
+      /*axis=*/0);
 
   Ort::Status status = wrapper->AddTransposeNode(
       0, "t_in", "t_out",
@@ -679,6 +679,13 @@ Qnn_ErrorHandle_t StubTensorCreateSuccess(Qnn_GraphHandle_t, Qnn_Tensor_t*) {
 Qnn_ErrorHandle_t StubGraphAddNode(Qnn_GraphHandle_t, Qnn_OpConfig_t) {
   return QNN_GRAPH_NO_ERROR;
 }
+
+std::vector<std::string> captured_qnn_node_names;
+
+Qnn_ErrorHandle_t StubGraphAddNodeCaptureNames(Qnn_GraphHandle_t, Qnn_OpConfig_t op_config) {
+  captured_qnn_node_names.emplace_back(op_config.v1.name);
+  return QNN_GRAPH_NO_ERROR;
+}
 }  // namespace
 
 // ComposeQnnGraph succeeds when tensors are registered and stubs are in place.
@@ -703,6 +710,40 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_NativeTensors_Succeeds) {
                                      {"inp"}, {"out"}, {}, /*do_op_validation=*/false));
 
   EXPECT_TRUE(wrapper->ComposeQnnGraph());
+}
+
+TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_DuplicateNodeNames_AreRenamed) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
+  ctx.qnn_interface.graphAddNode = StubGraphAddNodeCaptureNames;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  qnn::QnnTensorWrapper input("input", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                              qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper intermediate("intermediate", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                     qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper intermediate2("intermediate2", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                      qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper output("output", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(input)));
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(intermediate)));
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(intermediate2)));
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(output)));
+  ASSERT_TRUE(wrapper->CreateQnnNode("duplicate", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                                     {"input"}, {"intermediate"}, {}, false));
+  ASSERT_TRUE(wrapper->CreateQnnNode("duplicate", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                                     {"intermediate"}, {"intermediate2"}, {}, false));
+  ASSERT_TRUE(wrapper->CreateQnnNode("duplicate_2", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                                     {"intermediate2"}, {"output"}, {}, false));
+
+  captured_qnn_node_names.clear();
+  ASSERT_TRUE(wrapper->ComposeQnnGraph());
+  ASSERT_EQ(captured_qnn_node_names.size(), 3u);
+  EXPECT_EQ(captured_qnn_node_names[0], "duplicate");
+  EXPECT_EQ(captured_qnn_node_names[1], "duplicate_2");
+  EXPECT_EQ(captured_qnn_node_names[2], "duplicate_2_2");
 }
 
 // With graph I/O names set, RegisterGraphInputOutputInOrder registers APP_WRITE / APP_READ
@@ -1409,7 +1450,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
   // HTP validator requires quantized tensors for Relu — float32 is rejected at validation.
-  qnn::QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  qnn::QnnQuantParamsWrapper quant = qnn::QnnQuantParamsWrapper::PerTensor(/*scale=*/1.0f / 255.0f, /*offset=*/0);
   qnn::QnnTensorWrapper input_tw("relu_in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
                                  quant.Copy(), std::vector<uint32_t>{1, 4});
   qnn::QnnTensorWrapper output_tw("relu_out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,
@@ -1439,7 +1480,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
 
-  qnn::QnnQuantParamsWrapper quant(/*scale=*/1.0f / 255.0f, /*offset=*/0);
+  qnn::QnnQuantParamsWrapper quant = qnn::QnnQuantParamsWrapper::PerTensor(/*scale=*/1.0f / 255.0f, /*offset=*/0);
   qnn::QnnTensorWrapper input_tw("in", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_UFIXED_POINT_8,
                                  quant.Copy(), std::vector<uint32_t>{1, 4});
   qnn::QnnTensorWrapper output_tw("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_UFIXED_POINT_8,

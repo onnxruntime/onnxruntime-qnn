@@ -61,7 +61,7 @@ TEST_F(QnnCPUBackendTests, Slice_SharedInitializersBugFix) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -126,7 +126,7 @@ static void RunSliceNonQDQOnHTP(const TestInputDef<DataType>& data_def,
   RunQnnModelTest(f32_model_builder,
                   provider_options,
                   13,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Check that QNN compiles DQ -> Slice -> Q as a single unit.
@@ -234,6 +234,18 @@ TEST_F(QnnHTPBackendTests, SliceU8_NoSteps) {
                            TestInputDef<int64_t>({2}, true, {0, 1}),     // axes
                            TestInputDef<int64_t>(/*is_optional*/ true),  // steps
                            ExpectedEPNodeAssignment::All);
+}
+
+// Check that QNN supports Slice with bool data input on HTP.
+// StridedSlice on HTP BE doesn't support BOOL input/output directly, so QNN EP wraps it with
+// Cast(BOOL->UINT8) -> StridedSlice(UINT8) -> Cast(UINT8->BOOL).
+TEST_F(QnnHTPBackendTests, SliceBoolOnHTP) {
+  RunSliceNonQDQOnHTP<bool>(TestInputDef<bool>({2, 4}, false, {true, false, true, false, true, false, true, false}),
+                            TestInputDef<int64_t>({2}, true, {1, 0}),  // starts
+                            TestInputDef<int64_t>({2}, true, {2, 4}),  // ends
+                            TestInputDef<int64_t>({2}, true, {0, 1}),  // axes
+                            TestInputDef<int64_t>({2}, true, {1, 1}),  // steps
+                            ExpectedEPNodeAssignment::All);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

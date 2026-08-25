@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <utility>
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -19,6 +20,7 @@
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
+#include "qnn_ep_min_ort_api_version.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
@@ -85,7 +87,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
-  // HOST_ACCESSIBLE memory.
+  // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
@@ -97,6 +99,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
                                              &mem_info);
   if (status != nullptr) {
     ort_api.ReleaseMemoryInfo(mem_info);
+    ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }
@@ -185,11 +188,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
-    if (qnn::soc::GetSocId() != 0) {
-      // If ORT Core does not detect NPU hardware but we recognize the device as WoS (through qnn::soc::GetSocId),
-      // exploit virtual hardware device to create an NPU hardware device for user to select from.
-      // Such case happens for older WoS devices (e.g., Makena) that ORT Core's device discovery logic could not detect
-      // NPU through DXCore.
+    bool synthesize_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+
+    if (synthesize_npu) {
+      // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
+      // Triggers: WoS without DXCore enumeration (Makena), Qualcomm Linux arm64 (/dev/fastrpc-cdsp*),
+      // or Qualcomm Android arm64 (ro.soc.manufacturer == QTI).
       OrtHardwareDevice* undetected_npu_hw_device = nullptr;
       RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
       factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
@@ -229,22 +233,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                                         "Creating QNN EP", ORT_FILE, __LINE__, __FUNCTION__));
 
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
-
-  // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
-  // determine whether to use HTP shared memory but they are not available until now. This workaround works since
-  // PluginExecutionProvider collects the allocator infos after creating the EP (refer to
-  // ep_plugin_provider_interfaces.cc for the detail flow).
-  std::string enable_htp_shared_memory_allocator_str;
-  GetSessionConfigEntryOrDefault(factory->ort_api,
-                                 *session_options,
-                                 provider_prefix + "enable_htp_shared_memory_allocator",
-                                 "0",
-                                 enable_htp_shared_memory_allocator_str);
-  if (enable_htp_shared_memory_allocator_str == "1") {
-    for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
-    }
-  }
 
   const auto backend_type_key = provider_prefix + "backend_type";
   const auto backend_path_key = provider_prefix + "backend_path";
@@ -334,6 +322,13 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
+  factory->qnn_allocator_type_ = qnn_ep->qnn_allocator_type_;
+  if (factory->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+    for (OrtEpDevice* ep_device : factory->ep_devices_) {
+      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+    }
+  }
+
   factory->qnn_ep_ = qnn_ep.get();
   *ep = qnn_ep.release();
 
@@ -349,8 +344,23 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
   delete dummy_ep;
 }
 
-void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* /*this_ptr*/, OrtAllocator* allocator) noexcept {
-  delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
+void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+  if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
+    delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
+#ifdef _WIN32
+  } else if (qnn::IsDx12SharedMemoryAllocator(factory->qnn_allocator_type_)) {
+    delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
+#endif
+  } else {
+    std::ignore = factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
+                                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                                                     "Cannot release allocator of unknown type!",
+                                                     ORT_FILE,
+                                                     __LINE__,
+                                                     __FUNCTION__);
+  }
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
@@ -510,10 +520,11 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return nullptr;
   }
 
-  // kMinOrtApiVersion must be at least the ORT API version that introduced
-  // the newest ORT API method this EP calls. Below this floor, GetApi()
-  // returns a function table missing members the EP would dereference.
-  constexpr uint32_t kMinOrtApiVersion = 24;
+  // kMinOrtApiVersion is computed at build time by
+  // qcom/scripts/all/compute_min_ort_api_version.py from \since annotations
+  // on every ORT API method this EP calls. Below this floor, GetApi() returns
+  // a function table that lacks members the EP would dereference.
+  constexpr uint32_t kMinOrtApiVersion = QNN_EP_MIN_ORT_API_VERSION;
   static_assert(kMinOrtApiVersion <= ORT_API_VERSION,
                 "kMinOrtApiVersion must not exceed ORT_API_VERSION");
 

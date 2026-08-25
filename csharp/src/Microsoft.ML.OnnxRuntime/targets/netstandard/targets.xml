@@ -13,4 +13,39 @@
                       '$(SuppressOnnxRuntimePlatformCompatibilityError)' != 'true'"
            Text="Qualcomm.ML.OnnxRuntime.QNN only supports the AnyCPU, x64, arm32, arm64 and x86 platforms at this time."/>
   </Target>
+
+  <!--
+    Fallback for consumers that target the ARM64EC / ARM64X runtime identifiers.
+    Neither 'win-arm64ec' nor 'win-arm64x' exists in the NuGet/.NET runtime graph, so NuGet's
+    automatic runtimes/<rid>/native asset selection never fires for them and no native binary is
+    copied to the consumer's output (resulting in a DllNotFoundException at runtime).
+    The ARM64X binary shipped under runtimes/win-arm64/native is a valid drop-in for both cases
+    (it serves native ARM64 and ARM64EC callers via its embedded slices), so copy it explicitly.
+    Scoped strictly to these two non-standard RIDs; standard win-arm64/win-x64 consumers resolve
+    natively and never trigger this target (no double-copy).
+  -->
+  <Target Name="Qualcomm_ML_OnnxRuntime_QNN_CopyArm64XFallback"
+          AfterTargets="ResolveReferences"
+          Condition="'$(RuntimeIdentifier)' == 'win-arm64ec' OR '$(RuntimeIdentifier)' == 'win-arm64x'">
+    <!--
+      $(PkgQualcomm_ML_OnnxRuntime_QNN) is the NuGet-generated path property pointing at the
+      resolved package root (requires GeneratePathProperty="true" on the PackageReference, or is
+      auto-populated by newer SDKs) -- this already includes the version segment, so no separate
+      version lookup is needed. When that property isn't available, fall back to globbing the
+      version segment under $(NuGetPackageRoot) directly (there is no standard MSBuild property
+      for "the resolved version of package X", so a wildcard is the reliable option here).
+    -->
+    <ItemGroup Condition="'$(PkgQualcomm_ML_OnnxRuntime_QNN)' != ''">
+      <_QnnArm64XFallback Include="$(PkgQualcomm_ML_OnnxRuntime_QNN)\runtimes\win-arm64\native\*.dll" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(PkgQualcomm_ML_OnnxRuntime_QNN)' == '' AND '$(NuGetPackageRoot)' != ''">
+      <_QnnArm64XFallback Include="$(NuGetPackageRoot)qualcomm.ml.onnxruntime.qnn\*\runtimes\win-arm64\native\*.dll" />
+    </ItemGroup>
+    <Warning Condition="'@(_QnnArm64XFallback)' == ''"
+             Text="Qualcomm.ML.OnnxRuntime.QNN: could not locate the ARM64X native binaries under the installed package's runtimes\win-arm64\native for RuntimeIdentifier '$(RuntimeIdentifier)'. Native ONNX Runtime DLLs may be missing from the output." />
+    <Copy SourceFiles="@(_QnnArm64XFallback)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_QnnArm64XFallback)' != ''" />
+  </Target>
 </Project>

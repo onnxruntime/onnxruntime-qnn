@@ -13,8 +13,12 @@ namespace qnn {
 OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
+  CreateArrayFeatureExtractorOpBuilder("ArrayFeatureExtractor", *this);
+  CreateAttentionOpBuilder("Attention", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
+  CreateBernoulliOpBuilder("Bernoulli", *this);
   CreateCastOpBuilder("Cast", *this);
+  CreateCastOpBuilder("CastLike", *this);
   CreateClipOpBuilder("Clip", *this);
   CreateConcatOpBuilder("Concat", *this);
   CreateConvOpBuilder("Conv", *this);
@@ -29,8 +33,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
+  CreateGroupQueryAttentionOpBuilder("GroupQueryAttention", *this);
   CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
+  CreateIfOpBuilder("If", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
   CreateIsInfOpBuilder("IsInf", *this);
@@ -41,8 +47,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
+  CreateMaxRoiPoolOpBuilder("MaxRoiPool", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
+  CreateNonMaxSuppressionOpBuilder("NonMaxSuppression", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
   CreateOneHotOpBuilder("OneHot", *this);
   CreatePadOpBuilder("Pad", *this);
@@ -50,11 +58,15 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("GlobalAveragePool", *this);
   CreatePoolOpBuilder("GlobalMaxPool", *this);
   CreatePoolOpBuilder("MaxPool", *this);
+  CreateQLinearConvOpBuilder("QLinearConv", *this);
+  CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
   CreateQuickGeluOpBuilder("QuickGelu", *this);
   CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);
   CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
+  CreateRangeOpBuilder("Range", *this);
   CreateReciprocalOpBuilder("Reciprocal", *this);
   CreateReduceOpBuilder("ReduceL2", *this);
+  CreateReduceOpBuilder("ReduceLogSumExp", *this);
   CreateReduceOpBuilder("ReduceMax", *this);
   CreateReduceOpBuilder("ReduceMean", *this);
   CreateReduceOpBuilder("ReduceMin", *this);
@@ -108,6 +120,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateScatterElementsOpBuilder("ScatterElements", *this);
   CreateScatterNDOpBuilder("ScatterND", *this);
   CreateSeluOpBuilder("Selu", *this);
+  CreateShapeOpBuilder("Shape", *this);
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
   CreateSimpleOpBuilder("Sin", *this);

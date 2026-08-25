@@ -147,7 +147,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
     float scale = 0.0f;
     int32_t zero_point = 0;
     RETURN_IF_ERROR(utils::GetQuantParams(low, high, QNN_DATATYPE_UFIXED_POINT_8, scale, zero_point));
-    quantize_param = QnnQuantParamsWrapper(scale, zero_point);
+    quantize_param = QnnQuantParamsWrapper::PerTensor(scale, zero_point);
     QnnTensorWrapper intermediate_output_wrapper(intermediate_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
                                                  QNN_DATATYPE_UFIXED_POINT_8,

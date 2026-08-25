@@ -56,7 +56,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexDefaultAxis) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexNonDefaultAxis) {
@@ -83,7 +83,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexNonDefaultAxis) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Negative axis attribute (count-from-end) must resolve before bounds check.
@@ -112,7 +112,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsNegativeIndexNegativeAxis) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // ScatterElements(-1) embedded between producer/consumer ops must compile
@@ -150,7 +150,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsEndToEndNegativeIndexInGraph) {
 
   // HTP fp16 path -- loosen tolerance vs. CPU fp32 reference.
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All, 1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Same axis bound -- rewritten bytes are identical; both nodes land on QNN.
@@ -186,12 +186,14 @@ TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesInitializer) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-// Different axis bounds -- indices `[-1]` resolves to `kRows-1` for scatterA
-// and `kCols-1` for scatterB. The `_qnn_idx` rename prevents the two
-// per-axis rewrites from aliasing.
+// Different axis bounds -- the shared indices initializer {-1,-2,-3} rewrites to
+// rows {2,1,0} for scatterA (axis=0, dim=kRows) and cols {6,5,4} for scatterB
+// (axis=1, dim=kCols). Distinct per-row destinations keep the result deterministic
+// (no duplicate-index collision); the `_qnn_idx` rename prevents the two per-axis
+// rewrites from aliasing.
 TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesDifferentAxes) {
   constexpr int64_t kRows = 3;
   constexpr int64_t kCols = 7;  // != kRows so rewritten bytes differ.
@@ -202,7 +204,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesDifferentAxes) {
     builder.MakeInput<int32_t>("dataA", {kRows, kCols}, data_a);
     builder.MakeInput<int32_t>("dataB", {kRows, kCols}, data_b);
 
-    std::vector<int64_t> indices = {-1, -1, -1};
+    std::vector<int64_t> indices = {-1, -2, -3};  // distinct: no duplicate-index collision
     builder.MakeInitializer<int64_t>("indices", {kRows, 1}, indices);
 
     std::vector<int32_t> updates_a = {10, 20, 30};
@@ -227,7 +229,7 @@ TEST_F(QnnHTPBackendTests, ScatterElementsSharedNegativeIndicesDifferentAxes) {
   };
 
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 }  // namespace test

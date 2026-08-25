@@ -109,6 +109,8 @@ APPROVED_APP_INCLUDES: frozenset[str] = frozenset(
     {
         # onnxruntime_ORT_HOME (prebuilt) branch
         '"${onnxruntime_ORT_HOME}/include"',
+        # Debian/Ubuntu system-package layout: headers under include/onnxruntime/
+        '"${onnxruntime_ORT_HOME}/include/onnxruntime"',
         # build-from-source branch
         '"${ORT_SOURCE_DIR}/include/onnxruntime/core/session"',
         '"${ORT_SOURCE_DIR}/include/onnxruntime/core/providers/cpu"',

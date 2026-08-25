@@ -4,6 +4,7 @@
 #include "test/util/include/test_utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -17,10 +18,71 @@
 
 namespace onnxruntime {
 namespace test {
+
+namespace {
+
+template <typename T>
+void VerifyElementwiseAbsoluteOutput(const std::string& output_name,
+                                     const T* expected_data,
+                                     const T* actual_data,
+                                     size_t element_count,
+                                     const ElementwiseAbsoluteVerifier& verifier) {
+  for (size_t element_index = 0; element_index < element_count; ++element_index) {
+    EXPECT_NEAR(static_cast<float>(expected_data[element_index]),
+                static_cast<float>(actual_data[element_index]),
+                verifier.fp32_abs_err)
+        << "Element " << element_index << " mismatch for " << output_name;
+  }
+}
+
+template <typename T>
+void VerifyCosineSimilarityOutput(const std::string& output_name,
+                                  const T* expected_data,
+                                  const T* actual_data,
+                                  size_t element_count,
+                                  const CosineSimilarityVerifier& verifier) {
+  float dot = 0.0f;
+  float expected_norm_sq = 0.0f;
+  float actual_norm_sq = 0.0f;
+  for (size_t element_index = 0; element_index < element_count; ++element_index) {
+    const float expected_float = static_cast<float>(expected_data[element_index]);
+    const float actual_float = static_cast<float>(actual_data[element_index]);
+    dot += expected_float * actual_float;
+    expected_norm_sq += expected_float * expected_float;
+    actual_norm_sq += actual_float * actual_float;
+  }
+  const float denom = std::sqrt(expected_norm_sq) * std::sqrt(actual_norm_sq);
+  const float cosine_similarity = denom > 0.0f
+                                      ? dot / denom
+                                      // If one vector is null, let cs=1 if the other is also null and cs=0 otherwise.
+                                      : ((expected_norm_sq == 0.0f && actual_norm_sq == 0.0f) ? 1.0f : 0.0f);
+
+  EXPECT_GE(cosine_similarity, verifier.fp32_cs_threshold) << "Cosine similarity below threshold for " << output_name;
+}
+
+template <typename T>
+void VerifyFloatOutput(const std::string& output_name,
+                       const T* expected_data,
+                       const T* actual_data,
+                       size_t element_count,
+                       const TensorVerifier& verifier) {
+  if (std::holds_alternative<ElementwiseAbsoluteVerifier>(verifier)) {
+    VerifyElementwiseAbsoluteOutput(output_name, expected_data, actual_data, element_count,
+                                    std::get<ElementwiseAbsoluteVerifier>(verifier));
+  } else if (std::holds_alternative<CosineSimilarityVerifier>(verifier)) {
+    VerifyCosineSimilarityOutput(output_name, expected_data, actual_data, element_count,
+                                 std::get<CosineSimilarityVerifier>(verifier));
+  } else {
+    QNN_ASSERT(!"Unknown verifier type");
+  }
+}
+
+}  // namespace
+
 void VerifyOutput(const std::string& output_name,
                   const Ort::Value& expected_value,
                   const Ort::Value& actual_value,
-                  float fp32_abs_err) {
+                  const TensorVerifier& tensor_verifier) {
   // Get tensor type info
   auto expected_type_info = expected_value.GetTensorTypeAndShapeInfo();
   auto actual_type_info = actual_value.GetTensorTypeAndShapeInfo();
@@ -102,21 +164,13 @@ void VerifyOutput(const std::string& output_name,
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: {
       const float* expected_data = expected_value.GetTensorData<float>();
       const float* actual_data = actual_value.GetTensorData<float>();
-      for (size_t i = 0; i < element_count; ++i) {
-        EXPECT_NEAR(expected_data[i], actual_data[i], fp32_abs_err)
-            << "Element " << i << " mismatch for " << output_name;
-      }
+      VerifyFloatOutput(output_name, expected_data, actual_data, element_count, tensor_verifier);
       break;
     }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
       const Ort::Float16_t* expected_data = expected_value.GetTensorData<Ort::Float16_t>();
       const Ort::Float16_t* actual_data = actual_value.GetTensorData<Ort::Float16_t>();
-      for (size_t i = 0; i < element_count; ++i) {
-        float expected_float = static_cast<float>(expected_data[i]);
-        float actual_float = static_cast<float>(actual_data[i]);
-        EXPECT_NEAR(expected_float, actual_float, fp32_abs_err)
-            << "Element " << i << " mismatch for " << output_name;
-      }
+      VerifyFloatOutput(output_name, expected_data, actual_data, element_count, tensor_verifier);
       break;
     }
     default:
@@ -127,11 +181,11 @@ void VerifyOutput(const std::string& output_name,
 static void VerifyOutputs(const std::vector<std::string>& output_names,
                           const std::vector<Ort::Value>& expected_fetches,
                           const std::vector<Ort::Value>& fetches,
-                          const EPVerificationParams& params) {
+                          const TensorVerifier& tensor_verifier) {
   ASSERT_EQ(expected_fetches.size(), fetches.size());
 
   for (size_t i = 0, end = expected_fetches.size(); i < end; ++i) {
-    VerifyOutput(output_names[i], expected_fetches[i], fetches[i], params.fp32_abs_err);
+    VerifyOutput(output_names[i], expected_fetches[i], fetches[i], tensor_verifier);
   }
 }
 
@@ -284,7 +338,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   RunWithEP(ort_session, ort_run_options, feeds, fetches);
 
   if (verify_outputs) {
-    VerifyOutputs(output_names, expected_fetches, fetches, params);
+    VerifyOutputs(output_names, expected_fetches, fetches, params.tensor_verifier);
   }
 
   if (params.graph_verifier) {

@@ -347,7 +347,9 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
 
     // Construct Quant params for Weight
     QnnQuantParamsWrapper weight_qparams;
-    weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, output_channel_axis, block_size, is_int4_type);
+    weight_qparams = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_float_scale, per_block_int_scale,
+                                                              weight_offset, output_channel_axis,
+                                                              /*block_scale_bitwidth*/ is_int4_type ? 4 : 8);
 
     // Get weight tensor type from input of w_dql_tensor or output_dql_tensor
     Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
@@ -385,7 +387,6 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     if (input_channel_axis < 0) {
       input_channel_axis = weight_shape.size() + input_channel_axis;  // QNN requires positive axis value
     }
-    auto block_size = helper.Get("block_size", static_cast<int64_t>(0));
 
     // Check if the weight is a constant initializer
     RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(weight_tensor_name), "Weight must be a constant initializer");
@@ -406,7 +407,9 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
 
     // Construct Quant params for Weight
     QnnQuantParamsWrapper weight_qparams;
-    weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, output_channel_axis, block_size, is_int4_type);
+    weight_qparams = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_float_scale, per_block_int_scale,
+                                                              weight_offset, output_channel_axis,
+                                                              /*block_scale_bitwidth*/ is_int4_type ? 4 : 8);
 
     // Get weight tensor type from input of w_dql_tensor or output_dql_tensor
     Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
