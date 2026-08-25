@@ -74,6 +74,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                              _In_ size_t count,
                                              _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                              _Out_writes_(count) OrtNode** ep_context_nodes) noexcept;
+  static OrtStatus* PrepareAndLoadContext(QnnEp* ep,
+                                          const OrtGraph** graphs,
+                                          const OrtNode** fused_nodes,
+                                          size_t count);
   static void ORT_API_CALL ReleaseNodeComputeInfosImpl(OrtEp* this_ptr,
                                                        OrtNodeComputeInfo** node_compute_infos,
                                                        size_t num_node_compute_infos) noexcept;
