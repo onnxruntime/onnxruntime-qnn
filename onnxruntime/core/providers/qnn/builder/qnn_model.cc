@@ -550,7 +550,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
       // Free the old (shared) context and create a new one from the binary.
       qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
       RETURN_IF_ERROR(qnn_backend_manager_->CreateContextFromFilePath(
-          context_bin_filepath_, max_spill_fill_size_, new_context));
+          context_bin_filepath_, max_spill_fill_size_, new_context, io_dispatch));
     } else {
       // Another model already recovered and recreated the context from this binary.
       // Reuse it — it's the only context remaining in context_map_.

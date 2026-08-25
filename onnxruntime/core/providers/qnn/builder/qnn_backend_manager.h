@@ -208,14 +208,15 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // callback is dispatched instead of reading from disk.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
                                     std::vector<char>& buffer,
-                                    const qnn::EpContextIoDispatch& io_dispatch);
+                                    const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
 
   // Creates a new QNN context from a binary file, handling both file-mapped and direct-read
-  // paths.  Used by SSR recovery so it matches the file mapping behavior of the initial load.
+  // paths. Used by SSR recovery so it matches the file mapping behavior of the initial load.
   // The new context handle is registered via AddQnnContextHandle on success.
   Ort::Status CreateContextFromFilePath(const std::string& context_bin_filepath,
                                         int64_t max_spill_fill_size,
-                                        Qnn_ContextHandle_t& new_context);
+                                        Qnn_ContextHandle_t& new_context,
+                                        const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
 
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {

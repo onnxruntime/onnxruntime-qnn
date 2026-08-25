@@ -1283,7 +1283,8 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& context_bin_filepath,
                                                          int64_t max_spill_fill_size,
-                                                         Qnn_ContextHandle_t& new_context) {
+                                                         Qnn_ContextHandle_t& new_context,
+                                                         const qnn::EpContextIoDispatch& io_dispatch) {
   QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
 
@@ -1377,7 +1378,7 @@ Ort::Status QnnBackendManager::CreateContextFromFilePath(const std::string& cont
   if (!use_file_mapping || rt != QNN_SUCCESS) {
     // Direct read fallback (or primary path when file mapping is disabled).
     std::vector<char> buffer;
-    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer));
+    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer, io_dispatch));
     buffer_length = static_cast<uint64_t>(buffer.size());
 
     rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
