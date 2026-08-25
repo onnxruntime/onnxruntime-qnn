@@ -3067,11 +3067,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // After compilation timing: reload compiled context for multi-PD inference if requested.
   // Runs after the timing window intentionally — reload is post-compile work.
   if (ep->prepare_and_load_) {
-    RETURN_IF_NOT_NULL(PrepareAndLoadContext(ep, graphs, fused_nodes, count));
+    RETURN_IF_NOT_NULL(ReloadCompiledContext(ep, graphs, fused_nodes, count));
   }
 
   // Clean up transient GetCapability→Compile state.
-  // onnx_graph_io_names_ is deferred to here because PrepareAndLoadContext needs it.
+  // onnx_graph_io_names_ is deferred to here because ReloadCompiledContext needs it.
   ep->onnx_graph_io_names_.reset();
 
   if (ep->prepare_only_) {
@@ -3084,7 +3084,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   return nullptr;
 }
 
-OrtStatus* QnnEp::PrepareAndLoadContext(QnnEp* ep,
+OrtStatus* QnnEp::ReloadCompiledContext(QnnEp* ep,
                                         const OrtGraph** graphs,
                                         const OrtNode** fused_nodes,
                                         size_t count) {
