@@ -23,6 +23,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/masked_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
@@ -96,6 +97,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},
     {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusionGroup::TryFusion4, ReshapeGemmFusionGroup::TryFusion3, ReshapeGemmFusionGroup::TryFusion2}},
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
+    {"Softmax", {MaskedSoftmaxPatternAFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
@@ -142,7 +144,8 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Erf" &&
-      starting_node_unit.OpType() != "Reshape") {
+      starting_node_unit.OpType() != "Reshape" &&
+      starting_node_unit.OpType() != "Softmax") {
     return nullptr;
   }
 

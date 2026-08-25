@@ -21,5 +21,10 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name);
 
+// Asserts that exactly `count` compiled QNN node names contain `name_fragment`.
+void AssertNodeNameContainsInQnnGraph(const std::filesystem::path& dump_dir,
+                                      const std::string& name_fragment,
+                                      size_t count = 1);
+
 }  // namespace test
 }  // namespace onnxruntime

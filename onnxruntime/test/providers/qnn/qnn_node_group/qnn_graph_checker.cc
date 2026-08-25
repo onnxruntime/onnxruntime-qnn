@@ -70,5 +70,38 @@ void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
       << "Unexpected QNN node found: '" << node_name << "' in " << json_path;
 }
 
+void AssertNodeNameContainsInQnnGraph(const std::filesystem::path& dump_dir,
+                                      const std::string& name_fragment,
+                                      size_t count) {
+  std::filesystem::path json_path;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      json_path = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(json_path.empty()) << "No QNN JSON graph file found in " << dump_dir;
+
+  std::ifstream json_file(json_path);
+  ASSERT_TRUE(json_file.is_open()) << "Failed to open QNN JSON graph: " << json_path;
+
+  nlohmann::json root;
+  json_file >> root;
+  ASSERT_TRUE(root.contains("graph") && root["graph"].contains("nodes"))
+      << "JSON missing 'graph.nodes' field in: " << json_path;
+
+  size_t actual_count = 0;
+  for (const auto& [node_name, node_json] : root["graph"]["nodes"].items()) {
+    static_cast<void>(node_json);
+    if (node_name.find(name_fragment) != std::string::npos) {
+      ++actual_count;
+    }
+  }
+  EXPECT_EQ(actual_count, count)
+      << "QNN node name fragment '" << name_fragment << "': expected " << count
+      << " occurrence(s), found " << actual_count << " in " << json_path;
+}
+
 }  // namespace test
 }  // namespace onnxruntime

@@ -72,6 +72,14 @@ const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& qnn_model_wrapper,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map);
 
+// Returns true if an input or its QDQ source initializer contains expected_value.
+bool IsStaticQdqInputWithValue(const QnnModelWrapper& qnn_model_wrapper,
+                               const OrtNodeUnit& node_unit,
+                               size_t input_index,
+                               const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                               double expected_value,
+                               bool require_scalar);
+
 const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& qnn_model_wrapper,
                                         const OrtNodeUnit& node_unit,
                                         const OrtNodeUnitIODef& output,
