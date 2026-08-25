@@ -1697,6 +1697,11 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceed
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["htp_reused_io_limit_mb"] = "128";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On the x86_64 Linux HTP simulator, specify SM8850 to enable support for this config
+  // option. On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
 
   const std::string context_binary_file = "./testdata/qnn_context_cache_reused_io_limit.onnx";
   const std::string qnn_ctx_bin = "./testdata/qnn_context_cache_reused_io_limit_qnn.bin";
@@ -1752,6 +1757,11 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbMalformed_LoadsSuc
     provider_options["backend_type"] = "htp";
     provider_options["offload_graph_io_quantization"] = "0";
     provider_options["htp_reused_io_limit_mb"] = bad_value;
+#if defined(__linux__) && !defined(__aarch64__)
+    // On the x86_64 Linux HTP simulator, specify SM8850 to enable support for this config
+    // option. On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
 
     auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
@@ -1762,7 +1772,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbMalformed_LoadsSuc
   }
 }
 
-
+// Run QDQ model on HTP 2 times
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // Then delete the context bin file to make the 2nd sesssion.Initialize() return the status with code INVALID_GRAPH
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
