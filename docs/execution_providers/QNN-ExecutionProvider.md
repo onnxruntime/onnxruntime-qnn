@@ -683,7 +683,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
 |com.microsoft:QuickGelu||
-|com.microsoft:RotaryEmbedding|HTP backend only|
 |com.microsoft:SimplifiedLayerNormalization||
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
