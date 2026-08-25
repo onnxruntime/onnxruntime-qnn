@@ -149,7 +149,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_reused_io_limit_mb"`|Description|
 |---|---|
-|Size in MB (string)|Bounds the IO buffer size QNN accounts for when estimating a context's memory footprint on the HTP backend. See [Reused IO Limit](#reused-io-limit) below. Defaults to "0" (not set).|
+|Size in MB (string)|Only works when loading a context binary. Tells QNN the actual size of the IO buffer that gets reused, instead of QNN's default conservative estimate. Use this if a context binary fails to load due to running out of memory even though it should fit. See [Reused IO Limit](#reused-io-limit) below. Defaults to "0" (not set — QNN uses its default conservative estimate).|
 
 |`"htp_performance_mode"`|Description|
 |---|---|
@@ -399,15 +399,16 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 
 #### Reused IO Limit
 
-By default, QNN/HTP sums the full IO tensor size of a context's graphs when estimating memory requirements at context-load time (`contextCreateFromBinary`), without knowing whether those IO buffers will actually be reused across executions — QNN cannot know this until the client registers memory via `QnnMem_register` (in ORT, this happens when the `enable_htp_shared_memory_allocator` option is used) after context load.
+When QNN HTP loads a context binary, it estimates how much memory that context needs, including its IO buffers (the input/output tensors). By default it assumes the full graph IO size, because it doesn't know you might reuse the same buffer across multiple runs instead of allocating a new one each time — so the estimate can be larger than what you actually need.
 
-This conservative estimate can cause QNN to spread contexts across multiple process domains (PDs / cDSP sessions) even when they would otherwise fit on one, since each PD has a fixed virtual-address-space budget. Contexts on different PDs each use a separate rpcpool/dspqueue, so cross-PD data exchange between contexts costs more than intra-PD access — packing more contexts onto the same PD improves performance. `htp_reused_io_limit_mb` lets QNN use a tighter estimate instead of the conservative one, which can let more contexts land on the same PD.
+This estimate matters because HTP loads each context into one of several process domains (PDs), each with a limited memory budget. If a context's estimate is too large, it may fail to load at all (QNN error 1002, "Failed to find available PD") even though it would actually fit — or it may get placed alone in its own PD instead of sharing one with other contexts, which is slower since contexts on different PDs pay extra cost to talk to each other.
+
+`htp_reused_io_limit_mb` lets you tell QNN HTP the actual size of the IO buffer you reuse, so it can use that smaller, accurate number instead of its default estimation.
+Once you set a non-zero value, you take over responsibility for that part of the estimate — QNN HTP no longer checks whether it's realistic for your actual IO usage.
 
 **Choosing a value**: it should equal the total size of the IO buffers you actually keep registered and reuse at any point in time (e.g., the combined input+output buffer size for a single reused buffer set; the sum across all live buffers if you rotate between several). This is something you can compute from your own buffer-management strategy — it is not the same as, and is usually smaller than, the graph's declared IO tensor size.
 
-**Side effect**: a small enough value also lets a single large AOT context binary fit within one PD's address-space budget where the default conservative estimate would not, which can avoid HTP context-load failures due to PD memory exhaustion (QNN error 1002, "Failed to find available PD"). This is not this option's original purpose, but falls out of the same mechanism.
-
-**Warning**: this value is also a hard runtime cap on reused IO buffer size — the underlying QAIRT SDK does not guarantee correct behavior if actual reused IO traffic at runtime exceeds it. When using this option purely to work around a PD memory exhaustion failure (rather than from a known buffer-reuse budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
+**Warning**: this value is also a hard runtime cap on reused IO buffer size — the underlying QAIRT SDK does not guarantee correct behavior if actual reused IO traffic at runtime exceeds it. When using this option purely to work around a context load failure (rather than from a known buffer-reuse budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
 
 ### Flexible Context Binary (FCB) / multi-SoC EP context
 
