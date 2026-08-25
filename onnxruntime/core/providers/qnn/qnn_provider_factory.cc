@@ -533,12 +533,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
   int device_id = 0;
 
   // Create the external resource importer
-  auto* importer = new (std::nothrow) QnnExternalResourceImporterImpl(device_id, factory->ort_api);
-  if (importer == nullptr) {
+  try {
+    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
+  } catch (...) {
     return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
   }
 
-  *out_importer = importer;
   return nullptr;
 #else
   return factory->ort_api.CreateStatus(

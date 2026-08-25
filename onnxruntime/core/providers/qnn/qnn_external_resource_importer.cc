@@ -146,10 +146,9 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::ImportMemoryImpl(
 
       break;
     }
-    case ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP:
     default:
       return impl.ort_api_.CreateStatus(ORT_INVALID_ARGUMENT,
-                                        "Invalid external memory handle type");
+                                        "Unsupported external memory handle type");
   }
 
   handle->ep_device = nullptr;
@@ -200,7 +199,7 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
     element_count *= static_cast<size_t>(tensor_desc->shape[i]);
   }
 
-  size_t element_size = 0;
+  double element_size = 0;
   switch (tensor_desc->element_type) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
       element_size = sizeof(float);
@@ -244,11 +243,19 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ:
       element_size = 1;
       break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+      element_size = 0.5;
+      break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
+      element_size = 0.25;
+      break;
     default:
       return impl.ort_api_.CreateStatus(ORT_INVALID_ARGUMENT, "Unsupported tensor element type");
   }
 
-  size_t tensor_size_bytes = element_count * element_size;
+  size_t tensor_size_bytes = size_t(element_count * element_size);
   size_t available_size = qnn_handle->descriptor.size_bytes - qnn_handle->descriptor.offset_bytes - tensor_desc->offset_bytes;
 
   if (tensor_size_bytes > available_size) {
@@ -263,9 +270,16 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
 
   // Create memory info for the GPU device. Using the existing name DML works for us.
   OrtMemoryInfo* memory_info = nullptr;
-  OrtStatus* status = impl.ort_api_.CreateMemoryInfo("DML", OrtDeviceAllocator,
-                                                     impl.device_id_, OrtMemTypeDefault,
-                                                     &memory_info);
+  const uint32_t vendor_id{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
+  OrtStatus* status = impl.ort_api_.CreateMemoryInfo_V2(
+      "D3D12_RESOURCE_IMPORT",
+      OrtMemoryInfoDeviceType_GPU,
+      vendor_id,
+      impl.device_id_,
+      OrtDeviceMemoryType_DEFAULT,
+      0,
+      OrtDeviceAllocator,
+      &memory_info);
   if (status != nullptr) {
     return status;
   }
@@ -433,12 +447,10 @@ QnnSyncStreamImpl::~QnnSyncStreamImpl() {
 }
 
 void* ORT_API_CALL QnnSyncStreamImpl::GetHandleImpl(
-    _In_ OrtSyncStreamImpl* this_ptr) noexcept {
-  auto& impl = *static_cast<QnnSyncStreamImpl*>(this_ptr);
+    _In_ OrtSyncStreamImpl* /*this_ptr*/) noexcept {
+  // auto& impl = *static_cast<QnnSyncStreamImpl*>(this_ptr);
 
   // Currently not implemented.
-  return impl.ort_api_.CreateStatus(ORT_NOT_IMPLEMENTED, "Not implemented");
-
   return static_cast<void*>(nullptr);
 }
 
