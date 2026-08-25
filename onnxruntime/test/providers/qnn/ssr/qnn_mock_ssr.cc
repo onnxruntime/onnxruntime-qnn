@@ -38,8 +38,6 @@ extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
 
 // Tracks whether contextCreateFromBinaryWithCallback was invoked during SSR recovery
 // (i.e., after g_ssr_fired became true).  Reset alongside g_ssr_fired each session.
-// Only meaningful when QNN_FILE_MAPPED_WEIGHTS_AVAILABLE is defined (Windows ARM64,
-// QNN >= 2.32); always false on other platforms since the API doesn't exist there.
 static bool g_file_mapping_used_for_recovery = false;
 
 // When true, contextCreateFromBinaryWithCallback returns QNN_COMMON_ERROR_NOT_SUPPORTED

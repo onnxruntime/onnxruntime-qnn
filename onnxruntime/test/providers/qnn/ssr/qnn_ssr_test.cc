@@ -234,6 +234,10 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeFileMappingRe
   //         the direct-read fallback.
   // -----------------------------------------------------------------------
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // RAII guard: ensures the flag is always cleared even if an ASSERT_* exits the test early.
+  struct OldBlobGuard {
+    ~OldBlobGuard() { QnnMockSSR_SetSimulateOldBlobVersion(false); }
+  } old_blob_guard;
   QnnMockSSR_SetSimulateOldBlobVersion(true);
 #endif
 
@@ -254,7 +258,6 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeFileMappingRe
   EXPECT_FALSE(QnnMockSSR_WasFileMappingUsedForRecovery())
       << "SSR recovery should NOT have used contextCreateFromBinaryWithCallback when "
          "the callback API is rejected (pre-3.3.3 simulation). Direct read should be used.";
-  QnnMockSSR_SetSimulateOldBlobVersion(false);
 #endif
 
   CleanUpCtxFile(context_model_file);
