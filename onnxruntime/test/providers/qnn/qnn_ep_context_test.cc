@@ -1690,7 +1690,79 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 }
 
-// Run QDQ model on HTP 2 times
+// htp_reused_io_limit_mb: a valid numeric value is accepted and does not block AOT context load.
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["htp_reused_io_limit_mb"] = "128";
+
+  const std::string context_binary_file = "./testdata/qnn_context_cache_reused_io_limit.onnx";
+  const std::string qnn_ctx_bin = "./testdata/qnn_context_cache_reused_io_limit_qnn.bin";
+  std::remove(context_binary_file.c_str());
+  std::remove(qnn_ctx_bin.c_str());
+
+  std::unordered_map<std::string, std::string> session_option_pairs;
+  session_option_pairs.emplace(kOrtSessionOptionEpContextEnable, "1");
+  session_option_pairs.emplace(kOrtSessionOptionEpContextFilePath, context_binary_file);
+  session_option_pairs.emplace(kOrtSessionOptionEpContextEmbedMode, "0");
+
+  const TestInputDef<float> input_def({1, 2, 3}, false, -10.0f, 10.0f);
+  const std::string op_type = "Atan";
+
+  // 1st run generates the Onnx skeleton file + Qnn context cache binary file with the
+  // option applied during context creation.
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       provider_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       session_option_pairs);
+  EXPECT_TRUE(std::filesystem::exists(context_binary_file.c_str()));
+  EXPECT_TRUE(std::filesystem::exists(qnn_ctx_bin));
+
+  // 2nd run loads the cached context binary from disk with the option applied on the
+  // contextCreateFromBinary path (LoadCachedQnnContextFromBuffer).
+  std::unordered_map<std::string, std::string> session_option_pairs2;
+  session_option_pairs2.emplace(kOrtSessionOptionEpContextFilePath, context_binary_file);
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       provider_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       context_binary_file,
+                       session_option_pairs2);
+
+  std::remove(context_binary_file.c_str());
+  std::remove(qnn_ctx_bin.c_str());
+}
+
+// htp_reused_io_limit_mb: malformed values (negative / non-numeric) are ignored with a
+// warning rather than failing session creation.
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbMalformed_LoadsSucceeds) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  for (const char* bad_value : {"-1", "10abc"}) {
+    ProviderOptions provider_options;
+    provider_options["backend_type"] = "htp";
+    provider_options["offload_graph_io_quantization"] = "0";
+    provider_options["htp_reused_io_limit_mb"] = bad_value;
+
+    auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                       TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+    RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                    provider_options,
+                    13,
+                    EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
+  }
+}
+
+
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // Then delete the context bin file to make the 2nd sesssion.Initialize() return the status with code INVALID_GRAPH
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
