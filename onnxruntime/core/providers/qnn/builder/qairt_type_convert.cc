@@ -18,9 +18,14 @@ namespace qairt_convert {
 
 namespace {
 
-// Maps Qnn_TensorType_t to qairt::TensorProperties flags on `out`.
-void ApplyTensorType(Qnn_TensorType_t type, qairt::Tensor& out) {
-  auto& props = out.getTensorProperties();
+// Maps Qnn_TensorType_t to qairt::TensorProperties flags.
+// ponytail: QAIRT Graph::addNode requires native inputs to be outputs of a prior node
+// (QairtGraph.hpp line 501). Graph I/O tensors MUST be flagged isInput/isOutput so
+// the backend knows they're externally provided, not intermediate.
+//
+// IMPORTANT: caller must set an explicit TensorProperties on `out` via
+// setTensorProperties(api.make<TensorProperties>()) BEFORE calling this function.
+void ApplyTensorType(Qnn_TensorType_t type, qairt::TensorProperties& props) {
   switch (type) {
     case QNN_TENSOR_TYPE_APP_WRITE:
       props.setIsInput(true);
@@ -38,29 +43,12 @@ void ApplyTensorType(Qnn_TensorType_t type, qairt::Tensor& out) {
     case QNN_TENSOR_TYPE_STATIC:
       props.setIsStatic(true);
       break;
-    case QNN_TENSOR_TYPE_NULL:
-      props.setIsNull(true);
-      break;
     case QNN_TENSOR_TYPE_UPDATEABLE_STATIC:
       props.setIsStatic(true);
       props.setIsUpdatable(true);
       break;
-    case QNN_TENSOR_TYPE_UPDATEABLE_NATIVE:
-      props.setIsNative(true);
-      props.setIsUpdatable(true);
-      break;
-    case QNN_TENSOR_TYPE_UPDATEABLE_APP_WRITE:
-      props.setIsInput(true);
-      props.setIsUpdatable(true);
-      break;
-    case QNN_TENSOR_TYPE_UPDATEABLE_APP_READ:
-      props.setIsOutput(true);
-      props.setIsUpdatable(true);
-      break;
-    case QNN_TENSOR_TYPE_UPDATEABLE_APP_READWRITE:
-      props.setIsInput(true);
-      props.setIsOutput(true);
-      props.setIsUpdatable(true);
+    case QNN_TENSOR_TYPE_NULL:
+      props.setIsNull(true);
       break;
     default:
       props.setIsNative(true);
@@ -115,6 +103,33 @@ Ort::Status ConvertScalar(const Qnn_Scalar_t& qnn_scalar, const qairt::Api& api,
 }
 
 }  // namespace
+
+// ponytail: ID-only tensor ref for addNode OpConfig. Backend matches by ID to
+// the tensor registered at createGraphTensor time.
+// Do NOT set any TensorProperties — the default-constructed tensor has no type flags,
+// which is what the backend expects for OpConfig refs (it uses the registered tensor's type).
+Ort::Status FromQnnTensorRef(const Qnn_Tensor_t& qnn_tensor,
+                             const qairt::Api& api,
+                             qairt::Tensor& out) {
+  out = api.make<qairt::Tensor>();
+  out.setId(GetQnnTensorID(qnn_tensor));
+  const char* name = GetQnnTensorName(qnn_tensor);
+  if (name) out.setName(name);
+  out.setDataType(ToQairtDataType(GetQnnTensorDataType(qnn_tensor)));
+
+  uint32_t rank = GetQnnTensorRank(qnn_tensor);
+  uint32_t* dims = GetQnnTensorDims(qnn_tensor);
+  if (rank > 0 && dims) {
+    out.setDimensions(std::vector<uint32_t>(dims, dims + rank));
+  }
+  return Ort::Status();
+}
+
+Ort::Status ConvertScalarPublic(const Qnn_Scalar_t& qnn_scalar,
+                                const qairt::Api& api,
+                                qairt::Scalar& out) {
+  return ConvertScalar(qnn_scalar, api, out);
+}
 
 Ort::Status ApplyQuantizeParams(const Qnn_QuantizeParams_t& qnn_qp,
                                 const qairt::Api& /*api*/,
@@ -207,7 +222,12 @@ Ort::Status FromQnnTensor(const Qnn_Tensor_t& qnn_tensor,
   out.setDataFormat(GetQnnTensorDataFormat(qnn_tensor));
   out.setId(GetQnnTensorID(qnn_tensor));
 
-  ApplyTensorType(GetQnnTensorType(qnn_tensor), out);
+  // ponytail: must create explicit TensorProperties and assign BEFORE setting flags.
+  // A freshly-constructed Tensor's internal props handle is NULL — the non-owning
+  // accessor wraps NULL and flag setters become no-ops.
+  auto props = api.make<qairt::TensorProperties>();
+  ApplyTensorType(GetQnnTensorType(qnn_tensor), props);
+  out.setTensorProperties(props);
 
   uint32_t rank = GetQnnTensorRank(qnn_tensor);
   uint32_t* dims = GetQnnTensorDims(qnn_tensor);
@@ -215,12 +235,20 @@ Ort::Status FromQnnTensor(const Qnn_Tensor_t& qnn_tensor,
     out.setDimensions(std::vector<uint32_t>(dims, dims + rank));
   }
 
+  // ponytail: attach client buffer for STATIC (weight data at graph build) and
+  // APP_WRITE/APP_READ (inference data at execute time). Only skip for NATIVE
+  // intermediate tensors which have no external buffer.
+  Qnn_TensorType_t tensor_type = GetQnnTensorType(qnn_tensor);
   Qnn_TensorMemType_t mem_type = GetQnnTensorMemType(qnn_tensor);
-  if (mem_type == QNN_TENSORMEMTYPE_RAW) {
+  bool needs_buffer = (tensor_type != QNN_TENSOR_TYPE_NATIVE &&
+                       tensor_type != QNN_TENSOR_TYPE_NULL);
+  if (needs_buffer && mem_type == QNN_TENSORMEMTYPE_RAW) {
     const auto& buf = GetQnnTensorClientBuf(qnn_tensor);
-    auto& cb = out.getClientBuffer();
-    cb.setData(const_cast<void*>(static_cast<const void*>(buf.data)));
-    cb.setDataSize(buf.dataSize);
+    if (buf.data && buf.dataSize > 0) {
+      auto& cb = out.getClientBuffer();
+      cb.setData(const_cast<void*>(static_cast<const void*>(buf.data)));
+      cb.setDataSize(buf.dataSize);
+    }
   }
 
   QAIRT_RETURN_IF_ERROR(ApplyQuantizeParams(GetQnnTensorQParams(qnn_tensor), api, out));
@@ -252,29 +280,29 @@ Ort::Status FromQnnOpConfig(const Qnn_OpConfig_t& qnn_op,
       param.setScalar(scalar);
     } else if (qp.paramType == QNN_PARAMTYPE_TENSOR) {
       qairt::Tensor tensor;
-      QAIRT_RETURN_IF_ERROR(FromQnnTensor(qp.tensorParam, api, tensor));
+      QAIRT_RETURN_IF_ERROR(FromQnnTensorRef(qp.tensorParam, api, tensor));
       param.setTensor(tensor);
     }
     params.push_back(std::move(param));
   }
   out.setParams(params);
 
-  // Convert input tensors
+  // Convert input tensors — ID-only refs, no type properties (QAIRT addNode rejects them)
   std::vector<qairt::Tensor> inputs;
   inputs.reserve(v1.numOfInputs);
   for (uint32_t i = 0; i < v1.numOfInputs; ++i) {
     qairt::Tensor t;
-    QAIRT_RETURN_IF_ERROR(FromQnnTensor(v1.inputTensors[i], api, t));
+    QAIRT_RETURN_IF_ERROR(FromQnnTensorRef(v1.inputTensors[i], api, t));
     inputs.push_back(std::move(t));
   }
   out.setInputs(inputs);
 
-  // Convert output tensors
+  // Convert output tensors — same: ID-only refs
   std::vector<qairt::Tensor> outputs;
   outputs.reserve(v1.numOfOutputs);
   for (uint32_t i = 0; i < v1.numOfOutputs; ++i) {
     qairt::Tensor t;
-    QAIRT_RETURN_IF_ERROR(FromQnnTensor(v1.outputTensors[i], api, t));
+    QAIRT_RETURN_IF_ERROR(FromQnnTensorRef(v1.outputTensors[i], api, t));
     outputs.push_back(std::move(t));
   }
   out.setOutputs(outputs);

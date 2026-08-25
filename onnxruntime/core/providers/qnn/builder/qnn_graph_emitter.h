@@ -47,13 +47,13 @@ class QnnGraphEmitter final : public IGraphEmitter {
   Ort::Status FinalizeGraph(Qnn_GraphHandle_t graph,
                             Qnn_ProfileHandle_t profile) override;
 
-  Ort::Status ExecuteGraph(Qnn_GraphHandle_t graph,
-                           Qnn_Tensor_t* inputs,
-                           uint32_t n_inputs,
-                           Qnn_Tensor_t* outputs,
-                           uint32_t n_outputs,
-                           Qnn_ProfileHandle_t profile,
-                           Qnn_SignalHandle_t signal) override;
+  Qnn_ErrorHandle_t ExecuteGraph(Qnn_GraphHandle_t graph,
+                                 Qnn_Tensor_t* inputs,
+                                 uint32_t n_inputs,
+                                 Qnn_Tensor_t* outputs,
+                                 uint32_t n_outputs,
+                                 Qnn_ProfileHandle_t profile,
+                                 Qnn_SignalHandle_t signal) override;
 
  private:
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;

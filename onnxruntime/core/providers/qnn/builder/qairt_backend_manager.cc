@@ -38,20 +38,38 @@ Ort::Status QairtBackendManager::Initialize(const Config& config) {
   }
 
   try {
-    // Migration guide pattern: makeShared for Log and Backend (shared across components).
     log_ = api_->makeShared<qairt::Log>(static_cast<QairtLog_CallbackFn_t>(nullptr),
                                         QAIRT_LOG_LEVEL_WARN);
-    backend_ = api_->makeShared<qairt::Backend>(*log_);
+  } catch (const qairt::Exception& e) {
+    return MAKE_EP_FAIL(("QairtBackendManager: makeShared<Log> failed: " +
+                         std::string(e.what()))
+                            .c_str());
+  }
 
+  try {
+    backend_ = api_->makeShared<qairt::Backend>(*log_);
+  } catch (const qairt::Exception& e) {
+    return MAKE_EP_FAIL(("QairtBackendManager: makeShared<Backend> failed: " +
+                         std::string(e.what()))
+                            .c_str());
+  }
+
+  try {
     auto context_config = api_->make<qairt::ContextConfiguration>();
     auto context = backend_->createContext(context_config);
     contexts_.push_back(std::make_unique<qairt::Context>(std::move(context)));
+  } catch (const qairt::Exception& e) {
+    return MAKE_EP_FAIL(("QairtBackendManager: createContext failed: " +
+                         std::string(e.what()))
+                            .c_str());
+  }
 
+  try {
     if (config.enable_profiling) {
       profile_ = std::make_unique<qairt::Profile>(backend_->createProfile(QAIRT_PROFILE_LEVEL_BASIC));
     }
   } catch (const qairt::Exception& e) {
-    return MAKE_EP_FAIL(("QairtBackendManager::Initialize failed: " +
+    return MAKE_EP_FAIL(("QairtBackendManager: createProfile failed: " +
                          std::string(e.what()))
                             .c_str());
   }

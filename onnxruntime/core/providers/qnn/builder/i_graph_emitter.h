@@ -46,14 +46,15 @@ class IGraphEmitter {
   virtual Ort::Status FinalizeGraph(Qnn_GraphHandle_t graph,
                                     Qnn_ProfileHandle_t profile) = 0;
 
-  // Execute the graph (graphExecute).
-  virtual Ort::Status ExecuteGraph(Qnn_GraphHandle_t graph,
-                                   Qnn_Tensor_t* inputs,
-                                   uint32_t n_inputs,
-                                   Qnn_Tensor_t* outputs,
-                                   uint32_t n_outputs,
-                                   Qnn_ProfileHandle_t profile,
-                                   Qnn_SignalHandle_t signal) = 0;
+  // Execute the graph (graphExecute). Returns raw Qnn_ErrorHandle_t so callers
+  // can detect specific error codes (e.g. QNN_COMMON_ERROR_SYSTEM_COMMUNICATION for SSR).
+  virtual Qnn_ErrorHandle_t ExecuteGraph(Qnn_GraphHandle_t graph,
+                                         Qnn_Tensor_t* inputs,
+                                         uint32_t n_inputs,
+                                         Qnn_Tensor_t* outputs,
+                                         uint32_t n_outputs,
+                                         Qnn_ProfileHandle_t profile,
+                                         Qnn_SignalHandle_t signal) = 0;
 };
 
 }  // namespace qnn

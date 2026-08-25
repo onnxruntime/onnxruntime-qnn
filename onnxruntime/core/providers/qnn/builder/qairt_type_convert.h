@@ -64,6 +64,17 @@ Ort::Status FromQnnOpConfig(const Qnn_OpConfig_t& qnn_op,
                             const qairt::Api& api,
                             qairt::OpConfig& out);
 
+// ID-only tensor ref for fallback cases where a tensor wasn't pre-registered.
+// Sets ID, name, dataType, dims — no TensorProperties.
+Ort::Status FromQnnTensorRef(const Qnn_Tensor_t& qnn_tensor,
+                             const qairt::Api& api,
+                             qairt::Tensor& out);
+
+// Converts a QNN C Qnn_Scalar_t to a qairt::Scalar.
+Ort::Status ConvertScalarPublic(const Qnn_Scalar_t& qnn_scalar,
+                                const qairt::Api& api,
+                                qairt::Scalar& out);
+
 }  // namespace qairt_convert
 }  // namespace qnn
 }  // namespace onnxruntime

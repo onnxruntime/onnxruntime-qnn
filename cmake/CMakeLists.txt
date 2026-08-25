@@ -486,6 +486,19 @@ if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so")
     endif()
     message(STATUS "QNN lib files: " ${QNN_LIB_FILES})
+
+    if(onnxruntime_USE_QAIRT_API)
+      file(GLOB QAIRT_LIB_FILES LIST_DIRECTORIES false "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/libQairt*.so"
+                                                       "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/Qairt*.dll")
+      if (${QNN_ARCH_ABI} STREQUAL "aarch64-windows-msvc" OR ${QNN_ARCH_ABI} STREQUAL "arm64x-windows-msvc")
+        list(APPEND QAIRT_LIB_FILES "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQairtHtpV73Skel.so"
+                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libqairthtpv73.cat"
+                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQairtHtpV81Skel.so"
+                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libqairthtpv81.cat")
+      endif()
+      list(APPEND QNN_LIB_FILES ${QAIRT_LIB_FILES})
+      message(STATUS "QAIRT lib files: " ${QAIRT_LIB_FILES})
+    endif()
 endif()
 if (onnxruntime_USE_LOCK_FREE_QUEUE)
     add_compile_definitions(USE_LOCK_FREE_QUEUE)

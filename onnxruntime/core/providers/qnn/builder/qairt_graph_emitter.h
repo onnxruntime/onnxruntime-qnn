@@ -53,19 +53,23 @@ class QairtGraphEmitter final : public IGraphEmitter {
   Ort::Status FinalizeGraph(Qnn_GraphHandle_t graph,
                             Qnn_ProfileHandle_t profile) override;
 
-  Ort::Status ExecuteGraph(Qnn_GraphHandle_t graph,
-                           Qnn_Tensor_t* inputs,
-                           uint32_t n_inputs,
-                           Qnn_Tensor_t* outputs,
-                           uint32_t n_outputs,
-                           Qnn_ProfileHandle_t profile,
-                           Qnn_SignalHandle_t signal) override;
+  Qnn_ErrorHandle_t ExecuteGraph(Qnn_GraphHandle_t graph,
+                                 Qnn_Tensor_t* inputs,
+                                 uint32_t n_inputs,
+                                 Qnn_Tensor_t* outputs,
+                                 uint32_t n_outputs,
+                                 Qnn_ProfileHandle_t profile,
+                                 Qnn_SignalHandle_t signal) override;
 
  private:
   qairt::Api& api_;
   qairt::Context& context_;
   // ponytail: single-graph for now; multi-graph support via map if needed.
   std::shared_ptr<qairt::Graph> current_graph_;
+  // ponytail: tensors registered via createGraphTensor, keyed by ID.
+  // addNode must reference these objects (shallowCopy), not fresh tensors —
+  // QairtHtp.dll validates by handle identity, not ID matching.
+  std::unordered_map<uint32_t, qairt::Tensor> registered_tensors_;
 };
 
 }  // namespace qnn
