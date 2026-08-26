@@ -205,7 +205,7 @@ void RunAndVerifyLayerNormOutput(const GetTestModelFn& build_test_case, Provider
 
   std::vector<Ort::Value> qnn_outputs;
   InferenceModel(model_data, "DQLayerNormFusion_qnn", provider_options, expected_ep_assignment,
-                helper.feeds_, qnn_outputs);
+                 helper.feeds_, qnn_outputs);
 
   ASSERT_EQ(cpu_outputs.size(), qnn_outputs.size());
   for (size_t out_idx = 0; out_idx < cpu_outputs.size(); ++out_idx) {
@@ -219,8 +219,8 @@ void RunAndVerifyLayerNormOutput(const GetTestModelFn& build_test_case, Provider
       for (size_t i = 0; i < element_count; ++i) {
         const int diff = std::abs(static_cast<int>(expected[i]) - static_cast<int>(actual[i]));
         EXPECT_LE(diff, max_abs_diff) << "Output element " << i << " differs by " << diff
-                                       << " (cpu_ref=" << static_cast<int>(expected[i])
-                                       << ", qnn=" << static_cast<int>(actual[i]) << ")";
+                                      << " (cpu_ref=" << static_cast<int>(expected[i])
+                                      << ", qnn=" << static_cast<int>(actual[i]) << ")";
       }
     } else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
       const int8_t* expected = cpu_outputs[out_idx].GetTensorData<int8_t>();
@@ -228,8 +228,8 @@ void RunAndVerifyLayerNormOutput(const GetTestModelFn& build_test_case, Provider
       for (size_t i = 0; i < element_count; ++i) {
         const int diff = std::abs(static_cast<int>(expected[i]) - static_cast<int>(actual[i]));
         EXPECT_LE(diff, max_abs_diff) << "Output element " << i << " differs by " << diff
-                                       << " (cpu_ref=" << static_cast<int>(expected[i])
-                                       << ", qnn=" << static_cast<int>(actual[i]) << ")";
+                                      << " (cpu_ref=" << static_cast<int>(expected[i])
+                                      << ", qnn=" << static_cast<int>(actual[i]) << ")";
       }
     } else {
       FAIL() << "RunAndVerifyLayerNormOutput: unexpected output element type " << elem_type;
