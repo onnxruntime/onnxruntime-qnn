@@ -17,6 +17,8 @@
 namespace onnxruntime {
 namespace qnn {
 
+class QnnEpProfiler;
+
 struct QnnTensorInfo {
   const QnnTensorWrapper* tensor_wrapper = nullptr;
   uint32_t tensor_byte_size = 0;
@@ -70,7 +72,8 @@ class QnnModel {
 
   Ort::Status ExecuteGraph(OrtKernelContext* context,
                            const Ort::Logger& logger,
-                           const qnn::EpContextIoDispatch& io_dispatch);
+                           const qnn::EpContextIoDispatch& io_dispatch,
+                           QnnEpProfiler* ort_profiler = nullptr);
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = graph_outputs_.tensors.find(name);
@@ -178,7 +181,8 @@ class QnnModel {
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
   Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
                                   const Ort::Logger& logger,
-                                  Qnn_ErrorHandle_t& execute_status);
+                                  Qnn_ErrorHandle_t& execute_status,
+                                  QnnEpProfiler* ort_profiler);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);

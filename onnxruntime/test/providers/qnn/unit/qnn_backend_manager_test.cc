@@ -16,7 +16,7 @@
 //   - QnnSerializerConfig (CreateIr / CreateSaver / GetBackendPath / SetGraphName / Configure)
 //   - SetupBackend: load-failure paths (stub) + config permutations against real HTP
 //     (priority / device / profiling), serializer backends (Saver / Ir)
-//   - SetContextPriority / ResetContextPriority, SetProfilingLevelETW
+//   - SetContextPriority / ResetContextPriority, QnnBackendProfilingManager::SetProfilingLevelETW
 //   - ResetQnnLogLevel (before setup + after setup)
 //   - GetContextBinaryBuffer (before setup + after setup) / LoadCachedQnnContextFromBuffer
 //   - ParseLoraConfig file I/O error paths
@@ -330,9 +330,9 @@ TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
   static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnDeviceHandle),
                                     const qnn::QnnBackendManager&>,
                 "GetQnnDeviceHandle must be const");
-  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnProfileHandle),
-                                    const qnn::QnnBackendManager&>,
-                "GetQnnProfileHandle must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendProfilingManager::HasProfileHandle),
+                                    const qnn::QnnBackendProfilingManager&>,
+                "HasProfileHandle must be const");
   static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnBackendType),
                                     const qnn::QnnBackendManager&>,
                 "GetQnnBackendType must be const");
@@ -345,7 +345,8 @@ TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
   EXPECT_EQ(const_manager.GetQnnBackendHandle(), nullptr);
   EXPECT_EQ(const_manager.GetQnnValidatorBackendHandle(), nullptr);
   EXPECT_EQ(const_manager.GetQnnDeviceHandle(), nullptr);
-  EXPECT_EQ(const_manager.GetQnnProfileHandle(), nullptr);
+  EXPECT_FALSE(const_manager.GetProfilingManager().HasProfileHandle());
+  EXPECT_FALSE(const_manager.GetProfilingManager().OrtProfilingActive());
   EXPECT_EQ(const_manager.GetQnnBackendType(), qnn::QnnBackendType::CPU);
   EXPECT_EQ(const_manager.GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
   EXPECT_EQ(const_manager.GetQnnInterface().backendCreate,
@@ -655,7 +656,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_EtwLevelHigherThanMain_Us
 }
 
 // SetProfilingLevelETW releases and re-creates the profile handle.
-TEST_F(QnnUnit_BackendManagerHtpTest, SetProfilingLevelETW_HTP_ChangesLevel) {
+TEST_F(QnnUnit_BackendManagerHtpTest, ProfilingManager_SetProfilingLevelETW_HTP_ChangesLevel) {
   StubApiEnv env;
   auto manager = MakeHTPManager(env.api_ptrs, env.logger,
                                 qnn::ContextPriority::NORMAL, 0,
@@ -666,8 +667,8 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetProfilingLevelETW_HTP_ChangesLevel) {
     ASSERT_TRUE(s.IsOK()) << "SetupBackend failed: " << s.GetErrorMessage();
   }
 
-  EXPECT_TRUE(manager->SetProfilingLevelETW(qnn::ProfilingLevel::BASIC).IsOK());
-  EXPECT_TRUE(manager->SetProfilingLevelETW(qnn::ProfilingLevel::OFF).IsOK());
+  EXPECT_TRUE(manager->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::BASIC).IsOK());
+  EXPECT_TRUE(manager->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::OFF).IsOK());
 }
 
 // After SetupBackend each ORT log level maps to a different QNN log level.
