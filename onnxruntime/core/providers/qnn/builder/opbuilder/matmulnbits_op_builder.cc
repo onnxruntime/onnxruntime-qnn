@@ -512,16 +512,6 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
                                                                per_block_float_zp,
                                                                gsl::narrow_cast<uint32_t>(bits),
                                                                block_sizes);
-          if (is_act_16bitquant) {
-            // 2.6 Add Dequantize to UINT16/INT16 → FP16.
-            const std::string fp16_act_name = utils::UniqueNameGenerator().New(input_names[0], "_dq_fp16");
-            RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
-                                                                   input_names[0],
-                                                                   fp16_act_name,
-                                                                   do_op_validation,
-                                                                   "MatMulNBits"));
-            input_names[0] = fp16_act_name;
-          }
         }
       }
       // 2.7 Create and register the weight tensor wrapper.
@@ -651,7 +641,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     // For BwFloatBlock, the Conv2D kernel always outputs FP16.
     const bool is_lpbq = qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
                          qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsLPBQ();
-    const Qnn_DataType_t conv2d_output_dtype = is_lpbq ? output_info.qnn_data_type : QNN_DATATYPE_FLOAT_16;
+    const Qnn_DataType_t conv2d_output_dtype = (is_lpbq || utils::IsQuant16bit(output_info.qnn_data_type))
+                                                    ? output_info.qnn_data_type
+                                                    : QNN_DATATYPE_FLOAT_16;
 
     const std::string conv2d_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
     QnnTensorWrapper conv2d_output_tensor_wrapper(conv2d_output_name,
@@ -686,20 +678,6 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                     do_op_validation));
 
       reshape_input_name = cast_output_name;
-    } else if (utils::IsQuant16bit(output_info.qnn_data_type) && !is_lpbq) {
-      // 2. Add Quantize to FP16 → UINT16/INT16.
-      const std::string q_suffix = output_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ? "_q_int16" : "_q_uint16";
-      const std::string q_output_name = utils::UniqueNameGenerator().New(output_tensor.name, q_suffix);
-      RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
-                                                       conv2d_output_name,
-                                                       q_output_name,
-                                                       QNN_TENSOR_TYPE_NATIVE,
-                                                       output_info.qnn_data_type,
-                                                       output_info.quant_param.Copy(),
-                                                       std::vector<uint32_t>(conv2d_output_shape),
-                                                       do_op_validation));
-
-      reshape_input_name = q_output_name;
     }
 
     // 3. Add post-Reshape to squeeze shape back.
