@@ -710,6 +710,49 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
   }
 }
 
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_ConvertOnlyIfAsymmetric) {
+  namespace fs = std::filesystem;
+  struct TestCase {
+    const char* name;
+    float input1_min;
+    size_t expected_convert_count;
+  };
+
+  for (const TestCase& test_case : {TestCase{"symmetric", -0.1f, 0},
+                                    TestCase{"asymmetric", -0.05f, 1}}) {
+    SCOPED_TRACE(test_case.name);
+    const fs::path graph_dir = fs::temp_directory_path() /
+                               (std::string("MatMulOp_QDQ_U16DynamicInput1_") + test_case.name);
+    fs::remove_all(graph_dir);
+    ASSERT_TRUE(fs::create_directories(graph_dir));
+    auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+    ProviderOptions provider_options;
+    provider_options["backend_type"] = "htp";
+    provider_options["offload_graph_io_quantization"] = "0";
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#ifdef __linux__
+    provider_options["htp_arch"] = "73";
+#endif
+
+    TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
+    TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(test_case.input1_min, 0.1f, 6));
+    ASSERT_EQ(GetTestInputQuantParams<uint16_t>(input1_def).IsSymmetric(),
+              test_case.expected_convert_count == 0);
+
+    TestQDQModelAccuracy(
+        BuildMatMulOpTestCase(input0_def, input1_def),
+        BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false),
+        provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+    if (::testing::Test::IsSkipped()) {
+      return;
+    }
+    AssertOpInQnnGraph(graph_dir, "Convert", test_case.expected_convert_count);
+  }
+}
+
 // Tests MatMul with two uint16 (quantized) inputs with weight as static.
 // This exercises a workaround in QNN EP that inserts a QNN Convert op before input[1] (converts from uint16 to sint16).
 // This workaround prevents a validation error for this specific MatMul configuration.
