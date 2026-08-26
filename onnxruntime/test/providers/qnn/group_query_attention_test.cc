@@ -304,6 +304,11 @@ static void RunGQATest(const GqaTestConfig<T, M>& config) {
       provider_options["enable_htp_shared_memory_allocator"] = "1";
     }
   }
+#if defined(__linux__) && !defined(__aarch64__)
+  if (config.backend_name == "htp") {
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  }
+#endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions qnn_so;
@@ -414,6 +419,9 @@ static void RunHTPPackedGQATest(int32_t num_heads,
                                 int32_t do_rotary,
                                 float fp32_abs_err = 1e-2f,
                                 int32_t max_seq_len = 0) {
+  // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   const int32_t batch_size = 1;
   const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
   if (max_seq_len <= 0) {
@@ -467,6 +475,9 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
                                   float scale,
                                   int32_t do_rotary,
                                   float fp32_abs_err = 1e-2f) {
+  // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   const int32_t batch_size = 1;
   const int32_t q_hidden = num_heads * head_size;
   const int32_t kv_hidden = kv_num_heads * head_size;
@@ -641,6 +652,10 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigne
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
+  // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below,
+  // so pinning it to HTP can't actually get the node assigned there.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   const ScopedGqaOpAffinityConfig config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
   bool session_failed = false;
   std::string session_error;
