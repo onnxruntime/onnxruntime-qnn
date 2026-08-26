@@ -28,6 +28,14 @@ uint32_t real_numProviders{0};
 // Declared at file scope so QnnInterface_getProviders can reset it on all platforms.
 static bool g_ssr_fired = false;
 
+// Forces every graphExecute to fail, so a retry after SSR recovery crashes again.
+// Exported (see .def) because no header exists for this DLL.
+static bool g_always_crash_mode = false;
+
+extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
+  g_always_crash_mode = always_crash;
+}
+
 namespace {
 #if defined(_WIN32)
 // Load QnnHtp.dll at DLL startup and resolve the real QnnInterface_getProviders.
@@ -64,6 +72,9 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
                                    uint32_t numOutputs,
                                    Qnn_ProfileHandle_t profileHandle,
                                    Qnn_SignalHandle_t signalHandle) {
+  if (g_always_crash_mode) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  }
   if (!g_ssr_fired) {
     g_ssr_fired = true;
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;

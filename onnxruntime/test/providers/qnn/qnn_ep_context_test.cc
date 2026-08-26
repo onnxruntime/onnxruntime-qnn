@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 
+#include <cmath>
 #include <filesystem>
 #include <string>
 
@@ -3453,6 +3454,107 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
 #endif
 }
 
+// Builds a simple fp16 Conv graph (float I/O; enable_htp_fp16_precision runs it in fp16 on HTP).
+// Verifies that enable_htp_fp16_clamp_overflow is applied on the EPContext (context-binary) path.
+// The option is a runtime graph config applied via graphSetConfig after the graph is restored
+// from the binary (QnnModel::ApplyRuntimeGraphConfigs). Input and weight values of 300.0f ensure
+// the Conv accumulator reliably overflows fp16 max (~65504): without the clamp the output is NaN;
+// with it the output saturates to fp16-max (finite), making the isfinite assertion a real fence.
+// Requires QAIRT >= 2.49 (QNN API >= 2.38) for the clamp option to be effective; the overflow
+// → NaN behavior only manifests on HTP arch v79+ (Glymur/SM8850 and later).
+#ifdef QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["enable_htp_fp16_clamp_overflow"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  ModelTestBuilder helper;
+  BuildFp16ClampOverflowConvTestCase()(helper);
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string context_model_file = "./testdata/qnn_ctx_fp16_clamp_overflow_test.onnx";
+  std::remove(context_model_file.c_str());
+
+  // Phase 1: generate the EPContext model + binary (compose/finalize path).
+  ONNX_NAMESPACE::ModelProto ctx_model_proto;
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+    ASSERT_TRUE(std::filesystem::exists(context_model_file.c_str()));
+
+    std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << context_model_file;
+    ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << context_model_file;
+  }
+
+  // Phase 2: reload from the generated context model (binary-load path, where
+  // ApplyRuntimeGraphConfigs sets the fp16-clamp graph config), then run and check finite output.
+  {
+    Ort::SessionOptions so2;
+    so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    // Same provider_options as Phase 1: enable_htp_fp16_clamp_overflow must be set so
+    // ApplyRuntimeGraphConfigs fires on the binary-load path inside CompileContextModel.
+    RegisterQnnEpLibrary(registered_ep_device, so2, kQnnExecutionProvider, provider_options);
+
+    std::string ctx_model_data;
+    ctx_model_proto.SerializeToString(&ctx_model_data);
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so2));
+
+    std::vector<float> input_value(32, 300.0f);
+    std::vector<int64_t> input_dim{1, 2, 4, 4};
+    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<Ort::Value> ort_inputs;
+    ort_inputs.push_back(Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                  input_dim.data(), input_dim.size()));
+    const char* input_names_c[] = {"input"};
+    const char* output_names_c[] = {"output"};
+
+    auto ort_outputs = scoped.session().Run(Ort::RunOptions{}, input_names_c, ort_inputs.data(), ort_inputs.size(),
+                                            output_names_c, 1);
+
+    ASSERT_EQ(ort_outputs.size(), 1u);
+    const float* out_data = ort_outputs[0].GetTensorData<float>();
+    const size_t out_count = ort_outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    for (size_t i = 0; i < out_count; ++i) {
+      EXPECT_TRUE(std::isfinite(out_data[i])) << "Output element " << i << " is not finite: " << out_data[i];
+    }
+  }
+
+  CleanUpCtxFile(context_model_file);
+}
+#endif  // QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
@@ -3597,6 +3699,292 @@ TEST_F(QnnGPUBackendTests, QnnContextGenGpuNoWeightSharing) {
   ASSERT_EQ(std::remove(bin2.c_str()), 0);
 }
 #endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+
+// Utility class to help create enviornment using HNRD for testing.
+// Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
+class HnrdTestHandle {
+ public:
+  HnrdTestHandle(uint32_t htp_arch) : htp_arch_(htp_arch) {
+    // Move Prepare/Skel/Stub libraries to a temporary directory to trigger HNRD.
+    const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    temp_dir_ = std::string("temp_") + info->test_suite_name() + "-" + info->name();
+
+    std::filesystem::create_directory(temp_dir_);
+    for (const std::string& lib : GetRelatedLibs()) {
+      if (std::filesystem::exists(lib)) {
+        std::filesystem::rename(lib, temp_dir_ / lib);
+      }
+    }
+  }
+
+  ~HnrdTestHandle() {
+    // Move libraries back from temporary directory for later testcases.
+    for (const std::string& lib : GetRelatedLibs()) {
+      if (std::filesystem::exists(temp_dir_ / lib)) {
+        std::filesystem::rename(temp_dir_ / lib, lib);
+      }
+    }
+
+    std::filesystem::remove(temp_dir_);
+  }
+
+ private:
+  std::vector<std::string> GetRelatedLibs() {
+#ifdef _WIN32
+    return {"QnnHtpPrepare.dll",
+            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+            "QnnHtpV" + std::to_string(htp_arch_) + "Stub.dll"};
+#else
+    return {"libQnnHtpPrepare.so",
+            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+            "libQnnHtpV" + std::to_string(htp_arch_) + "Stub.so"};
+#endif
+  }
+
+  uint32_t htp_arch_;
+  std::filesystem::path temp_dir_;
+};
+
+// ============================================================
+// prepare_and_load tests
+// ============================================================
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+// Test 1: prepare_and_load with context_enable=0 (Path A) — inference works in single session.
+TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathA_InferenceWorks) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+  // Verify inference works — get actual names from session (BuildGraphWithQAndNonQ uses auto-generated names)
+  Ort::Session& session = scoped.session();
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
+  auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
+
+  std::vector<int64_t> input_dim{200, 200};
+  std::vector<float> input_data(200 * 200, 0.0f);
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                input_dim.data(), input_dim.size()));
+  const char* input_names[] = {input_name_ptr.get()};
+  const char* output_names[] = {output_name_ptr.get()};
+
+  auto results = session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1);
+  ASSERT_EQ(results.size(), 1u);
+}
+
+// Test 2: prepare_and_load with context_enable=1 (Path B) — persists artifact AND inference works.
+TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathB_PersistsAndRuns) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_and_load_path_b_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+  // Verify artifact was written
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  // Verify inference works — get actual names from session
+  Ort::Session& session = scoped.session();
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
+  auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
+
+  std::vector<int64_t> input_dim{200, 200};
+  std::vector<float> input_data(200 * 200, 0.0f);
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                input_dim.data(), input_dim.size()));
+  const char* input_names[] = {input_name_ptr.get()};
+  const char* output_names[] = {output_name_ptr.get()};
+
+  auto results = session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1);
+  ASSERT_EQ(results.size(), 1u);
+
+  CleanUpCtxFile(ctx_path);
+}
+
+// Test 3: prepare_and_load + prepare_only are mutually exclusive — throws.
+TEST_F(QnnHTPBackendTests, PrepareAndLoad_MutuallyExclusive) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_and_load_mutex_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_only", "1");
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  try {
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+    FAIL() << "Expected session creation to throw due to mutually exclusive options";
+  } catch (const std::exception& e) {
+    ASSERT_THAT(e.what(), testing::HasSubstr("mutually exclusive"));
+  }
+
+  std::remove(ctx_path.c_str());
+}
+
+// Test 4: prepare_and_load with context_enable=0 + context_file_path — contradictory, throws.
+TEST_F(QnnHTPBackendTests, PrepareAndLoad_ContextDisabledWithFilePath_Throws) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "some_path.onnx");
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  try {
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+    FAIL() << "Expected session creation to throw due to contradictory options";
+  } catch (const std::exception& e) {
+    ASSERT_THAT(e.what(), testing::HasSubstr("Contradictory"));
+  }
+}
+
+// Test 5: prepare_and_load with embed_mode=1 — binary is embedded in .onnx, no separate .bin.
+TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_and_load_embed_override_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");  // should be respected
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+
+  // Verify ctx.onnx exists
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
+
+  // Verify embed_mode=1 was respected: binary is embedded, no separate .bin file
+  auto bin_path = std::filesystem::path(ctx_path).replace_extension("").string() + "_qnn.bin";
+  EXPECT_FALSE(std::filesystem::exists(bin_path));
+
+  // Clean up: only the .onnx exists (no .bin to remove in embed mode)
+  ASSERT_EQ(std::remove(ctx_path.c_str()), 0);
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

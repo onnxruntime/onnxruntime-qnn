@@ -36,6 +36,14 @@ class QnnModelWrapper;
 class QnnQuantParamsWrapper;
 
 namespace utils {
+
+template <typename T>
+inline bool IsCompatibleFcBiasShape(const std::vector<T>& bias_shape, T output_channels) {
+  return (bias_shape.empty() && output_channels == 1) ||
+         (bias_shape.size() == 1 && bias_shape[0] == output_channels) ||
+         (bias_shape.size() == 2 && bias_shape[0] == 1 && bias_shape[1] == output_channels);
+}
+
 /**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
@@ -251,6 +259,15 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
                                  gsl::span<const float> scales, gsl::span<const int32_t> offsets,
                                  /*out*/ gsl::span<float> data, Qnn_DataType_t data_type,
                                  std::optional<int64_t> axis = std::nullopt);
+
+// Recovers the true two's-complement value of sub-byte data that UnpackInitializerData() expanded
+// to one byte per element with the unused high bits masked off (UnpackInt4ToInt8 / UnpackInt2ToInt8
+// mask to work around a QNN INT4 accuracy bug; that mask must stay). Consumers that read those
+// bytes as plain integers need this: DequantizePerChannel is told SFIXED_POINT_8, since
+// CreateMapQuantize collapses INT4 into it on non-GPU backends, so a negative 4-bit value would
+// read back as q + 16. UINT4/UINT2 are never masked and are left alone.
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes);
 
 Ort::Status Quantize(const double double_value,
                      const float scale,
@@ -503,6 +520,31 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   return Ort::Status();
 }
 
+// Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
+// (right-aligned dimensions; a dim of 1 broadcasts against any dim).
+template <typename T>
+Ort::Status BroadcastShape(const std::vector<T>& a, const std::vector<T>& b,
+                           /*out*/ std::vector<T>& out) {
+  const size_t rank = std::max(a.size(), b.size());
+  out.assign(rank, 1);
+  for (size_t i = 0; i < rank; ++i) {
+    const T da = (i < a.size()) ? a[a.size() - 1 - i] : 1;
+    const T db = (i < b.size()) ? b[b.size() - 1 - i] : 1;
+    T dim = 0;
+    if (da == db) {
+      dim = da;
+    } else if (da == 1) {
+      dim = db;
+    } else if (db == 1) {
+      dim = da;
+    } else {
+      return MAKE_EP_FAIL("BroadcastShape: incompatible dimensions, cannot broadcast.");
+    }
+    out[rank - 1 - i] = dim;
+  }
+  return Ort::Status();
+}
+
 // Gets error message associated with QNN error handle value.
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                Qnn_ErrorHandle_t qnn_error_handle);
@@ -524,6 +566,40 @@ Ort::Status NchwShapeToNhwc(gsl::span<const T> nchw_shape, gsl::span<T> nhwc_sha
   nhwc_shape[3] = nchw_shape[1];
 
   return Ort::Status();
+}
+
+// Returns the channel-first (NCHW/NCDHW) -> channel-last (NHWC/NDHWC) permutation for the
+// given tensor rank. Works for any rank >= 2: e.g. rank 4 -> {0,2,3,1}, rank 5 -> {0,2,3,4,1}.
+inline std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i - 1] = static_cast<uint32_t>(i);
+  }
+  perm[rank - 1] = 1;
+  return perm;
+}
+
+// Returns the channel-last (NHWC/NDHWC) -> channel-first (NCHW/NCDHW) permutation for the
+// given tensor rank (inverse of ChannelFirstToLastPerm).
+inline std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  perm[1] = static_cast<uint32_t>(rank - 1);
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i] = static_cast<uint32_t>(i - 1);
+  }
+  return perm;
+}
+
+// Applies a permutation to a shape vector and returns the permuted shape.
+inline std::vector<uint32_t> ApplyPermToShape(const std::vector<uint32_t>& shape,
+                                              const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out(shape.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    out[i] = shape[perm[i]];
+  }
+  return out;
 }
 
 // NCHW shape to HWCN shape, required for Conv weight

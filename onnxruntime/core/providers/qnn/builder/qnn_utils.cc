@@ -1235,6 +1235,27 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
   return Ort::Status();
 }
 
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes) {
+  // The masks keep this well-defined for any input byte, and idempotent: SignExtendLower*Bits()
+  // left-shifts its argument, so it needs a byte holding nothing above the sub-byte element.
+  switch (onnx_data_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+      for (uint8_t& byte : bytes) {
+        byte = static_cast<uint8_t>(Int4x2::SignExtendLower4Bits(static_cast<std::byte>(byte & 0x0F)));
+      }
+      break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
+      for (uint8_t& byte : bytes) {
+        byte = static_cast<uint8_t>(Int2x4::SignExtendLower2Bits(static_cast<std::byte>(byte & 0x03)));
+      }
+      break;
+    default:
+      // UINT4/UINT2 hold their value in the masked byte; nothing else was ever masked.
+      break;
+  }
+}
+
 Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
                                           gsl::span<const int32_t> bq_offsets,
                                           uint32_t num_blocks_per_channel,

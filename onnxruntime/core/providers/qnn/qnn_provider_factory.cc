@@ -20,6 +20,7 @@
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
+#include "qnn_ep_min_ort_api_version.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
@@ -98,6 +99,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
                                              &mem_info);
   if (status != nullptr) {
     ort_api.ReleaseMemoryInfo(mem_info);
+    ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }
@@ -518,10 +520,11 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return nullptr;
   }
 
-  // kMinOrtApiVersion must be at least the ORT API version that introduced
-  // the newest ORT API method this EP calls. Below this floor, GetApi()
-  // returns a function table missing members the EP would dereference.
-  constexpr uint32_t kMinOrtApiVersion = 24;
+  // kMinOrtApiVersion is computed at build time by
+  // qcom/scripts/all/compute_min_ort_api_version.py from \since annotations
+  // on every ORT API method this EP calls. Below this floor, GetApi() returns
+  // a function table that lacks members the EP would dereference.
+  constexpr uint32_t kMinOrtApiVersion = QNN_EP_MIN_ORT_API_VERSION;
   static_assert(kMinOrtApiVersion <= ORT_API_VERSION,
                 "kMinOrtApiVersion must not exceed ORT_API_VERSION");
 
