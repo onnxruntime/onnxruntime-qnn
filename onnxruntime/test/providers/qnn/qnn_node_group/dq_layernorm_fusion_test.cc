@@ -175,6 +175,68 @@ ProviderOptions GetProviderOptions() {
   return provider_options;
 }
 
+// RunQnnModelTest's built-in output comparison does an exact EXPECT_EQ byte compare for int8/uint8
+// graph outputs (ElementwiseAbsoluteVerifier's tolerance only applies to FLOAT/FLOAT16 -- see
+// test_utils.cc's VerifyOutput switch), which is too strict for a quantized LayerNorm: a benign
+// +/-1 LSB rounding-tie difference between the CPU reference and the target backend's kernel is
+// expected and not a correctness issue. This runs the actual CPU reference and the actual QNN
+// execution directly (bypassing RunQnnModelTest's comparison) and compares them itself with a
+// small integer tolerance, so a real bug in the resign math (e.g. a wrong zero-point shift) still
+// fails loudly, while a harmless +/-1 LSB tie does not.
+void RunAndVerifyLayerNormOutput(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
+                                 int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
+                                 int max_abs_diff = 1) {
+  ModelTestBuilder helper;
+  build_test_case(helper);
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    ONNX_NAMESPACE::OperatorSetIdProto* opset_id_proto = helper.model_.add_opset_import();
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  std::vector<Ort::Value> cpu_outputs;
+  InferenceModelCPU(model_data, "DQLayerNormFusion_cpu_ref", helper.feeds_, cpu_outputs);
+
+  std::vector<Ort::Value> qnn_outputs;
+  InferenceModel(model_data, "DQLayerNormFusion_qnn", provider_options, expected_ep_assignment,
+                helper.feeds_, qnn_outputs);
+
+  ASSERT_EQ(cpu_outputs.size(), qnn_outputs.size());
+  for (size_t out_idx = 0; out_idx < cpu_outputs.size(); ++out_idx) {
+    auto type_info = cpu_outputs[out_idx].GetTensorTypeAndShapeInfo();
+    const size_t element_count = type_info.GetElementCount();
+    const auto elem_type = type_info.GetElementType();
+
+    if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
+      const uint8_t* expected = cpu_outputs[out_idx].GetTensorData<uint8_t>();
+      const uint8_t* actual = qnn_outputs[out_idx].GetTensorData<uint8_t>();
+      for (size_t i = 0; i < element_count; ++i) {
+        const int diff = std::abs(static_cast<int>(expected[i]) - static_cast<int>(actual[i]));
+        EXPECT_LE(diff, max_abs_diff) << "Output element " << i << " differs by " << diff
+                                       << " (cpu_ref=" << static_cast<int>(expected[i])
+                                       << ", qnn=" << static_cast<int>(actual[i]) << ")";
+      }
+    } else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+      const int8_t* expected = cpu_outputs[out_idx].GetTensorData<int8_t>();
+      const int8_t* actual = qnn_outputs[out_idx].GetTensorData<int8_t>();
+      for (size_t i = 0; i < element_count; ++i) {
+        const int diff = std::abs(static_cast<int>(expected[i]) - static_cast<int>(actual[i]));
+        EXPECT_LE(diff, max_abs_diff) << "Output element " << i << " differs by " << diff
+                                       << " (cpu_ref=" << static_cast<int>(expected[i])
+                                       << ", qnn=" << static_cast<int>(actual[i]) << ")";
+      }
+    } else {
+      FAIL() << "RunAndVerifyLayerNormOutput: unexpected output element type " << elem_type;
+    }
+  }
+}
+
 }  // namespace
 
 // Unsigned X (UFIXED_POINT_8) + signed scale (SFIXED_POINT_8): the exact combination the QNN HTP
@@ -192,20 +254,10 @@ TEST_F(QnnHTPBackendTests, DQLayerNormFusion_UnsignedX_SignedScale) {
   opts["dump_json_qnn_graph"] = "1";
   opts["json_qnn_graph_dir"] = json_dir.string();
 
-  RunQnnModelTest(
+  RunAndVerifyLayerNormOutput(
       BuildDQLayerNormSignFixupTestCase(/*x_signed=*/false, /*scale_signed=*/true, /*scale_per_channel=*/false,
                                         BiasKind::kMatched8Bit),
-      opts, 17,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)},
-      /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-      // The graph output is int8/uint8 (post-QuantizeLinear), so VerifyOutputs does an exact byte
-      // compare regardless of the tolerance above (ElementwiseAbsoluteVerifier only applies to
-      // FLOAT/FLOAT16 outputs -- see test_utils.cc's VerifyOutput switch). That makes this
-      // brittle to a benign +/-1 LSB rounding-tie difference between the CPU reference and the
-      // target backend's LayerNorm kernel, unrelated to fusion correctness (already verified
-      // against real HTP hardware on a production model). Skip value verification; EP assignment
-      // and the emitted QNN op are what this test is actually checking.
-      /*verify_outputs=*/false);
+      opts, 17, ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
 }
@@ -224,13 +276,10 @@ TEST_F(QnnHTPBackendTests, DQLayerNormFusion_SignedX_UnsignedScale) {
   opts["dump_json_qnn_graph"] = "1";
   opts["json_qnn_graph_dir"] = json_dir.string();
 
-  RunQnnModelTest(
+  RunAndVerifyLayerNormOutput(
       BuildDQLayerNormSignFixupTestCase(/*x_signed=*/true, /*scale_signed=*/false, /*scale_per_channel=*/false,
                                         BiasKind::kMatched8Bit),
-      opts, 17,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)},
-      /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-      /*verify_outputs=*/false);  // see comment in DQLayerNormFusion_UnsignedX_SignedScale above.
+      opts, 17, ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
 }
@@ -249,13 +298,10 @@ TEST_F(QnnHTPBackendTests, DQLayerNormFusion_Skip_AlreadyMatchingSign) {
   opts["dump_json_qnn_graph"] = "1";
   opts["json_qnn_graph_dir"] = json_dir.string();
 
-  RunQnnModelTest(
+  RunAndVerifyLayerNormOutput(
       BuildDQLayerNormSignFixupTestCase(/*x_signed=*/false, /*scale_signed=*/false, /*scale_per_channel=*/false,
                                         BiasKind::kMatched8Bit),
-      opts, 17,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)},
-      /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-      /*verify_outputs=*/false);  // see comment in DQLayerNormFusion_UnsignedX_SignedScale above.
+      opts, 17, ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
 }
@@ -290,13 +336,10 @@ TEST_F(QnnHTPBackendTests, DQLayerNormFusion_UnsignedX_MismatchedBias) {
   opts["dump_json_qnn_graph"] = "1";
   opts["json_qnn_graph_dir"] = json_dir.string();
 
-  RunQnnModelTest(
+  RunAndVerifyLayerNormOutput(
       BuildDQLayerNormSignFixupTestCase(/*x_signed=*/false, /*scale_signed=*/true, /*scale_per_channel=*/false,
                                         BiasKind::kMismatched8Bit),
-      opts, 17,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)},
-      /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-      /*verify_outputs=*/false);  // see comment in DQLayerNormFusion_UnsignedX_SignedScale above.
+      opts, 17, ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
 }
@@ -318,13 +361,10 @@ TEST_F(QnnHTPBackendTests, DQLayerNormFusion_SignedX_MismatchedBias) {
   opts["dump_json_qnn_graph"] = "1";
   opts["json_qnn_graph_dir"] = json_dir.string();
 
-  RunQnnModelTest(
+  RunAndVerifyLayerNormOutput(
       BuildDQLayerNormSignFixupTestCase(/*x_signed=*/true, /*scale_signed=*/false, /*scale_per_channel=*/false,
                                         BiasKind::kMismatched8Bit),
-      opts, 17,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)},
-      /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-      /*verify_outputs=*/false);  // see comment in DQLayerNormFusion_UnsignedX_SignedScale above.
+      opts, 17, ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
 }
