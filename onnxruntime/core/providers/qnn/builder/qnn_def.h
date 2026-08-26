@@ -127,6 +127,14 @@ enum class ProfilingMethodType : uint8_t {
   CONTEXT_FINALIZE
 };
 
+enum class OrtProfilingOperation : uint8_t {
+  UNKNOWN = 0,
+  COMPOSE,
+  FINALIZE,
+  CONTEXT_LOAD,
+  EXECUTE,
+};
+
 // Defines performance modes available for HTP backend.
 enum class HtpPerformanceMode : uint8_t {
   kHtpDefault = 0,

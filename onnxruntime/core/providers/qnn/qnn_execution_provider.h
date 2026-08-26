@@ -97,6 +97,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                        _In_ size_t num_options) noexcept;
   static const char* ORT_API_CALL GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                         _In_ const OrtGraph* graph) noexcept;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  static OrtStatus* ORT_API_CALL CreateProfilerImpl(_In_ OrtEp* this_ptr,
+                                                    _Outptr_result_maybenull_ OrtEpProfilerImpl** profiler) noexcept;
+#endif
 
   OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
                                    const OrtNode** fused_nodes,

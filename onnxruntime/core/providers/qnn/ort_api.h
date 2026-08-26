@@ -77,6 +77,12 @@ namespace onnxruntime {
 #define MAKE_FAIL(msg) Ort::Status(msg, ORT_FAIL)
 #define MAKE_EP_FAIL(msg) Ort::Status(msg, ORT_EP_FAIL)
 
+#if ORT_API_VERSION >= 25
+#define QNN_ORT_EP_PROFILING_API_ENABLED 1
+#else
+#define QNN_ORT_EP_PROFILING_API_ENABLED 0
+#endif
+
 // ORT_DEVICE_RESET (added in ORT 1.28 / API 28) lets callers distinguish an unrecoverable
 // SSR from other EP errors; fall back to ORT_ENGINE_ERROR for older prebuilt ORT headers.
 #if ORT_API_VERSION >= 28
@@ -180,6 +186,8 @@ inline bool IsNullLogger(const Ort::Logger& logger) {
 #else
 #define ORT_UNUSED_PARAMETER(x) (void)(x)
 #endif
+
+#define ORT_IGNORE_RETURN_VALUE(x) (void)(x)
 
 // Macros to disable the copy and/or move ctor and assignment methods
 // These are usually placed in the private: declarations for a class.
