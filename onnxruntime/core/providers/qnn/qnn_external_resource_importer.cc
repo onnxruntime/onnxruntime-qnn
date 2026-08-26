@@ -4,6 +4,7 @@
 #ifdef _WIN32
 
 #include "core/providers/qnn/qnn_external_resource_importer.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
 
 #include <new>
 #include <sstream>
@@ -193,69 +194,13 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
 
   const auto* qnn_handle = static_cast<const QnnExternalMemoryHandle*>(mem_handle);
 
-  // Calculate tensor size
-  size_t element_count = 1;
-  for (size_t i = 0; i < tensor_desc->rank; ++i) {
-    element_count *= static_cast<size_t>(tensor_desc->shape[i]);
+  size_t tensor_size_bytes = 0;
+  try {
+    tensor_size_bytes = qnn::utils::GetOnnxTensorDataSizeInBytes(gsl::span{tensor_desc->shape, tensor_desc->rank}, tensor_desc->element_type);
+  } catch (...) {
+    return impl.ort_api_.CreateStatus(ORT_INVALID_ARGUMENT, "Unsupported tensor element type");
   }
 
-  double element_size = 0;
-  switch (tensor_desc->element_type) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-      element_size = sizeof(float);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
-      element_size = 2;
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-      element_size = sizeof(int32_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
-      element_size = sizeof(int64_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      element_size = sizeof(uint8_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-      element_size = sizeof(int8_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
-      element_size = sizeof(uint16_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
-      element_size = sizeof(int16_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:
-      element_size = sizeof(double);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32:
-      element_size = sizeof(uint32_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64:
-      element_size = sizeof(uint64_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16:
-      element_size = 2;
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ:
-      element_size = 1;
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
-      element_size = 0.5;
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
-      element_size = 0.25;
-      break;
-    default:
-      return impl.ort_api_.CreateStatus(ORT_INVALID_ARGUMENT, "Unsupported tensor element type");
-  }
-
-  size_t tensor_size_bytes = size_t(element_count * element_size);
   size_t available_size = qnn_handle->descriptor.size_bytes - qnn_handle->descriptor.offset_bytes - tensor_desc->offset_bytes;
 
   if (tensor_size_bytes > available_size) {
