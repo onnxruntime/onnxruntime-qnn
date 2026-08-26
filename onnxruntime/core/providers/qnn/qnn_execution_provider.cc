@@ -347,6 +347,30 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
+static uint64_t ParseUInt64Option(const OrtApi& ort_api,
+                                  const OrtSessionOptions& session_options,
+                                  const std::string& key,
+                                  uint64_t default_value,
+                                  const Ort::Logger& logger) {
+  std::string value_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
+  if (value_str.empty()) {
+    return default_value;
+  }
+
+  uint64_t result = default_value;
+  const char* begin = value_str.data();
+  const char* end = begin + value_str.size();
+  auto [ptr, ec] = std::from_chars(begin, end, result);
+  if (ec != std::errc{} || ptr != end) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                ("Ignoring malformed " + key + ": " + value_str).c_str());
+    return default_value;
+  }
+
+  return result;
+}
+
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -1354,27 +1378,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
-  // Caps the IO buffer QNN reuses across contextCreateFromBinary calls (AOT context load).
-  // Mitigates NPU memory exhaustion on large AOT context binaries. 0 (default) leaves the
-  // SDK's own behavior unchanged.
-  std::string reused_io_limit_mb_str;
-  GetSessionConfigEntryOrDefault(ort_api,
-                                 session_options_,
-                                 FormatEPConfigKey("htp_reused_io_limit_mb"),
-                                 "0",
-                                 reused_io_limit_mb_str);
-  if (!reused_io_limit_mb_str.empty() && reused_io_limit_mb_str != "0") {
-    uint64_t parsed_reused_io_limit_mb = 0;
-    const char* begin = reused_io_limit_mb_str.data();
-    const char* end = begin + reused_io_limit_mb_str.size();
-    auto [ptr, ec] = std::from_chars(begin, end, parsed_reused_io_limit_mb);
-    if (ec == std::errc{} && ptr == end) {
-      reused_io_limit_mb_ = parsed_reused_io_limit_mb;
-    } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  ("Ignoring malformed htp_reused_io_limit_mb: " + reused_io_limit_mb_str).c_str());
-    }
-  }
+  // Specifies the effective I/O buffer size used by a context across contextCreateFromBinary calls (AOT context load).
+  reused_io_limit_mb_ = ParseUInt64Option(ort_api,
+                                          session_options_,
+                                          FormatEPConfigKey("htp_reused_io_limit_mb"),
+                                          0,
+                                          logger_);
 
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
@@ -1437,14 +1446,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      op_packages,
                                      skip_qnn_version_check,
                                      enable_framework_op_trace_,
-                                     skip_backend_op_validation},
+                                     skip_backend_op_validation,
+                                     reused_io_limit_mb_},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
-
-  qnn_backend_manager_->SetReusedIoLimitMb(reused_io_limit_mb_);
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
