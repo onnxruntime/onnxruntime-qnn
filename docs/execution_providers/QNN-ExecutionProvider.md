@@ -407,6 +407,8 @@ This overestimation matters because HTP loads each context into one of several p
 
 **Choosing a value**: it should equal the total size of the IO buffers you actually keep registered and reuse at any point in time — whether reused across multiple runs of the same graph, shared between multiple graphs in the same context, or shared across multiple contexts. This is something you can compute from your own buffer-management strategy — it is not the same as, and is usually smaller than, the sum of each graph's declared IO tensor size.
 
+**Multi-context / weight-sharing scenarios**: when `htp_share_resource_optimization` is enabled (multiple context binaries loaded together with resource/weight sharing), this value is applied as a group-level property — it is the shared IO buffer size for the whole group of contexts, not a per-context limit. The same option value is used in both cases; only its scope differs.
+
 **Warning**: this value is also a hard runtime cap on reused IO buffer size — the underlying QAIRT SDK does not guarantee correct behavior if actual reused IO traffic at runtime exceeds it. When using this option purely to work around a context load failure (rather than from a known buffer-reuse budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
 
 ### Flexible Context Binary (FCB) / multi-SoC EP context

@@ -1473,6 +1473,16 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
+  // Group-level property, shared by all contexts in the list.
+  QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t reused_io_limit_custom_config;
+  if (reused_io_limit_mb_ > 0) {
+    reused_io_limit_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+    reused_io_limit_custom_config.reusedIoLimitMb = reused_io_limit_mb_;
+    reused_io_limit_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    reused_io_limit_config.customConfig = &reused_io_limit_custom_config;
+  }
+
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
@@ -1480,6 +1490,9 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
 #endif
+  if (reused_io_limit_mb_ > 0) {
+    configs_vec.push_back(&reused_io_limit_config);
+  }
   configs_vec.push_back(nullptr);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
