@@ -139,8 +139,7 @@ struct QnnBackendManagerConfig {
   // remains constant for the manager's lifetime.
   bool enable_framework_op_trace = false;
   bool skip_backend_op_validation = false;
-  // Caps the IO buffer QNN reuses across contextCreateFromBinary calls (AOT context load).
-  // 0 (default) leaves the SDK's own behavior unchanged.
+  // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
 };
 

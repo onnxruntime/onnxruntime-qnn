@@ -1378,7 +1378,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
-  // Specifies the effective I/O buffer size used by a context across contextCreateFromBinary calls (AOT context load).
+  // Caps the reused IO buffer size at context load. See docs; 0 = SDK default.
   reused_io_limit_mb_ = ParseUInt64Option(ort_api,
                                           session_options_,
                                           FormatEPConfigKey("htp_reused_io_limit_mb"),

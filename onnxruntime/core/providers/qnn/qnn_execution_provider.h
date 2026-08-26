@@ -222,8 +222,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
   int htp_share_resource_optimization_ = -1;
-  // Caps the IO buffer QNN reuses across contextCreateFromBinary calls (AOT context load).
-  // Mitigates NPU memory exhaustion on large AOT context binaries. 0 = SDK default behavior.
+  // Caps the reused IO buffer size at context load; mitigates NPU memory exhaustion. 0 = SDK default.
   uint64_t reused_io_limit_mb_ = 0;
   std::string context_node_name_prefix_ = "";
   std::string context_cache_path_cfg_ = "";
