@@ -1288,7 +1288,6 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
   QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
 
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
   QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t custom_config;
   custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
@@ -1299,9 +1298,6 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
   spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   spill_fill_config.customConfig = &custom_config;
   QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size > 0 ? &spill_fill_config : nullptr;
-#else
-  QnnContext_Config_t* spill_fill_ptr = nullptr;
-#endif
 
   const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_ptr, nullptr};
 
