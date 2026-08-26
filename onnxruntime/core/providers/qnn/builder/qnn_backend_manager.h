@@ -208,7 +208,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // callback is dispatched instead of reading from disk.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
                                     std::vector<char>& buffer,
-                                    const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
+                                    const qnn::EpContextIoDispatch& io_dispatch);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
   // and direct-read paths to match initial-load behavior. Always starts a new spill-fill
