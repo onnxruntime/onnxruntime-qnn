@@ -1575,8 +1575,10 @@ QnnEp::~QnnEp() {
 }
 
 const char* ORT_API_CALL QnnEp::GetNameImpl(const OrtEp* this_ptr) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   const auto* qnn_ep = static_cast<const QnnEp*>(this_ptr);
   return qnn_ep->name_.c_str();
+  QNN_EP_API_IMPL_END_RETURN("")
 }
 
 // Logs information about the supported/unsupported nodes.
@@ -2003,6 +2005,7 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
 OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
                                                   const OrtGraph* graph,
                                                   OrtEpGraphSupportInfo* graph_support_info) {
+  QNN_EP_API_IMPL_BEGIN
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
@@ -2040,11 +2043,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
   }
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   // Best-effort diagnostic dump of the ONNX graph the EP just received.
@@ -2348,6 +2353,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
@@ -2975,6 +2981,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _In_ size_t count,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
@@ -3082,6 +3089,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   }
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
@@ -3191,12 +3199,14 @@ OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
 void ORT_API_CALL QnnEp::ReleaseNodeComputeInfosImpl(OrtEp* this_ptr,
                                                      OrtNodeComputeInfo** node_compute_infos,
                                                      size_t num_node_compute_infos) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   ORT_UNUSED_PARAMETER(this_ptr);
   for (size_t idx = 0; idx < num_node_compute_infos; ++idx) {
     // All derived types share QnnNodeComputeInfoBase, which provides the virtual destructor
     // required to safely delete through the OrtNodeComputeInfo C-API base.
     delete static_cast<QnnNodeComputeInfoBase*>(node_compute_infos[idx]);
   }
+  QNN_EP_API_IMPL_END_VOID
 }
 
 OrtStatus* ORT_API_CALL QnnEp::GetPreferredDataLayoutImpl(_In_ OrtEp* this_ptr,
@@ -3211,6 +3221,7 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
                                                                 _In_z_ const char* op_type,
                                                                 _In_ OrtEpDataLayout target_data_layout,
                                                                 _Outptr_ int* should_convert) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   ORT_UNUSED_PARAMETER(this_ptr);
   ORT_UNUSED_PARAMETER(target_data_layout);
 
@@ -3261,6 +3272,7 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   }
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
@@ -3318,6 +3330,7 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
 }
 
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (ep->prepare_only_) {
@@ -3349,11 +3362,13 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
   }
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
                                             _In_ const ::OrtRunOptions* /*run_options*/,
                                             _In_ bool /*sync_stream*/) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (ep->prepare_only_) {
@@ -3374,11 +3389,13 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
   }
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
                                                    _In_ const OrtMemoryInfo* memory_info,
                                                    _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
@@ -3403,12 +3420,14 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   }
 #endif  // _WIN32
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                      _In_reads_(num_options) const char* const* option_keys,
                                                      _In_reads_(num_options) const char* const* option_values,
                                                      _In_ size_t num_options) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (ep->prepare_only_) {
@@ -3470,9 +3489,12 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
   }  // end for loop
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
+
 const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                       _In_ const OrtGraph* /*graph*/) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   Ort::Status status = ep->qnn_cache_compatibility_manager_->SerializeCompatibilityInfo(ep->compatibility_info_,
@@ -3488,6 +3510,7 @@ const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp
               ORT_LOGGING_LEVEL_INFO,
               ("Model compatibility info: " + ep->compatibility_info_string_).c_str());
   return ep->compatibility_info_string_.c_str();
+  QNN_EP_API_IMPL_END_RETURN("")
 }
 
 OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice* const* /*devices*/,
@@ -3659,6 +3682,7 @@ QnnEp::QnnNodeComputeInfo::QnnNodeComputeInfo(QnnEp& ep) : ep(ep) {
 OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
                                                       OrtNodeComputeContext* compute_context,
                                                       void** compute_state) {
+  QNN_EP_API_IMPL_BEGIN
   auto* node_compute_info = static_cast<QnnNodeComputeInfo*>(this_ptr);
   QnnEp& ep = node_compute_info->ep;
 
@@ -3686,11 +3710,13 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_p
 
   *compute_state = qnn_model_it->second.get();
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
                                                   void* compute_state,
                                                   OrtKernelContext* kernel_context) {
+  QNN_EP_API_IMPL_BEGIN
   auto* node_compute_info = static_cast<QnnNodeComputeInfo*>(this_ptr);
   QnnEp& ep = node_compute_info->ep;
 
@@ -3704,6 +3730,7 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_, *ep.io_dispatch_));
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 void QnnEp::QnnNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, void* compute_state) {
