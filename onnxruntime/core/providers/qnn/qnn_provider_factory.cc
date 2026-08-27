@@ -19,6 +19,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_custom_op_domain_parser.h"
 #include "core/providers/qnn/soc_utils.h"
 #include "qnn_ep_min_ort_api_version.h"
 
@@ -71,6 +72,22 @@ static bool QnnCpuBackendEnabled() {
 #endif
 }
 
+// Returns the raw value of ORT_QNN_CUSTOM_OP_DOMAINS (or empty string if unset).
+// Uses the same platform-safe pattern as QnnCpuBackendEnabled() above.
+static std::string ReadCustomOpDomainsEnvVar() {
+#if defined(_WIN32)
+  char* value = nullptr;
+  size_t value_size = 0;
+  const bool found = _dupenv_s(&value, &value_size, "ORT_QNN_CUSTOM_OP_DOMAINS") == 0 && value != nullptr;
+  std::string result = found ? std::string(value) : std::string{};
+  free(value);
+  return result;
+#else
+  const char* value = std::getenv("ORT_QNN_CUSTOM_OP_DOMAINS");
+  return value != nullptr ? std::string(value) : std::string{};
+#endif
+}
+
 namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
@@ -90,6 +107,32 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   IsStreamAware = IsStreamAwareImpl;
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
+  GetNumCustomOpDomains = GetNumCustomOpDomainsImpl;
+  GetCustomOpDomains = GetCustomOpDomainsImpl;
+
+  // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
+  // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
+  // so we parse once here at factory construction and cache the result for all sessions.
+  const std::string custom_op_domains_spec = ReadCustomOpDomainsEnvVar();
+  if (!custom_op_domains_spec.empty()) {
+    // Use the default logger if available; otherwise a default-constructed Ort::Logger() is safe
+    // because ParseCustomOpDomains uses ORT_CXX_LOG_PTR which tolerates a null OrtLogger*.
+    Ort::Logger logger{};
+    if (OrtLoggingManager::HasDefaultLogger()) {
+      logger = Ort::Logger(OrtLoggingManager::GetDefaultLoggerPtr());
+    }
+    std::vector<CustomOpDomainSpec> specs;
+    ParseCustomOpDomains(custom_op_domains_spec, specs, logger);
+    for (const auto& spec : specs) {
+      Ort::CustomOpDomain domain{spec.domain.c_str()};
+      for (const auto& op_type : spec.op_types) {
+        auto op = std::make_unique<qnn::QnnUdoPlaceholderOp>(op_type, ep_name_);
+        domain.Add(op.get());
+        custom_op_objects_.push_back(std::move(op));
+      }
+      custom_op_domains_.push_back(std::move(domain));
+    }
+  }
 
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
@@ -547,6 +590,25 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
   return factory->ort_api.CreateStatus(
       ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
 #endif
+}
+
+OrtStatus* ORT_API_CALL QnnEpFactory::GetNumCustomOpDomainsImpl(
+    _In_ OrtEpFactory* this_ptr,
+    _Out_ size_t* num_domains) noexcept {
+  const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
+  *num_domains = factory->custom_op_domains_.size();
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
+    _In_ OrtEpFactory* this_ptr,
+    _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
+    _In_ size_t num_domains) noexcept {
+  const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
+  for (size_t i = 0; i < num_domains; ++i) {
+    domains[i] = factory->custom_op_domains_[i];
+  }
+  return nullptr;
 }
 
 }  // namespace onnxruntime

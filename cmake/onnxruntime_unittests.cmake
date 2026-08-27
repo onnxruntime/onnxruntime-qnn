@@ -330,6 +330,8 @@ block()
       # ParseOpPackages is consumed by qnn_basic_test.cc; recompile here for the same reason
       # as the genie sources (the EP shared library is loaded via dlopen, not linked).
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_package/op_package_parser.cc
+      # ParseCustomOpDomains is consumed by qnn_basic_test.cc for the same reason.
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_custom_op_domain_parser.cc
     )
   endif()
 
