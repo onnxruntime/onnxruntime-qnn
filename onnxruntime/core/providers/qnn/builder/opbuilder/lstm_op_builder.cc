@@ -333,8 +333,8 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
   }
   // TODO: an absent output slot keeps the default UNDEFINED quant_param, emitted verbatim below.
   // Dormant only because LSTM has no QDQ selector yet (always fp, where UNDEFINED is valid); before
-  // enabling a u8 LSTM, have its selector require all outputs (as OrtGRUNodeGroupSelector does) or
-  // backfill absent slots' quant encodings here.
+  // enabling a u8 LSTM, either fp-degrade a missing-output group in this builder (as the GRU op
+  // builder does) or backfill absent slots' quant encodings here.
 
   OrtNodeAttrHelper node_helper(node_unit);
   const uint32_t hidden_size = node_helper.Get("hidden_size", 0);

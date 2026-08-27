@@ -744,14 +744,18 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   // Walk the output slots and validate them against the Q nodes.
   bool produces_graph_output = false;
   size_t total_consumers = 0;
+  size_t present_outputs = 0;
 
   for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
-    // An empty slot -- nullptr OrtValueInfo* from ORT core, e.g. GRU's optional Y / Y_h -- makes
-    // the group ill-formed; decline (also avoids the nullptr deref in the C API calls below).
+    // Skip an absent optional output slot -- a nullptr OrtValueInfo* from ORT core, e.g. GRU's
+    // optional Y / Y_h. A missing optional output is valid ONNX, not a malformed group; the present
+    // slots are still validated below (graph-output + consumer-count). The null check also avoids a
+    // nullptr deref in the C API calls below.
     if (value_info == nullptr) {
-      return false;
+      continue;
     }
+    ++present_outputs;
 
     bool is_graph_output = false;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
@@ -764,7 +768,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
     total_consumers += num_consumers;
   }
 
-  return (num_outputs == q_nodes.size()) &&
+  return (present_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
@@ -1522,97 +1526,14 @@ bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
                                     const OrtNode* redundant_clip_node,
                                     const std::vector<const OrtNode*>& dq_nodes,
                                     const std::vector<const OrtNode*>& q_nodes) const {
-  // GRU has two optional outputs (Y, Y_h). CheckQDQNodes declines a group whose GRU exposes only
-  // one (an empty slot is ill-formed), so it runs fp32 instead of fusing to u8. Intentional: a
-  // Y_h-only u8 fold drifted ~8.8% on real silicon (v73) because the unrolled recurrence requantizes
-  // the hidden state at the single present output's tight scale, clipping wider intermediate states.
-  // Both-outputs is the shape customer models use. TODO: to allow missing-output u8, decouple the
-  // recurrence scale AND backfill the absent slot's quant encoding in gru_op_builder.cc (else its
-  // emitted u8 tensor carries an UNDEFINED encoding and crashes HTP finalize).
-  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
-                     static_cast<int>(dq_nodes.size()), /*is_empty_q_nodes_allowed=*/false)) {
-    return false;
-  }
-
-  // HTP cannot finalize a u8 LBR=0 GRU: during Graph Optimizations the gate-matmul activation is
-  // force-widened u8 -> QUint16Crouton, leaving no constructible q::ConvLayer_s1.opt -> error 1002
-  // (measured on real silicon v73 and v81). Decline so it runs fp (finalizes, as before this
-  // selector). LBR=1 (what customer models use) finalizes and stays accelerated. Remove once HTP
-  // registers a u8 kernel for the LBR=0 gate matmul.
-  OrtNodeAttrHelper node_helper(*node);
-  if (node_helper.Get("linear_before_reset", static_cast<int64_t>(0)) == 0) {
-    return false;
-  }
-
-  // GRU ONNX inputs:
-  //   in[0]: X (activation)      — UINT8
-  //   in[1]: W (weights)         — UINT8 or INT8
-  //   in[2]: R (recurrent wts)   — UINT8 or INT8
-  //   in[3]: B (bias, optional)  — INT32
-  //   in[4]: sequence_lens       — not quantized (skip)
-  //   in[5]: initial_h (optional)— UINT8
-  // GRU ONNX outputs:
-  //   out[0]: Y (optional)       — UINT8
-  //   out[1]: Y_h (optional)     — UINT8
-
-  // Build name-to-index map for DQ nodes (map DQ output name -> index in dq_nodes vector)
-  std::unordered_map<std::string, size_t> dq_output_to_index;
-  for (size_t i = 0; i < dq_nodes.size(); ++i) {
-    size_t output_count = 0;
-    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(dq_nodes[i], &output_count), ort_api);
-    std::vector<const OrtValueInfo*> outputs(output_count);
-    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(dq_nodes[i], outputs.data(), outputs.size()), ort_api);
-    const char* name = nullptr;
-    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(outputs[0], &name), ort_api);
-    dq_output_to_index[std::string(name)] = i;
-  }
-
-  // Get GRU node inputs
-  size_t num_inputs = 0;
-  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
-  std::vector<const OrtValueInfo*> inputs(num_inputs);
-  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api);
-
-  // Per-input data type constraints (index matches ONNX GRU input position)
-  // Empty set means "skip this input" (not quantized)
-  const std::vector<std::unordered_set<int32_t>> input_constraints = {
-      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},                                      // in[0]: X
-      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8},  // in[1]: W
-      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8},  // in[2]: R
-      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
-       ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32},  // in[3]: B
-      {},                                     // in[4]: sequence_lens (skip)
-      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},  // in[5]: initial_h
-  };
-
-  for (size_t i = 0; i < num_inputs && i < input_constraints.size(); ++i) {
-    if (input_constraints[i].empty()) {
-      continue;  // Not a quantized input
-    }
-    const OrtValueInfo* value_info = inputs[i];
-    if (value_info == nullptr) {
-      continue;  // Optional input not provided
-    }
-
-    const char* input_name = nullptr;
-    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(value_info, &input_name), ort_api);
-
-    auto it = dq_output_to_index.find(std::string(input_name));
-    if (it == dq_output_to_index.end()) {
-      continue;  // This input is not DQ-produced (optional input not quantized)
-    }
-
-    auto dt = GetNodeInputDataType(dq_nodes[it->second], ort_api, 0);
-    if (!dt.has_value()) {
-      return false;
-    }
-
-    if (input_constraints[i].find(static_cast<int32_t>(dt.value())) == input_constraints[i].end()) {
-      return false;
-    }
-  }
-
-  return true;
+  // Structural-only selector: fold DQ -> GRU -> Q into a single QDQGroup NodeUnit whenever the
+  // boundary Q/DQ nodes are well-formed. GRU's outputs Y and Y_h are both optional, so an absent
+  // slot is skipped by CheckQDQNodes; the present slots must still be consumed only by Q and must
+  // not be graph outputs. ALL op-semantic fp-fallback decisions -- LBR=0, missing-output, and
+  // non-tested-good input dtypes -- live in gru_op_builder.cc, which emits an explicit
+  // Dequantize -> fp32 GRU -> Quantize (all on QNN) for those configs.
+  return CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                       static_cast<int>(dq_nodes.size()), /*is_empty_q_nodes_allowed=*/false);
 }
 
 // =============================================================================
@@ -1834,6 +1755,10 @@ void OrtSelectorManager::CreateSelectors() {
       {"Gemm", {}}};
   ort_selectors_.RegisterSelector(gemm_ops, std::make_unique<OrtGemmNodeGroupSelector>());
 
+  // Register GRU ops
+  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
+  ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
+
   // Register instance and layer normalization ops
   OrtOpVersionsAndSelector::OpVersionsMap instance_layer_norm_ops = {
       {"InstanceNormalization", {}},
@@ -1889,10 +1814,6 @@ void OrtSelectorManager::CreateSelectors() {
   OrtOpVersionsAndSelector::OpVersionsMap matmulnbits_ops = {
       {"MatMulNBits", {}}};
   ort_selectors_.RegisterSelector(matmulnbits_ops, std::make_unique<OrtMatMulNBitsNodeGroupSelector>());
-
-  // Register GRU ops
-  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
-  ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 }
 
 void OrtSelectorManager::InitializeSelectorsMap() {

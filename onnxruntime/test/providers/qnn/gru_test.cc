@@ -59,19 +59,21 @@ void _BuildGRUTestCase(ModelTestBuilder& builder,
                        const int64_t hidden_size,
                        const int64_t layout,
                        const int64_t linear_before_reset,
-                       const std::vector<QuantParams<InputType>>& output_qparams) {
+                       const std::vector<QuantParams<InputType>>& output_qparams,
+                       const bool int32_bias = false) {
   static constexpr bool kIsFp16 = std::is_same<InputType, Ort::Float16_t>::value;
   static constexpr bool kIsU8 = std::is_same<InputType, uint8_t>::value;
+  static constexpr bool kIsU16 = std::is_same<InputType, uint16_t>::value;
 
   auto add_input = [&](const char* name, const TestInputDef<float>& def) -> std::string {
     if constexpr (kIsFp16) {
       TestInputDef<Ort::Float16_t> fp16_def = ConvertToFP16InputDef(def);
       MakeTestInput(builder, name, fp16_def);
       return name;
-    } else if constexpr (kIsU8) {
+    } else if constexpr (kIsU8 || kIsU16) {
       MakeTestInput(builder, name, def);
-      QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(def);
-      return AddQDQNodePair<uint8_t>(builder, std::string("qdq_") + name, name, qparams.scale, qparams.zero_point);
+      QuantParams<InputType> qparams = GetTestInputQuantParams<InputType>(def);
+      return AddQDQNodePair<InputType>(builder, std::string("qdq_") + name, name, qparams.scale, qparams.zero_point);
     } else {
       MakeTestInput(builder, name, def);
       return name;
@@ -92,7 +94,27 @@ void _BuildGRUTestCase(ModelTestBuilder& builder,
 
   // B
   if (B_def) {
-    input_names.push_back(add_input("B", B_def->get()));
+    // HTP's quantized Gru configs use an int32 (SFIXED_POINT_32) bias. The INT16 (u16) config requires
+    // it; the INT8 (u8) config accepts a u8 OR an int32 bias, so int32_bias lets a u8 test exercise the
+    // int32-bias variant. Quantize to int32 with the usual input_scale * weight_scale bias scale. The
+    // float reference model always takes a plain (non-QDQ) bias.
+    if constexpr (kIsU16) {
+      QuantParams<uint16_t> x_qparams = GetTestInputQuantParams<uint16_t>(X_def);
+      QuantParams<uint16_t> w_qparams = GetTestInputQuantParams<uint16_t>(W_def);
+      input_names.push_back(
+          MakeTestQDQBiasInput(builder, "B", B_def->get(), x_qparams.scale * w_qparams.scale, false));
+    } else if constexpr (kIsU8) {
+      if (int32_bias) {
+        QuantParams<uint8_t> x_qparams = GetTestInputQuantParams<uint8_t>(X_def);
+        QuantParams<uint8_t> w_qparams = GetTestInputQuantParams<uint8_t>(W_def);
+        input_names.push_back(
+            MakeTestQDQBiasInput(builder, "B", B_def->get(), x_qparams.scale * w_qparams.scale, false));
+      } else {
+        input_names.push_back(add_input("B", B_def->get()));
+      }
+    } else {
+      input_names.push_back(add_input("B", B_def->get()));
+    }
   } else {
     input_names.push_back("");
   }
@@ -110,7 +132,7 @@ void _BuildGRUTestCase(ModelTestBuilder& builder,
   // Outputs
   auto make_output = [&](const char* name) -> std::string {
     if (name == nullptr || name[0] == '\0') return "";
-    if constexpr (kIsU8) {
+    if constexpr (kIsU8 || kIsU16) {
       return std::string("gru_") + name;
     } else {
       builder.MakeOutput(name);
@@ -135,16 +157,17 @@ void _BuildGRUTestCase(ModelTestBuilder& builder,
   builder.AddNode("gru", "GRU", input_names, output_names, "", attrs);
 
   QNN_TEST_UNUSED_PARAMETER(output_qparams);
-  if constexpr (kIsU8) {
+  QNN_TEST_UNUSED_PARAMETER(int32_bias);
+  if constexpr (kIsU8 || kIsU16) {
     size_t i = 0;
     if (has_Y) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y", y_out, output_qparams[i].scale,
-                                                     output_qparams[i].zero_point);
+      AddQDQNodePairWithOutputAsGraphOutput<InputType>(builder, "qdq_Y", y_out, output_qparams[i].scale,
+                                                       output_qparams[i].zero_point);
       ++i;
     }
     if (has_Y_h) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y_h", y_h_out, output_qparams[i].scale,
-                                                     output_qparams[i].zero_point);
+      AddQDQNodePairWithOutputAsGraphOutput<InputType>(builder, "qdq_Y_h", y_h_out, output_qparams[i].scale,
+                                                       output_qparams[i].zero_point);
       ++i;
     }
   }
@@ -181,13 +204,14 @@ static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<floa
                                                          const std::string direction,
                                                          const int64_t hidden_size,
                                                          const int64_t layout,
-                                                         const int64_t linear_before_reset = 0) {
+                                                         const int64_t linear_before_reset = 0,
+                                                         const bool int32_bias = false) {
   return [X_def, W_def, R_def, B_def, H_def,
           has_Y, has_Y_h,
-          direction, hidden_size, layout, linear_before_reset](ModelTestBuilder& builder,
-                                                               std::vector<QuantParams<InputQType>>& output_qparams) {
+          direction, hidden_size, layout, linear_before_reset, int32_bias](ModelTestBuilder& builder,
+                                                                           std::vector<QuantParams<InputQType>>& output_qparams) {
     _BuildGRUTestCase<InputQType>(builder, X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
-                                  direction, hidden_size, layout, linear_before_reset, output_qparams);
+                                  direction, hidden_size, layout, linear_before_reset, output_qparams, int32_bias);
   };
 }
 
@@ -354,7 +378,8 @@ static void RunHtpQDQGRUOpTest(const TestInputDef<float>& X_def,
                                ExpectedEPNodeAssignment expected_ep_assignment,
                                const int64_t linear_before_reset = 0,
                                QDQTolerance tolerance = QDQTolerance(),
-                               int opset = 22) {
+                               int opset = 22,
+                               bool int32_bias = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -362,7 +387,7 @@ static void RunHtpQDQGRUOpTest(const TestInputDef<float>& X_def,
   TestQDQModelAccuracy(BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
                                                direction, hidden_size, layout, linear_before_reset),
                        BuildQDQGRUTestCase<QuantType>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
-                                                      direction, hidden_size, layout, linear_before_reset),
+                                                      direction, hidden_size, layout, linear_before_reset, int32_bias),
                        provider_options,
                        opset,
                        expected_ep_assignment,
@@ -401,9 +426,11 @@ static void RunHtpFp16GRUOpTest(const TestInputDef<float>& X_def,
 // HTP QDQ Tests
 // ============================================================
 
-// u8 QDQ GRU, linear_before_reset=0. OrtGRUNodeGroupSelector declines LBR=0 (HTP can't finalize it:
-// the gate matmul is widened u8 -> QUint16Crouton -> Code 1002 on v73/v81), so it runs fp32 + Q/DQ.
-// This validates the LBR=0 decline + fp accuracy, not u8 HTP exec (genuine u8 = GRU_QDQ_linear_before_reset).
+// u8 QDQ GRU, linear_before_reset=0. The selector is structural-only: it folds DQ -> GRU -> Q into a
+// single QDQ group. The builder then fp-degrades LBR=0 (a fp-fallback trigger, because HTP can't
+// finalize a u8 LBR=0 cell: the gate matmul widens u8 -> QUint16Crouton -> Code 1002 on v73/v81),
+// emitting an explicit Dequantize -> fp32 GRU -> Quantize -- all on QNN, so the assignment stays All.
+// Validates the LBR=0 fp-degrade + fp accuracy, not u8 HTP exec (genuine u8 = GRU_QDQ_linear_before_reset).
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -427,7 +454,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward) {
 }
 
 // seq_len=1 variant of GRU_QDQ_sanity_forward. seq=1 still 1002s as u8 LBR=0, so the per-timestep
-// unroll is not the discriminator -- linear_before_reset=0 is. Declined to fp, same as forward.
+// unroll is not the discriminator -- linear_before_reset=0 is. fp-degraded by the builder, same as forward.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward_seq1) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -450,7 +477,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward_seq1) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
+// LBR=0 u8 QDQ GRU, fp-degraded by the builder (see GRU_QDQ_sanity_forward). Validates fp-degrade, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_reverse) {
   std::string direction = "reverse";
   uint32_t num_direction = 1;
@@ -473,7 +500,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_reverse) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
+// LBR=0 u8 QDQ GRU, fp-degraded by the builder (see GRU_QDQ_sanity_forward). Validates fp-degrade, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -496,7 +523,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
+// LBR=0 u8 QDQ GRU, fp-degraded by the builder (see GRU_QDQ_sanity_forward). Validates fp-degrade, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_B) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -518,7 +545,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_B) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
+// LBR=0 u8 QDQ GRU, fp-degraded by the builder (see GRU_QDQ_sanity_forward). Validates fp-degrade, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_H) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -540,7 +567,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_H) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// LBR=0 u8 QDQ GRU, declined to fp32 + Q/DQ (see GRU_QDQ_sanity_forward). Validates decline, not u8 exec.
+// LBR=0 u8 QDQ GRU, fp-degraded by the builder (see GRU_QDQ_sanity_forward). Validates fp-degrade, not u8 exec.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -565,8 +592,10 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
                               QDQTolerance(0.004f));
 }
 
-// u16 QDQ GRU. Declined for two reasons -- LBR=0 (see GRU_QDQ_sanity_forward) and u16 X outside the
-// selector's UINT8-only in[0] allowlist -- so it runs fp. fp-path sanity check at u16 quant params.
+// Real u16 QDQ GRU (X/W/R/initial_h u16, int32 bias) that fp-degrades because LBR=0 (builder trigger;
+// see GRU_QDQ_sanity_forward). Exercises the u16 fp-degrade path: the builder dequantizes the u16 inputs
+// and the int32 bias to fp32, runs the GRU in fp, then requantizes to u16. Native u16 (LBR=1) is covered
+// by GRU_QDQ_u16_linear_before_reset.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -589,9 +618,50 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Y-only GRU (Y_h absent). The selector requires BOTH outputs (CheckQDQNodes declines an empty slot),
-// so it runs fp. linear_before_reset=1 isolates the missing-output decline from the LBR=0 one. A Y-only
-// u8 fold was itself fine (~0.75% on v73); it is the Y_h-only mirror that drifted (see below).
+// Native u16 QDQ GRU: HTP's INT16 Gru config with u16 X/W/R/initial_h, an int32 bias, forward direction,
+// LBR=1 (LBR=0 fp-degrades). u16 mirror of GRU_QDQ_linear_before_reset; the only test that exercises the
+// genuine native-u16 builder path (no builder-inserted Dequantize/Quantize). Like the u8 mirror it
+// finalizes on HTP (no 1002) and runs genuine u16 on real silicon; measured vs qdq@CPU_EP on v73 (seed
+// 2345): Y = 2.37%, Y_h = 2.52% (peak). That does not beat the u8 mirror's 2.24% despite 256x finer I/O
+// quantization -- the per-timestep unrolled recurrence accumulation dominates the drift, so widening I/O
+// 8->16 bit barely helps. Intrinsic quant drift, not an EP bug. 3.0% clears the 2.52% peak with headroom
+// (mirrors the u8 silicon bound). The linux x86_64 HTP emulator drifts further (the u8 mirror there was
+// ~1.9x its silicon peak), so relax to 6.0% there pending a direct emulator u16 measurement, keeping the
+// tight 3.0% bound on real silicon.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_linear_before_reset) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+#if defined(__linux__) && defined(__x86_64__)
+  constexpr float kTolerance = 0.06f;
+#else
+  constexpr float kTolerance = 0.03f;
+#endif
+  RunHtpQDQGRUOpTest<uint16_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               1,  // linear_before_reset
+                               QDQTolerance(kTolerance));
+}
+
+// Y-only GRU (Y_h absent), bidirectional. The structural-only selector folds the group even with an
+// absent optional output; the builder then fp-degrades it. Two triggers fire here -- missing-output AND
+// non-forward direction -- so this does NOT isolate the missing-output trigger (that is
+// GRU_QDQ_Y_h_only_forward). A Y-only u8 fold was itself fine (~0.75% on v73); the Y_h-only mirror
+// drifted (see below), which is why missing-output fp-degrades rather than folding to genuine u8.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_only_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -612,12 +682,14 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_only_bidirectional) {
                               hidden_size,                                                                             // hidden_size
                               0,                                                                                       // layout
                               ExpectedEPNodeAssignment::All,
-                              1);  // LBR=1: isolates the missing-output decline from LBR (fp path)
+                              1);  // LBR=1 (bidirectional still fp-degrades via non-forward direction + missing-output)
 }
 
-// Y_h-only mirror of GRU_QDQ_Y_only_bidirectional; declined to fp by the same both-outputs rule
-// (LBR=1 isolates it from the LBR=0 decline). As a u8 fold this drifted ~8.8% on v73 -- HTP requantizes
-// the per-step recurrence at Y_h's tight final-step scale -- which is why missing-output u8 is deferred.
+// Y_h-only mirror of GRU_QDQ_Y_only_bidirectional, bidirectional. The selector folds the group; the
+// builder fp-degrades it (missing-output AND non-forward direction both fire, so this does NOT isolate
+// the missing-output trigger -- see GRU_QDQ_Y_h_only_forward). As a genuine-u8 fold this drifted ~8.8%
+// on v73 (HTP requantizes the per-step recurrence at Y_h's tight final-step scale), which is why
+// missing-output fp-degrades instead of folding to genuine u8.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_h_only_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
@@ -638,7 +710,37 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_h_only_bidirectional) {
                               hidden_size,                                                                             // hidden_size
                               0,                                                                                       // layout
                               ExpectedEPNodeAssignment::All,
-                              1);  // LBR=1: isolates the missing-output decline from LBR (fp path)
+                              1);  // LBR=1 (bidirectional still fp-degrades via non-forward direction + missing-output)
+}
+
+// Y_h-only GRU (Y absent), forward, LBR=1, genuine-u8 dtype -- the isolation test for the missing-output
+// fp-degrade trigger. LBR=1 and forward are both non-triggers and the dtype is genuine-u8, so missing-output
+// is the ONLY term that makes use_fp_fallback fire (the bidirectional GRU_QDQ_Y*_only tests can't isolate it
+// because non-forward direction fires too). The builder fp-degrades -- Dequantize -> fp32 GRU -> Quantize,
+// all on QNN, so assignment stays All and the compute is fp32 -- it should clear the tight default 0.4%
+// tolerance. A genuine-u8 Y_h-only fold instead drifted ~8.8% on v73 (HTP requantizes the per-step
+// recurrence at Y_h's tight final-step scale); fp-degrading it is exactly why missing-output is a trigger.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_h_only_forward) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::ref(H_def),                                                                         // initial_h
+                              false,                                                                                   // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All,
+                              1);  // LBR=1: forward + genuine-u8, so missing-output is the sole fp-degrade trigger
 }
 
 // layout=1: ORT CPU EP does not support batchwise layout, so session initialization throws.
@@ -717,6 +819,43 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
                               ExpectedEPNodeAssignment::All,
                               1,  // linear_before_reset
                               QDQTolerance(kTolerance));
+}
+
+// Genuine-u8 GRU with an int32 (SFIXED_POINT_32) bias instead of the u8 bias used by
+// GRU_QDQ_linear_before_reset. genuine_u8_combo accepts a u8 OR an int32 bias (the INT8 Gru config's
+// spec bias is int32), so this covers the u8-X/W/R + int32-bias genuine path the u8-bias mirror leaves
+// untested. Forward + LBR=1 -> finalizes on HTP, runs genuine u8 (no fp-degrade). int32's huge range
+// makes the bias quant error negligible, so drift should track the u8-bias mirror's measured 2.24%
+// (v81, seed 2345); reuse its 3.0% silicon / 6.0% linux-x86_64-emulator bounds.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset_int32_bias) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+#if defined(__linux__) && defined(__x86_64__)
+  constexpr float kTolerance = 0.06f;
+#else
+  constexpr float kTolerance = 0.03f;
+#endif
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::ref(H_def),                                                                         // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All,
+                              1,  // linear_before_reset
+                              QDQTolerance(kTolerance),
+                              22,  // opset
+                              /*int32_bias=*/true);
 }
 
 // ============================================================
