@@ -34,6 +34,7 @@ struct QnnUdoPlaceholderOp
     : Ort::CustomOpBase<QnnUdoPlaceholderOp, QnnUdoPlaceholderKernel, /*WithStatus=*/true> {
   QnnUdoPlaceholderOp(std::string op_type, std::string ep_type)
       : op_type_(std::move(op_type)), ep_type_(std::move(ep_type)) {}
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnUdoPlaceholderOp);
 
   OrtStatusPtr CreateKernelV2(const OrtApi& /*api*/,
                               const OrtKernelInfo* /*info*/,
@@ -66,6 +67,24 @@ struct QnnUdoPlaceholderOp
     return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC;
   }
   bool GetVariadicOutputHomogeneity() const { return false; }
+
+  // Propagate the first input's type/shape to all outputs so ORT's type-inference pass
+  // succeeds during model load. Without this, UNDEFINED output type causes an inference
+  // error even though the node will be fused+compiled by QNN EP and the placeholder kernel
+  // is never executed.
+  static OrtStatusPtr InferOutputShape(Ort::ShapeInferContext& ctx) {
+    if (ctx.GetInputCount() == 0) {
+      return nullptr;
+    }
+    const auto& input_shape = ctx.GetInputShape(0);
+    // SetOutputShape's type defaults to FLOAT, which matches the primary UDO use case.
+    // For a compile-based EP the placeholder kernel never runs; the type only needs to
+    // satisfy model-load validation, not actual execution.
+    for (size_t i = 0; i < 1 /* GetOutputCount not available; placeholder has 1 output */; ++i) {
+      ctx.SetOutputShape(i, input_shape);
+    }
+    return nullptr;
+  }
 
  private:
   std::string op_type_;

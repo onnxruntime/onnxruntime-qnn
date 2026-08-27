@@ -605,6 +605,11 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
     _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
     _In_ size_t num_domains) noexcept {
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
+  if (num_domains > factory->custom_op_domains_.size()) {
+    return factory->ort_api.CreateStatus(
+        ORT_INVALID_ARGUMENT,
+        "GetCustomOpDomains: num_domains exceeds the value returned by GetNumCustomOpDomains");
+  }
   for (size_t i = 0; i < num_domains; ++i) {
     domains[i] = factory->custom_op_domains_[i];
   }
