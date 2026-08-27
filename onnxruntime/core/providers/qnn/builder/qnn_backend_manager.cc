@@ -1300,6 +1300,9 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     spill_cfg->customConfig = spill_custom;
   }
 
+  // Reused-IO-limit, available since QNN API 2.32 (QAIRT 2.43; version extrapolated, verify if using
+  // an SDK older than 2.49).
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 32)
   if (reused_io_limit_mb_ > 0) {
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_INFO,
@@ -1313,6 +1316,7 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     reused_io_limit_config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     reused_io_limit_config->customConfig = reused_io_limit_custom_config;
   }
+#endif
 
   return Ort::Status();
 }
@@ -1473,7 +1477,9 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
-  // Group-level property, shared by all contexts in the list.
+  // Group-level property, shared by all contexts in the list. Available since QNN API 2.32
+  // (QAIRT 2.43; version extrapolated, verify if using an SDK older than 2.49).
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 32)
   QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t reused_io_limit_custom_config;
   if (reused_io_limit_mb_ > 0) {
@@ -1482,6 +1488,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     reused_io_limit_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     reused_io_limit_config.customConfig = &reused_io_limit_custom_config;
   }
+#endif
 
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
@@ -1490,9 +1497,11 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
 #endif
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 32)
   if (reused_io_limit_mb_ > 0) {
     configs_vec.push_back(&reused_io_limit_config);
   }
+#endif
   configs_vec.push_back(nullptr);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE

@@ -149,7 +149,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_reused_io_limit_mb"`|Description|
 |---|---|
-|Size in MB (string)|Specifies the effective I/O buffer size used by a context when I/O buffers are reused across graphs or contexts. Used for memory estimation and DSP PD placement decisions when loading a context binary. See [Reused IO Limit](#reused-io-limit) below. Defaults to "0" (no reuse assumed; QNN estimates using the total I/O size of all graphs in the context).|
+|Size in MB (string)|Specifies the effective I/O buffer size used by a context when I/O buffers are reused across graphs or contexts. Used for memory estimation and DSP PD placement decisions when loading a context binary. See [Reused IO Limit](#reused-io-limit) below. Defaults to "0" (no reuse assumed; QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.43 or later.|
 
 |`"htp_performance_mode"`|Description|
 |---|---|
