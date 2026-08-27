@@ -154,6 +154,14 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU16_WU8) {
                                        true);
 }
 
+TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU16_WS16Shifted) {
+  RunRMSNormQDQTest<uint16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+                                       TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+                                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                       ExpectedEPNodeAssignment::All,
+                                       true);
+}
+
 TEST_F(QnnHTPBackendTests, RMSNormU8U8_4D_LastAxis) {
   RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18)),
                                       TestInputDef<float>({3}, true, GetFloatDataInRange(-2.0f, 2.0f, 3)),
