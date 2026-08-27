@@ -27,14 +27,16 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                                             std::vector<std::string>&& input_names,
                                                             const Ort::Logger& logger,
                                                             bool do_op_validation) const {
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Processing QuickGelu operator: " + node_unit.Name()).c_str());
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Processing " + node_unit.OpType() + " operator: " + node_unit.Name()).c_str());
 
   const std::string& input_name = input_names[0];
   const auto& outputs = node_unit.Outputs();
   const std::string& output_name = outputs[0].name;
 
   OrtNodeAttrHelper node_helper(node_unit);
-  float alpha = node_helper.Get("alpha", 1.702f);
+  const float default_alpha = node_unit.OpType() == "Swish" ? 1.0f : 1.702f;
+  float alpha = node_helper.Get("alpha", default_alpha);
 
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
