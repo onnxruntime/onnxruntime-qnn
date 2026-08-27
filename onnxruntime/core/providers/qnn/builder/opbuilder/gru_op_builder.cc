@@ -548,12 +548,12 @@ Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   // is structural-only and folds every DQ -> GRU -> Q group; the op-semantic fp-fallback decision
   // lives here. HTP has two native quantized Gru configs (HtpOpDefSupplement): an INT8 combo
   // (X/W/R/initial_h u8) and an INT16 combo (X/initial_h u16, W/R u16-or-u8), both forward-only and
-  // both with an int32 (SFIXED_POINT_32) bias. u8 additionally accepts a u8 bias because that is
-  // measured-good on real silicon; u16 has no such empirical relaxation yet, so it takes only the
-  // spec dtypes (and requires the bias to be present). Everything else -- LBR=0 (fails HTP finalize
-  // with a mixed-width Crouton), a non-forward direction, a missing optional output, or a
-  // non-supported input dtype -- is fp-degraded (explicit Dequantize -> fp32 GRU -> Quantize, all on
-  // QNN) so the numeric result is still produced on QNN.
+  // both with an int32 (SFIXED_POINT_32) bias -- no config takes a quantized-integer bias. Everything
+  // else -- a non-forward direction, a missing optional output, or a non-supported input dtype (e.g. a
+  // non-int32 bias) -- is fp-degraded (explicit Dequantize -> fp32 GRU -> Quantize, all on QNN) so the
+  // numeric result is still produced on QNN. LBR=0 additionally fp-degrades the u8 combo (its u8 cell
+  // widens to a mixed-width QUint16Crouton that fails HTP finalize, 1002); the u16 combo is already
+  // 16-bit with no such widening, so LBR=0 stays native there.
   const bool is_qdq = node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup;
   const int64_t linear_before_reset = node_helper.Get("linear_before_reset", static_cast<int64_t>(0));
 
@@ -574,8 +574,7 @@ Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
         dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_8 &&
         dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8 &&
         dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8 &&
-        (!has_input(3) || dtype_at(3) == QNN_DATATYPE_UFIXED_POINT_8 ||
-         dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32) &&
+        (!has_input(3) || dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32) &&
         (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_8);
     const bool genuine_u16_combo =
         dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_16 &&
@@ -583,8 +582,10 @@ Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
         (dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8) &&
         has_input(3) && dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32 &&
         (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_16);
-    use_fp_fallback = (linear_before_reset == 0) || !is_forward || missing_output ||
-                      !(genuine_u8_combo || genuine_u16_combo);
+    // LBR=0 blocks the u8 combo (its u8 cell widens to a mixed-width QUint16Crouton -> HTP finalize
+    // 1002) but not the u16 combo (already 16-bit, no widening), so only u8 fp-degrades at LBR=0.
+    use_fp_fallback = ((linear_before_reset == 0) && !genuine_u16_combo) || !is_forward ||
+                      missing_output || !(genuine_u8_combo || genuine_u16_combo);
   }
 
   // fp-degrade input side: Dequantize each present quantized input to fp32 once (shared by both

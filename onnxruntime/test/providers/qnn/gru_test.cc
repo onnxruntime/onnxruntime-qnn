@@ -60,7 +60,7 @@ void _BuildGRUTestCase(ModelTestBuilder& builder,
                        const int64_t layout,
                        const int64_t linear_before_reset,
                        const std::vector<QuantParams<InputType>>& output_qparams,
-                       const bool int32_bias = false) {
+                       const bool int32_bias = true) {
   static constexpr bool kIsFp16 = std::is_same<InputType, Ort::Float16_t>::value;
   static constexpr bool kIsU8 = std::is_same<InputType, uint8_t>::value;
   static constexpr bool kIsU16 = std::is_same<InputType, uint16_t>::value;
@@ -94,10 +94,11 @@ void _BuildGRUTestCase(ModelTestBuilder& builder,
 
   // B
   if (B_def) {
-    // HTP's quantized Gru configs use an int32 (SFIXED_POINT_32) bias. The INT16 (u16) config requires
-    // it; the INT8 (u8) config accepts a u8 OR an int32 bias, so int32_bias lets a u8 test exercise the
-    // int32-bias variant. Quantize to int32 with the usual input_scale * weight_scale bias scale. The
-    // float reference model always takes a plain (non-QDQ) bias.
+    // HTP's quantized Gru configs use an int32 (SFIXED_POINT_32) bias only -- the INT16 (u16) and INT8
+    // (u8) configs both require it -- so int32 bias is the default. int32_bias=false forces an off-spec
+    // u8 QDQ bias, used only by the GRU_QDQ_u8_bias_fp_degrade guard to prove that path fp-degrades.
+    // Quantize to int32 with the usual input_scale * weight_scale bias scale. The float reference model
+    // always takes a plain (non-QDQ) bias.
     if constexpr (kIsU16) {
       QuantParams<uint16_t> x_qparams = GetTestInputQuantParams<uint16_t>(X_def);
       QuantParams<uint16_t> w_qparams = GetTestInputQuantParams<uint16_t>(W_def);
@@ -205,7 +206,7 @@ static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<floa
                                                          const int64_t hidden_size,
                                                          const int64_t layout,
                                                          const int64_t linear_before_reset = 0,
-                                                         const bool int32_bias = false) {
+                                                         const bool int32_bias = true) {
   return [X_def, W_def, R_def, B_def, H_def,
           has_Y, has_Y_h,
           direction, hidden_size, layout, linear_before_reset, int32_bias](ModelTestBuilder& builder,
@@ -379,7 +380,7 @@ static void RunHtpQDQGRUOpTest(const TestInputDef<float>& X_def,
                                const int64_t linear_before_reset = 0,
                                QDQTolerance tolerance = QDQTolerance(),
                                int opset = 22,
-                               bool int32_bias = false) {
+                               bool int32_bias = true) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -592,13 +593,93 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
                               QDQTolerance(0.004f));
 }
 
-// Real u16 QDQ GRU (X/W/R/initial_h u16, int32 bias) that fp-degrades because LBR=0 (builder trigger;
-// see GRU_QDQ_sanity_forward). Exercises the u16 fp-degrade path: the builder dequantizes the u16 inputs
-// and the int32 bias to fp32, runs the GRU in fp, then requantizes to u16. Native u16 (LBR=1) is covered
-// by GRU_QDQ_u16_linear_before_reset.
+// Native u16 QDQ GRU with LBR=0. The LBR=0 fp-degrade exists only for the u8 combo -- its u8 cell
+// widens to a mixed-width QUint16Crouton that fails HTP finalize (1002). The u16 combo is already
+// 16-bit with no such widening, so LBR=0 runs genuine native u16 (X/W/R/initial_h u16 + int32 bias,
+// forward, both outputs). Skipped on the x86 HTP emulator (no faithful native-INT16 Gru kernel; see
+// GRU_QDQ_u16_linear_before_reset); validated on real silicon @3.0%.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
+#if defined(__linux__) && defined(__x86_64__)
+  GTEST_SKIP() << "native INT16 Gru kernel unsupported on linux x86_64 HTP emulator; requires real device.";
+#endif
   std::string direction = "forward";
   uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  constexpr float kTolerance = 0.03f;
+  RunHtpQDQGRUOpTest<uint16_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               0,  // linear_before_reset
+                               QDQTolerance(kTolerance));
+}
+
+// Native u16 QDQ GRU: HTP's INT16 Gru config with u16 X/W/R/initial_h, an int32 bias, forward direction,
+// LBR=1. u16 mirror of GRU_QDQ_linear_before_reset; exercises the genuine native-u16 builder path (no
+// builder-inserted Dequantize/Quantize) with LBR=1, as GRU_QDQ_u16_sanity_forward does with LBR=0. Like
+// the u8 mirror it
+// finalizes on HTP (no 1002) and runs genuine u16 on real silicon; measured vs qdq@CPU_EP on v73 (seed
+// 2345): Y = 2.37%, Y_h = 2.52% (peak). That does not beat the u8 mirror's 2.24% despite 256x finer I/O
+// quantization -- the per-timestep unrolled recurrence accumulation dominates the drift, so widening I/O
+// 8->16 bit barely helps. Intrinsic quant drift, not an EP bug. 3.0% clears the 2.52% peak with headroom
+// (mirrors the u8 silicon bound). The linux x86_64 HTP emulator has no faithful native-INT16 Gru kernel:
+// this path degenerates to a constant output there (measured -- every mismatching element collapses to
+// one value, err/output_range up to ~100%, which no tolerance can bracket), unlike the u8 mirror whose
+// emulator INT8 kernel merely drifts (~1.9x its silicon peak and still bounded). So the test is skipped on
+// that emulator; real silicon keeps the tight 3.0% bound.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_linear_before_reset) {
+#if defined(__linux__) && defined(__x86_64__)
+  // No faithful native INT16 Gru kernel on the x86 HTP emulator (output degenerates to a constant -- see
+  // the note above). Validated instead on real silicon; mirrors the x86-sim skips in cast_test.cc and
+  // framework_op_trace_test.cc.
+  GTEST_SKIP() << "native INT16 Gru kernel unsupported on linux x86_64 HTP emulator; requires real device.";
+#endif
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  constexpr float kTolerance = 0.03f;
+  RunHtpQDQGRUOpTest<uint16_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                               std::ref(B_def),                                                                         // B
+                               std::ref(H_def),                                                                         // initial_h
+                               true,                                                                                    // has_Y
+                               true,                                                                                    // has_Y_h
+                               direction,                                                                               // direction
+                               hidden_size,                                                                             // hidden_size
+                               0,                                                                                       // layout
+                               ExpectedEPNodeAssignment::All,
+                               1,  // linear_before_reset
+                               QDQTolerance(kTolerance));
+}
+
+// u16 QDQ GRU, bidirectional -> fp-degraded by the builder: HTP's native quantized Gru is forward-only,
+// so !is_forward triggers fp-degrade regardless of dtype (see GRU_QDQ_sanity_forward). This is the only
+// test that exercises the u16 fp-degrade boundary (builder-inserted AddDequantizeNode u16->fp32 /
+// AddQuantizeNode fp32->u16); the native-u16 tests run genuine u16 and never insert those. Unlike them it
+// needs no native-INT16 kernel (fp32 GRU + standard u16 Q/DQ), so it is NOT skipped on the x86 emulator
+// and is the only live u16 GRU path there. Default tolerance suffices: the u16 input quant is shared with
+// the CPU reference and cancels, leaving only the fine u16 output requantization.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_bidirectional) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
   uint32_t batch_size = 3;
   uint32_t hidden_size = 4;
   uint32_t input_size = 5;
@@ -616,45 +697,6 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
                                hidden_size,                                                                             // hidden_size
                                0,                                                                                       // layout
                                ExpectedEPNodeAssignment::All);
-}
-
-// Native u16 QDQ GRU: HTP's INT16 Gru config with u16 X/W/R/initial_h, an int32 bias, forward direction,
-// LBR=1 (LBR=0 fp-degrades). u16 mirror of GRU_QDQ_linear_before_reset; the only test that exercises the
-// genuine native-u16 builder path (no builder-inserted Dequantize/Quantize). Like the u8 mirror it
-// finalizes on HTP (no 1002) and runs genuine u16 on real silicon; measured vs qdq@CPU_EP on v73 (seed
-// 2345): Y = 2.37%, Y_h = 2.52% (peak). That does not beat the u8 mirror's 2.24% despite 256x finer I/O
-// quantization -- the per-timestep unrolled recurrence accumulation dominates the drift, so widening I/O
-// 8->16 bit barely helps. Intrinsic quant drift, not an EP bug. 3.0% clears the 2.52% peak with headroom
-// (mirrors the u8 silicon bound). The linux x86_64 HTP emulator drifts further (the u8 mirror there was
-// ~1.9x its silicon peak), so relax to 6.0% there pending a direct emulator u16 measurement, keeping the
-// tight 3.0% bound on real silicon.
-TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_linear_before_reset) {
-  std::string direction = "forward";
-  uint32_t num_direction = 1;
-  uint32_t batch_size = 3;
-  uint32_t hidden_size = 4;
-  uint32_t input_size = 5;
-  uint32_t seq_len = 6;
-  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
-  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-#if defined(__linux__) && defined(__x86_64__)
-  constexpr float kTolerance = 0.06f;
-#else
-  constexpr float kTolerance = 0.03f;
-#endif
-  RunHtpQDQGRUOpTest<uint16_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
-                               std::ref(B_def),                                                                         // B
-                               std::ref(H_def),                                                                         // initial_h
-                               true,                                                                                    // has_Y
-                               true,                                                                                    // has_Y_h
-                               direction,                                                                               // direction
-                               hidden_size,                                                                             // hidden_size
-                               0,                                                                                       // layout
-                               ExpectedEPNodeAssignment::All,
-                               1,  // linear_before_reset
-                               QDQTolerance(kTolerance));
 }
 
 // Y-only GRU (Y_h absent), bidirectional. The structural-only selector folds the group even with an
@@ -786,12 +828,16 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_layout1_forward) {
 }
 
 // linear_before_reset=1: the config customer models use. Unlike LBR=0 it finalizes on HTP (no u8 ->
-// QUint16Crouton widening, no 1002) and runs genuine u8 on real silicon. Tolerance relaxed 0.4% -> 3.0%
-// because the per-timestep unrolled recurrence accumulates u8 quant drift; measured peak vs qdq@CPU_EP
-// = 2.24% (Y) on v81, seed 2345. Intrinsic quant drift, not an EP bug; 3.0% clears 2.24% with headroom.
-// The linux x86_64 HTP emulator's u8 GRU kernel is not bit-accurate to silicon and drifts further
-// (observed peak ~4.29% vs f32@CPU_EP), so relax to 6.0% there while keeping the tight 3.0% bound on
-// real silicon. TODO: Remove the platform-aware tolerance once the emulator u8 kernel matches silicon.
+// QUint16Crouton widening, no 1002) and runs genuine u8 on real silicon. The genuine INT8 Gru config's
+// spec bias is int32 (SFIXED_POINT_32) -- HTP has no u8-bias config -- so the bias is int32 here; a u8
+// bias would fp-degrade instead. Tolerance relaxed 0.4% -> 3.0% because the per-timestep unrolled
+// recurrence accumulates u8 quant drift; measured peak vs qdq@CPU_EP = 2.24% (Y) on v81, seed 2345
+// (measured with a u8 bias; int32's huge range makes the bias quant error negligible, so the drift is
+// dominated by the u8 X/W/R recurrence and tracks that 2.24%). Intrinsic quant drift, not an EP bug;
+// 3.0% clears 2.24% with headroom. The linux x86_64 HTP emulator's u8 GRU kernel is not bit-accurate to
+// silicon and drifts further (observed peak ~4.29% vs f32@CPU_EP), so relax to 6.0% there while keeping
+// the tight 3.0% bound on real silicon. TODO: Remove the platform-aware tolerance once the emulator u8
+// kernel matches silicon.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -821,13 +867,13 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
                               QDQTolerance(kTolerance));
 }
 
-// Genuine-u8 GRU with an int32 (SFIXED_POINT_32) bias instead of the u8 bias used by
-// GRU_QDQ_linear_before_reset. genuine_u8_combo accepts a u8 OR an int32 bias (the INT8 Gru config's
-// spec bias is int32), so this covers the u8-X/W/R + int32-bias genuine path the u8-bias mirror leaves
-// untested. Forward + LBR=1 -> finalizes on HTP, runs genuine u8 (no fp-degrade). int32's huge range
-// makes the bias quant error negligible, so drift should track the u8-bias mirror's measured 2.24%
-// (v81, seed 2345); reuse its 3.0% silicon / 6.0% linux-x86_64-emulator bounds.
-TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset_int32_bias) {
+// Boundary guard for the u8-bias fp-degrade decision. HTP's INT8 Gru config takes an int32
+// (SFIXED_POINT_32) bias only -- a u8 bias is off-spec, so genuine_u8_combo rejects it and this
+// otherwise-genuine shape (u8 X/W/R, LBR=1, forward, both outputs) fp-degrades (Dequantize -> fp32 GRU
+// -> Quantize). fp-degrade is accurate, so it passes at the tight default (~0.4%) tolerance; if a u8
+// bias were ever (re)accepted as genuine, the u8 recurrence would drift ~2.24% (see
+// GRU_QDQ_linear_before_reset) and blow this bound -- so a green run here proves the u8 bias fp-degraded.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_u8_bias_fp_degrade) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -836,11 +882,6 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset_int32_bias) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-#if defined(__linux__) && defined(__x86_64__)
-  constexpr float kTolerance = 0.06f;
-#else
-  constexpr float kTolerance = 0.03f;
-#endif
   RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
@@ -852,10 +893,10 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset_int32_bias) {
                               hidden_size,                                                                             // hidden_size
                               0,                                                                                       // layout
                               ExpectedEPNodeAssignment::All,
-                              1,  // linear_before_reset
-                              QDQTolerance(kTolerance),
-                              22,  // opset
-                              /*int32_bias=*/true);
+                              1,                      // linear_before_reset
+                              QDQTolerance(),         // tight default (~0.4%): fp-degrade is accurate
+                              22,                     // opset
+                              /*int32_bias=*/false);  // u8 bias -> off-spec -> fp-degrade
 }
 
 // ============================================================
