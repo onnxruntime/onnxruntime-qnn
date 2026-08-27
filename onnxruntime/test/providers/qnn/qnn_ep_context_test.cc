@@ -1742,8 +1742,8 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceed
                        context_binary_file,
                        session_option_pairs2);
 
-  std::remove(context_binary_file.c_str());
-  std::remove(qnn_ctx_bin.c_str());
+  ASSERT_EQ(std::remove(context_binary_file.c_str()), 0);
+  ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 #endif
 }
 
