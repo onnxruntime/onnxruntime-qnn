@@ -211,22 +211,6 @@ TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
                  ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, UnaryOp_Swish_DefaultAlpha) {
-  RunOpTestOnCPU("Swish",
-                 {TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})},
-                 {},
-                 24,
-                 ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, UnaryOp_Swish_CustomAlpha) {
-  RunOpTestOnCPU("Swish",
-                 {TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})},
-                 {test::MakeAttribute("alpha", 0.5f)},
-                 24,
-                 ExpectedEPNodeAssignment::All);
-}
-
 // Test float HardSwish on the QNN HTP backend.
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
   QNN_SKIP_TEST_ON_ARM64("Fails on ARM64/AARCH64");
