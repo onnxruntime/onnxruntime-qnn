@@ -5,8 +5,10 @@
 
 #include <gsl/gsl>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -73,6 +75,46 @@ const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& qnn_model_wrapper,
                                     const OrtNodeUnitIODef& input,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map);
+
+// Returns the uniform value of an input or its QDQ source initializer.
+std::optional<double> GetStaticQdqInputValue(const QnnModelWrapper& qnn_model_wrapper,
+                                             const OrtNodeUnit& node_unit,
+                                             size_t input_index,
+                                             const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                             bool require_scalar);
+
+// Returns true if an input or its QDQ source initializer contains expected_value.
+bool IsStaticQdqInputWithValue(const QnnModelWrapper& qnn_model_wrapper,
+                               const OrtNodeUnit& node_unit,
+                               size_t input_index,
+                               const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                               double expected_value,
+                               bool require_scalar);
+
+// Derives a uint16 per-tensor encoding with `replacement_min` as its minimum
+// real value while preserving the original encoding's maximum real value.
+inline bool DeriveUInt16EncodingWithMin(float original_scale,
+                                        int32_t original_offset,
+                                        double replacement_min,
+                                        float& replacement_scale,
+                                        int32_t& replacement_offset) {
+  constexpr uint32_t kUInt16QMax = std::numeric_limits<uint16_t>::max();
+  if (!std::isfinite(original_scale) || original_scale <= 0.0f || !std::isfinite(replacement_min)) {
+    return false;
+  }
+
+  const double original_max = (static_cast<double>(kUInt16QMax) + original_offset) * original_scale;
+  const double new_scale = (original_max - replacement_min) / kUInt16QMax;
+  if (!std::isfinite(new_scale) || new_scale <= 0.0) {
+    return false;
+  }
+
+  const int32_t new_zero_point = static_cast<int32_t>(std::clamp(
+      std::lround(-replacement_min / new_scale), 0l, static_cast<long>(kUInt16QMax)));
+  replacement_scale = static_cast<float>(new_scale);
+  replacement_offset = -new_zero_point;
+  return true;
+}
 
 const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& qnn_model_wrapper,
                                         const OrtNodeUnit& node_unit,

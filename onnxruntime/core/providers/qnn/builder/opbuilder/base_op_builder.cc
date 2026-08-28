@@ -281,7 +281,6 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_ERROR(OverrideOutputQuantParam(qnn_model_wrapper, node_unit, logger, input_names,
                                                output_idx, output_info.qnn_data_type, output_info.quant_param));
     }
-
     Qnn_DataType_t supported_qnn_data_type = GetSupportedOutputDataType(output_idx, output_info.qnn_data_type);
     bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 

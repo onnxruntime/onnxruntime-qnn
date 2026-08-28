@@ -104,6 +104,11 @@ class QnnModelWrapper {
   // Add to internal tensor wrapper table
   bool AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper);
 
+  void SetQuantParamOverride(const std::string& tensor_name,
+                             const QnnQuantParamsWrapper& quant_param) {
+    quant_param_overrides_[tensor_name] = quant_param.Copy();
+  }
+
   // Add to internal param wrapper table
   bool AddParamWrapper(QnnParamWrapper&& param_wrapper);
 
@@ -600,6 +605,8 @@ class QnnModelWrapper {
   std::unordered_map<std::string, QnnTensorWrapper> model_tensors_map_;
   // All QnnParamWrapper for the graph
   std::unordered_map<std::string, QnnParamWrapper> model_params_map_;
+  // Quantization overrides installed by node-groups before tensor metadata is consumed.
+  std::unordered_map<std::string, QnnQuantParamsWrapper> quant_param_overrides_;
   std::vector<QnnOpProperty> qnn_op_property_list_;
   std::unordered_set<std::string> qnn_node_names_;
   // <tensor_name, qnn_tensor_id> -- stores the QNN-assigned ID once the tensor is created

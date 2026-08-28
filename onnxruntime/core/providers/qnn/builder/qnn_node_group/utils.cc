@@ -8,6 +8,7 @@
 #include <cstring>
 #include <gsl/gsl>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <unordered_map>
@@ -15,9 +16,63 @@
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+namespace {
+
+std::optional<double> GetUniformInitializerValue(const QnnModelWrapper& qmw, const OrtNodeUnitIODef& input,
+                                                 bool require_scalar) {
+  if (!qmw.IsConstantInput(input.name)) return std::nullopt;
+
+  TensorInfo info = {};
+  if (!qmw.GetTensorInfo(input, info).IsOK() || !info.is_initializer || info.initializer_tensor == nullptr ||
+      (require_scalar && (info.shape.size() != 0 && (info.shape.size() != 1 || info.shape[0] != 1)))) {
+    return std::nullopt;
+  }
+
+  std::vector<uint8_t> bytes;
+  if (!qmw.UnpackInitializerData(info.initializer_tensor, bytes).IsOK()) return std::nullopt;
+
+  const auto is_same_value = [](double lhs, double rhs) {
+    return std::abs(lhs - rhs) <= std::max(1e-6, std::max(std::abs(lhs), std::abs(rhs)) * 1e-5);
+  };
+  if (info.qnn_data_type == QNN_DATATYPE_FLOAT_32 && bytes.size() % sizeof(float) == 0) {
+    if (bytes.empty()) return std::nullopt;
+    float first_value = 0.0f;
+    std::memcpy(&first_value, bytes.data(), sizeof(first_value));
+    for (size_t offset = 0; offset < bytes.size(); offset += sizeof(float)) {
+      float value = 0.0f;
+      std::memcpy(&value, bytes.data() + offset, sizeof(value));
+      if (!is_same_value(value, first_value)) return std::nullopt;
+    }
+    return first_value;
+  }
+  if (info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 && bytes.size() % sizeof(uint16_t) == 0 &&
+      info.quant_param.IsPerTensor()) {
+    float scale = 0.0f;
+    int32_t offset = 0;
+    if (!info.quant_param.GetPerTensorScaleOffset(scale, offset).IsOK() || scale <= 0.0f || bytes.empty()) {
+      return std::nullopt;
+    }
+    uint16_t first_quantized = 0;
+    std::memcpy(&first_quantized, bytes.data(), sizeof(first_quantized));
+    const double first_value = utils::Dequantize(offset, scale, static_cast<double>(first_quantized));
+    for (size_t byte_offset = 0; byte_offset < bytes.size(); byte_offset += sizeof(uint16_t)) {
+      uint16_t quantized = 0;
+      std::memcpy(&quantized, bytes.data() + byte_offset, sizeof(quantized));
+      if (!is_same_value(utils::Dequantize(offset, scale, static_cast<double>(quantized)), first_value)) {
+        return std::nullopt;
+      }
+    }
+    return first_value;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 std::optional<std::vector<uint32_t>> GetReduceAxes(const QnnModelWrapper& qmw,
                                                    const OrtNodeUnit& node_unit) {
@@ -324,6 +379,34 @@ const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& /*qnn_model_wrapper*/
     return p_parent_node_unit;
   }
   return nullptr;
+}
+
+std::optional<double> GetStaticQdqInputValue(
+    const QnnModelWrapper& qmw, const OrtNodeUnit& node_unit, size_t input_index,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map, bool require_scalar) {
+  if (input_index >= node_unit.Inputs().size()) return std::nullopt;
+
+  const OrtNodeUnitIODef& input = node_unit.Inputs()[input_index];
+  if (auto value = GetUniformInitializerValue(qmw, input, require_scalar); value.has_value()) return value;
+
+  static const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*> no_claims;
+  const OrtNodeUnit* parent = GetParentOfInput(qmw, node_unit, input, node_unit_map, no_claims);
+  if (parent == nullptr || parent->UnitType() != OrtNodeUnit::Type::QDQGroup || parent->Inputs().empty()) {
+    return std::nullopt;
+  }
+
+  return GetUniformInitializerValue(qmw, parent->Inputs()[0], require_scalar);
+}
+
+bool IsStaticQdqInputWithValue(const QnnModelWrapper& qmw,
+                               const OrtNodeUnit& node_unit,
+                               size_t input_index,
+                               const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                               double expected_value,
+                               bool require_scalar) {
+  const auto value = GetStaticQdqInputValue(qmw, node_unit, input_index, node_unit_map, require_scalar);
+  return value.has_value() && std::abs(*value - expected_value) <=
+                                  std::max(1e-6, std::max(std::abs(*value), std::abs(expected_value)) * 1e-5);
 }
 
 const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& /*qnn_model_wrapper*/,

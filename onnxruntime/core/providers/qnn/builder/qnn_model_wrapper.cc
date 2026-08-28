@@ -83,7 +83,6 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const OrtNodeUnitIODef& tensor, Q
 
   TensorInfo tensor_info = {};
   RETURN_IF_ERROR(GetTensorInfo(tensor, tensor_info));
-
   std::vector<uint8_t> unpacked_tensor;
   if (tensor_info.is_initializer) {
     RETURN_IF_ERROR(UnpackInitializerData(tensor_info.initializer_tensor, unpacked_tensor));
@@ -876,6 +875,9 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
 
   // Fill in quantization param info.
   RETURN_IF_ERROR(tensor_info.quant_param.Init(*this, tensor));
+  if (const auto it = quant_param_overrides_.find(name); it != quant_param_overrides_.end()) {
+    tensor_info.quant_param = it->second.Copy();
+  }
 
   // Fill in QNN data type.
   tensor_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
