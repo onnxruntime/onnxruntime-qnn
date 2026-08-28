@@ -1368,6 +1368,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_htp_graph_splitting_ = false;
   }
 #endif
+  if (enable_htp_graph_splitting_ && htp_share_resource_optimization_ == 1) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_graph_splitting=1 has no effect when htp_share_resource_optimization=1. "
+                "Graph splitting is a context-creation feature; the VTCM sharing path uses "
+                "QnnContext_createFromBinaryListAsync (a binary-load API) and does not support it.");
+  }
 
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
