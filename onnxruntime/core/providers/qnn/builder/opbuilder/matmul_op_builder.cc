@@ -381,6 +381,12 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
 
   // Inserts a QNN Convert op before uint16 input[1] to avoid QNN HTP validation failure.
   //
+  // Gated on the NPU backend: the constraints worked around here (input[1] must be symmetric, and
+  // must be per-tensor quantized) are imposed by the HTP backend, not by the QNN API, and HTP has
+  // relaxed them across releases. The DLC/Saver serializer flows still report their intended
+  // backend here (see QnnBackendManager::LoadQnnSerializerBackend), so a serialized HTP graph
+  // keeps the workaround.
+  //
   // QNN graph that fails validation:
   //     input_0_uint16 ---> MatMul ---> output_uint16
   //                         ^
@@ -398,7 +404,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   //                                             ^
   //                                             |
   //     input_1_uint16 --> Convert(int16_sym) --+
-  if (!input_info_0.is_initializer &&
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      !input_info_0.is_initializer &&
       input_info_0.qnn_data_type == input_info_1.qnn_data_type &&
       input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
     RETURN_IF_NOT(input_info_1.quant_param.IsPerTensor(),
