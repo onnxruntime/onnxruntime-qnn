@@ -509,6 +509,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
     OrtEpFactory* this_ptr,
     const OrtEpDevice* /*ep_device*/,
     OrtExternalResourceImporterImpl** out_importer) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
   if (out_importer == nullptr) {
@@ -526,17 +527,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
   int device_id = 0;
 
   // Create the external resource importer
-  try {
-    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
-  } catch (...) {
-    return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
-  }
+  *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
 
   return nullptr;
 #else
   return factory->ort_api.CreateStatus(
       ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
 #endif
+  QNN_EP_API_IMPL_END
 }
 
 }  // namespace onnxruntime
