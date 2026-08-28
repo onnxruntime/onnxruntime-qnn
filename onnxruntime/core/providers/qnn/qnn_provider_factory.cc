@@ -107,31 +107,23 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
 // Ex: a factory that supports NPU should have a different than a factory that supports GPU.
 const char* ORT_API_CALL QnnEpFactory::GetNameImpl(const OrtEpFactory* this_ptr) noexcept {
-  QNN_EP_API_IMPL_BEGIN
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
   return factory->ep_name_.c_str();
-  QNN_EP_API_IMPL_END_RETURN("")
 }
 
 const char* ORT_API_CALL QnnEpFactory::GetVendorImpl(const OrtEpFactory* this_ptr) noexcept {
-  QNN_EP_API_IMPL_BEGIN
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
   return factory->vendor_.c_str();
-  QNN_EP_API_IMPL_END_RETURN("")
 }
 
 uint32_t ORT_API_CALL QnnEpFactory::GetVendorIdImpl(const OrtEpFactory* this_ptr) noexcept {
-  QNN_EP_API_IMPL_BEGIN
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
   return factory->vendor_id_;
-  QNN_EP_API_IMPL_END_RETURN(0)
 }
 
 const char* ORT_API_CALL QnnEpFactory::GetVersionImpl(const OrtEpFactory* this_ptr) noexcept {
-  QNN_EP_API_IMPL_BEGIN
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
   return factory->ep_version_.c_str();
-  QNN_EP_API_IMPL_END_RETURN("")
 }
 
 // Creates and returns OrtEpDevice instances for all OrtHardwareDevices that this factory supports.
@@ -374,17 +366,13 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
                                                              OrtDataTransferImpl** data_transfer) noexcept {
-  QNN_EP_API_IMPL_BEGIN;
   *data_transfer = nullptr;
 
   return nullptr;
-  QNN_EP_API_IMPL_END;
 }
 
 bool ORT_API_CALL QnnEpFactory::IsStreamAwareImpl(const OrtEpFactory* /*this_ptr*/) noexcept {
-  QNN_EP_API_IMPL_BEGIN;
   return false;
-  QNN_EP_API_IMPL_END;
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl(
