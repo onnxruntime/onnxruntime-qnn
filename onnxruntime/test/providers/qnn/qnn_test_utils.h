@@ -30,6 +30,12 @@
 #include "QnnLog.h"
 #include "QnnTypes.h"
 
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#include <d3d12.h>
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
+#endif  // _WIN32 && ...
+
 namespace onnxruntime {
 namespace test {
 constexpr const char* kOnnxDomain = "";
@@ -2138,6 +2144,37 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     } else                                                                                             \
       static_assert(true, "");                                                                         \
   }
+
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+
+inline HRESULT CreateD3D12Buffer(
+    ID3D12Device* device,
+    UINT64 size,
+    D3D12_HEAP_FLAGS heap_flags,
+    D3D12_HEAP_TYPE heap_type,
+    ID3D12Resource** resource) {
+  D3D12_HEAP_PROPERTIES heap_props = {};
+  heap_props.Type = heap_type;
+
+  D3D12_RESOURCE_DESC desc = {};
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  desc.Width = size;
+  desc.Height = 1;
+  desc.DepthOrArraySize = 1;
+  desc.MipLevels = 1;
+  desc.SampleDesc.Count = 1;
+  desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+  return device->CreateCommittedResource(
+      &heap_props,
+      heap_flags,
+      &desc,
+      D3D12_RESOURCE_STATE_COMMON,
+      nullptr,
+      IID_PPV_ARGS(resource));
+}
+
+#endif  // _WIN32 && ...
 
 }  // namespace test
 }  // namespace onnxruntime

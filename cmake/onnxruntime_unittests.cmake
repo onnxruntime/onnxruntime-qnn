@@ -402,6 +402,11 @@ block()
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()
 
+  if(WIN32)
+    # Required for OrtExternalResourceImporter import d3d resource tests.
+    target_link_libraries(onnxruntime_provider_test PRIVATE d3d12.lib dxgi.lib)
+  endif()
+
   if(onnxruntime_USE_QNN AND NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB AND WIN32)
     # ---------------------------------------------------------------------------
     # QnnMockSSR shared library — wraps QnnHtp.dll and injects a QNN_COMMON_ERROR_SYSTEM_COMMUNICATION

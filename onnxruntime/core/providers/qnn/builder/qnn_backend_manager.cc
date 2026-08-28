@@ -33,6 +33,7 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/shared_context.h"
+#include "core/providers/qnn/qnn_external_resource_importer.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
@@ -2979,11 +2980,11 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
 }
 
 Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t context_handle,
-                                                             void* shared_memory_address,
+                                                             void* memory_address,
                                                              const Qnn_Tensor_t& qnn_tensor,
                                                              Qnn_MemHandle_t& mem_handle) {
   // Multi-threading situations to consider:
-  // 1) Shared memory allocation is being freed in another thread while we are processing `shared_memory_address`.
+  // 1) Shared memory allocation is being freed in another thread while we are processing `memory_address`.
   //    This implies incorrect usage as the memory is being freed while it is still in use. Let's assume this won't
   //    happen.
   // 2) The shared memory allocation clean up function is being run from another thread while the
@@ -2998,7 +2999,7 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   auto& context_mem_handle_manager = context_handle_record->mem_handles;
 
   bool did_register{};
-  RETURN_IF_ERROR(context_mem_handle_manager->GetOrRegister(shared_memory_address,
+  RETURN_IF_ERROR(context_mem_handle_manager->GetOrRegister(memory_address,
                                                             qnn_tensor,
                                                             mem_handle,
                                                             did_register,
@@ -3007,10 +3008,10 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   if (did_register) {
     // The cleanup lambda is the same for both HTP and DX12: unregister the QNN mem handle when the allocation is freed.
     auto unregister_mem_handle =
-        [shared_memory_address,
+        [memory_address,
          weak_backend_manager = weak_from_this(),
          weak_context_handle_record = std::weak_ptr{context_handle_record}](
-            void* /* allocation_base_address */) {
+            void* /* allocation_base_address  */) {
           // Lock QnnBackendManager shared_ptr to ensure that QNN interface is still valid.
           auto backend_manager = weak_backend_manager.lock();
           if (!backend_manager) {
@@ -3025,31 +3026,32 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
 
           auto& context_mem_handle_manager = context_handle_record->mem_handles;
 
-          auto unregister_status = context_mem_handle_manager->Unregister(shared_memory_address);
+          auto unregister_status = context_mem_handle_manager->Unregister(memory_address);
           if (!unregister_status.IsOK()) {
             std::ostringstream oss;
-            oss << "Failed to unregister shared memory mem handle for address: "
-                << shared_memory_address
+            oss << "Failed to unregister mem handle for address: "
+                << memory_address
                 << ", error: "
                 << unregister_status.GetErrorMessage();
             ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
           }
         };
 
-    Ort::Status add_cleanup_status = Ort::Status();
-    if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
-      RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
-          shared_memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-    }
 #ifdef _WIN32
-    else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+    if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address)) {
+      RETURN_IF_ERROR(QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
+          memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)}));
+    } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
       RETURN_IF_ERROR(Dx12SharedMemoryAllocator::AddAllocationCleanUp(
-          shared_memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-    }
+          memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+    } else
 #endif  // _WIN32
-    else {
-      return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
-    }
+      if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
+        RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
+            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+      } else {
+        return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+      }
   }
 
   return Ort::Status();

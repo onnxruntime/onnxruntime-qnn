@@ -1614,7 +1614,7 @@ Once registered, UDOs integrate transparently into model conversion and runtime 
 
 **HTP UDO is not supported on Windows.** `qnn-op-package-generator` and the Hexagon toolchain only target HTP on Linux; the `x86_64-windows-msvc` host platform supports the CPU backend only. On Windows, CPU UDO must be generated with the `--gen_cmakelists` flag (see Step 2), which produces a `CMakeLists.txt`-based build instead of the Linux Makefile flow.
 
-**The shipped UDO unit test runs on Linux x86_64 only.** `qnn-op-package-generator` requires Python 3.10, while the Windows CI environment ships with Python 3.11+, so the end-to-end UDO build/run loop is currently gated on Linux x86_64. Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
+**The shipped UDO unit test runs on Linux x86_64 only.** The Linux x86_64 CI build uses Python 3.12, and `qnn-op-package-generator` supports Python 3.10 and 3.12 via version-tagged extensions in the QAIRT SDK. Windows is excluded because the Hexagon toolchain only targets HTP on Linux; Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
 
 ### UDO Workflow
 
