@@ -405,9 +405,23 @@ Turned off by default (`0`), the runtime assumes no I/O reuse and estimates the 
 
 This overestimation matters because HTP loads each context into one of several process domains (PDs), each with a limited memory budget. An inflated estimate can cause a context to be placed in its own PD instead of sharing one with others (which is slower, since contexts on different PDs pay extra cost to talk to each other) — or it can cause the context to fail to load at all (QNN error 1002, "Failed to find available PD") even though it would actually fit. By explicitly specifying the reused I/O size, you let QNN HTP use a smaller, more accurate estimate instead.
 
-**Choosing a value**: it should equal the total size of the IO buffers you actually keep registered and reuse at any point in time — whether reused across multiple runs of the same graph, shared between multiple graphs in the same context, or shared across multiple contexts. This is something you can compute from your own buffer-management strategy — it is not the same as, and is usually smaller than, the sum of each graph's declared IO tensor size.
+**Choosing a value**: the value represents the maximum I/O your app actually keeps registered at any one time across the lifecycle (init / execute / deinit). It depends entirely on how your app uses the I/O buffers:
 
-**Multi-context / weight-sharing scenarios**: when `htp_share_resource_optimization` is enabled (multiple context binaries loaded together with resource/weight sharing), this value is applied as a group-level property — it is the shared IO buffer size for the whole group of contexts, not a per-context limit. The same option value is used in both cases; only its scope differs.
+- If your app maps only the I/O of the graph it is about to run and unmaps the rest (e.g. graph switching), the peak is `max(each graph's I/O)`.
+- If your app keeps all graphs' I/O mapped at once, the peak is `sum(each graph's I/O)`.
+
+To find each graph's I/O size, enable VERBOSE session logging and look for the per-graph estimate the HTP backend emits at context load, for example:
+
+```
+... estimated PD size ~3491.61MB, including nonSharedWeight 1908408320 B I/O 1662533632 B runlist 59602944 B spillfill 22282240 B
+```
+
+The `I/O` field is that graph's I/O size. Sum or take the max over the graphs your app uses concurrently, per the rules above.
+
+**Per-context vs. group scope** — the same intended peak maps to a *different* value depending on which context-creation path is used, because QNN only sees one context at a time on the default path:
+
+- **Default path (`contextCreateFromBinary`, one config per context):** QNN adds up the per-context limits, so set each context's value to `peak / number_of_contexts`. Example: 4 contexts, each 1 graph of 100 MB, app runs one graph at a time (real peak 100 MB) → set `25` on each context so QNN totals 100 MB.
+- **Group path (async list API, active when `htp_share_resource_optimization` is enabled):** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
 
 **Warning**: this value is also a hard runtime cap on reused IO buffer size — the underlying QAIRT SDK does not guarantee correct behavior if actual reused IO traffic at runtime exceeds it. When using this option purely to work around a context load failure (rather than from a known buffer-reuse budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
 
