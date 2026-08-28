@@ -1283,8 +1283,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-    const qnn::EpContextIoDispatch& io_dispatch,
-    bool enable_htp_graph_splitting) {
+    const qnn::EpContextIoDispatch& io_dispatch) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
@@ -1316,30 +1315,12 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  QnnContext_Config_t context_config_graph_splitting_vtcm = QNN_CONTEXT_CONFIG_INIT;
-  QnnHtpContext_CustomConfig_t graph_splitting_custom_config_vtcm;
-  if (enable_htp_graph_splitting) {
-    graph_splitting_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
-    graph_splitting_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
-    context_config_graph_splitting_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    context_config_graph_splitting_vtcm.customConfig = &graph_splitting_custom_config_vtcm;
-  }
-#else
-  ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
-#endif
-
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   configs_vec.push_back(&context_config_resource_sharing);
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
-#endif
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting) {
-    configs_vec.push_back(&context_config_graph_splitting_vtcm);
-  }
 #endif
   configs_vec.push_back(nullptr);
 
@@ -2001,8 +1982,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                           io_dispatch,
-                                                           enable_htp_graph_splitting);
+                                                           io_dispatch);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2149,10 +2129,16 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
+    if (htp_share_resource_optimization_ == 1 && enable_htp_graph_splitting) {
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_WARNING,
+                      "enable_htp_graph_splitting=1 has no effect when htp_share_resource_optimization=1. "
+                      "Graph splitting is a context-creation feature; the VTCM sharing path uses "
+                      "QnnContext_createFromBinaryListAsync (a binary-load API) and does not support it.");
+    }
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                               io_dispatch,
-                                                               enable_htp_graph_splitting)
+                                                               io_dispatch)
                  : CreateContext(enable_htp_weight_sharing,
                                  enable_htp_extended_udma_mode,
                                  enable_htp_prepare_only,

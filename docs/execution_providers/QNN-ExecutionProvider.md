@@ -361,7 +361,7 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 |`"enable_htp_graph_splitting"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail. The number of sub-graph partitions is controlled by the `GPE_KWAY_PARTITIONS` environment variable.|
+|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary or when `htp_share_resource_optimization=1` (VTCM sharing uses a binary-load API that does not support graph splitting). Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail. The number of sub-graph partitions is controlled by the `GPE_KWAY_PARTITIONS` environment variable.|
 
 |`"GPE_KWAY_PARTITIONS"`|Description|
 |---|---|
