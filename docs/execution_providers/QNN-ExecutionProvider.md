@@ -149,7 +149,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_reused_io_limit_mb"`|Description|
 |---|---|
-|Size in MB (string)|Specifies the effective I/O buffer size used by a context when I/O buffers are reused across graphs or contexts. Used for memory estimation and DSP PD placement decisions when loading a context binary. See [Reused IO Limit](#reused-io-limit) below. Defaults to "0" (no reuse assumed; QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.43 or later.|
+|Size in MB (string)|Tells QNN HTP the maximum I/O your app actually keeps registered at any one time, instead of assuming every graph's I/O is live at once. Used for memory estimation and DSP PD placement when loading a context binary; a tighter value can avoid PD placement failures (QNN error 1002). See [Reused IO Limit](#reused-io-limit) below for how to choose a value (it differs between the per-context and group paths). Defaults to "0" (QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.43 or later.|
 
 |`"htp_performance_mode"`|Description|
 |---|---|
@@ -399,7 +399,7 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 
 #### Reused IO Limit
 
-`htp_reused_io_limit_mb` specifies the effective I/O buffer size used by a context when I/O buffers are reused across graphs or contexts in shared-buffer scenarios. QNN HTP uses this value for memory estimation and DSP PD placement decisions when it loads a context binary.
+`htp_reused_io_limit_mb` tells QNN HTP the maximum I/O your app actually keeps registered at any one time throughout the context lifecycle (init / execute / deinit). QNN HTP uses this value for memory estimation and DSP PD placement decisions when it loads a context binary.
 
 Turned off by default (`0`), the runtime assumes no I/O reuse and estimates the context's memory using the total I/O size of all graphs in the context. If you actually share (reuse) one or more I/O buffers across multiple graphs in a context, or across multiple contexts, that default estimate can overshoot what the context really needs.
 
