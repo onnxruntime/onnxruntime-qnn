@@ -14,6 +14,7 @@ from ..util import DEFAULT_PYTHON_LINUX
 DOCKER_BUILD_USER = "ortqnnep"
 DOCKER_REPO_ROOT = Path("/ort")
 MANYLINUX_2_34_AARCH64_TAG = "ort-manylinux_2_34_aarch64"
+MANYLINUX_2_34_AARCH64_XCOMPILE_TAG = "ort-manylinux_2_34_aarch64_xcompile"
 UBUNTU_22_04_X86_64_TAG = "ort-ubuntu_22_04_x86_64"
 
 
@@ -93,12 +94,13 @@ class DockerBuildAndTestTask(DockerRunTask):
         ccache_root: Path | None = None,
         build_archive: bool = False,
         platform: str = "linux/aarch64",
+        python: str | None = None,
     ) -> None:
         # deferred to avoid circular import
         from ..tools import get_package_dir, get_tools_dir  # noqa:PLC0415
 
         cmd = [
-            str(DEFAULT_PYTHON_LINUX),
+            python or str(DEFAULT_PYTHON_LINUX),
             str(DOCKER_REPO_ROOT / "qcom" / "build_and_test.py"),
             f"--target-py-version={target_py_version}",
         ]

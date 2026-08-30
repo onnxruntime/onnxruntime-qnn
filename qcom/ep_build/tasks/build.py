@@ -43,15 +43,21 @@ class BuildEpDockerTask(CompositeTask):
         inner_task: str = "_build_ort_linux_aarch64_manylinux_2_34",
         docker_tag: str = MANYLINUX_2_34_AARCH64_TAG,
         platform: str = "linux/aarch64",
+        python: str | None = None,
     ) -> None:
         dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
+        if target_py_version:
+            py_tag = f"cp{target_py_version.replace('.', '')}"
+            whl_glob = (REPO_ROOT / dist_rel_dir).glob(f"*-{py_tag}-*.whl")
+        else:
+            whl_glob = (REPO_ROOT / dist_rel_dir).glob("*.whl")
 
         super().__init__(
             group_name,
             [
                 RemovePathsTask(
                     "Deleting wheels to workaround ORT build bug",
-                    (REPO_ROOT / dist_rel_dir).glob("*.whl"),
+                    whl_glob,
                 ),
                 DockerBuildAndTestTask(
                     "Building ONNX Runtime inside a container",
@@ -64,6 +70,7 @@ class BuildEpDockerTask(CompositeTask):
                     ccache_root=ccache_root,
                     build_archive=build_archive,
                     platform=platform,
+                    python=python,
                 ),
             ],
         )
