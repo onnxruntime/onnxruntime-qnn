@@ -272,7 +272,8 @@ class BaseOpBuilder : public IOpBuilder {
         {"BatchNormalization", {3, 1}},
         {"GlobalAveragePool", {0, 1}},
         {"LayerNormalization", {0, 1}},
-        {"MaxPool", {0, 1}}};
+        {"MaxPool", {0, 1}},
+        {"SkipSimplifiedLayerNormalization", {0, 1}}};
 
     auto pos = input_output_count_qnn_required.find(onnx_op_type);
     if (pos == input_output_count_qnn_required.end()) {

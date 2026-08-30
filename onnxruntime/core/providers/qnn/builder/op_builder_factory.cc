@@ -79,6 +79,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateResizeOpBuilder("Resize", *this);
   CreateRMSNormalizationOpBuilder("RMSNormalization", *this);
   CreateRMSNormalizationOpBuilder("SimplifiedLayerNormalization", *this);
+  CreateSkipSimplifiedLayerNormOpBuilder("SkipSimplifiedLayerNormalization", *this);
   CreateRoiAlignOpBuilder("RoiAlign", *this);
   CreateRotaryEmbeddingOpBuilder("RotaryEmbedding", *this);
   CreateSimpleOpBuilder("Abs", *this);
