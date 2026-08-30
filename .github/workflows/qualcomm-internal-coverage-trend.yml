@@ -1,0 +1,55 @@
+name: Coverage Trend Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days back to include (default: 30)"
+        required: false
+        default: "30"
+  # Temporary: allows testing from feature branch before merge to main.
+  # Remove this push trigger after the workflow is verified.
+  push:
+    branches:
+      - dev/yuhuchua/coverage-trend-report
+
+env:
+  BUILD_ARTIFACTORY_REPO: ${{ secrets.BUILD_ARTIFACTORY_REPO }}
+
+jobs:
+  coverage-trend:
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install --quiet openpyxl plotly
+
+      - name: Setup JFrog CLI
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Generate coverage trend report
+        run: |
+          python scripts/gen_coverage_trend.py \
+            --days "${{ inputs.days || '30' }}" \
+            --output coverage_trend_${{ github.run_id }}.html
+
+      - name: Upload trend report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-trend-${{ github.run_id }}
+          path: coverage_trend_${{ github.run_id }}.html
+          retention-days: 7
