@@ -14,6 +14,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_conv_integer_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/dq_layernorm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_matmul_integer_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dql_dq_fusion.h"
@@ -109,6 +110,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Tanh", {TanhGeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
+    {"LayerNormalization", {DQLayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
@@ -147,13 +149,15 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except
-  // MatMul w/ LPBQ encodings, Erf, and Reshape.
+  // MatMul w/ LPBQ encodings, Erf, Tanh, Reshape, Gather, and LayerNormalization (DQ scale/bias
+  // resign fixup for QNN HTP).
   if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode &&
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Tanh" &&
-      starting_node_unit.OpType() != "Reshape") {
+      starting_node_unit.OpType() != "Reshape" &&
+      starting_node_unit.OpType() != "LayerNormalization") {
     return nullptr;
   }
 
