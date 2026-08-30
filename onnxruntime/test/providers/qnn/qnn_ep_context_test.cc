@@ -11,6 +11,7 @@
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
+#include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -30,7 +31,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if QNN_ARCH_ARM64 || defined(__linux__)
 static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out_model) {
   std::ifstream fin(path, std::ios::in | std::ios::binary);
   if (!fin) {
@@ -2153,7 +2154,7 @@ static void GetModelInputNames(const std::string& model_path,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
 TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2209,7 +2210,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   EXPECT_TRUE(file_size_1 > 0);
 
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -2270,7 +2271,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2328,7 +2329,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 
   provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
 
@@ -2387,7 +2388,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 }
 
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2445,7 +2446,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   EXPECT_TRUE(file_size_1 > 0);
 
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -2498,7 +2499,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
                                             output_names_c.data(), 1);
   auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                    output_names_c.data(), 1);
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // QNN_ARCH_ARM64
 
   for (auto model_path : onnx_model_paths) {
     std::remove(model_path.c_str());
@@ -2513,7 +2514,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 // For Ort sessions to generate the context binary, with session option ep.share_ep_contexts enabled
 // Ort sessions will share the QnnBackendManager, so that all graphs from all models compile into the same Qnn context
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2828,7 +2829,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   EXPECT_EQ(status.GetErrorMessage(), "Error from OrtOutStreamWriteFunc callback");
 }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
 // Tests setting num_graph_prepare_threads to compile model
 // 1. Compile model with 2 threads
 // 2. Check for successful compilation (_ctx.onnx model should exist)
@@ -2947,7 +2948,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
                                       output_names_c.data(), 1);
   std::filesystem::remove(output_model_file);
 }
-#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // _WIN32 && QNN_ARCH_ARM64
 
 struct CustomInitializerHandlerState {
   const ORTCHAR_T* external_file_path = nullptr;
@@ -3390,7 +3391,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
 // [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
 // HTP weight sharing is active: both sessions compile into the same .bin.
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -3555,9 +3556,9 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 }
 #endif  // QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // QNN_ARCH_ARM64 || defined(__linux__)
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
 
 // GPU backend does not support QDQ (quantized) ops. This creates a plain float
 // Add model that GPU can compile into a context binary.
@@ -3698,7 +3699,7 @@ TEST_F(QnnGPUBackendTests, QnnContextGenGpuNoWeightSharing) {
   ASSERT_EQ(std::remove(bin1.c_str()), 0);
   ASSERT_EQ(std::remove(bin2.c_str()), 0);
 }
-#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
 
 // Utility class to help create enviornment using HNRD for testing.
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.

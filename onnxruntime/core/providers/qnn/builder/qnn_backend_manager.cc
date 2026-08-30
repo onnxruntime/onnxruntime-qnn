@@ -2135,7 +2135,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   bool enable_htp_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     (QNN_API_VERSION_MAJOR < 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34))
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
