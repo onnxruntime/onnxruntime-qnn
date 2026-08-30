@@ -11,6 +11,7 @@
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
+#include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -3390,7 +3391,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
 // [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
 // HTP weight sharing is active: both sessions compile into the same .bin.
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if QNN_ARCH_ARM64 && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -3400,7 +3401,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -3557,7 +3558,7 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
 
 // GPU backend does not support QDQ (quantized) ops. This creates a plain float
 // Add model that GPU can compile into a context binary.
@@ -3698,7 +3699,7 @@ TEST_F(QnnGPUBackendTests, QnnContextGenGpuNoWeightSharing) {
   ASSERT_EQ(std::remove(bin1.c_str()), 0);
   ASSERT_EQ(std::remove(bin2.c_str()), 0);
 }
-#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
 
 // Utility class to help create enviornment using HNRD for testing.
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
