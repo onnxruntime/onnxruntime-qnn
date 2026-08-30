@@ -366,7 +366,18 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     std::ofstream ofs(context.json_qnn_graph_path);
 
     if (ofs.is_open()) {
-      ofs << json_graph.dump();
+      // If HTP graph configs are available, inject them as a top-level key before writing.
+      if (context.htp_graph_configs) {
+        nlohmann::json json_with_configs = json_graph;
+        json_with_configs["graph_configs"] = {
+            {"vtcm_size_in_mb", context.htp_graph_configs->vtcm_size_in_mb},
+            {"htp_graph_finalization_opt_mode", static_cast<int>(context.htp_graph_configs->htp_graph_finalization_opt_mode)},
+            {"enable_htp_fp16_precision", context.htp_graph_configs->enable_htp_fp16_precision},
+            {"enable_htp_monolithic_lstm", context.htp_graph_configs->enable_htp_monolithic_lstm}};
+        ofs << json_with_configs.dump();
+      } else {
+        ofs << json_graph.dump();
+      }
       ofs.close();
     } else {
       ORT_CXX_LOG(logger,

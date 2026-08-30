@@ -2446,6 +2446,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
       namespace fs = std::filesystem;
       context.json_qnn_graph_path =
           (fs::path(json_qnn_graph_dir_) / fs::path(fused_node_name + ".json")).string();
+      context.htp_graph_configs = &htp_graph_configs;
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
