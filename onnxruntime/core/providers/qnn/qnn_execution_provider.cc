@@ -3299,7 +3299,10 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
     // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
     per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
     per_thread_htp_power_configs.rpc_polling_time = dynamic_rpc_polling_time_;
-  } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
+  } else if (qnn::HtpPerformanceMode::kHtpSustainedHighPerformance == default_htp_performance_mode_) {
+    // Only sustained mode needs per-inference power management via the timer path.
+    // All other session-level modes (burst, high_performance, etc.) are applied once at
+    // session init via SetHtpPowerConfigs() and must not incur per-inference RPC overhead.
     per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
     per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
   }

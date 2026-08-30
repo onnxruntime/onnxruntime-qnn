@@ -59,6 +59,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   friend struct GenieNodeComputeInfo;
   friend class QnnEpFactory;
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+  friend class test::QnnUnit_ExecutionProviderTest;
+#endif
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
