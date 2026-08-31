@@ -1,3 +1,5 @@
+# Ownership is resolved per file; for each file the LAST matching pattern wins.
+
 # Build & CI
 /.github/ @qti-mbadnara @qti-kromero @huaychou
 /.vscode/ @qti-mbadnara @qti-kromero @huaychou
@@ -8,12 +10,10 @@
 /qcom/ @qti-mbadnara @qti-kromero @huaychou
 /tools/ @qti-mbadnara @qti-kromero @huaychou
 
-# Runtime
+# Runtime: EP core (session, context cache, allocator, telemetry, backend manager)
 /onnxruntime/core/providers/qnn/ @qti-kromero @quic-calvnguy
-/onnxruntime/test/providers/qnn/ @qti-kromero @quic-calvnguy
 
-# Compiler
+# Compiler: graph/op lowering, and all QNN EP tests
 /onnxruntime/core/providers/qnn/builder/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
 /onnxruntime/core/providers/qnn/op_affinity/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
-/onnxruntime/test/providers/qnn/qnn_node_group/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
-/onnxruntime/test/providers/qnn/optimizer/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
+/onnxruntime/test/providers/qnn/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
