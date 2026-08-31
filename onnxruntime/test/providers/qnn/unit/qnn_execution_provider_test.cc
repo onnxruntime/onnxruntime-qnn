@@ -1179,9 +1179,11 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_BurstSessionMo
   };
 
   qnn::PerThreadHtpPowerConfigs_t configs;
-  ep->GetPerThreadHtpPowerConfigs(configs, nullptr);
+  bool configs_set = ep->GetPerThreadHtpPowerConfigs(configs, nullptr);
 
   // Burst at session level: set-and-forget at init, zero per-inference power calls.
+  EXPECT_FALSE(configs_set)
+      << "kHtpBurst session option must not trigger AddPerThreadHtpPowerConfigMapping per inference";
   EXPECT_FALSE(configs.default_perf_mode.has_value())
       << "kHtpBurst session option must not set default_perf_mode (regression guard for PR #38)";
   EXPECT_FALSE(configs.pre_run_perf_mode.has_value());
@@ -1205,8 +1207,10 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_SustainedSessi
   };
 
   qnn::PerThreadHtpPowerConfigs_t configs;
-  ep->GetPerThreadHtpPowerConfigs(configs, nullptr);
+  bool configs_set = ep->GetPerThreadHtpPowerConfigs(configs, nullptr);
 
+  EXPECT_TRUE(configs_set)
+      << "kHtpSustainedHighPerformance must trigger AddPerThreadHtpPowerConfigMapping per inference";
   ASSERT_TRUE(configs.default_perf_mode.has_value())
       << "kHtpSustainedHighPerformance must set default_perf_mode for per-inference timer path";
   EXPECT_EQ(*configs.default_perf_mode, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance);
