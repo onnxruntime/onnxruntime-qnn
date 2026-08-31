@@ -21,7 +21,7 @@
 
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 // Forward declarations for operator<< overloads defined in qnn_utils.cc
 // but not declared in qnn_utils.h (Qnn_DataType_t IS declared there).

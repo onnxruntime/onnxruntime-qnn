@@ -5,26 +5,40 @@
 
 ## Directory structure
 
+Tests are organized **tier-first**: each testing tier is a top-level sibling
+directory, with shared infrastructure factored out alongside them.
+
 ```
 test/providers/qnn/
-├── *.cc              # Op-level accuracy tests (QnnHTPBackendTests, QnnCPUBackendTests, …)
-├── unit/             # Function-level unit tests — coverage build only; some tests use
-│                     #   libQnnHtp.so for op validation (no graph execution or session)
-└── integration/      # Targeted pipeline integration tests — require a real backend and
-                      #   a full session (GetCapability + Compile + Execute); exercise
-                      #   specific EP internal code paths rather than op accuracy
+├── *.cc                # Op-level accuracy tests (QnnHTPBackendTests, QnnCPUBackendTests, …)
+│                       #   — legacy integration tier; being migrated into the tiers below
+├── test_infra/         # Cross-tier test infrastructure (mocks, stub backends, golden utils,
+│                       #   shared op specs). Never depends on any tier directory.
+├── component/          # Function/component-level white-box tests — coverage build only;
+│                       #   some tests use libQnnHtp.so for op validation (no session)
+├── snapshot/           # Op-builder snapshot tests — diff the QNN JSON graph produced by
+│                       #   the op builder against a stored golden (real backend, no finalize)
+├── session_snapshot/   # Session-level snapshot tests — diff the QNN JSON graph after the
+│                       #   full ORT session (optimizer + partition transforms) against a golden
+├── accuracy/           # Per-op accuracy tests — route a model through a real session and
+│                       #   compare inference results; share op specs with the snapshot tier
+└── integration/        # Targeted pipeline integration tests — require a real backend and
+                        #   a full session (GetCapability + Compile + Execute); exercise
+                        #   specific EP internal code paths rather than op accuracy
 ```
 
 **During the transition period**, new tests should follow this rule:
 
 | Test type | Where to add |
 |---|---|
-| Op-level correctness / inference accuracy vs CPU EP | Here (`qnn/` root) |
+| Pure function / op-builder logic, no session (white-box) | `component/` |
+| Op-builder → QNN graph structure (JSON golden) | `snapshot/` |
+| Post-session QNN graph structure (JSON golden) | `session_snapshot/` |
+| Op-level correctness / inference accuracy vs CPU EP | `accuracy/` for a spec-shared per-op case, or the `qnn/` root |
 | Targets a specific EP internal code path with a minimal inline model | `integration/` |
-| Pure function logic or op validation only (no session/inference) | `unit/` |
 
-The long-term plan is to migrate op-level tests from this directory into `integration/`
-as well. (Aspirational; no fixed timeline.) Until then, both locations coexist.
+The long-term plan is to migrate op-level tests from the `qnn/` root into the
+tiers above. (Aspirational; no fixed timeline.) Until then, both coexist.
 
 ## Building the Tests
 The tests are built as part of the regular ONNX Runtime build. After a successful build you will have an executable named

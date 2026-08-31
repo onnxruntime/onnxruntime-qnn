@@ -38,7 +38,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/test_infra/qnn_unit_test_utils.h"
 
 // Public entry points from qnn_provider_factory.cc (extern "C" linkage,
 // re-declared here rather than via a private header).
