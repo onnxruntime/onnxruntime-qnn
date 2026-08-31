@@ -15,11 +15,20 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
+#include <unordered_map>
 
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+using CanonicalNodeNameMap = std::unordered_map<const OrtNode*, std::string>;
+
+// Returns the exact node names used as keys by DumpQnnEpInputGraphToJson.
+// Named nodes keep their ONNX name. Unnamed and duplicate nodes receive the
+// same synthesized suffixes used by the dump format.
+CanonicalNodeNameMap BuildCanonicalNodeNameMap(const OrtGraph* graph);
 
 // Walks the EP-input OrtGraph and writes a QNN-Netron-schema JSON description
 // to `output_path`. Returns true on success; logs a WARNING and returns false

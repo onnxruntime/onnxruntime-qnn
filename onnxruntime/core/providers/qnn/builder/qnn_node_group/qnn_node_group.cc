@@ -47,7 +47,8 @@ namespace qnn {
 /// </summary>
 class QnnNodeUnitWrapper : public IQnnNodeGroup {
  public:
-  explicit QnnNodeUnitWrapper(const OrtNodeUnit& node_unit) : node_unit_(&node_unit) {}
+  QnnNodeUnitWrapper(const OrtNodeUnit& node_unit, const std::string& canonical_node_name)
+      : node_unit_(&node_unit), canonical_node_name_(canonical_node_name) {}
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnNodeUnitWrapper);
 
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
@@ -61,7 +62,8 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 
     // op_affinity gate, generic across all op types (not just GroupQueryAttention): if the config
     // pins this op type to a different backend, decline before reaching the op builder.
-    RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
+    RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(
+        op_type, canonical_node_name_, qmw.GetQnnBackendType()));
 
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
@@ -82,6 +84,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 
  private:
   const OrtNodeUnit* node_unit_;
+  std::string canonical_node_name_;
 };
 
 /// <summary>
@@ -177,6 +180,7 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
                                         /*out*/ std::vector<size_t>& sorted_qnn_node_group_indices,
                                         QnnModelWrapper& qnn_model_wrapper,
                                         const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+                                        const CanonicalNodeNameMap& canonical_node_names,
                                         const size_t num_node_units,
                                         const Ort::Logger& logger) {
   const OrtGraph& graph = qnn_model_wrapper.GetOrtGraph();
@@ -229,7 +233,10 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
     if (fused_node_group != nullptr) {
       const OpAffinityMap& affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
       for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {
-        if (!affinity.Evaluate(member->OpType(), qnn_model_wrapper.GetQnnBackendType()).IsOK()) {
+        const std::string& canonical_name = canonical_node_names.at(&member->GetNode());
+        if (!affinity.Evaluate(member->OpType(), canonical_name,
+                               qnn_model_wrapper.GetQnnBackendType())
+                 .IsOK()) {
           fused_node_group = nullptr;
           break;
         }
@@ -265,7 +272,8 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
     }
 
     const size_t index = qnn_node_groups.size();
-    auto qnn_node_group = std::make_unique<QnnNodeUnitWrapper>(*node_unit);
+    auto qnn_node_group = std::make_unique<QnnNodeUnitWrapper>(
+        *node_unit, canonical_node_names.at(&node_unit->GetNode()));
 
     node_unit_to_qnn_node_group.insert({node_unit, qnn_node_group.get()});
     qnn_node_groups.push_back(std::move(qnn_node_group));
@@ -280,12 +288,13 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
 Ort::Status GetQnnNodeGroups(/*out*/ std::vector<std::unique_ptr<IQnnNodeGroup>>& qnn_node_groups,
                              QnnModelWrapper& qnn_model_wrapper,
                              const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+                             const CanonicalNodeNameMap& canonical_node_names,
                              const size_t num_node_units,
                              const Ort::Logger& logger) {
   std::vector<size_t> sorted_qnn_node_group_indices;
   std::vector<std::unique_ptr<IQnnNodeGroup>> qnn_node_groups_holder;
   RETURN_IF_ERROR(GetQnnNodeGroupsImpl(qnn_node_groups_holder, sorted_qnn_node_group_indices, qnn_model_wrapper,
-                                       node_to_node_unit, num_node_units, logger));
+                                       node_to_node_unit, canonical_node_names, num_node_units, logger));
 
   // Move IQnnNodeGroups to the output std::vector in sorted (topological) order.
   qnn_node_groups.resize(0);

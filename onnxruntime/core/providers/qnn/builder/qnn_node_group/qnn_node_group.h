@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -64,12 +65,14 @@ void registerUDO(const std::string& node_type, const std::string& op_package);
 /// <param name="qnn_node_groups">Output vector into which the resulting IQnnNodeGroup objects are stored.</param>
 /// <param name="qnn_model_wrapper">Contains reference to the ONNX GraphViewer and used for validaton on QNN</param>
 /// <param name="node_to_node_unit">Maps a Node* to a NodeUnit*</param>
+/// <param name="canonical_node_names">Maps each Node* to the name emitted by the EP-input graph dump.</param>
 /// <param name="num_node_units">The number of NodeUnits in the ONNX graph.</param>
 /// <param name="logger">Logger</param>
 /// <returns>Status with potential error</returns>
 Ort::Status GetQnnNodeGroups(/*out*/ std::vector<std::unique_ptr<IQnnNodeGroup>>& qnn_node_groups,
                              QnnModelWrapper& qnn_model_wrapper,
                              const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+                             const CanonicalNodeNameMap& canonical_node_names,
                              size_t num_node_units,
                              const Ort::Logger& logger);
 }  // namespace qnn
