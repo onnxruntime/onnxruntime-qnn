@@ -1557,6 +1557,30 @@ static Ort::Status TransposeDataRank5(gsl::span<const int64_t> input_shape,
   return Ort::Status();
 }
 
+template <size_t ElementSize>
+static void TransposeDataRank2(size_t rows,
+                               size_t cols,
+                               gsl::span<const uint8_t> input_buffer,
+                               gsl::span<uint8_t> output_buffer) {
+  constexpr size_t tile_size = 32;
+  for (size_t row_start = 0; row_start < rows; row_start += tile_size) {
+    const size_t row_end = std::min(row_start + tile_size, rows);
+    for (size_t col_start = 0; col_start < cols; col_start += tile_size) {
+      const size_t col_end = std::min(col_start + tile_size, cols);
+      for (size_t col = col_start; col < col_end; ++col) {
+        size_t dst_byte_index = (col * rows + row_start) * ElementSize;
+        for (size_t row = row_start; row < row_end; ++row) {
+          const size_t src_byte_index = (row * cols + col) * ElementSize;
+          assert(src_byte_index < input_buffer.size());
+          assert(dst_byte_index < output_buffer.size());
+          std::memcpy(&output_buffer[dst_byte_index], &input_buffer[src_byte_index], ElementSize);
+          dst_byte_index += ElementSize;
+        }
+      }
+    }
+  }
+}
+
 Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint32_t>& data_shape,
                                   const OrtValueInfo* initializer,
@@ -1598,18 +1622,31 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   // Actual tensor content is required.
   const size_t rows = data_shape[0];
   const size_t cols = data_shape[1];
-  const size_t output_cols = output_shape[1];
-
-  for (size_t row = 0; row < rows; row++) {
-    for (size_t col = 0; col < cols; col++) {
-      const size_t src_elem_index = (row * cols + col);
-      const size_t dst_elem_index = (col * output_cols + row);
-      const size_t src_byte_index = src_elem_index * elem_byte_size;
-      const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-      assert(src_byte_index < input_buffer.size());
-      assert(dst_byte_index < transposed_data.size());
-
-      std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+  switch (elem_byte_size) {
+    case 1:
+      TransposeDataRank2<1>(rows, cols, input_buffer, transposed_data);
+      break;
+    case 2:
+      TransposeDataRank2<2>(rows, cols, input_buffer, transposed_data);
+      break;
+    case 4:
+      TransposeDataRank2<4>(rows, cols, input_buffer, transposed_data);
+      break;
+    case 8:
+      TransposeDataRank2<8>(rows, cols, input_buffer, transposed_data);
+      break;
+    default: {
+      const size_t output_cols = output_shape[1];
+      for (size_t row = 0; row < rows; ++row) {
+        for (size_t col = 0; col < cols; ++col) {
+          const size_t src_byte_index = (row * cols + col) * elem_byte_size;
+          const size_t dst_byte_index = (col * output_cols + row) * elem_byte_size;
+          assert(src_byte_index < input_buffer.size());
+          assert(dst_byte_index < transposed_data.size());
+          std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+        }
+      }
+      break;
     }
   }
 
