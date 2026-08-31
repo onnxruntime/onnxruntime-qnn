@@ -1368,14 +1368,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_htp_graph_splitting_ = false;
   }
 #endif
+
   if (enable_htp_graph_splitting_ && !context_cache_enabled_) {
-    ORT_CXX_LOG(...);
-    enable_htp_graph_splitting_ = false;
-  }
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_graph_splitting=1 has no effect when htp_share_resource_optimization=1. "
-                "Graph splitting is a context-creation feature; the VTCM sharing path uses "
-                "QnnContext_createFromBinaryListAsync (a binary-load API) and does not support it.");
+                "enable_htp_graph_splitting=1 has no effect without context caching enabled. "
+                "Enable context caching (ep_context_enable=1) to persist the split context binary.");
   }
 
   // Option to skip QNN API interface version check to use other QNN library other than default.
