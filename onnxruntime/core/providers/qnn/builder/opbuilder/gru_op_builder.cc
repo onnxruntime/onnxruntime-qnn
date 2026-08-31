@@ -533,6 +533,44 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+namespace {
+
+// Decide whether a QDQ GRU group runs as a genuine quantized Gru or must be fp-degraded. HTP has two
+// native quantized Gru configs (HtpOpDefSupplement): an INT8 combo (X/W/R/initial_h u8) and an INT16
+// combo (X/initial_h u16, W/R u16-or-u8), both forward-only and both with an int32 (SFIXED_POINT_32)
+// bias -- no config takes a quantized-integer bias. Everything else -- a non-forward direction, a
+// missing optional output, or a non-supported input dtype (e.g. a non-int32 bias) -- is fp-degraded
+// (explicit Dequantize -> fp32 GRU -> Quantize, all on QNN) so the numeric result is still produced on
+// QNN. LBR=0 additionally fp-degrades the u8 combo (its u8 cell widens to a mixed-width QUint16Crouton
+// that fails HTP finalize, 1002); the u16 combo is already 16-bit with no such widening, so LBR=0 stays
+// native there.
+bool ShouldFpDegradeQdqGru(gsl::span<const TensorInfo> input_infos,
+                           gsl::span<const OrtNodeUnitIODef> inputs,
+                           gsl::span<const OrtNodeUnitIODef> outputs,
+                           const std::string& direction,
+                           int64_t linear_before_reset) {
+  const bool missing_output = !(outputs.size() >= 2 && outputs[0].Exists() && outputs[1].Exists());
+  const bool is_forward = direction == "forward";
+  auto dtype_at = [&](size_t i) { return input_infos[i].qnn_data_type; };
+  auto has_input = [&](size_t i) { return inputs.size() > i && inputs[i].Exists(); };
+  const bool genuine_u8_combo =
+      dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_8 &&
+      dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8 &&
+      dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8 &&
+      (!has_input(3) || dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32) &&
+      (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_8);
+  const bool genuine_u16_combo =
+      dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_16 &&
+      (dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8) &&
+      (dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8) &&
+      has_input(3) && dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32 &&
+      (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_16);
+  return ((linear_before_reset == 0) && !genuine_u16_combo) || !is_forward ||
+         missing_output || !(genuine_u8_combo || genuine_u16_combo);
+}
+
+}  // namespace
+
 Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                       const OrtNodeUnit& node_unit,
                                                       std::vector<std::string>&& input_names,
@@ -544,16 +582,6 @@ Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   std::string direction = node_helper.Get("direction", "forward");
   RETURN_IF_NOT(inputs.size() >= 3 && inputs.size() <= 6, "GRU should receive inputs ranging from 3 to 6!");
 
-  // Decide whether this QDQ GRU group runs as a genuine quantized Gru or is fp-degraded. The selector
-  // is structural-only and folds every DQ -> GRU -> Q group; the op-semantic fp-fallback decision
-  // lives here. HTP has two native quantized Gru configs (HtpOpDefSupplement): an INT8 combo
-  // (X/W/R/initial_h u8) and an INT16 combo (X/initial_h u16, W/R u16-or-u8), both forward-only and
-  // both with an int32 (SFIXED_POINT_32) bias -- no config takes a quantized-integer bias. Everything
-  // else -- a non-forward direction, a missing optional output, or a non-supported input dtype (e.g. a
-  // non-int32 bias) -- is fp-degraded (explicit Dequantize -> fp32 GRU -> Quantize, all on QNN) so the
-  // numeric result is still produced on QNN. LBR=0 additionally fp-degrades the u8 combo (its u8 cell
-  // widens to a mixed-width QUint16Crouton that fails HTP finalize, 1002); the u16 combo is already
-  // 16-bit with no such widening, so LBR=0 stays native there.
   const bool is_qdq = node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup;
   const int64_t linear_before_reset = node_helper.Get("linear_before_reset", static_cast<int64_t>(0));
 
@@ -564,29 +592,11 @@ Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     }
   }
 
-  bool use_fp_fallback = false;
-  if (is_qdq) {
-    const bool missing_output = !(outputs.size() >= 2 && outputs[0].Exists() && outputs[1].Exists());
-    const bool is_forward = direction == "forward";
-    auto dtype_at = [&](size_t i) { return input_infos[i].qnn_data_type; };
-    auto has_input = [&](size_t i) { return inputs.size() > i && inputs[i].Exists(); };
-    const bool genuine_u8_combo =
-        dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_8 &&
-        dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8 &&
-        dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8 &&
-        (!has_input(3) || dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32) &&
-        (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_8);
-    const bool genuine_u16_combo =
-        dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_16 &&
-        (dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8) &&
-        (dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8) &&
-        has_input(3) && dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32 &&
-        (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_16);
-    // LBR=0 blocks the u8 combo (its u8 cell widens to a mixed-width QUint16Crouton -> HTP finalize
-    // 1002) but not the u16 combo (already 16-bit, no widening), so only u8 fp-degrades at LBR=0.
-    use_fp_fallback = ((linear_before_reset == 0) && !genuine_u16_combo) || !is_forward ||
-                      missing_output || !(genuine_u8_combo || genuine_u16_combo);
-  }
+  // The selector enforces structural QDQ well-formedness and folds the DQ -> GRU -> Q group;
+  // ShouldFpDegradeQdqGru() makes the op-semantic decision of whether this group runs as a genuine
+  // quantized Gru or is fp-degraded (explicit Dequantize -> fp32 GRU -> Quantize, all on QNN).
+  const bool use_fp_fallback =
+      is_qdq && ShouldFpDegradeQdqGru(input_infos, inputs, outputs, direction, linear_before_reset);
 
   // fp-degrade input side: Dequantize each present quantized input to fp32 once (shared by both
   // directions in the bidirectional case) and rewrite input_names in place. seq_lens (idx 4) is
