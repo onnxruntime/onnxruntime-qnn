@@ -47,3 +47,8 @@ jobs:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit
+
+  pytest:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/qualcomm-internal-pytest.yml
+    secrets: inherit
