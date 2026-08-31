@@ -3292,9 +3292,6 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
     per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
   }
 
-  // This ensures that rpc polling time is always set to a value
-  per_thread_htp_power_configs.rpc_polling_time = qnn::kDisableRpcPolling;
-
   if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
     // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
     per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
@@ -3309,10 +3306,8 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
 
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
-    // rpc polling time will only be updated with perf mode changes
-    if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
-      per_thread_htp_power_configs.rpc_polling_time = 9999;
-    }
+    per_thread_htp_power_configs.rpc_polling_time =
+        (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) ? 9999 : qnn::kDisableRpcPolling;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != post_run_htp_performance_mode) {

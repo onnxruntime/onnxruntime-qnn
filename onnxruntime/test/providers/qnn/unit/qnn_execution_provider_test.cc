@@ -1185,9 +1185,11 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_BurstSessionMo
   EXPECT_FALSE(configs.default_perf_mode.has_value())
       << "kHtpBurst session option must not set default_perf_mode (regression guard for PR #38)";
   EXPECT_FALSE(configs.pre_run_perf_mode.has_value());
-  // rpc_polling_time is always initialized; burst's 9999 must NOT appear here.
-  ASSERT_TRUE(configs.rpc_polling_time.has_value());
-  EXPECT_EQ(*configs.rpc_polling_time, qnn::kDisableRpcPolling);
+  // rpc_polling_time must be empty for burst session mode: it is only populated on paths
+  // where SetPerThreadHtpPowerConfigs will actually dereference it (dynamic, sustained,
+  // or per-run override). Leaving it unset prevents any per-inference RPC overhead.
+  EXPECT_FALSE(configs.rpc_polling_time.has_value())
+      << "rpc_polling_time must not be set for burst session mode (no per-inference RPC overhead)";
 }
 
 // Sustained-high-performance mode set at session level MUST populate default_perf_mode
