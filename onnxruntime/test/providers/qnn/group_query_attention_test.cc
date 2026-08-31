@@ -398,7 +398,8 @@ class ScopedGqaOpAffinityConfig {
     std::filesystem::remove(path_, ec);
   }
 
-  ORT_DISALLOW_COPY_AND_ASSIGNMENT(ScopedGqaOpAffinityConfig);
+  ScopedGqaOpAffinityConfig(const ScopedGqaOpAffinityConfig&) = delete;
+  ScopedGqaOpAffinityConfig& operator=(const ScopedGqaOpAffinityConfig&) = delete;
 
   const std::filesystem::path& path() const { return path_; }
 
