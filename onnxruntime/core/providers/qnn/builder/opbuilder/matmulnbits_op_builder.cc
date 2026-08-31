@@ -474,7 +474,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         }
 
         bool used_bw_block_mapped = false;
+#if defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
         // 2-bit Standard Symmetric BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
+        // Gated to SDK >= 2.51: the native W2A16 HTP kernel is not available until 2.51.
         if (bits == 2 && is_act_16bitquant && zp_is_symmetric) {
           const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
           const std::vector<int32_t> per_block_int32_offset(total_blocks, 0);
@@ -486,6 +488,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           used_bw_block_mapped = true;
           ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (STANDARD_SYMMETRIC) for " + weight_tensor_name).c_str());
         }
+#endif  // QNN_SDK_VERSION_MINOR >= 51
 
         if (!used_lpbq && !used_bw_block_mapped) {
           // BwFloatBlock (float block-quantized) path.
