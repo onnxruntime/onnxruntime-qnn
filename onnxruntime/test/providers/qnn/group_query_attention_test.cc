@@ -678,6 +678,24 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
   ASSERT_FALSE(session_failed) << session_error;
 }
 
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_OpNameHtpOverridesDefaultCpu) {
+  const ScopedGqaOpAffinityConfig config(R"({ "op_name": { "GQA": "HTP" } })");
+  bool session_failed = false;
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", config.path().string(), ExpectedEPNodeAssignment::All,
+                                  &session_failed, &session_error);
+  ASSERT_FALSE(session_failed) << session_error;
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_UnmatchedOpNameSessionFails) {
+  const ScopedGqaOpAffinityConfig config(R"({ "op_name": { "missing_gqa": "HTP" } })");
+  bool session_failed = false;
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", config.path().string(), ExpectedEPNodeAssignment::None,
+                                  &session_failed, &session_error);
+  ASSERT_TRUE(session_failed) << session_error;
+}
+
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
   const ScopedGqaOpAffinityConfig config(R"({ "op_type": { "GroupQueryAttention": "GPU" } })");
   bool session_failed = false;
