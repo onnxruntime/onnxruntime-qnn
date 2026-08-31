@@ -977,6 +977,19 @@ bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper,
                                     const std::string& zp_tensor_name,
                                     int64_t bits);
 
+// Processes a bias tensor for quantized ops (LPBQ Conv2D, etc.).
+// Handles: INT32 quantized (check/requantize if mismatch), float (quantize).
+// Sets was_handled=true if the bias was added to input_names.
+// Sets was_handled=false if the bias should be processed normally by the caller
+// (e.g., non-initializer, or activation/weight not quantized, or scales already match).
+Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
+                                      const Ort::Logger& logger,
+                                      const OrtNodeUnitIODef& bias_def,
+                                      const QnnQuantParamsWrapper& act_quant_param,
+                                      const QnnQuantParamsWrapper& weight_quant_param,
+                                      std::vector<std::string>& input_names,
+                                      bool& was_handled);
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 
 namespace onnxruntime {
@@ -148,6 +149,84 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
                                            int16_tensor_type, int16_qnn_data_type,
                                            std::move(int16_quant_param),
                                            std::move(output_shape), do_op_validation);
+}
+
+Ort::Status RegisterWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
+                                          const std::string& weight_name,
+                                          const TensorInfo& weight_info,
+                                          std::vector<uint8_t> weight_data,
+                                          std::vector<std::string>& input_names) {
+  RETURN_IF_NOT(weight_info.shape.size() == 2,
+                "LPBQ 1x1 filter lowering requires weight to be rank-2 [K, N]");
+  RETURN_IF_NOT(weight_info.quant_param.IsLPBQ(),
+                "LPBQ 1x1 filter lowering requires LPBQ quant params");
+
+  const uint32_t K = weight_info.shape[0];
+  const uint32_t N = weight_info.shape[1];
+
+  std::vector<uint32_t> conv_weight_shape = {1u, 1u, K, N};
+  QnnQuantParamsWrapper conv_weight_quant = weight_info.quant_param.Copy();
+  RETURN_IF_ERROR(conv_weight_quant.HandleUnsqueeze<uint32_t>(weight_info.shape, conv_weight_shape));
+
+  const std::string conv_weight_name = utils::UniqueNameGenerator().New(weight_name, "_reshape");
+
+  Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(weight_name);
+  QnnTensorWrapper weight_tensorwrapper(conv_weight_name, tensor_type, weight_info.qnn_data_type,
+                                        std::move(conv_weight_quant), std::move(conv_weight_shape),
+                                        std::move(weight_data));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensorwrapper)),
+                "Failed to add LPBQ 1x1 filter weight tensor.");
+  input_names.emplace_back(conv_weight_name);
+  return Ort::Status();
+}
+
+Ort::Status AddConv2DNodeforBQLowering(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       std::vector<std::string>&& input_names,
+                                       const std::string& conv2d_output_name,
+                                       const std::vector<uint32_t>& conv2d_output_shape,
+                                       Qnn_DataType_t conv2d_output_dtype,
+                                       const QnnQuantParamsWrapper& conv2d_output_quant_param,
+                                       bool is_graph_output,
+                                       bool do_op_validation) {
+  // Build Conv2D params: stride=[1,1], pad=[[0,0],[0,0]], dilation=[1,1], group=1.
+  std::vector<std::string> param_tensor_names;
+
+  QnnParamWrapper stride_param(node_unit.Index(), node_unit.Name(),
+                               QNN_OP_CONV_2D_PARAM_STRIDE, {2}, {1u, 1u});
+  param_tensor_names.push_back(stride_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(stride_param));
+
+  QnnParamWrapper pad_param(node_unit.Index(), node_unit.Name(),
+                            QNN_OP_CONV_2D_PARAM_PAD_AMOUNT, {2, 2}, {0u, 0u, 0u, 0u});
+  param_tensor_names.push_back(pad_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(pad_param));
+
+  QnnParamWrapper dilation_param(node_unit.Index(), node_unit.Name(),
+                                 QNN_OP_CONV_2D_PARAM_DILATION, {2}, {1u, 1u});
+  param_tensor_names.push_back(dilation_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(dilation_param));
+
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 1u,
+                                         QNN_OP_CONV_2D_PARAM_GROUP, param_tensor_names));
+
+  const Qnn_TensorType_t conv2d_tensor_type = is_graph_output
+                                                  ? QNN_TENSOR_TYPE_APP_READ
+                                                  : QNN_TENSOR_TYPE_NATIVE;
+
+  QnnTensorWrapper conv2d_output_wrapper(conv2d_output_name, conv2d_tensor_type, conv2d_output_dtype,
+                                         conv2d_output_quant_param.Copy(),
+                                         std::vector<uint32_t>(conv2d_output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv2d_output_wrapper)),
+                "Failed to add Conv2D output tensor.");
+
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONV_2D,
+                                                std::move(input_names), {conv2d_output_name},
+                                                std::move(param_tensor_names), do_op_validation),
+                "Failed to add Conv2D node.");
+
+  return Ort::Status();
 }
 
 }  // namespace bq

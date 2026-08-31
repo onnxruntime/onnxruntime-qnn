@@ -599,100 +599,57 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                      false,
                                                      is_graph_output));
   } else {
-    // 1. Add MatMul as Conv2d with default stride/pad amount.
-    std::vector<std::string> param_tensor_names;
-
-    std::vector<uint32_t> stride = {1, 1};
-    QnnParamWrapper stride_param_wrapper(node_unit.Index(),
-                                         node_unit.Name(),
-                                         QNN_OP_CONV_2D_PARAM_STRIDE,
-                                         {2},
-                                         std::move(stride));
-    param_tensor_names.push_back(stride_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(stride_param_wrapper));
-
-    std::vector<uint32_t> pad_amount = {0, 0, 0, 0};
-    QnnParamWrapper pad_amount_param_wrapper(node_unit.Index(),
-                                             node_unit.Name(),
-                                             QNN_OP_CONV_2D_PARAM_PAD_AMOUNT,
-                                             {2, 2},
-                                             std::move(pad_amount));
-    param_tensor_names.push_back(pad_amount_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param_wrapper));
-
-    std::vector<uint32_t> dilation = {1, 1};
-    QnnParamWrapper dilation_param_wrapper(node_unit.Index(),
-                                           node_unit.Name(),
-                                           QNN_OP_CONV_2D_PARAM_DILATION,
-                                           {2},
-                                           std::move(dilation));
-    param_tensor_names.push_back(dilation_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(dilation_param_wrapper));
-
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                                           node_unit.Index(),
-                                           node_unit.Name(),
-                                           1,
-                                           QNN_OP_CONV_2D_PARAM_GROUP,
-                                           param_tensor_names));
-
     // Input originally having 3D shape is guaranteed in IsOpSupported.
     assert(output_info.shape.size() == 3);
-    std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
+    const std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1u, output_info.shape[1], output_info.shape[2]};
 
     // Detect LPBQ from the registered weight tensor's quant encoding.
-    // For LPBQ, the Conv2D output uses the actual output data type (e.g., uint16/int16 for QDQ models).
-    // For BwFloatBlock, the Conv2D kernel always outputs FP16.
     const bool is_lpbq = qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
                          qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsLPBQ();
-    const Qnn_DataType_t conv2d_output_dtype = is_lpbq ? output_info.qnn_data_type : QNN_DATATYPE_FLOAT_16;
 
-    const std::string conv2d_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
-    QnnTensorWrapper conv2d_output_tensor_wrapper(conv2d_output_name,
-                                                  QNN_TENSOR_TYPE_NATIVE,
-                                                  conv2d_output_dtype,
-                                                  output_info.quant_param.Copy(),
-                                                  std::vector<uint32_t>(conv2d_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv2d_output_tensor_wrapper)),
-                  "Failed to add Conv2d output tensor.");
+    // 1. Both LPBQ and BwFloatBlock use AddConv2DNodeforBQLowering for the Conv2D node.
+    // LPBQ: Conv2D outputs directly in target dtype (INT16).
+    // BwFloatBlock: Conv2D outputs FP16, then Cast/Quantize is applied below.
+    const Qnn_DataType_t conv2d_out_dtype = is_lpbq ? output_info.qnn_data_type : QNN_DATATYPE_FLOAT_16;
+    const QnnQuantParamsWrapper conv2d_out_quant = is_lpbq ? output_info.quant_param.Copy() : QnnQuantParamsWrapper();
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CONV_2D,
-                                                  std::move(input_names),
-                                                  {conv2d_output_name},
-                                                  std::move(param_tensor_names),
-                                                  do_op_validation),
-                  "Failed to add Conv2d node.");
+    const std::string conv2d_out_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
+    RETURN_IF_ERROR(bq::AddConv2DNodeforBQLowering(qnn_model_wrapper, node_unit,
+                                                   std::move(input_names),
+                                                   conv2d_out_name,
+                                                   conv2d_output_shape,
+                                                   conv2d_out_dtype,
+                                                   conv2d_out_quant,
+                                                   /*is_graph_output=*/false,
+                                                   do_op_validation));
 
-    std::string reshape_input_name = conv2d_output_name;
+    // BwFloatBlock post-processing: Cast or Quantize the FP16 Conv2D output.
+    std::string reshape_input_name = conv2d_out_name;
     if (output_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
       // 2. Workaround: Add post-Cast to cast float16 back to float32 to pass HTP validation.
       // TODO: Remove the additional Cast once HTP supports float32.
       const std::string cast_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_cast_fp32");
       RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(node_unit, "_cast_fp32"),
-                                                    conv2d_output_name,
+                                                    conv2d_out_name,
                                                     cast_output_name,
                                                     QNN_TENSOR_TYPE_NATIVE,
                                                     QNN_DATATYPE_FLOAT_32,
                                                     output_info.quant_param.Copy(),
                                                     std::vector<uint32_t>(conv2d_output_shape),
                                                     do_op_validation));
-
       reshape_input_name = cast_output_name;
     } else if (utils::IsQuant16bit(output_info.qnn_data_type) && !is_lpbq) {
       // 2. Add Quantize to FP16 → UINT16/INT16.
       const std::string q_suffix = output_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ? "_q_int16" : "_q_uint16";
       const std::string q_output_name = utils::UniqueNameGenerator().New(output_tensor.name, q_suffix);
       RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
-                                                       conv2d_output_name,
+                                                       conv2d_out_name,
                                                        q_output_name,
                                                        QNN_TENSOR_TYPE_NATIVE,
                                                        output_info.qnn_data_type,
                                                        output_info.quant_param.Copy(),
                                                        std::vector<uint32_t>(conv2d_output_shape),
                                                        do_op_validation));
-
       reshape_input_name = q_output_name;
     }
 

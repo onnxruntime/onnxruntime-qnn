@@ -227,8 +227,8 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 |`"enable_block_quant_weight_optimization"`|Description|
 |---|---|
-|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
-|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+|'0'|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|'1'|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|

@@ -19,6 +19,7 @@ namespace onnxruntime {
 namespace qnn {
 
 class QnnModelWrapper;
+struct TensorInfo;
 
 // Shared helpers for block-quantized (BQ) weight handling in the QNN HTP
 // BW_FLOAT_BLOCK op-builder paths (Conv, MatMul, Gemm).
@@ -91,6 +92,29 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
                                          QnnQuantParamsWrapper int16_quant_param,
                                          std::vector<uint32_t> output_shape,
                                          bool do_op_validation);
+
+// Registers an LPBQ weight tensor as a [1, 1, K, N] (HWCN 1×1 filter).
+// Precondition: weight_info.shape == [K, N] and weight_info.quant_param.IsLPBQ().
+// Unsqueezes [K, N] → [1, 1, K, N] and updates the LPBQ quant axis (1 → 3).
+// Pushes the registered tensor name to input_names.
+Ort::Status RegisterWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
+                                          const std::string& weight_name,
+                                          const TensorInfo& weight_info,
+                                          std::vector<uint8_t> weight_data,
+                                          std::vector<std::string>& input_names);
+
+// Creates a QNN Conv2D node (stride=1, pad=0, dilation=1, group=1) for LPBQ/BwFloatBlock lowering.
+// Registers the Conv2D output tensor with conv2d_output_name, conv2d_output_shape, and
+// conv2d_output_dtype.
+Ort::Status AddConv2DNodeforBQLowering(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       std::vector<std::string>&& input_names,
+                                       const std::string& conv2d_output_name,
+                                       const std::vector<uint32_t>& conv2d_output_shape,
+                                       Qnn_DataType_t conv2d_output_dtype,
+                                       const QnnQuantParamsWrapper& conv2d_output_quant_param,
+                                       bool is_graph_output,
+                                       bool do_op_validation);
 
 }  // namespace bq
 }  // namespace qnn
