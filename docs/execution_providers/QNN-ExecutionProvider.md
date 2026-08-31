@@ -205,8 +205,10 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 |`"enable_htp_fp16_precision"`|Description [Example](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)|
 |---|---|
-|'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
-|'1'|Enable the float32 model to be inferenced with fp16 precision.|
+|'0'|Default. Does not request the legacy HTP FP16 precision configuration. With QAIRT 2.35 or later, this does not select FP32 precision.|
+|'1'|Requests the legacy HTP FP16 precision configuration. With QAIRT 2.35 or later, this setting no longer changes HTP execution precision.|
+
+> **Note:** Starting with QAIRT 2.35, HTP floating-point operations use FP16 math on SoCs with floating-point model support, regardless of this setting. `htp_bf16_enable` configures BF16 separately on supported SoCs.
 
 |`"enable_htp_monolithic_lstm"`|Description|
 |---|---|
