@@ -1607,17 +1607,17 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   const size_t elem_byte_size = qnn::utils::GetElementSizeByType(onnx_type);
   RETURN_IF_NOT(elem_byte_size != 0, "Can't get element byte size from given ONNX type");
 
+  if (skip_output_data_copy) {
+    ORT_CXX_LOG(logger,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping initializer data transpose during op validation.");
+    data_shape = std::move(output_shape);
+    return Ort::Status();
+  }
+
   std::vector<uint8_t> input_buffer;
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
   transposed_data.resize(input_buffer.size(), 0);
-
-  if (skip_output_data_copy) {  // Only shape & dtype validation are needed, no need for real tensor
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
-    data_shape = std::move(output_shape);  // Update parameter with final transposed shape
-    return Ort::Status();
-  }
 
   // Actual tensor content is required.
   const size_t rows = data_shape[0];
