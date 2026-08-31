@@ -1174,7 +1174,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_BurstSessionMo
 
   // GetRunConfigEntry must not be null when GetPerThreadHtpPowerConfigs calls it.
   // Stub returns nullptr → no per-run override, only session-level defaults apply.
-  ctx.stub_ort_api.GetRunConfigEntry = [](const OrtRunOptions*, const char*) -> const char* {
+  ctx.stub_ort_api.GetRunConfigEntry = [](const OrtRunOptions*, const char*) noexcept -> const char* {
     return nullptr;
   };
 
@@ -1198,7 +1198,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_SustainedSessi
   auto factory = MakeFactory(ctx);
   auto ep = MakeEp(*factory, ctx);
 
-  ctx.stub_ort_api.GetRunConfigEntry = [](const OrtRunOptions*, const char*) -> const char* {
+  ctx.stub_ort_api.GetRunConfigEntry = [](const OrtRunOptions*, const char*) noexcept -> const char* {
     return nullptr;
   };
 

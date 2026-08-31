@@ -42,6 +42,13 @@ class QnnBackendManager;
 class GenieBackendManager;
 }  // namespace qnn
 
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+// Forward declaration for white-box unit test access.
+namespace test {
+class QnnUnit_ExecutionProviderTest;
+}  // namespace test
+#endif
+
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
   QnnEp(QnnEpFactory& factory,
