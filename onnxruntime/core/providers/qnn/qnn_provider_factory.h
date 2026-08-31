@@ -45,6 +45,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
       _In_ OrtEpFactory* this_ptr,
       _In_ const OrtHardwareDevice* hw,
       _Inout_ OrtDeviceEpIncompatibilityDetails* details) noexcept;
+  static OrtStatus* ORT_API_CALL CreateExternalResourceImporterForDeviceImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _In_ const OrtEpDevice* ep_device,
+      _Out_ OrtExternalResourceImporterImpl** out_importer) noexcept;
 
   // const OrtApi& ort_api;
   const std::string ep_name_;              // EP name
