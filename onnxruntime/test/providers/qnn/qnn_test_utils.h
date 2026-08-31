@@ -15,8 +15,6 @@
 #include <type_traits>
 #include <unordered_map>
 
-#include "core/providers/qnn/builder/qnn_def.h"
-
 #include "test/util/env_var_utils.h"
 
 #include "test/unittest_util/qdq_test_utils.h"

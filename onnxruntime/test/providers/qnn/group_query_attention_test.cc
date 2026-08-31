@@ -20,6 +20,20 @@
 #include "test/util/include/api_asserts.h"
 #include "gtest/gtest.h"
 
+// QNN_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.37 (QAIRT 2.48).
+// QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.38 (QAIRT 2.49).
+// Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so this test file does not
+// need to include that EP-private header.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37)
+#define QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
 namespace onnxruntime {
 namespace test {
 
