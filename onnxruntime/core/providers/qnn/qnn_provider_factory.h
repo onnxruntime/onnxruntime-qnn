@@ -7,14 +7,14 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/qnn_custom_op.h"
+#include "core/providers/qnn/custom_op/qnn_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 
 namespace onnxruntime {
 
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
-  QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
+  QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in, const OrtLogger* default_logger);
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;

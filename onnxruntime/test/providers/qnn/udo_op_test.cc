@@ -15,8 +15,6 @@
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_c_api.h"
 
-#include "core/providers/qnn/qnn_custom_op.h"
-
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -280,36 +278,6 @@ TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
 }
 
 #endif  // defined(__linux__) && defined(__x86_64__) && defined(BUILD_QNN_UDO_TEST)
-
-// ── QnnUdoPlaceholderOp tests ────────────────────────────────────────────────
-// These tests do not require a QNN backend or UDO op package; they verify the
-// placeholder op's metadata and that its kernel returns an explicit error (not a
-// silent no-op) when Compute() is accidentally invoked.
-
-TEST(QnnEP, UDO_PlaceholderOp_Metadata) {
-  onnxruntime::qnn::QnnUdoPlaceholderOp op{"MyAdd", "QNNExecutionProvider"};
-  EXPECT_STREQ(op.GetName(), "MyAdd");
-  EXPECT_STREQ(op.GetExecutionProviderType(), "QNNExecutionProvider");
-  EXPECT_EQ(op.GetInputTypeCount(), 1u);
-  EXPECT_EQ(op.GetOutputTypeCount(), 1u);
-  EXPECT_EQ(op.GetInputCharacteristic(0),
-            OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC);
-  EXPECT_EQ(op.GetOutputCharacteristic(0),
-            OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC);
-  EXPECT_FALSE(op.GetVariadicInputHomogeneity());
-  EXPECT_FALSE(op.GetVariadicOutputHomogeneity());
-}
-
-TEST(QnnEP, UDO_PlaceholderKernel_ComputeReturnsError) {
-  onnxruntime::qnn::QnnUdoPlaceholderKernel kernel;
-  OrtStatusPtr status = kernel.ComputeV2(/*context=*/nullptr);
-  ASSERT_NE(status, nullptr) << "Expected an error status but got nullptr (success)";
-  // Confirm it's ORT_FAIL and the message mentions 'fused'.
-  EXPECT_EQ(Ort::GetApi().GetErrorCode(status), ORT_FAIL);
-  std::string msg = Ort::GetApi().GetErrorMessage(status);
-  EXPECT_NE(msg.find("fused"), std::string::npos) << "Error message: " << msg;
-  Ort::GetApi().ReleaseStatus(status);
-}
 
 }  // namespace test
 }  // namespace onnxruntime

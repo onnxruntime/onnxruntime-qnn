@@ -72,14 +72,23 @@ struct QnnUdoPlaceholderOp
   // succeeds during model load. Without this, UNDEFINED output type causes an inference
   // error even though the node will be fused+compiled by QNN EP and the placeholder kernel
   // is never executed.
+  //
+  // KNOWN LIMITATION: SetOutputShape's type defaults to FLOAT, and there is no API on
+  // Ort::ShapeInferContext to read the actual runtime input tensor type, so this always
+  // declares the output as FLOAT regardless of the UDO's real element type. This matches
+  // every currently-supported UDO test: the ONNX-graph-level custom-domain node is float
+  // in both the CPU path and the HTP QDQ path (UDOQDQFusion strips the surrounding DQ/Q
+  // pair before the node reaches QNN, so quantization never touches the node's own declared
+  // type). A UDO whose ONNX-level type genuinely isn't FLOAT will fail Ort::Session
+  // construction with a clear type-inference error (fail-fast, not a silent wrong answer),
+  // because SetOutputShape unconditionally calls SetTensorElementType with this value. Per-op
+  // type configurability (e.g. an optional type suffix in ORT_QNN_CUSTOM_OP_DOMAINS) is
+  // deferred to a follow-up if a concrete non-FLOAT UDO use case arises.
   static OrtStatusPtr InferOutputShape(Ort::ShapeInferContext& ctx) {
     if (ctx.GetInputCount() == 0) {
       return nullptr;
     }
     const auto& input_shape = ctx.GetInputShape(0);
-    // SetOutputShape's type defaults to FLOAT, which matches the primary UDO use case.
-    // For a compile-based EP the placeholder kernel never runs; the type only needs to
-    // satisfy model-load validation, not actual execution.
     for (size_t i = 0; i < 1 /* GetOutputCount not available; placeholder has 1 output */; ++i) {
       ctx.SetOutputShape(i, input_shape);
     }

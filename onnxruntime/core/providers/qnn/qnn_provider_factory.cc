@@ -19,7 +19,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
-#include "core/providers/qnn/qnn_custom_op_domain_parser.h"
+#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "core/providers/qnn/soc_utils.h"
 #include "qnn_ep_min_ort_api_version.h"
 
@@ -72,27 +72,12 @@ static bool QnnCpuBackendEnabled() {
 #endif
 }
 
-// Returns the raw value of ORT_QNN_CUSTOM_OP_DOMAINS (or empty string if unset).
-// Uses the same platform-safe pattern as QnnCpuBackendEnabled() above.
-static std::string ReadCustomOpDomainsEnvVar() {
-#if defined(_WIN32)
-  char* value = nullptr;
-  size_t value_size = 0;
-  const bool found = _dupenv_s(&value, &value_size, "ORT_QNN_CUSTOM_OP_DOMAINS") == 0 && value != nullptr;
-  std::string result = found ? std::string(value) : std::string{};
-  free(value);
-  return result;
-#else
-  const char* value = std::getenv("ORT_QNN_CUSTOM_OP_DOMAINS");
-  return value != nullptr ? std::string(value) : std::string{};
-#endif
-}
-
 namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
 QnnEpFactory::QnnEpFactory(const char* ep_name,
-                           ApiPtrs ort_api_in)
+                           ApiPtrs ort_api_in,
+                           const OrtLogger* default_logger)
     : OrtEpFactory{}, ApiPtrs(ort_api_in), ep_name_{ep_name} {
   ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
@@ -113,26 +98,11 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
   // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
   // so we parse once here at factory construction and cache the result for all sessions.
-  const std::string custom_op_domains_spec = ReadCustomOpDomainsEnvVar();
-  if (!custom_op_domains_spec.empty()) {
-    // Use the default logger if available; otherwise a default-constructed Ort::Logger() is safe
-    // because ParseCustomOpDomains uses ORT_CXX_LOG_PTR which tolerates a null OrtLogger*.
-    Ort::Logger logger{};
-    if (OrtLoggingManager::HasDefaultLogger()) {
-      logger = Ort::Logger(OrtLoggingManager::GetDefaultLoggerPtr());
-    }
-    std::vector<CustomOpDomainSpec> specs;
-    ParseCustomOpDomains(custom_op_domains_spec, specs, logger);
-    for (const auto& spec : specs) {
-      Ort::CustomOpDomain domain{spec.domain.c_str()};
-      for (const auto& op_type : spec.op_types) {
-        auto op = std::make_unique<qnn::QnnUdoPlaceholderOp>(op_type, ep_name_);
-        domain.Add(op.get());
-        custom_op_objects_.push_back(std::move(op));
-      }
-      custom_op_domains_.push_back(std::move(domain));
-    }
-  }
+  // default_logger is passed in directly by CreateEpFactories (ultimately
+  // logging::LoggingManager::DefaultLogger().ToExternal() from ORT core) and is always non-null;
+  // OrtLoggingManager's own default logger is not yet set at this point in CreateEpFactories
+  // (SetDefaultLogger runs after the factory is constructed), so it cannot be used here.
+  BuildCustomOpDomainsFromEnv(Ort::Logger(default_logger), ep_name_, custom_op_domains_, custom_op_objects_);
 
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
@@ -706,7 +676,8 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     factory = std::make_unique<onnxruntime::QnnEpFactory>(registration_name,
                                                           onnxruntime::ApiPtrs{*ort_api,
                                                                                *ep_api,
-                                                                               *model_editor_api});
+                                                                               *model_editor_api},
+                                                          default_logger);
   } catch (const std::exception& e) {
     return ort_api->CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
