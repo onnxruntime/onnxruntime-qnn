@@ -11,7 +11,7 @@
 /tools/ @qti-mbadnara @qti-kromero @huaychou
 
 # Runtime: EP core (session, context cache, allocator, telemetry, backend manager)
-/onnxruntime/core/providers/qnn/ @qti-kromero @quic-calvnguy
+/onnxruntime/core/providers/qnn/ @qti-kromero @quic-calvnguy @qti-chuteng
 
 # Compiler: graph/op lowering, and all QNN EP tests
 /onnxruntime/core/providers/qnn/builder/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
