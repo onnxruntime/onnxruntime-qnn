@@ -24,6 +24,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/qkv_split_attention_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
@@ -34,6 +35,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/window_partition_reverse_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
@@ -110,7 +112,14 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
-    {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion}},
+    // NOTE: order matters for the "Reshape" anchor. WindowPartitionReverseFusion must precede
+    // Rank6ToRank5Fusion: the generic rank-6 -> rank-5 fusion also matches the Swin window
+    // partition/reverse chains (they carry a unit batch dim that satisfies its conditions), so
+    // registering it first would let it claim those chains and prevent the rank-4 rewrite.
+    {"Reshape",
+     {SpaceToDepthFusion::TryFusion, WindowPartitionReverseFusion::TryFusion,
+      Rank6ToRank5Fusion::TryFusion, QkvSplitAttentionFusion::TryFusion,
+      ReshapeTransposeFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
