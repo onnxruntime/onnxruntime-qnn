@@ -680,14 +680,14 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   /* out */ std::vector<T>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false) {
-  transposed_data.resize(data.size(), 0);
-
   if (skip_output_data_copy) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
-                "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
+                "Skipping initializer data transpose during op validation.");
     return Ort::Status();
   }
+
+  transposed_data.resize(data.size(), 0);
 
   const size_t rows = data_shape[0];
   const size_t cols = data_shape[1];
