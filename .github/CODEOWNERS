@@ -1,7 +1,7 @@
 # Ownership is resolved per file; for each file the LAST matching pattern wins.
 
 # Build & CI
-/.github/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
+/.github/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti @tirupath-qti @qti-chuteng
 /.vscode/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
 /cmake/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
 /csharp/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
