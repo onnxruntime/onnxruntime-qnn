@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "CPU/QnnCpuCommon.h"
+#include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpDevice.h"
 #include "GPU/QnnGpuBackend.h"
 #include "QnnCommon.h"
@@ -33,6 +34,7 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
@@ -218,6 +220,15 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                   int64_t max_spill_fill_size,
                                   Qnn_ContextHandle_t& new_context,
                                   const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
+
+  // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
+  // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
+  // context load (joins the existing spill-fill group).
+  // Adding a new config here propagates to both LoadCachedQnnContextFromBuffer and ReloadContextForSSR.
+  Ort::Status BuildContextBinaryConfigs(
+      int64_t max_spill_fill_size,
+      Qnn_ContextHandle_t first_group_handle,
+      QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder);
 
   // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
   // Attempts contextCreateFromBinaryWithCallback when use_file_mapping is true; falls back to

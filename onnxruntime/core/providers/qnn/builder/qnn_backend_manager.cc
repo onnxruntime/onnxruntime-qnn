@@ -1281,6 +1281,27 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   return Ort::Status();
 }
 
+Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
+    int64_t max_spill_fill_size,
+    Qnn_ContextHandle_t first_group_handle,
+    QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder) {
+  gsl::not_null<QnnContext_Config_t*> priority_cfg = configs_builder.PushConfig();
+  RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, *priority_cfg));
+
+  if (max_spill_fill_size > 0) {
+    gsl::not_null<QnnHtpContext_CustomConfig_t*> spill_custom = configs_builder.PushCustomConfig();
+    spill_custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+    spill_custom->groupRegistration.firstGroupHandle = first_group_handle;
+    spill_custom->groupRegistration.maxSpillFillBuffer = max_spill_fill_size;
+
+    gsl::not_null<QnnContext_Config_t*> spill_cfg = configs_builder.PushConfig();
+    spill_cfg->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    spill_cfg->customConfig = spill_custom;
+  }
+
+  return Ort::Status();
+}
+
 Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
     void* bin_buffer,
     uint64_t buffer_length,
@@ -1357,22 +1378,8 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
                                                    const qnn::EpContextIoDispatch& io_dispatch) {
   QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
       QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
-
-  auto* priority_cfg = configs_builder.PushConfig();
-  RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, *priority_cfg));
-
-  // Spill-fill: re-register buffer allocation for the recovered context.
-  // Always a new group (firstGroupHandle = 0x0) since SSR invalidated all prior handles.
-  if (max_spill_fill_size > 0) {
-    auto* spill_custom = configs_builder.PushCustomConfig();
-    spill_custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-    spill_custom->groupRegistration.firstGroupHandle = 0x0;
-    spill_custom->groupRegistration.maxSpillFillBuffer = max_spill_fill_size;
-
-    auto* spill_cfg = configs_builder.PushConfig();
-    spill_cfg->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    spill_cfg->customConfig = spill_custom;
-  }
+  // SSR always starts a new spill-fill group (firstGroupHandle = 0x0): all prior handles are invalid.
+  RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, 0x0, configs_builder));
 
   void* bin_buffer = nullptr;
   uint64_t buffer_length = 0;
@@ -1963,34 +1970,16 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   } else {
 #endif
-    QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
-    RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
-
-    // Register spill fill buffer for multi context
-    QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
-
-    // The spill fill buffer is available since 2.28, API version starts from 2.21
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
-    QnnHtpContext_CustomConfig_t custom_config;
-    custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-    QnnHtpContext_GroupRegistration_t group_info;
+    // Join the existing spill-fill group if one exists; otherwise start a new one.
     size_t current_contexts_size = GetQnnContextSize();
-    // set to 0x0 (new group) if this is the first context, otherwise point to the first context handle
-    // note that we already move the context with max spill fill size to the beginning of the list
-    group_info.firstGroupHandle = (max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
-    group_info.maxSpillFillBuffer = max_spill_fill_size;  // Max spill-fill buffer across contexts. Must be >0
-    custom_config.groupRegistration = group_info;
-    spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    spill_fill_config.customConfig = &custom_config;
-
-#endif
-
-    QnnContext_Config_t* spill_fill_config_pointer = max_spill_fill_size > 0 ? &spill_fill_config : nullptr;
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
+    Qnn_ContextHandle_t first_group_handle =
+        (max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
                     ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
 
-    const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_config_pointer, nullptr};
+    QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
+        QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
+    RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
 
     qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -2000,8 +1989,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 #endif
 
     RETURN_IF_ERROR(CreateContextHandleFromBinary(bin_buffer, buffer_length, use_file_mapping,
-                                                  context_configs, context_bin_filepath, io_dispatch,
-                                                  context));
+                                                  configs_builder.GetQnnConfigs(), context_bin_filepath,
+                                                  io_dispatch, context));
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
     if (ProfilingEnabled()) {
