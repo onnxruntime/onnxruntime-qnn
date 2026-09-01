@@ -327,11 +327,6 @@ block()
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
       # Stub for OrtGetRuntimePath (defined in ort_api.cc, which is EP DLL only).
       ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie_test_stubs.cc
-      # ParseOpPackages is consumed by qnn_basic_test.cc; recompile here for the same reason
-      # as the genie sources (the EP shared library is loaded via dlopen, not linked).
-      ${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/op_package/op_package_parser.cc
-      # ParseCustomOpDomains is consumed by unit/qnn_custom_op_test.cc for the same reason.
-      ${ONNXRUNTIME_ROOT}/core/providers/qnn/custom_op/qnn_custom_op_domain_parser.cc
     )
   endif()
 

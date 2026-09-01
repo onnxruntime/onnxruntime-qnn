@@ -99,7 +99,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   // so we parse once here at factory construction and cache the result for all sessions.
   // SetDefaultLogger is called before factory construction in CreateEpFactories, so
   // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
-  BuildCustomOpDomainsFromEnv(Ort::Logger(OrtLoggingManager::GetDefaultLoggerPtr()), ep_name_, custom_op_domains_, custom_op_objects_);
+  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
 
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
