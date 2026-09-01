@@ -1285,21 +1285,24 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
                                                    int64_t max_spill_fill_size,
                                                    Qnn_ContextHandle_t& new_context,
                                                    const qnn::EpContextIoDispatch& io_dispatch) {
-  QnnContext_Config_t qnn_context_config = QNN_CONTEXT_CONFIG_INIT;
-  RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, qnn_context_config));
+  QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
+      QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
 
-  QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
-  QnnHtpContext_CustomConfig_t custom_config;
-  custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-  QnnHtpContext_GroupRegistration_t group_info;
-  group_info.firstGroupHandle = 0x0;  // New group after SSR — this is the only context
-  group_info.maxSpillFillBuffer = max_spill_fill_size;
-  custom_config.groupRegistration = group_info;
-  spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-  spill_fill_config.customConfig = &custom_config;
-  QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size > 0 ? &spill_fill_config : nullptr;
+  auto* priority_cfg = configs_builder.PushConfig();
+  RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, *priority_cfg));
 
-  const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_ptr, nullptr};
+  // Spill-fill: re-register buffer allocation for the recovered context.
+  // Always a new group (firstGroupHandle = 0x0) since SSR invalidated all prior handles.
+  if (max_spill_fill_size > 0) {
+    auto* spill_custom = configs_builder.PushCustomConfig();
+    spill_custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+    spill_custom->groupRegistration.firstGroupHandle = 0x0;
+    spill_custom->groupRegistration.maxSpillFillBuffer = max_spill_fill_size;
+
+    auto* spill_cfg = configs_builder.PushConfig();
+    spill_cfg->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    spill_cfg->customConfig = spill_custom;
+  }
 
   RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
             "Invalid function pointer for contextCreateFromBinary.");
@@ -1354,7 +1357,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 
       rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
                                                               device_handle_,
-                                                              context_configs,
+                                                              configs_builder.GetQnnConfigs(),
                                                               &callbacks,
                                                               bin_buffer,
                                                               static_cast<Qnn_ContextBinarySize_t>(buffer_length),
@@ -1379,7 +1382,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 
     rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
                                                 device_handle_,
-                                                context_configs,
+                                                configs_builder.GetQnnConfigs(),
                                                 static_cast<void*>(buffer.data()),
                                                 static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                                 &new_context,
