@@ -1,0 +1,27 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "Download Tool Artifact"
+description: "Download a versioned tool artifact from Artifactory (stable path, not scoped to a CI run)"
+
+inputs:
+  name:
+    description: Name of the artifact to download
+    required: true
+    type: string
+  version:
+    description: Artifact version. Defaults to the QAIRT SDK version pinned in qcom/packages.yml.
+    required: false
+    type: string
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download from Artifactory
+      shell: bash
+      run: >
+        python3
+        qcom/scripts/artifactory/download_tool.py
+        --name "${{ inputs.name }}"
+        ${{ inputs.version != '' && format('--version {0}', inputs.version) || '' }}

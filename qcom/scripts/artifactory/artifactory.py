@@ -79,6 +79,25 @@ class QaArtifactory(Artifactory):
         return f"{super().repo_path}/qa/{self.__tag}"
 
 
+class ToolArtifactory(Artifactory):
+    """Stable-path storage for prebuilt tooling that's rebuilt out-of-band, not per-CI-run.
+
+    Unlike CiArtifactory (scoped to one ref/commit/run), the same {name}/{version} path is reused
+    across runs and overwritten on republish. Callers should key `version` on whatever makes the
+    artifact's content/ABI unique -- e.g. the QAIRT SDK version for qnn-udo-test-package, since a
+    prebuilt op package cannot float across QAIRT SDK versions.
+    """
+
+    def __init__(self, name: str, version: str) -> None:
+        super().__init__()
+        self.__name = name
+        self.__version = version
+
+    @property
+    def artifact_root(self) -> str:
+        return f"{super().repo_path}/tools/{self.__name}/{self.__version}"
+
+
 def initialize_logging(name: str) -> None:
     log_format = f"[%(asctime)s] [{name}] [%(levelname)s] %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=log_format, force=True)
