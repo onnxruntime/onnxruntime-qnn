@@ -1,6 +1,6 @@
 # ONNX Runtime QNN Execution Provider v2.6.0
 
-**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with vTBD)<br>
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.27.0)<br>
 **QAIRT SDK Compatibility:** 2.50.40
 
 ```
