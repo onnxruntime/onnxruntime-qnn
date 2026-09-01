@@ -2258,7 +2258,8 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
   }
 
   // Override cached values.
-  htp_arch_ = htp_arch;
+  // Update htp_arch_internal_ as well to make sure GetHtpArch returns correct value.
+  htp_arch_ = htp_arch_internal_ = htp_arch;
   soc_model_ = soc_model;
 
   Ort::Status status = CreateDevice();
@@ -2522,7 +2523,7 @@ void QnnBackendManager::ReleaseDeviceAndContext() {
   }
 
   // Reset to default values as opposed to cached values set in `SetupDeviceAndContext`.
-  htp_arch_ = QNN_HTP_DEVICE_ARCH_NONE;
+  htp_arch_ = htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   soc_model_ = QNN_SOC_MODEL_UNKNOWN;
 
   backend_setup_completed_ = false;

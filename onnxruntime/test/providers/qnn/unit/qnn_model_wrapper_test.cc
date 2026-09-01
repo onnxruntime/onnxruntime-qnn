@@ -30,22 +30,32 @@ namespace {
 // (e.g. ctx.stub_ort_api.GetTensorData = MyStub) and pick up the initializer-
 // query stubs + MakeApiPtrs() invariant guard for free.
 struct QnnModelWrapperTestContext : public OrtApiStubContext {
-  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t backend_handle = nullptr;
-
-  // No validator interface in unit tests; validator_backend_handle is held as a
-  // const reference by QnnModelWrapper so it must be a stable lvalue.
-  QNN_INTERFACE_VER_TYPE qnn_validator_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t validator_backend_handle = nullptr;
-
-  // Stable lvalues passed to QnnModelWrapper. The constructor stores pointers
-  // to these members; they must outlive any wrapper returned by CreateWrapper().
+  // Stable lvalues passed to QnnModelWrapper / QnnBackendManager. Both store
+  // pointers (or reference-holding views) to these members, so they must outlive
+  // any wrapper returned by CreateWrapper().
   //
   // null_logger_: cached severity FATAL via MakeNullLogger() — see qnn_unit_test_utils.h.
+  //   Declared before backend_manager because QnnBackendManager keeps a pointer to it.
   // fake_graph_sentinel_: an int used as a stable address; stubs receive this
   //   pointer but never dereference it (same pattern as g_type_info_sentinel etc.).
   Ort::Logger null_logger_{MakeNullLogger()};
   int fake_graph_sentinel_{};
+
+  // QnnModelWrapper now reads the QNN interface, backend handles, and backend type
+  // through a QnnBackendManager rather than taking them as constructor arguments.
+  // StubBackendManager owns one with no backend library loaded and hands back
+  // mutable references, so the members below keep the names (and the stubbing
+  // ergonomics) tests used before the refactor: ctx.qnn_interface.graphAddNode = ...
+  StubBackendManager backend_manager{MakeApiPtrs(), null_logger_};
+
+  QNN_INTERFACE_VER_TYPE& qnn_interface = backend_manager.QnnInterface();
+  Qnn_BackendHandle_t& backend_handle = backend_manager.BackendHandle();
+
+  // No validator interface in unit tests — validator_backend_handle stays null so
+  // ValidateQnnNode routes through qnn_interface / backend_handle. Tests that want
+  // the validator branch assign both.
+  QNN_INTERFACE_VER_TYPE& qnn_validator_interface = backend_manager.ValidatorInterface();
+  Qnn_BackendHandle_t& validator_backend_handle = backend_manager.ValidatorBackendHandle();
 
   qnn::GraphInputOutputInfo input_info;
   qnn::GraphInputOutputInfo output_info;
@@ -53,19 +63,16 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
   std::unique_ptr<qnn::QnnModelWrapper> CreateWrapper(
       const qnn::ModelSettings& settings,
       qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
+    backend_manager.BackendType() = backend_type;
     ApiPtrs api_ptrs = MakeApiPtrs();
     const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     return std::make_unique<qnn::QnnModelWrapper>(
         fake_graph,
         api_ptrs,
         null_logger_,
-        qnn_interface,
-        backend_handle,
-        qnn_validator_interface,
-        validator_backend_handle,
+        *backend_manager.Get(),
         input_info,
         output_info,
-        backend_type,
         settings);
   }
 };
@@ -79,17 +86,14 @@ std::unique_ptr<qnn::QnnModelWrapper> MakeWrapperWithOverrides(
     std::unordered_map<std::string, std::string>* overrides) {
   ApiPtrs api_ptrs = ctx.MakeApiPtrs();
   const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
+  ctx.backend_manager.BackendType() = qnn::QnnBackendType::HTP;
   return std::make_unique<qnn::QnnModelWrapper>(
       fake_graph,
       api_ptrs,
       ctx.null_logger_,
-      ctx.qnn_interface,
-      ctx.backend_handle,
-      ctx.qnn_validator_interface,
-      ctx.validator_backend_handle,
+      *ctx.backend_manager.Get(),
       ctx.input_info,
       ctx.output_info,
-      qnn::QnnBackendType::HTP,
       settings,
       overrides);
 }
@@ -2559,6 +2563,162 @@ TEST(QnnUnit_ModelWrapperTest, FoldedConstant_GetTensorTypeIsStatic) {
   EXPECT_EQ(wrapper->GetTensorType("unmarked"), QNN_TENSOR_TYPE_NATIVE);
   wrapper->MarkTensorAsFoldedConstant("folded");
   EXPECT_EQ(wrapper->GetTensorType("folded"), QNN_TENSOR_TYPE_STATIC);
+}
+
+// The op-builder query path: an op builder holding a QnnModelWrapper must observe
+// the HTP arch the backend manager resolved, so it can pick a translation per arch.
+TEST(QnnUnit_ModelWrapperTest, GetQnnBackendManager_HtpArch_ReturnsBackendManagerArch) {
+  QnnModelWrapperTestContext ctx;
+  ctx.backend_manager.HtpArch() = QNN_HTP_DEVICE_ARCH_V79;
+
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  EXPECT_EQ(wrapper->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V79);
+}
+
+// An arch set after the wrapper was constructed is still visible — the wrapper does
+// not cache it. Matches production order: the wrapper is built per graph, while the
+// manager's arch is resolved once during backend setup.
+TEST(QnnUnit_ModelWrapperTest, GetQnnBackendManager_HtpArch_ReflectsLaterChange) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  ASSERT_EQ(wrapper->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+
+  ctx.backend_manager.HtpArch() = QNN_HTP_DEVICE_ARCH_V75;
+  EXPECT_EQ(wrapper->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V75);
+}
+
+// GetQnnBackendType() is a live read from the manager, not a construction-time copy:
+// build the wrapper as CPU, flip the manager to HTP, and the wrapper follows.
+TEST(QnnUnit_ModelWrapperTest, GetQnnBackendType_FollowsBackendManager_AfterConstruction) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::CPU);
+
+  ASSERT_EQ(wrapper->GetQnnBackendType(), qnn::QnnBackendType::CPU);
+
+  ctx.backend_manager.BackendType() = qnn::QnnBackendType::HTP;
+  EXPECT_EQ(wrapper->GetQnnBackendType(), qnn::QnnBackendType::HTP);
+}
+
+// GetTensorInfo() resolves the ONNX→QNN type map through the manager's backend type.
+// The GPU map in qnn_utils.cc CreateMap() is the only one with an INT4 entry, so an
+// unquantized INT4 tensor succeeds on GPU...
+TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_GpuBackend_Int4_UsesGpuTypeMap) {
+  QnnModelWrapperTestContext ctx;
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
+
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::GPU);
+
+  OrtNodeUnitIODef io_def;
+  io_def.name = "t_int4";
+  io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4;
+  io_def.shape = std::vector<int64_t>{8};
+  io_def.quant_param = std::nullopt;
+
+  qnn::TensorInfo info{};
+  Ort::Status status = wrapper->GetTensorInfo(io_def, info);
+
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(info.qnn_data_type, QNN_DATATYPE_SFIXED_POINT_4);
+}
+
+// ...and fails on HTP, which uses the base map. Together with the test above this
+// proves the backend type reaching GetQnnDataType() comes from the manager.
+TEST(QnnUnit_ModelWrapperTest, GetTensorInfo_HtpBackend_Int4_Fails) {
+  QnnModelWrapperTestContext ctx;
+  ctx.stub_ort_api.Graph_GetNumInitializers = StubGetNumInitializersZero;
+  ctx.stub_ort_api.Graph_GetInitializers = StubGetInitializersEmpty;
+
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+
+  OrtNodeUnitIODef io_def;
+  io_def.name = "t_int4";
+  io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4;
+  io_def.shape = std::vector<int64_t>{8};
+  io_def.quant_param = std::nullopt;
+
+  qnn::TensorInfo info{};
+  Ort::Status status = wrapper->GetTensorInfo(io_def, info);
+
+  EXPECT_FALSE(status.IsOK());
+}
+
+namespace {
+// Records the data type of the first input tensor the validator was handed, so a
+// test can tell whether the BF16 conversion ran before validation. Reset before use.
+Qnn_DataType_t g_validated_input_data_type = QNN_DATATYPE_UNDEFINED;
+
+Qnn_ErrorHandle_t StubBackendValidateOpConfigCaptureDataType(Qnn_BackendHandle_t, Qnn_OpConfig_t op_config) {
+  if (op_config.version == QNN_OPCONFIG_VERSION_1 &&
+      op_config.v1.numOfInputs > 0 &&
+      op_config.v1.inputTensors != nullptr) {
+    g_validated_input_data_type = qnn::GetQnnTensorDataType(op_config.v1.inputTensors[0]);
+  }
+  return QNN_BACKEND_NO_ERROR;
+}
+
+// Adds one FP32 NATIVE input and one FP32 NATIVE output, the shape the BF16
+// validation path expects (neither tensor is graph I/O).
+void AddFp32NativeInputOutput(qnn::QnnModelWrapper& wrapper) {
+  qnn::QnnTensorWrapper in("in0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  ASSERT_TRUE(wrapper.AddTensorWrapper(std::move(in)));
+  ASSERT_TRUE(wrapper.AddTensorWrapper(std::move(out)));
+}
+}  // namespace
+
+// IsBF16ConversionEnabled() reads the backend type from the manager. On HTP with
+// htp_bf16_enable=true the validator must see BF16 inputs...
+TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16Enabled_HtpBackend_ValidatorSeesBf16) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.backendValidateOpConfig = StubBackendValidateOpConfigCaptureDataType;
+  g_validated_input_data_type = QNN_DATATYPE_UNDEFINED;
+
+  qnn::ModelSettings settings{};
+  settings.htp_bf16_enable = true;
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  AddFp32NativeInputOutput(*wrapper);
+
+  EXPECT_TRUE(wrapper->CreateQnnNode("node0",
+                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                     QNN_OP_CAST,
+                                     {"in0"}, {"out0"}, {},
+                                     /*do_op_validation=*/true));
+
+  EXPECT_EQ(g_validated_input_data_type, QNN_DATATYPE_BFLOAT_16);
+  // BF16ConversionGuard restores FP32 once CreateQnnNode returns.
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("in0").GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+}
+
+// ...while the same settings on CPU must skip the conversion entirely, because the
+// manager — not a constructor argument — is what reports the backend type.
+TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16Enabled_CpuBackend_ValidatorSeesFp32) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.backendValidateOpConfig = StubBackendValidateOpConfigCaptureDataType;
+  g_validated_input_data_type = QNN_DATATYPE_UNDEFINED;
+
+  qnn::ModelSettings settings{};
+  settings.htp_bf16_enable = true;
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::CPU);
+  AddFp32NativeInputOutput(*wrapper);
+
+  EXPECT_TRUE(wrapper->CreateQnnNode("node0",
+                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                     QNN_OP_CAST,
+                                     {"in0"}, {"out0"}, {},
+                                     /*do_op_validation=*/true));
+
+  EXPECT_EQ(g_validated_input_data_type, QNN_DATATYPE_FLOAT_32);
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("in0").GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
 }
 
 }  // namespace test
