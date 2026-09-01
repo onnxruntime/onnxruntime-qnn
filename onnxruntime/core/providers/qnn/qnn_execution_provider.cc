@@ -1227,6 +1227,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                            false,
                                                                            logger_);
 
+  // Temporary EP-level workaround for A16W2 MatMulNBits fallback handling.
+  model_settings_.force_symmetric_weights = ParseBoolOption(ort_api,
+                                                            session_options_,
+                                                            FormatEPConfigKey("force_symmetric_weights"),
+                                                            false,
+                                                            logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
