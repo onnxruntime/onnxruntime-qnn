@@ -1488,16 +1488,10 @@ QnnEp::~QnnEp() {
   if (qnn_backend_manager_) {
     auto thread_id = std::this_thread::get_id();
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
-    // NOTE: do NOT tear down the release timer here. The QnnBackendManager may be
-    // shared across sessions (htp_share_resource_optimization_/weight sharing);
-    // killing the timer on the first session's destruction would break the others.
-    // The timer is released with the manager itself (QnnBackendManager::ReleaseResources).
+
     std::lock_guard<std::mutex> lock(config_id_mutex_);
     if (htp_power_config_id_.has_value()) {
-      // Drop this id from the (possibly still-live shared) timer's boosted set
-      // before destroying it, so the timer never relaxes a destroyed id.
-      qnn_backend_manager_->DropBoostedPowerConfigId(*htp_power_config_id_);
-      qnn_backend_manager_->DestroyHtpPowerConfigId(*htp_power_config_id_);
+      qnn_backend_manager_->DestroyHTPPowerConfigID(*htp_power_config_id_);
     }
   }
 
@@ -2112,29 +2106,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
-  // so HTP sessions default to keeping GQA on CPU
-  // -- users can opt into HTP via the op_affinity config once they've validated it.
-  const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
-  if (resolved_backend == qnn::QnnBackendType::HTP) {
-    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
-  }
-
-  rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
-
-  if (!rt.IsOK()) {
-    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
-  }
-
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
-    // Create the HTP power config id (and its release timer) for the main thread.
-    // The perf mode itself is not voted here: it is applied around graph compile
-    // via the INIT_START/INIT_DONE power guard in CompileImpl, and per run via
-    // SetPerThreadHtpPowerConfigs. The id is torn down with the session, so a
-    // session created but never run ends compile in the relaxed state and frees
-    // its vote on destruction.
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
+    // Set the power config id and the default power mode from provider option for main thread,
+    // otherwise it will mess up the power mode if user just create session without run it.
     ep->CreateHtpPowerConfigId();
 
     ep->WarnIfHnrdPathActive();
@@ -2401,26 +2375,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     } else {
       finalize_start = std::chrono::steady_clock::now();
 #endif
-      {
-        // Boost the HTP only around graphFinalize() -- the accelerator-side graph
-        // compilation. ComposeGraph above is host-side (graphAddNode), so the HTP is
-        // deliberately left relaxed during it. The perf config id is valid here in both
-        // the single-SoC path (created at GetCapability) and the multi-SoC path (created
-        // per-SoC by ScopedPerSocQnnBackendSetup::Init before CompileOnnxModel runs).
-        uint32_t htp_power_config_id = 0;
-        bool valid_power_config_id = GetHtpPowerConfigId(htp_power_config_id);
-        qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, default_htp_performance_mode_,
-                                                default_rpc_polling_time_, default_rpc_control_latency_};
-        qnn::HtpPowerStateGuard power_guard(
-            &qnn_backend_manager_->GetHtpPowerConfigManager(),
-            valid_power_config_id,
-            qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
-            perf_config,
-            logger_);
-        RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
-        RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
-        RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
-      }
+      RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
       end = std::chrono::steady_clock::now();
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
@@ -2446,30 +2401,12 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     qnn::thread::QnnJobThreadPool tp(num_graph_prepare_threads_);
     tp.Start();
     finalize_start = std::chrono::steady_clock::now();
-
-    // Boost the HTP once around the whole finalize batch. graphFinalize() is the
-    // accelerator-side work; the preceding ComposeGraph loop is host-side and runs
-    // relaxed. The boost is a single global vote on the perf config id, so one guard
-    // for the batch is correct -- do not vote from inside the per-thread jobs.
-    uint32_t htp_power_config_id = 0;
-    bool valid_power_config_id = GetHtpPowerConfigId(htp_power_config_id);
-    qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, default_htp_performance_mode_,
-                                            default_rpc_polling_time_, default_rpc_control_latency_};
-    qnn::HtpPowerStateGuard power_guard(
-        &qnn_backend_manager_->GetHtpPowerConfigManager(),
-        valid_power_config_id,
-        qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
-        perf_config,
-        logger_);
-    RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
-
     for (auto& model_info : model_infos) {
       tp.SubmitJob([qnn_model = model_info.model.get(), &logger = logger_, res = &model_info.result] {
         *res = qnn_model->FinalizeGraphs(logger);
       });
     }
     tp.WaitForQueuedJobsToFinish();
-    RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 
@@ -2917,57 +2854,25 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
-    uint32_t htp_power_config_id = 0;
-    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
-    qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-    qnn::HtpPowerStateGuard power_guard(
-        &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
-        power_config_valid,
-        qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
-        perf_config,
-        ep->logger_);
-    RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
-    auto status = ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
-    RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
-    return status;
+    return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
-    uint32_t htp_power_config_id = 0;
-    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
-    qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-    qnn::HtpPowerStateGuard power_guard(
-        &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
-        power_config_valid,
-        qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
-        perf_config,
-        ep->logger_);
-    RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
-    auto status = ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
-    RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
-    return status;
+    return ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
   }
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   auto compile_start = std::chrono::steady_clock::now();
 #endif
 
-  // NOTE: the HTP perf boost is applied inside CompileOnnxModel, scoped tightly around
-  // graphFinalize() (the accelerator-side work) rather than the whole compile. This keeps
-  // the HTP relaxed during host-side graph composition, and -- unlike a guard here -- works
-  // for the multi-SoC path, where the valid perf config id only exists per-SoC (created by
-  // ScopedPerSocQnnBackendSetup::Init), not at this point.
-  OrtStatus* compile_status = nullptr;
   if (!ep->enable_multi_soc_ep_context_) {
-    compile_status = ep->CompileOnnxModel(graphs,
-                                          fused_nodes,
-                                          count,
-                                          node_compute_infos,
-                                          ep->htp_graph_configs_,
-                                          /*collect_subgraph_traces=*/true);
+    RETURN_IF_NOT_NULL(ep->CompileOnnxModel(graphs,
+                                            fused_nodes,
+                                            count,
+                                            node_compute_infos,
+                                            ep->htp_graph_configs_,
+                                            /*collect_subgraph_traces=*/true));
   } else {
-    compile_status = ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos);
+    RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
   }
-
-  RETURN_IF_NOT_NULL(compile_status);
 
   // Clean up transient GetCapability→Compile state.
   // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
@@ -3068,10 +2973,12 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   return nullptr;
 }
 
-void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
+bool QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                         const ::OrtRunOptions* run_options) {
   qnn::HtpPerformanceMode pre_run_htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
   qnn::HtpPerformanceMode post_run_htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
+
+  bool configs_set = false;
 
   const char* htp_perf_mode = nullptr;
   htp_perf_mode = ort_api.GetRunConfigEntry(run_options, kOrtRunOptionsConfigQnnPerfMode);
@@ -3091,35 +2998,29 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
   if (rpc_latency != nullptr) {
     rpc_control_latency = static_cast<uint32_t>(std::stoul(rpc_latency));
     per_thread_htp_power_configs.rpc_control_latency = rpc_control_latency;
+    configs_set = true;
 
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, (std::string("rpc_control_latency: ") + rpc_latency).c_str());
-  } else {
-    per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
   }
 
-  // This ensures that rpc polling time is always set to a value
-  per_thread_htp_power_configs.rpc_polling_time = qnn::kDisableRpcPolling;
-
-  if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
-    // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
-    per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
-    per_thread_htp_power_configs.rpc_polling_time = dynamic_rpc_polling_time_;
-  } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
-    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
-    per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
+  uint32_t rpc_polling_time = 0;
+  if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
+    rpc_polling_time = 9999;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
     // rpc polling time will only be updated with perf mode changes
-    if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
-      per_thread_htp_power_configs.rpc_polling_time = 9999;
-    }
+    per_thread_htp_power_configs.rpc_polling_time = rpc_polling_time;
+    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != post_run_htp_performance_mode) {
     per_thread_htp_power_configs.post_run_perf_mode = post_run_htp_performance_mode;
+    configs_set = true;
   }
+
+  return configs_set;
 }
 
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
@@ -3140,10 +3041,11 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
   if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
     auto thread_id = std::this_thread::get_id();
     qnn::PerThreadHtpPowerConfigs_t per_thread_htp_power_configs;
-    ep->GetPerThreadHtpPowerConfigs(per_thread_htp_power_configs, run_options);
-    per_thread_htp_power_configs.power_config_id = htp_power_config_id;
-    RETURN_IF_ERROR(ep->qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
-                                                                                per_thread_htp_power_configs));
+    if (ep->GetPerThreadHtpPowerConfigs(per_thread_htp_power_configs, run_options)) {
+      per_thread_htp_power_configs.power_config_id = htp_power_config_id;
+      RETURN_IF_ERROR(ep->qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
+                                                                                  per_thread_htp_power_configs));
+    }
   }
 
   const char* lora_config = nullptr;
@@ -3249,22 +3151,18 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
       }
       qnn::HtpPerformanceMode htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
       ParseHtpPerformanceMode(value, htp_performance_mode, ep->logger_);
-      // Dynamic HTP performance mode is used for performance setting for execute so it will be set in OnRunStart.
-      if (htp_performance_mode != qnn::HtpPerformanceMode::kHtpDefault) {
-        ep->dynamic_htp_performance_mode_ = htp_performance_mode;
-        if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-          ep->dynamic_rpc_polling_time_ = 9999;
-        } else {
-          ep->dynamic_rpc_polling_time_ = 0;
-        }
-      } else {
-        // Reset the dynamic override so a caller can revert to default. OnRunStart
-        // prefers dynamic_htp_performance_mode_ over the session default, so without
-        // this reset a previously set non-default mode would latch permanently. With
-        // it cleared, OnRunStart falls back to the session default perf mode (or
-        // applies nothing if that is also default).
-        ep->dynamic_htp_performance_mode_ = qnn::HtpPerformanceMode::kHtpDefault;
-        ep->dynamic_rpc_polling_time_ = 0;
+
+      uint32_t rpc_polling_time = 0;
+      if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
+        rpc_polling_time = 9999;
+      }
+
+      uint32_t htp_power_config_id = 0;
+      if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
+        RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
+                                                                      htp_performance_mode,
+                                                                      rpc_polling_time,
+                                                                      ep->default_rpc_control_latency_));
       }
     } else {
       ORT_CXX_LOG(ep->logger_,
@@ -3418,10 +3316,19 @@ void QnnEp::CreateHtpPowerConfigId() const {
   constexpr uint32_t core_id = 0;
   uint32_t htp_power_config_id;
 
-  Ort::Status rt = qnn_backend_manager_->InitializePowerCfgId(device_id_, core_id, htp_power_config_id);
+  Ort::Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
 
   if (rt.IsOK()) {
     htp_power_config_id_ = htp_power_config_id;
+
+    rt = qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
+                                                  default_htp_performance_mode_,
+                                                  default_rpc_polling_time_,
+                                                  default_rpc_control_latency_);
+
+    if (!rt.IsOK()) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Unable to set HTP power configurations.");
+    }
   } else {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to create HTP power config id.");
   }
@@ -3537,8 +3444,7 @@ QnnEp::ScopedPerSocQnnBackendSetup::~ScopedPerSocQnnBackendSetup() {
   // has_value(), and ReleaseDeviceAndContext() is idempotent (SetupDeviceAndContext() also self-cleans on failure).
   // Hence no separate "initialized" flag is needed here.
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType()) && ep_.htp_power_config_id_.has_value()) {
-    ep_.qnn_backend_manager_->DropBoostedPowerConfigId(*ep_.htp_power_config_id_);
-    ep_.qnn_backend_manager_->DestroyHtpPowerConfigId(*ep_.htp_power_config_id_);
+    ep_.qnn_backend_manager_->DestroyHTPPowerConfigID(*ep_.htp_power_config_id_);
     ep_.htp_power_config_id_.reset();
   }
   ep_.qnn_backend_manager_->ReleaseDeviceAndContext();
