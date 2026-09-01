@@ -1369,12 +1369,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  if (enable_htp_graph_splitting_ && !context_cache_enabled_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_htp_graph_splitting=1 has no effect without context caching enabled. "
-                "Enable context caching (ep_context_enable=1) to persist the split context binary.");
-  }
-
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(ort_api,
@@ -2988,6 +2982,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
                   "prepare_and_load=1 is ignored because the input model is already a pre-compiled context model. "
                   "The model will be loaded directly via the AOT path.");
+    }
+    if (ep->enable_htp_graph_splitting_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "enable_htp_graph_splitting=1 has no effect because the input model is already a pre-compiled "
+                  "context binary. Graph splitting is applied at context creation time, not at load time.");
     }
     uint32_t htp_power_config_id = 0;
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
