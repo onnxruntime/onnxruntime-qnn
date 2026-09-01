@@ -484,7 +484,9 @@ void QnnEp::ParsePerSocHtpConfigs() {
                                   htp_graph_configs_.htp_graph_finalization_opt_mode,
                                   htp_graph_configs_.enable_htp_fp16_precision,
                                   htp_graph_configs_.enable_htp_monolithic_lstm,
-                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow};
+                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow,
+                                  htp_graph_configs_.enable_htp_matmul_lut,
+                                  htp_graph_configs_.enable_int_matmul_lut_w2a16};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -991,6 +993,18 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+  htp_graph_configs_.enable_htp_matmul_lut = ParseBoolOption(ort_api,
+                                                              session_options_,
+                                                              FormatEPConfigKey("enable_htp_matmul_lut"),
+                                                              false,
+                                                              logger_);
+
+  htp_graph_configs_.enable_int_matmul_lut_w2a16 = ParseBoolOption(ort_api,
+                                                                    session_options_,
+                                                                    FormatEPConfigKey("enable_int_matmul_lut_w2a16"),
+                                                                    false,
+                                                                    logger_);
+
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
   // Declare outside the if scope since there are users later. They may be overwritten in the else branch.
@@ -1212,6 +1226,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                            FormatEPConfigKey("enable_block_quant_weight_optimization"),
                                                                            false,
                                                                            logger_);
+
+  // Temporary EP-level workaround for A16W2 MatMulNBits fallback handling.
+  model_settings_.force_symmetric_weights = ParseBoolOption(ort_api,
+                                                            session_options_,
+                                                            FormatEPConfigKey("force_symmetric_weights"),
+                                                            false,
+                                                            logger_);
 
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
@@ -1829,6 +1850,30 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_config->customConfig = htp_fp16_clamp_config;
 #endif
+    }
+
+    if (configs.enable_htp_matmul_lut) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> matmul_lut_config = configs_builder.PushCustomConfig();
+      matmul_lut_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG;
+      matmul_lut_config->finalizeConfig.key = "enable_matmul_lut";
+      matmul_lut_config->finalizeConfig.value.dataType = QNN_DATATYPE_BOOL_8;
+      matmul_lut_config->finalizeConfig.value.bool8Value = 1;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = matmul_lut_config;
+    }
+
+    if (configs.enable_int_matmul_lut_w2a16) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> int_matmul_lut_config = configs_builder.PushCustomConfig();
+      int_matmul_lut_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG;
+      int_matmul_lut_config->finalizeConfig.key = "enable_int_matmul_lut_w2a16";
+      int_matmul_lut_config->finalizeConfig.value.dataType = QNN_DATATYPE_BOOL_8;
+      int_matmul_lut_config->finalizeConfig.value.bool8Value = 1;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = int_matmul_lut_config;
     }
   }
 }

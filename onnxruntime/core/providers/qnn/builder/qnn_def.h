@@ -159,6 +159,8 @@ typedef struct HtpGraphConfigs {
   bool enable_htp_fp16_precision = false;
   bool enable_htp_monolithic_lstm = false;
   bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
+  bool enable_htp_matmul_lut = false;
+  bool enable_int_matmul_lut_w2a16 = false;
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {
