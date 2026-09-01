@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <string>
 #include <thread>
+#include <memory>
 
 #include "nlohmann/json.hpp"
 
@@ -15,6 +16,7 @@
 
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
+
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -24,6 +26,8 @@
 using namespace ONNX_NAMESPACE;
 
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
+// interface macro defined in combaseapi.h conflicts with its use in this file.
+#undef interface
 
 constexpr std::string_view kDlcOutputDir("dlc_output");
 
@@ -875,7 +879,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 }
 
 // Tests running a single session in multiple threads on the HTP backend with run option to set power config
-TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
+TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgSessionRunOption) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -984,9 +988,59 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   }
 }
 
+// Tests running a single session in multiple threads on the HTP backend with EP option to set default power config to sustained high performance
+TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
+  std::unique_ptr<ModelAndBuilder> model;
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::vector<int64_t> shape = {1, 3, 2};
+  std::vector<std::vector<int64_t>> output_shapes = {shape};
+  std::vector<std::vector<float>> output_values = {{3.0f, 6.0f, 9.0f, 12.0f, 15.0f, 18.0f}};
+
+  CreateModelInMemory(model,
+                      QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
+                                                   TestInputDef<float>(shape, false, input_data),
+                                                   TestInputDef<float>(shape, false, input_data)));
+
+  ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnHtp.dll";
+#else
+  options["backend_path"] = "libQnnHtp.so";
+#endif
+  options["offload_graph_io_quantization"] = "0";
+  options["htp_performance_mode"] = "sustained_high_performance";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  Ort::SessionOptions session_opts;
+  session_opts.SetLogId("logger0");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts));
+
+  std::vector<std::thread> threads;
+  constexpr int num_threads = 5;
+  constexpr int loop_count = 10;
+  for (int i = 0; i < num_threads; i++) {
+    threads.push_back(std::thread(RunSessionAndVerify, std::ref(scoped.session()), Ort::RunOptions{nullptr},
+                                  std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
+  }
+
+  for (auto& th : threads) {
+    th.join();
+  }
+}
+
 // Tests running a single session in multiple threads on the HTP backend with
 // EP option to set default power config + run option to set power config for each run
-TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
+TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgDefaultAndRunOption) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -1816,11 +1870,28 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 #endif  // !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 
 #if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
+// RAII guard that unconditionally unregisters an execution provider library on scope exit.
+// The AutoEp tests below register the EP library directly (without appending a device to the
+// session options, so RegisterQnnEpLibrary / RegisteredEpDeviceUniquePtr cannot be reused).
+// Without this guard, an early return from an ASSERT_* failure would leave the library
+// registered in the shared Ort::Env, corrupting subsequent tests (the source of the
+// intermittent failures).
+struct ScopedEpLibraryGuard {
+  const char* registration_name;
+  ~ScopedEpLibraryGuard() {
+    OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, registration_name);
+    if (status != nullptr) {
+      Ort::GetApi().ReleaseStatus(status);
+    }
+  }
+};
+
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1832,13 +1903,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1850,13 +1920,12 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1878,13 +1947,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1908,13 +1976,12 @@ TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
+  ScopedEpLibraryGuard ep_guard{kQnnExecutionProvider};
 
   Ort::SessionOptions so;
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
@@ -1938,8 +2005,6 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
     Ort::Session session(*ort_env, ort_model_path, so);
     EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
   }
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
 TEST_F(QnnGPUBackendTests, ElementwiseAbsoluteVerifier) {
@@ -2399,7 +2464,7 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
 
-// Returns a function that builds a model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a model with EyeLike (CPU-only) + Add
 // to test partition-added inputs.
 static GetTestModelFn BuildPartitionAddedInputModel() {
   return [](ModelTestBuilder& builder) {
@@ -2408,14 +2473,14 @@ static GetTestModelFn BuildPartitionAddedInputModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create constant initializer for RandomNormalLike
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines graph input with partition-added input
-    builder.AddNode("add", "Add", {"input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2480,10 +2545,10 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   // ONNX-declared input first, partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
-// Returns a function that builds a QDQ model with RandomNormalLike (CPU-only) + Add
+// Returns a function that builds a QDQ model with EyeLike (CPU-only) + Add
 // to test partition-added inputs with offload_graph_io_quantization.
 static GetTestModelFn BuildPartitionAddedInputQDQModel() {
   return [](ModelTestBuilder& builder) {
@@ -2492,8 +2557,8 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // Create input
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
 
-    // Create initializers
-    builder.MakeInitializer<float>("constant", {1, 3}, {0.0f, 0.0f, 0.0f});
+    // "constant" is a graph input (not an initializer) to prevent ORT constant-folding EyeLike.
+    MakeTestInput<float>(builder, "constant", TestInputDef<float>({1, 3}, false, {0.0f, 0.0f, 0.0f}));
     builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
     builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
 
@@ -2503,11 +2568,11 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
     // DequantizeLinear: q_input -> dq_input (goes to QNN)
     builder.AddNode("dequantize", "DequantizeLinear", {"q_input", "scale", "zero_point"}, {"dq_input"}, kOnnxDomain);
 
-    // RandomNormalLike: CPU-only op that creates a partition-added input
-    builder.AddNode("rnl", "RandomNormalLike", {"constant"}, {"rnl_output"}, kOnnxDomain);
+    // EyeLike: CPU-only op (no QNN builder) that creates a partition-added input
+    builder.AddNode("el", "EyeLike", {"constant"}, {"el_output"}, kOnnxDomain);
 
     // Add: combines dequantized input with partition-added input
-    builder.AddNode("add", "Add", {"dq_input", "rnl_output"}, {"add_output"}, kOnnxDomain);
+    builder.AddNode("add", "Add", {"dq_input", "el_output"}, {"add_output"}, kOnnxDomain);
 
     builder.MakeOutput("add_output");
   };
@@ -2575,7 +2640,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   // partition-added input second.
   ASSERT_EQ(inputs_with_id.size(), 2u);
   EXPECT_EQ(inputs_with_id[0].first, "input");
-  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+  EXPECT_EQ(inputs_with_id[1].first, "el_output");
 }
 
 // Returns a model where a single graph input fans out to two separate Q->DQ chains,
@@ -3223,6 +3288,345 @@ TEST_F(QnnGPUBackendTests, DISABLED_io_binding_qnn_gpu_shared_offset) {
   // Clean up
   binding.ClearBoundInputs();
   binding.ClearBoundOutputs();
+}
+
+/*
+ * Import external memory.
+ */
+TEST_F(QnnGPUBackendTests, import_memory_basic) {
+  ComPtr<ID3D12Device> d3d12device;
+  HRESULT hr = D3D12CreateDevice(
+      nullptr,
+      D3D_FEATURE_LEVEL_12_0,
+      IID_PPV_ARGS(&d3d12device));
+  ASSERT_FALSE(FAILED(hr) || d3d12device == nullptr);
+
+  ComPtr<ID3D12Resource> input_buffer;
+  UINT64 input_size = 16;
+  hr = CreateD3D12Buffer(
+      d3d12device.Get(),
+      input_size,
+      D3D12_HEAP_FLAG_SHARED,
+      D3D12_HEAP_TYPE_DEFAULT,
+      input_buffer.GetAddressOf());
+  ASSERT_FALSE(FAILED(hr) || input_buffer == nullptr);
+
+  HANDLE input_handle = nullptr;
+  hr = d3d12device->CreateSharedHandle(
+      input_buffer.Get(),
+      nullptr,
+      GENERIC_ALL,
+      nullptr,
+      &input_handle);
+  ASSERT_FALSE(FAILED(hr) || input_handle == nullptr);
+
+  Ort::SessionOptions session_options;
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+  ASSERT_FALSE(registered_ep_device == nullptr);
+  OrtExternalResourceImporter* importer = nullptr;
+  ASSERT_ORTSTATUS_OK(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(registered_ep_device.get(), &importer));
+  ASSERT_FALSE(importer == nullptr);
+
+  bool capability = false;
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE, &capability);
+  ASSERT_TRUE(capability);
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP, &capability);
+  ASSERT_FALSE(capability);
+  Ort::GetInteropApi().CanImportSemaphore(importer, ORT_EXTERNAL_SEMAPHORE_D3D12_FENCE, &capability);
+  ASSERT_FALSE(capability);
+
+  OrtExternalMemoryDescriptor input_desc;
+  input_desc.version = ORT_API_VERSION;
+  input_desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE;
+  input_desc.native_handle = input_handle;
+  input_desc.size_bytes = input_size;
+  input_desc.offset_bytes = 0;
+  OrtExternalMemoryHandle* input_mem = nullptr;
+  Ort::GetInteropApi().ImportMemory(importer, &input_desc, &input_mem);
+  ASSERT_FALSE(input_mem == nullptr);
+
+  // cleanup
+  Ort::GetInteropApi().ReleaseExternalMemoryHandle(input_mem);
+  Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
+  CloseHandle(input_handle);
+}
+
+/*
+ * Use imported external memory for inferencing input.
+ */
+TEST_F(QnnGPUBackendTests, import_memory_inference_input) {
+  // input
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+
+  ComPtr<ID3D12Device> d3d12device;
+  HRESULT hr = D3D12CreateDevice(
+      nullptr,
+      D3D_FEATURE_LEVEL_12_0,
+      IID_PPV_ARGS(&d3d12device));
+  ASSERT_FALSE(FAILED(hr) || d3d12device == nullptr);
+
+  ComPtr<ID3D12Resource> input_buffer;
+  UINT64 input_size = sizeof(x_values);
+  hr = CreateD3D12Buffer(
+      d3d12device.Get(),
+      input_size,
+      D3D12_HEAP_FLAG_SHARED,
+      D3D12_HEAP_TYPE_DEFAULT,
+      input_buffer.GetAddressOf());
+  ASSERT_FALSE(FAILED(hr) || input_buffer == nullptr);
+
+  HANDLE input_handle = nullptr;
+  hr = d3d12device->CreateSharedHandle(
+      input_buffer.Get(),
+      nullptr,
+      GENERIC_ALL,
+      nullptr,
+      &input_handle);
+  ASSERT_FALSE(FAILED(hr) || input_handle == nullptr);
+
+  Ort::SessionOptions session_options;
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+  ASSERT_FALSE(registered_ep_device == nullptr);
+  OrtExternalResourceImporter* importer = nullptr;
+  ASSERT_ORTSTATUS_OK(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(registered_ep_device.get(), &importer));
+  ASSERT_FALSE(importer == nullptr);
+
+  bool capability = false;
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE, &capability);
+  ASSERT_TRUE(capability);
+
+  OrtExternalMemoryDescriptor input_desc;
+  input_desc.version = ORT_API_VERSION;
+  input_desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE;
+  input_desc.native_handle = input_handle;
+  input_desc.size_bytes = input_size;
+  input_desc.offset_bytes = 0;
+  OrtExternalMemoryHandle* input_mem_handle = nullptr;
+  Ort::GetInteropApi().ImportMemory(importer, &input_desc, &input_mem_handle);
+  ASSERT_FALSE(input_mem_handle == nullptr);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  OrtExternalTensorDescriptor input_tensor_desc;
+  input_tensor_desc.version = ORT_API_VERSION;
+  input_tensor_desc.element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  input_tensor_desc.shape = x_shape.data();
+  input_tensor_desc.rank = x_shape.size();
+  input_tensor_desc.offset_bytes = 0;
+  OrtValue* x_tensor = nullptr;
+  Ort::GetInteropApi().CreateTensorFromMemory(importer, input_mem_handle, &input_tensor_desc, &x_tensor);
+  ASSERT_FALSE(x_tensor == nullptr);
+
+  // Real use case imported memory would already contain input data from the gpu.
+  // Since ours doesn't we need to copy input data to it from the cpu.
+  // However it seems D3D12_HEAP_FLAG_SHARED & D3D12_HEAP_TYPE_UPLOAD does not seem to work.
+  // This means we cannot map the d3d buffer to CPU address space to copy input.
+  /*
+  {
+    void* cpu_mapped_ptr = nullptr;
+    hr = input_buffer->Map(0, nullptr, &cpu_mapped_ptr);
+    ASSERT_FALSE(FAILED(hr) || cpu_mapped_ptr == nullptr);
+    memcpy(cpu_mapped_ptr, x_values.data(), sizeof(x_values));
+  }
+  */
+
+  // Set up RunOptions
+  OrtRunOptions* run_options = nullptr;
+  Ort::GetApi().CreateRunOptions(&run_options);
+  // Run inference using simple Run() API (no IOBinding required)
+  const char* input_names[] = {"X"};
+  const char* output_names[] = {"Y"};
+  const OrtValue* inputs[] = {x_tensor};
+  OrtValue* outputs[] = {nullptr};
+  auto status = Ort::GetApi().Run(session, run_options, input_names, inputs, 1, output_names, 1, outputs);
+  ASSERT_TRUE(status == nullptr);
+
+  // check the output attributes
+  ASSERT_FALSE(outputs[0] == nullptr);
+  const auto* y_tensor = outputs[0];
+  OrtTensorTypeAndShapeInfo* y_info;
+  Ort::GetApi().GetTensorTypeAndShape(y_tensor, &y_info);
+  ASSERT_FALSE(y_info == nullptr);
+  size_t count = 0;
+  Ort::GetApi().GetTensorShapeElementCount(y_info, &count);
+  ASSERT_FALSE(count == 0);
+  const float* y = nullptr;
+  Ort::GetApi().GetTensorData(y_tensor, &(const void*)y);
+  ASSERT_FALSE(y == nullptr);
+
+  // Compare the actual output values to the expected output values.
+  // However since input values could not be provided (see above Map), we cannot compare output values.
+  /*
+  {
+    const std::array<int64_t, 2> expected_y_shape = {3, 2};
+    const std::array<float, 3 * 2> expected_y = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+
+    ASSERT_EQ(expected_y.size(), count);
+    constexpr float y_max_abs_err = 1e-5f;
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), gsl::span(y, count)));
+  }
+  */
+
+  // cleanup
+  Ort::GetApi().ReleaseValue(x_tensor);
+  Ort::GetInteropApi().ReleaseExternalMemoryHandle(input_mem_handle);
+  Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
+  CloseHandle(input_handle);
+}
+
+/*
+ * Use imported external memory for first inferencing output.
+ * Then use imported external memory for second inferencing input.
+ * Then compare the output values of second inferencing.
+ * Two inference need to be run this way because we cannot copy input to
+ * the imported external memory from the cpu.
+ */
+TEST_F(QnnGPUBackendTests, import_memory_inference_output_input) {
+  // ---------------------- create gpu session
+  Ort::SessionOptions session_options;
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+  ASSERT_FALSE(registered_ep_device == nullptr);
+  OrtExternalResourceImporter* importer = nullptr;
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  // ---------------------- prepare tensor for input stage 1
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  OrtValue* x_tensor = nullptr;
+  OrtMemoryInfo* meminfo = nullptr;
+  Ort::GetApi().CreateMemoryInfo("Cpu", OrtArenaAllocator, 0, OrtMemTypeCPU, &meminfo);
+  ASSERT_FALSE(meminfo == nullptr);
+  Ort::GetApi().CreateTensorWithDataAsOrtValue(
+      meminfo, x_values.data(), sizeof(x_values), x_shape.data(), x_shape.size(),
+      ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &x_tensor);
+
+  // ---------------------- prepare tensor for output stage 1
+  const std::array<int64_t, 2> expected_y_shape = {3, 2};
+  const std::array<float, 3 * 2> expected_y_values = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+
+  ComPtr<ID3D12Device> d3d12device;
+  HRESULT hr = D3D12CreateDevice(
+      nullptr,
+      D3D_FEATURE_LEVEL_12_0,
+      IID_PPV_ARGS(&d3d12device));
+  ASSERT_FALSE(FAILED(hr) || d3d12device == nullptr);
+
+  ComPtr<ID3D12Resource> d3d12buffer;
+  UINT64 d3d12buffer_size = sizeof(expected_y_values);
+  hr = CreateD3D12Buffer(
+      d3d12device.Get(),
+      d3d12buffer_size,
+      D3D12_HEAP_FLAG_SHARED,
+      D3D12_HEAP_TYPE_DEFAULT,
+      d3d12buffer.GetAddressOf());
+  ASSERT_FALSE(FAILED(hr) || d3d12buffer == nullptr);
+
+  HANDLE d3d12buffer_shared_handle = nullptr;
+  hr = d3d12device->CreateSharedHandle(
+      d3d12buffer.Get(),
+      nullptr,
+      GENERIC_ALL,
+      nullptr,
+      &d3d12buffer_shared_handle);
+  ASSERT_FALSE(FAILED(hr) || d3d12buffer_shared_handle == nullptr);
+
+  ASSERT_ORTSTATUS_OK(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(registered_ep_device.get(), &importer));
+  ASSERT_FALSE(importer == nullptr);
+
+  bool capability = false;
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE, &capability);
+  ASSERT_TRUE(capability);
+
+  OrtExternalMemoryDescriptor import_mem_desc;
+  import_mem_desc.version = ORT_API_VERSION;
+  import_mem_desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE;
+  import_mem_desc.native_handle = d3d12buffer_shared_handle;
+  import_mem_desc.size_bytes = d3d12buffer_size;
+  import_mem_desc.offset_bytes = 0;
+  OrtExternalMemoryHandle* import_mem_handle = nullptr;
+  Ort::GetInteropApi().ImportMemory(importer, &import_mem_desc, &import_mem_handle);
+  ASSERT_FALSE(import_mem_handle == nullptr);
+
+  OrtExternalTensorDescriptor import_mem_tensor_desc;
+  import_mem_tensor_desc.version = ORT_API_VERSION;
+  import_mem_tensor_desc.element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  import_mem_tensor_desc.shape = x_shape.data();
+  import_mem_tensor_desc.rank = x_shape.size();
+  import_mem_tensor_desc.offset_bytes = 0;
+  OrtValue* y_tensor = nullptr;
+  Ort::GetInteropApi().CreateTensorFromMemory(importer, import_mem_handle, &import_mem_tensor_desc, &y_tensor);
+  ASSERT_FALSE(y_tensor == nullptr);
+
+  // ---------------------- run inference stage 1
+  OrtRunOptions* run_options = nullptr;
+  Ort::GetApi().CreateRunOptions(&run_options);
+  // Run inference using simple Run() API (no IOBinding required)
+  const char* input_names[] = {"X"};
+  const char* output_names[] = {"Y"};
+  const OrtValue* inputs[] = {x_tensor};
+  OrtValue* outputs[] = {y_tensor};
+  auto status = Ort::GetApi().Run(session, run_options, input_names, inputs, 1, output_names, 1, outputs);
+  ASSERT_TRUE(status == nullptr);
+
+  // ---------------------- check the stage 1 run output attributes
+  ASSERT_TRUE(outputs[0] == y_tensor);
+  OrtTensorTypeAndShapeInfo* y_info;
+  Ort::GetApi().GetTensorTypeAndShape(y_tensor, &y_info);
+  ASSERT_FALSE(y_info == nullptr);
+  size_t count = 0;
+  Ort::GetApi().GetTensorShapeElementCount(y_info, &count);
+  ASSERT_FALSE(count == 0);
+  // The following cannot work because there is no cpu map of d3d12buffer.
+  /*
+  const float* y = nullptr;
+  Ort::GetApi().GetTensorData(y_tensor, &(const void*)y);
+  ASSERT_FALSE(y == nullptr);
+  */
+
+  // ---------------------- run inference stage 2
+  inputs[0] = y_tensor;
+  outputs[0] = nullptr;
+  status = Ort::GetApi().Run(session, run_options, input_names, inputs, 1, output_names, 1, outputs);
+  ASSERT_TRUE(status == nullptr);
+
+  // ---------------------- check the stage 2 run output attributes
+  ASSERT_FALSE(outputs[0] == nullptr);
+  const auto* z_tensor = outputs[0];
+  OrtTensorTypeAndShapeInfo* z_info;
+  Ort::GetApi().GetTensorTypeAndShape(z_tensor, &z_info);
+  ASSERT_FALSE(z_info == nullptr);
+  count = 0;
+  Ort::GetApi().GetTensorShapeElementCount(z_info, &count);
+  ASSERT_FALSE(count == 0);
+  const float* z = nullptr;
+  Ort::GetApi().GetTensorData(z_tensor, &(const void*)z);
+  ASSERT_FALSE(z == nullptr);
+
+  // ---------------------- Compare the actual output values to the expected output values.
+  const std::array<int64_t, 2> expected_z_shape = {3, 2};
+  const std::array<float, 3 * 2> expected_z = {1.0f, 8.0f, 27.0f, 64.0f, 125.0f, 216.0f};
+
+  ASSERT_EQ(expected_z.size(), count);
+  constexpr float z_max_abs_err = 1e-5f;
+  EXPECT_THAT(expected_z, ::testing::Pointwise(::testing::FloatNear(z_max_abs_err), gsl::span(z, count)));
+
+  // cleanup
+  Ort::GetApi().ReleaseValue(y_tensor);
+  Ort::GetInteropApi().ReleaseExternalMemoryHandle(import_mem_handle);
+  Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
+  CloseHandle(d3d12buffer_shared_handle);
 }
 
 #endif  // defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB

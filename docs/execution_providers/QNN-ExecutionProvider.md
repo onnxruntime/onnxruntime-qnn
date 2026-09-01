@@ -15,6 +15,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Pre-built Packages](#pre-built-packages)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
+- [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
 - [Supported ONNX operators](#supported-onnx-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
@@ -29,7 +30,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Add new operator support in QNN EP](#add-new-operator-support-in-qnn-ep)
 - [QNN User-Defined Operation (UDO)](#qnn-user-defined-operation-udo)
 - [Mixed precision support](#mixed-precision-support)
-- [LoRAv2 support](#lorav2-support)
+- [LoRA support](#lora-support)
 
 ## Install Pre-requisites (Build from Source Only)
 
@@ -41,33 +42,36 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.3.0         | v2.47.0           | v1.24.4              |
+| v2.5.0         | v2.49.40          | v1.26.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.3.0 was built and tested with ORT 1.24.4 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.5.0 was built and tested with ORT 1.26.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages
-- [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
     - Windows X64 (for quantizing models. see [Generating a quantized model](./QNN-ExecutionProvider.md#generating-a-quantized-model-x64-only))
     - Linux ARM64 (for inferencing on local Qualcomm-powered Linux devices)
+    - Linux x64 (for generating a quantized model on Linux Host)
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- Linux ARM64 archive (`.tgz`)
-  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
+- [NuGet package - `Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
+  - A single package covering Windows ARM64 (ARM64X), ARM64EC, and x64 (`win-arm64`, `win-arm64ec`, `win-arm64x`, `win-x64` RuntimeIdentifiers) with appropriate fallbacks.
+- Archives (`.zip` and `.tgz`)
+  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Windows and Linux hosts and targets.
 - Maven package (Android)
   - **Note**: The Maven package supports Android ARM64
   - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.45.0` |
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.26.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.49.0` |
+  - **Version note:** QNN EP v2.5.0 was built and tested with QAIRT SDK 2.49.40; the public Android Maven runtime artifact is versioned `2.49.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -138,6 +142,10 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |Size in MB (string)|QNN VTCM size in MB. Defaults to "0" (not set). Must be > 0 to take effect.|
 
+|`"context_memory_limit_hint_mb"`|Description|
+|---|---|
+|Size in MB (string)|Memory limit hint for HTP context loading in MB. When set to a positive value, enables graph switching for large multi-graph contexts: graphs are loaded and unloaded on demand to stay within the memory budget. Defaults to "0" (disabled). Incompatible with shared EP contexts (`share_ep_contexts`). Only effective on HTP backend.|
+
 |`"enable_vtcm_backup_buffer_sharing"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
@@ -180,7 +188,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"soc_model"`|Description|
 |---|---|
-|Model number (string)|The SoC model number. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid values. Defaults to "0" (unknown).|
+|Model number (string)|The SoC model to target. Accepts a **numeric model ID** (e.g. `"69"`) or a **chip-family name string** (e.g. `"SM8750"`, case-insensitive) for a subset of well-known chips — note this list is not exhaustive and chips not recognised by name must use the numeric ID. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid numeric values. Defaults to `"0"` (unknown). Accepts a comma-separated list (e.g. `"43,69"`) to enable [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
 
 |`"htp_arch"`|Description|
 |---|---|
@@ -189,9 +197,12 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'69'|HTP v69.|
 |'73'|HTP v73.|
 |'75'|HTP v75.|
+|'79'|HTP v79.|
 |'81'|HTP v81.|
 
 Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
+
+`htp_arch` accepts a comma-separated list of architectures (e.g. `"73,81"`). Supplying more than one value enables [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.
 
 |`"device_id"`|Description|
 |---|---|
@@ -199,13 +210,17 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 |`"enable_htp_fp16_precision"`|Description [Example](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)|
 |---|---|
-|'0'|Disabled. Inference with fp32 precision if it's fp32 model.|
-|'1'|Default. Enable the float32 model to be inferenced with fp16 precision.|
+|'0'|Default. Does not add `QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION`. With QAIRT 2.35 or later, this does not select FP32 precision.|
+|'1'|Adds `QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION` with `QNN_PRECISION_FLOAT16`. With QAIRT 2.35 or later, this configuration no longer changes HTP execution precision.|
 
-|`"disable_htp_monolithic_lstm"`|Description|
+> **Note:** Starting with QAIRT 2.35, HTP floating-point operations use FP16 math on SoCs with floating-point model support, regardless of this setting. `htp_bf16_enable` configures BF16 separately on supported SoCs.
+
+|`"enable_htp_monolithic_lstm"`|Description|
 |---|---|
-|'0'|Default. HTP uses the monolithic LSTM graph configuration.|
-|'1'|Disable the monolithic LSTM graph configuration on HTP.|
+|'0'|Default. LSTM is expanded into per-timestep cells at the ORT layer.|
+|'1'|Run the monolithic LSTM kernel on HTP (single graph node).|
+
+Warning: Enabling HTP Monolithic LSTM may improve session creation time, but this improvement may come with a regression in inference performance.
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
@@ -277,6 +292,13 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |---|---|
 |Directory path (string)|Directory path for framework op trace JSON files. Only effective when `enable_framework_op_trace` is `'1'`. Defaults to the current working directory if not set. The directory is created automatically if it does not exist. If the directory cannot be created or written to (e.g. read-only mount, missing permissions), framework op tracing is disabled with a WARNING log and no trace file is produced. Trace files use the pattern `qnn_op_trace.json`.|
 
+**Schema migration note:** The `qnn_op_trace.json` schema moves the `compilation_target` object out of the document root and into a new `soc_traces` array. Single-SoC sessions emit exactly one entry; multi-SoC FCB sessions emit one entry per `(htp_arch, soc_model)` pair. `subgraph_traces` (the ONNX-to-QNN op mapping) stays at the document root because op-builder output is SoC-agnostic. A new `summary.total_socs` field reports the entry count. A top-level `"schema_version"` field (currently `2`) is bumped on every breaking schema change so consumers can branch on it.
+
+- Old (legacy): `j["compilation_target"]["htp_arch"]`
+- New: `j["soc_traces"][0]["compilation_target"]["htp_arch"]`
+
+Consumers that read the compilation target must update the JSON path. Consumers of `subgraph_traces`, `unsupported_nodes`, and `summary` are unaffected.
+
 |`"qnn_ir_backend_path"`|Description|
 |---|---|
 |Backend path (string)|Path to the QNN IR backend library. Defaults to 'libQnnIr.so' or 'QnnIr.dll'. Only effective when `dump_qnn_ir_dlc` is enabled.|
@@ -318,6 +340,167 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. Disabled.|
 |'1'|Compile the model and save the QNN context binary, but skip inference. `OnRunStart`, `OnRunEnd`, `CreateState`, and `SetDynamicOptions` are all no-ops. Useful for a compile-once/run-later workflow. Requires `ep.context_enable=1`; silently disabled with a warning if context cache is not enabled.|
 
+|`"enable_htp_prepare_and_load"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Compile the model and reload the context binary in the same session, enabling multi-PD inference without requiring a second session.|
+
+The `enable_htp_prepare_and_load` option performs AOT compilation and context loading within a single ORT session. This allows large models to bypass the single process-domain (PD) memory limit imposed by the JIT flow without requiring two separate sessions.
+
+**Behavior matrix:**
+
+|`ep.context_enable`|`enable_htp_prepare_and_load`|Behavior|
+|---|---|---|
+|0|0|Existing JIT flow (unchanged)|
+|1|0|Existing AOT flow (unchanged)|
+|0|1|**Path A:** Compile → reload from memory → infer. No artifact persisted.|
+|1|1|**Path B:** Compile → write `_ctx.onnx` + `.bin` to disk → reload → infer. Artifact persists for future reuse.|
+
+**Path A Provider Option:** `-C "ep.qnnexecutionprovider.enable_htp_prepare_and_load|1"`
+
+**Path B Provider Option:** `-C "ep.context_enable|1 ep.context_file_path|model_ctx.onnx ep.qnnexecutionprovider.enable_htp_prepare_and_load|1"`
+
+**Constraints:**
+- Mutually exclusive with `enable_htp_prepare_only`. Setting both to `'1'` raises an error.
+- Setting `enable_htp_prepare_and_load=1` with `ep.context_enable=0` AND an explicit `ep.context_file_path` raises an error (contradictory: "don't persist" + "here's where to persist").
+- If the input model is already a pre-compiled context model (`_ctx.onnx`), `enable_htp_prepare_and_load` is silently ignored with a warning — the model loads directly via the existing AOT path.
+
+|`"enable_htp_graph_splitting"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail. The number of sub-graph partitions is controlled by the `GPE_KWAY_PARTITIONS` environment variable.|
+
+|`"GPE_KWAY_PARTITIONS"`|Description|
+|---|---|
+| `8` | Default |
+| `N` | Split into N sub-graphs (must be ≥ 2) |
+
+|`"session.disable_cpu_ep_fallback"`|Description|
+|---|---|
+|'0'|Default. Unsupported operators fall back to the CPU EP.|
+|'1'|Disable CPU EP fallback. Returns an error if any operator cannot be handled by QNN EP. Set via `session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1")`.|
+
+|`"op_affinity"`|Description|
+|---|---|
+|Path to a JSON config file (string)|Pins specific ONNX op types to a backend. See [Op Affinity](#op-affinity) below. Not set by default.|
+
+#### Op Affinity
+
+The `op_affinity` option points at a JSON config file that pins ONNX op types to a single backend:
+
+```json
+{ "op_type": { "GroupQueryAttention": "HTP" } }
+```
+
+- Backend names are case-insensitive (`"HTP"` == `"htp"`).
+- A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
+- Pinning an op type to a backend other than the one the session is running on fails session creation, since heterogeneous execution is not supported — except a `"cpu"` pin, which is a legitimate way to opt an op out of QNN EP (falls back to the CPU EP without failing the session).
+- On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`. This applies to the legacy built-in QNN EP path (`-e qnn -i ...`); when registering QNN EP via the plugin-EP path (`--plugin_eps`/`--plugin_ep_options`), provider options are passed through generically and are not subject to the built-in QNN EP's key allowlist.
+
+### Flexible Context Binary (FCB) / multi-SoC EP context
+
+The Flexible Context Binary (FCB) feature packages one or more QNN context binaries into a single QNN DLC, so a single EPContext ONNX model can be deployed across multiple Snapdragon SoCs. It requires **QAIRT 2.48 or later (QNN API >= 2.37)**.
+
+Multi-SoC mode is enabled automatically when `soc_model` and/or `htp_arch` is given a comma-separated list of more than one value. In that case:
+
+- `soc_model` and `htp_arch` may each be given on their own; the other is then defaulted for every target SoC. If both are given as lists, they must contain the same number of values (one per target SoC), and `soc_model` takes priority if the two do not agree.
+- The following HTP backend options may each be given `0`, `1`, or `N` values (comma-separated), where `N` matches the number of SoCs. With `0` values the default is applied to every SoC; with `1` value it is duplicated across all SoCs; with `N` values each is applied to the corresponding SoC:
+  - `vtcm_mb`
+
+Constraints:
+
+- Supported only on **x86_64** hosts (offline preparation). On-device preparation will soon be supported in later QAIRT version.
+- Requires the EP context cache to be enabled (`ep.context_enable=1`). `enable_htp_prepare_only` is turned on automatically (preparation only, no inference).
+- Not supported together with shared EP contexts (`share_ep_contexts` / `stop_share_ep_contexts`).
+
+**Example (Python):**
+```python
+ep_options = {
+    "backend_type": "htp",
+    "htp_arch": "73,81",          # two target SoCs -> multi-SoC mode
+    "soc_model": "60,88",         # one SoC model per arch
+    "vtcm_mb": "8",               # single value duplicated to every SoC
+}
+# ep.context_enable must be set to 1; enable_htp_prepare_only is enabled automatically.
+```
+
+#### Stripping an FCB for deployment (`deploy_multi_soc_ep_context.py`)
+After an FCB is generated, you may want to **prune** the SoCs it targets — for example, to ship a smaller artifact that only covers the devices you actually support. The `deploy_multi_soc_ep_context.py` helper (shipped in the `onnxruntime-qnn` Python wheel) lists and removes the per-SoC HTP cache records inside the FCB, and keeps the accompanying ONNX model's compatibility metadata in sync.
+
+The script works on both EP context model layouts, selected by which input you pass:
+
+* **Non-embed mode** (`ep.context_embed_mode = "0"`, the default): the context binary is a standalone `*_qnn.bin` file alongside the ONNX model. Pass it via `--input_bin` (and `--input_onnx` for the metadata). The stripped binary is written to `--output_bin` and the updated model to `--output_onnx`; both inputs are left untouched. Pass `--inplace` to overwrite the inputs instead.
+* **Embed mode** (`ep.context_embed_mode = "1"`): the context binary is embedded inside the EP context node of the ONNX model. Omit `--input_bin` and pass the model via `--input_onnx`; the tool extracts the embedded binary to a temporary file, edits it, and re-embeds the result into `--output_onnx`. The input model is left untouched. Pass `--inplace` to overwrite `--input_onnx` instead.
+
+Run it as a module from an installed wheel:
+
+```bash
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context --input_bin model_ctx_qnn.bin --list
+```
+
+|Argument|Description|
+|---|---|
+|`--input_bin`|Path to a standalone context binary / EP-context file (**non-embed mode**). Omit it for an embed-mode model, in which case the embedded binary is read from `--input_onnx`.|
+|`--input_onnx`|Path to the input EP context ONNX model. **Required with `--remove_record`** so its `ep_compatibility_info.QNNExecutionProvider` metadata is kept in sync. In embed mode this is also the source of the embedded binary, so it is always required there.|
+|`-l`, `--list`|List every HTP cache record with its DSP architecture, SoC model and (first-graph) VTCM size.|
+|`-r`, `--remove_record`|Comma-separated HTP cache record name(s) to remove (e.g. `-r backend.metadata0,backend.metadata1`).|
+|`--output_onnx`|**Required with `--remove_record`** (both modes) unless `--inplace` is given. Destination path for the updated ONNX model. In embed mode the stripped binary is re-embedded into it; in non-embed mode it carries the updated metadata. The input `--input_onnx` is left untouched.|
+|`--output_bin`|**Required with `--remove_record` in non-embed mode** unless `--inplace` is given. Destination path for the stripped binary. The input `--input_bin` is left untouched.|
+|`--temp_bin`|*Embed mode only, optional.* Path to stage the extracted binary while it is edited. When omitted, an auto-generated temporary file is used. The file is removed when the tool finishes either way.|
+|`--inplace`|*Optional.* Overwrite the input model (and, in non-embed mode, the input binary) in place instead of writing to new paths. Mutually exclusive with `--output_onnx` / `--output_bin`.|
+
+**Listing the packaged SoCs:**
+
+```bash
+# Non-embed mode (standalone context binary)
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context --input_bin model_ctx_qnn.bin --list
+
+# Embed mode (context binary embedded in the ONNX model)
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context --input_onnx model_ctx.onnx --list
+```
+
+**Removing a SoC (non-embed mode)** — writes the pruned binary and updated model to new paths, leaving the inputs untouched:
+
+```bash
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_bin model_ctx_qnn.bin \
+    --input_onnx model_ctx.onnx \
+    --output_bin model_ctx_qnn.pruned.bin \
+    --output_onnx model_ctx.pruned.onnx \
+    -r backend.metadata0
+```
+
+**Removing a SoC (embed mode)** — extracts, edits, and re-embeds the binary into a new model:
+
+```bash
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_onnx model_ctx.onnx \
+    --output_onnx model_ctx.pruned.onnx \
+    -r backend.metadata0 \
+    --list
+```
+
+**Removing a SoC in place** — overwrite the inputs instead of writing new files (works in both modes):
+
+```bash
+# Non-embed mode: overwrites both model_ctx_qnn.bin and model_ctx.onnx
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_bin model_ctx_qnn.bin \
+    --input_onnx model_ctx.onnx \
+    --inplace \
+    -r backend.metadata0
+
+# Embed mode: overwrites model_ctx.onnx
+python -m onnxruntime_qnn.deploy_multi_soc_ep_context \
+    --input_onnx model_ctx.onnx \
+    --inplace \
+    -r backend.metadata0
+```
+
+> **Note**: `deploy_multi_soc_ep_context.py` depends on the `libDlModelToolsPy` extension from the QAIRT SDK. The `onnxruntime-qnn` wheel bundles it next to the script, so `python -m onnxruntime_qnn.deploy_multi_soc_ep_context` works out of the box. When running the script directly from a source checkout instead, the SDK's `lib/python/qti/aisw/dlc_utils/<platform>` directory must be on `PYTHONPATH`.
+
+> **Note**: Only **Python 3.12** is supported. The `onnxruntime-qnn` wheel bundles the `libDlModelToolsPy` extension (compiled for Python 3.12) only into the 3.12 wheel, and the script imports it directly. The script is thus not shipped in the wheels other than Python 3.12 one.
+
 ### Run Options
 
 Run options can be set dynamically at runtime using the ORT Run API. These options allow you to configure QNN EP behavior on a per-inference basis.
@@ -326,8 +509,9 @@ Run options can be set dynamically at runtime using the ORT Run API. These optio
 |---|---|
 |`"qnn.perf_mode"`|HTP performance mode for this inference run. Valid values: 'burst', 'balanced', 'default', 'high_performance', 'high_power_saver', 'low_balanced', 'low_power_saver', 'power_saver', 'extreme_power_saver', 'sustained_high_performance'. Overrides the EP provider option `htp_performance_mode` for this run.|
 |`"qnn.rpc_control_latency"`|RPC control latency in microseconds for this inference run. Overrides the EP provider option `rpc_control_latency` for this run.|
-|`"qnn.lora_config"`|LoRAv2 config file path. Format: `<graph name>;<adapter binary section path>`. See **LoRAv2 support** section for details.|
+|`"qnn.lora_config"`|LoRAv2 / LoRAv3 config file path. Format: `<graph name>;<adapter binary section path>`. See the **LoRA support** section for details.|
 |`"kvcache_rewind"`|Genie KV-cache reset. Set to `"0"` to reset the KV cache before the next inference (useful at the start of a new conversation). Set to `"1"` (default) to skip the reset. Only applies when using the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend).|
+|`"ep.dynamic.workload_type"`|EP workload type. `'Default'` resets to the default context priority. `'Efficient'` sets context priority to `low`, reducing resource usage at the cost of throughput. HTP backend only. Set via the `SetDynamicOptions` API.|
 
 **Example usage (Python):**
 ```python
@@ -375,9 +559,12 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:ArgMin||
 |ai.onnx:Asin||
 |ai.onnx:Atan||
+|ai.onnx:Attention|Opsets 23–24. 3D \[B,S,n·hs\] and 4D \[B,n,S,hs\] inputs. HTP: full decomposition for MHA, GQA/MQA, is\_causal, attn\_mask, softcap, KV cache, qk\_matmul\_output modes 0–3. GPU: native QNN\_OP\_GROUP\_QUERY\_ATTENTION when is\_causal=1 and no softcap/attn\_mask/qk\_output (covers MHA and GQA/MQA); decomposition otherwise. Static shapes only.|
 |ai.onnx:AveragePool||
+|ai.onnx:Bernoulli|CPU and HTP backends supported.|
 |ai.onnx:BatchNormalization|fp16 supported since 1.18.0|
 |ai.onnx:Cast||
+|ai.onnx:CastLike||
 |ai.onnx:Ceil||
 |ai.onnx:Clip|fp16 supported since 1.18.0|
 |ai.onnx:Concat||
@@ -407,6 +594,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
 |ai.onnx:GridSample||
+|ai.onnx:GRU|layout=0 (batch-first) only; fixed-length sequences; default activations (sigmoid/tanh); no clip; no initial hidden/cell state from ONNX|
 |ai.onnx:GroupNormalization||
 |ai.onnx:HardSigmoid||
 |ai.onnx:HardSwish||
@@ -414,6 +602,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
+|ai.onnx:IsInf|float32 and float16 inputs only; CPU backend only|
 |ai.onnx:IsNaN||
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
@@ -424,10 +613,12 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Log||
 |ai.onnx:LogSoftmax||
 |ai.onnx:LpNormalization|p == 2|
+|ai.onnx:LpPool|p=1 or p=2 only; rank-5 (3D pooling) requires GPU backend or HTP with bf16_mode=1|
 |ai.onnx:MatMul|Supported input data types on HTP backend: (uint8, uint8), (uint8, uint16), (uint16, uint8)|
 |ai.onnx:MatMulInteger|Supported exclusively via DynamicQuantizeLinear → MatMulInteger fusion pattern|
 |ai.onnx:Max||
 |ai.onnx:MaxPool||
+|ai.onnx:MaxRoiPool|rois must be a constant initializer|
 |ai.onnx:Mean||
 |ai.onnx:Min||
 |ai.onnx:Mod||
@@ -437,13 +628,16 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:NonZero||
 |ai.onnx:Not||
 |ai.onnx:Or||
+|ai.onnx:OneHot|depth and values must be constant initializers; indices must be int32, int64, or uint32|
 |ai.onnx:PRelu|fp16, int32 supported since 1.18.0|
 |ai.onnx:Pad||
 |ai.onnx:Pow||
+|ai.onnx:QLinearConv|All scale/zero-point inputs must be initializers; per-tensor activation/output quant; per-channel weight quant (1-D w_scale/w_zp) supported; input types int8 or uint8; optional int32 bias; 1D, 2D, and 3D convolution|
 |ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
 |ai.onnx:RandomNormalLike||
 |ai.onnx:RandomUniformLike||
+|ai.onnx:Range|All inputs (start, limit, delta) must be constant initializers; pre-computed host-side into a static tensor|
 |ai.onnx:Reciprocal||
 |ai.onnx:ReduceL2||
 |ai.onnx:ReduceLogSumExp|Decomposed into ReduceMax->Sub->Exp->ReduceSum->Log->Add. Quantized input not supported.|
@@ -455,13 +649,15 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Relu||
 |ai.onnx:RMSNormalization||
 |ai.onnx:Reshape||
-|ai.onnx:Resize||
+|ai.onnx:Resize|tf_half_pixel_for_nn coordinate_transformation_mode: only mode "nearest" with nearest_mode "floor" on rank-4 input is supported on HTP; other combinations fall back to CPU|
 |ai.onnx:RoiAlign||
 |ai.onnx:Round||
 |ai.onnx:RotaryEmbedding|HTP backend only|
 |ai.onnx:STFT||
 |ai.onnx:ScatterElements||
 |ai.onnx:ScatterND||
+|ai.onnx:Selu||
+|ai.onnx:Shape|start/end attributes supported (ONNX opset 15+); output is int64 (upcast from QNN int32); empty-slice (end <= start) not supported|
 |ai.onnx:Sigmoid||
 |ai.onnx:Sign||
 |ai.onnx:Sin||
@@ -483,13 +679,17 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Unsqueeze||
 |ai.onnx:Upsample||
 |ai.onnx:Where||
+|ai.onnx:Xor||
+|ai.onnx.ml:ArrayFeatureExtractor|Decomposed to `QNN_OP_GATHER` at axis=rank(X)-1. Supported X dtypes: float32, int32, int64. Scalar Y (rank-0 indices) not supported (CPU fallback).|
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft.MatMulNBits||
+|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
+|com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49|
+|com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
+|com.microsoft:RMSNormalization||
 |com.microsoft:QuickGelu||
-|com.microsoft:RotaryEmbedding|HTP backend only|
 |com.microsoft:SimplifiedLayerNormalization||
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
@@ -503,6 +703,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `DequantizeLinear → QuantizeLinear` | `QNN_OP_CONVERT` | Eliminates redundant re-quantization between compatible quantization schemes. Scalar scale/zero-point required. |
+| `DynamicQuantizeLinear → DequantizeLinear` | `QNN_OP_TRANSPOSE` (identity) | Fuses a quantize+dequantize round-trip into a pass-through when all three DQL outputs are consumed exclusively by a single DQ node and the DQ output is float32. |
 | `(non-DQ node) → Cast(→float) → QuantizeLinear` | `QNN_OP_CONVERT` | Fuses a cast-to-float followed by quantization when there is no preceding DQ node. |
 | `DynamicQuantizeLinear → ConvInteger → Cast → Mul → [Add]` | `QNN_OP_CONV_2D` / `QNN_OP_DEPTH_WISE_CONV_2D` | ConvInteger is supported exclusively via this fusion. Dynamic quantization + integer convolution pattern. Constant int8/uint8 weights required. |
 | `DynamicQuantizeLinear → MatMulInteger → Cast → Mul → [Add]` | `QNN_OP_MAT_MUL` | MatMulInteger is supported exclusively via this fusion. Dynamic quantization + integer matmul pattern. Constant rank-2 int8/uint8 weights required. |
@@ -519,9 +720,14 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | Pattern | Fused QNN op | Notes |
 |---|---|---|
 | `[Div/Mul(√2)] → Erf → [Mul(0.5) →] Add(1) → Mul → [Mul(0.5)]` | `QNN_OP_GELU` | Matches two common Gelu decomposition variants (ErfAdd and ErfMul). Surrounding DQ nodes are also handled. |
+| `Mul(x,x) → Mul(x²,x) → Mul(0.044715) → Add(x) → Mul(√(2/π)) → Tanh → Add(1) → Mul(x) → Mul(0.5)` | `QNN_OP_GELU` | Tanh-based GELU approximation. SingleNode (non-QDQ) only. The QNN GELU op uses the exact-erf definition; max substitution error is ~4.7e-4 over [-10, 10]. |
 | `HardSigmoid(α=1/6, β=0.5) → Mul` (shared input) | `QNN_OP_ELEMENT_WISE_NEURON` (HardSwish) | Both inputs to Mul must originate from the same source tensor. |
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
+| `ReduceL2 → Add(ε) → Div(x, .)` | `QNN_OP_L2_NORM` | Avoids fp16 overflow in the ReduceL2→Sqrt decomposition by using HTP's native L2Norm kernel. Epsilon must be a constant scalar. |
+| `Reshape(ND→2D) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Input Reshape must not be shared; Gemm: transA=0, transB=0, alpha=1, beta=1; weight must be a constant; input rank ≤ 4. CPU and HTP backends only. |
+| `Reshape(ND→2D) → Gemm → Reshape(2D→MD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 3-node variant; quantized weights supported. |
+| `Reshape(ND→2D) → Gemm → Reshape(2D→MD) → Reshape(MD→PD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 4-node variant; two consecutive output Reshapes. |
 
 ### Layout and reshape fusions
 
@@ -532,6 +738,8 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(4D→6D) → Einsum(transpose-equivalent) → Reshape(6D→4D)` | `QNN_OP_DEPTH_TO_SPACE + QNN_OP_TRANSPOSE` | Matches Einsum used as a rank-6 permutation with perm `[0,5,1,3,2,4]` (DCR DepthToSpace). |
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
+| `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
+| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or noop `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits identity Reshape if composed perm is identity, or a single Transpose otherwise. |
 
 ### Miscellaneous fusions
 
@@ -992,6 +1200,46 @@ g_ort->AddSessionConfigEntry(session_options, kOrtSessionOptionEpContextEmbedMod
 options.add_session_config_entry("ep.context_embed_mode", "1")
 ```
 
+### At-rest encryption of the context binary (ORT API v28+)
+
+By default the QNN context binary is written to / read from disk in plaintext (as an external
+file when `ep.context_embed_mode` is `"0"`, or embedded in the EPContext model when `"1"`). ORT
+API v28 adds a write/read callback pair so an application can encrypt the binary before it is
+persisted and decrypt it before QNN consumes it, without either version of ONNX Runtime having
+any built-in cipher.
+
+The callback-based encryption/decryption path described here applies only when
+`ep.context_embed_mode` is `"0"`. When `ep.context_embed_mode` is `"1"` (embedded), the context
+binary is stored within the EPContext model and applications should use ONNX Runtime model
+protection mechanisms (for example, `SetOutputModelWriteFunc`) to protect the generated ONNX
+model. If no callback is registered while `ep.context_embed_mode` is `"0"`, the EP uses the
+legacy plaintext behavior.
+
+- **Write callback** (`SetEpContextDataWriteFunc`) is set on `Ort::ModelCompilationOptions`
+  during a compile session. The EP hands the plaintext context bytes to the callback instead of
+  writing them to disk; the callback is responsible for encrypting and persisting them itself.
+- **Read callback** (`SetEpContextDataReadFunc`) is set on `Ort::SessionOptions` for a later
+  inference session. The EP asks the callback for the plaintext bytes (by name) instead of
+  reading the on-disk file directly; the callback decrypts and returns them.
+- Registering **no callback** is fully backward compatible — the EP falls back to the original
+  plaintext disk read/write, unchanged.
+- File-mapped weights and this feature are mutually exclusive for a given session: registering a
+  read callback disables file mapping for that session, since file mapping requires reading the
+  on-disk bytes directly.
+
+**Scope — what is (and isn't) covered:**
+
+- Only the standard EPContext artifact is encrypted: the external `_qnn.bin` (or the
+  `EP_CACHE_CONTEXT`-referenced buffer) and the context-binary-list buffers used by multi-SoC /
+  Flexible Context Binary compilation.
+- The QNN IR-serializer `.dlc` artifact (written when the QNN IR serializer backend is used) and
+  the DLC consumed by the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend)
+  node's `DlcConfig_create` are written to and read from disk directly and are **not** covered by
+  these callbacks. An application combining Genie or the IR serializer backend with an encrypting
+  write callback will still get a plaintext `.dlc` on disk.
+- The cipher itself is entirely the application's responsibility — ORT and the QNN EP only provide
+  the callback plumbing.
+
 ## Parallel Graph Preparation
 For general context, please read the [QNN context binary cache feature](#qnn-context-binary-cache-feature) section above.
 
@@ -1336,7 +1584,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 
 ## Error handling
 ### HTP SubSystem Restart - [SSR](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#subsystem-restart-ssr-)
-QNN EP returns StatusCode::ENGINE_ERROR regarding QNN HTP SSR issue. Uppper level framework/application should recreate Onnxruntime session if this error detected during session run.
+When an unrecoverable SSR (NPU crash) is detected, QNN EP returns `ORT_DEVICE_RESET` on ONNX Runtime 1.28.0+, or `ORT_ENGINE_ERROR` (`StatusCode::ENGINE_ERROR`) on older ONNX Runtime versions. Either way, the upper level framework/application should recreate the ONNX Runtime session if this error is detected during session run.
 
 
 ## Add new operator support in QNN EP
@@ -1373,7 +1621,7 @@ Once registered, UDOs integrate transparently into model conversion and runtime 
 
 **HTP UDO is not supported on Windows.** `qnn-op-package-generator` and the Hexagon toolchain only target HTP on Linux; the `x86_64-windows-msvc` host platform supports the CPU backend only. On Windows, CPU UDO must be generated with the `--gen_cmakelists` flag (see Step 2), which produces a `CMakeLists.txt`-based build instead of the Linux Makefile flow.
 
-**The shipped UDO unit test runs on Linux x86_64 only.** `qnn-op-package-generator` requires Python 3.10, while the Windows CI environment ships with Python 3.11+, so the end-to-end UDO build/run loop is currently gated on Linux x86_64. Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
+**The shipped UDO unit test runs on Linux x86_64 only.** The Linux x86_64 CI build uses Python 3.12, and `qnn-op-package-generator` supports Python 3.10 and 3.12 via version-tagged extensions in the QAIRT SDK. Windows is excluded because the Hexagon toolchain only targets HTP on Linux; Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
 
 ### UDO Workflow
 
@@ -1519,12 +1767,98 @@ After the override, the model works like this:
 - Op4’s output is just u16 (not converted).
 - Op5’s output is converted from u16 to u8. Op6 consumes the u8 type.
 
-## LoRAv2 support
-Currently, only pre-compiled models with EPContext nodes are supported. The  example script for reference [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). After applying the model LoRAv2 using the [QAIRT SDK](https://docs.qualcomm.com/doc/80-63442-10/topic/general_tutorials.html#lora-low-rank-adaptation), a main qnn context binary and several adapter binary sections will be generated. We use the LoRAv2 config and place it into RunOptions for inference.
+## LoRA support
 
-* The format of the LoRAv2 config:
-  * graph name: QNN graph in QNN pre-built context binary.
-  * adapter binary section path: binary section generated by qnn-context-binary-generator
+LoRA (Low-Rank Adaptation) lets you fine-tune and switch adapter weights on top of a pre-compiled base model without reloading it. Only pre-compiled models with EPContext nodes are supported.
+
+QNN EP supports two generations:
+
+| | LoRAv2 | LoRAv3 |
+|---|---|---|
+| Adapters per run | 1 | 1 or multiple (concurrency) |
+| Adapter constraints | Same architecture, max rank, precision | Incompatible adapters supported |
+| Encoding update | All encodings updated per switch | Configurable: none / adapter-only / all / float-only |
+| Alpha | Scalar | Vector (`lora_alpha` graph input) |
+| Optimization modes | — | No-Updateable, All-Updateable, Float-Only, Hot Switch, Grouped LoRA |
+| QAIRT preparation | [LoRA v2](https://docs.qualcomm.com/doc/80-63442-10/topic/lora_v2_0_overview.html) | [LoRA v3](https://docs.qualcomm.com/doc/80-63442-10/topic/lora_v3_overview.html) |
+
+### Offline preparation
+
+Use the QAIRT SDK to build the base model and adapter binary sections. The exact tool chain differs between versions — see the [QAIRT LoRA tutorials](https://docs.qualcomm.com/doc/80-63442-10/topic/general_tutorials.html#lora-low-rank-adaptation) for the step-by-step guide for each. Both versions produce the same artifacts that ORT needs:
+* A main QNN context binary (e.g. `<graph>_quantized.serialized.bin`).
+* One adapter binary section per use case (`<graph>_<adapter>.bin`), plus a `<graph>_default_adapter.bin` for the no-adapter (base) state.
+
+Wrap the main context binary in an EPContext ONNX model so QNN EP can load it, using the reference script [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). The script needs the graph's input/output metadata, extracted from the context binary with the QAIRT `qnn-context-binary-utility` tool (`--qnn_json`). The generated wrapper ONNX names its EPContext node after the QNN graph; that name is the graph name used in `qnn.lora_config` at runtime.
+
+### Runtime usage
+
+The `qnn.lora_config` run-option format is identical for both versions — one line per file:
+
 ```
 <graph name>;<adapter binary section path>
 ```
+
+* *graph name*: the QNN graph name emitted by the offline tools, not the ONNX file name.
+* *adapter binary section path*: the `<graph>_<adapter>.bin` from `qnn-context-binary-generator`.
+
+To switch adapters, pass a different `qnn.lora_config` file to each `session.run(...)` via `RunOptions`. The base model does not need to be reloaded.
+
+**LoRAv3 model input — executor usage.** LoRAv3 models may expose a vector `lora_alpha` graph input that scales each adapter's contribution. This is a model input, not a `qnn.lora_config` setting or a general `--lora-alpha` ORT executor option. ORT applications must provide it through the normal input feed passed to `session.run()`; command-line executors such as `onnxruntime_perf_test` must use their normal model-input mechanism. The dtype depends on which wrapper ONNX you load:
+* `*_qnn_ctx_fp32_io.onnx` (recommended) — session input is float32; a `QuantizeLinear` node quantizes on the fly. Feed real values in `[0.0, 1.0]`.
+* `*_qnn_ctx.onnx` (quantized IO) — session input matches the QNN graph directly (e.g. `uint16`). For each adapter slot, "off" means that adapter contributes nothing to the output (`lora_alpha = 0`), while "on" means that adapter contributes at full scale (`lora_alpha = 1.0`). Feed the corresponding pre-quantized integer codes: `0` means off and `numpy.iinfo(dtype).max` means on, where `numpy.iinfo(dtype).max` is the largest value representable by the input integer dtype (for example, `65535` for `uint16`). The encoding scale is not exposed via ORT, so floating-point alpha values cannot be converted automatically for this wrapper.
+
+**Sample script usage.** [qcom/samples/test_lora.py](../../qcom/samples/test_lora.py) adds the `--lora-alpha` option for setting this model input and the `--input-dir` option for loading real inputs. It accepts ONNX test-data `input_*.pb` or translates a QNN net-run directory (`input_list.txt` plus `.raw` files) into the ORT input feed. These are conveniences provided by the sample script; those files and command-line options are not consumed directly by ORT.
+
+With zero token embeddings and `lora_alpha=0`, the LoRA branch contributes nothing, so every adapter produces identical output. Provide real model inputs and a non-zero `lora_alpha` to observe adapter differences.
+
+**Disable ORT's CPU-EP fallback** after session creation for all EPContext workflows:
+```python
+session.disable_fallback()
+```
+Without this, any QNN EP error causes ORT to reset the session to CPU providers — which then fails because CPU cannot run EPContext, corrupting the session. See [`onnxruntime_inference_collection.py`](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/onnxruntime_inference_collection.py) (`disable_fallback`). Do **not** use the `session.disable_cpu_ep_fallback` SessionOptions entry — that blocks CPU entirely and breaks the `*_fp32_io.onnx` wrapper, whose QuantizeLinear/DequantizeLinear nodes need CPU as a partition fallback at session init.
+
+### LoRAv3 optimization mode support
+
+LoRAv3 offers configurable [optimization modes](https://docs.qualcomm.com/doc/80-63442-10/topic/lora_v3_optimizations.html). QNN EP support:
+
+| Optimization mode | Runtime mechanism | QNN EP support |
+|---|---|---|
+| Adapter-Only (default) | `applyBinarySection`; only LoRA branch encodings update | Supported |
+| No-Updateable | `applyBinarySection`; weights only, no encoding update | Supported |
+| Grouped LoRA | *(no flag change)* | `applyBinarySection`, order-sensitive; cross-group requires encodings-only section then weights-only section | Intra-group: supported. Cross-group: two sequential `session.run()` calls (step 1 applies the encodings section — expect QNN error 6000 on `graph.execute`, the section IS applied; step 2 applies weights, output is the real result). See `test_lora.py --grouped-switch`. |
+| All-Updateable | `applyBinarySection`; all encodings update (LoRAv2 default behaviour) | Supported |
+| Float-Only | `applyBinarySection`; floating-point model, no quantization encodings | Supported |
+| Hot Switch | No binary section; select adapter by setting `lora_alpha` values at execution | Supported — do not pass `qnn.lora_config`; use `--hot-switch` in `test_lora.py` |
+
+### Sample
+
+See [qcom/samples/test_lora.py](../../qcom/samples/test_lora.py) for a runnable example covering all supported modes and both real-input layouts:
+
+```
+# Base model (no adapter):
+python test_lora.py --onnx model_ctx.onnx
+
+# One adapter via a pre-written lora config file (<graph name>;<bin path>):
+python test_lora.py --onnx model_ctx.onnx --lora-config configs/elementary.txt
+
+# Sweep every *.txt config in a directory (with a baseline no-adapter run first):
+python test_lora.py --onnx model_ctx.onnx --sweep-configs configs/
+
+# One adapter directly by .bin path (graph name auto-detected from EPContext):
+python test_lora.py --onnx model_ctx.onnx --adapter ctx_output/model_elementary.bin
+
+# Sweep every adapter .bin in a directory (excludes the main *.serialized.bin):
+python test_lora.py --onnx model_ctx.onnx --sweep-adapters ctx_output/
+
+# Feed real inputs so adapters produce different outputs (LoRAv3):
+python test_lora.py --onnx model_ctx.onnx --sweep-configs configs/ \
+    --input-dir test_data_set_0/ --lora-alpha 1.0 0.0
+
+# Hot Switch: no binary section — one-hot sweep across lora_alpha (LoRAv3):
+python test_lora.py --onnx model_ctx.onnx --hot-switch
+
+# Grouped LoRA cross-group switch — two-step per adapter (LoRAv3):
+python test_lora.py --onnx model_ctx.onnx --grouped-switch configs_grouped/
+```
+
+Use `*_qnn_ctx_fp32_io.onnx` to pass real-valued `--lora-alpha` in `[0.0, 1.0]`. See the script header for the full flag reference.

@@ -9,12 +9,13 @@
 #include <unordered_set>
 #include <vector>
 
+#include "HTP/QnnHtpDeviceConfigShared.h"
 #include "nlohmann/json.hpp"
-#include "QnnInterface.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -23,6 +24,8 @@ namespace qnn {
 // Forward declarations
 class BF16ConversionGuard;
 class OpTraceCollector;
+// Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
+class QnnBackendManager;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -39,6 +42,8 @@ struct ModelSettings {
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
+  bool enable_htp_monolithic_lstm = false;
+  OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 
 class QnnModelWrapper {
@@ -49,39 +54,20 @@ class QnnModelWrapper {
   QnnModelWrapper(const OrtGraph& ort_graph,
                   const ApiPtrs& api_ptrs,
                   const Ort::Logger& logger,
-                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                  const Qnn_BackendHandle_t& backend_handle,
-                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
-                  const Qnn_BackendHandle_t& validator_backend_handle,
+                  const QnnBackendManager& qnn_backend_manager,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
-                  QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
-                  OpTraceCollector* op_trace_collector = nullptr)
-      : ort_graph_(ort_graph),
-        logger_(logger),
-        qnn_interface_(qnn_interface),
-        backend_handle_(backend_handle),
-        qnn_validator_interface_(qnn_validator_interface),
-        validator_backend_handle_(validator_backend_handle),
-        graph_inputs_(graph_inputs),
-        graph_outputs_(graph_outputs),
-        qnn_backend_type_(qnn_backend_type),
-        model_settings_(model_settings),
-        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
-        tensor_name_overrides_(tensor_name_overrides),
-        op_trace_collector_(op_trace_collector) {
-    // Invariant: validator interface and handle must both be set or both be null.
-    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
-    assert((validator_backend_handle == nullptr) ==
-           (qnn_validator_interface.backendValidateOpConfig == nullptr));
-  }
+                  OpTraceCollector* op_trace_collector = nullptr,
+                  bool is_post_layout_transform = false);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
+
+  QnnHtpDevice_Arch_t GetHtpArch() const;
 
   bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
                       const std::string& graph_name,
@@ -385,7 +371,9 @@ class QnnModelWrapper {
                                     std::vector<uint8_t>& unpacked_tensor,
                                     const bool unpack_sub_byte_to_8_bit = true) const;
 
-  QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
+  QnnBackendType GetQnnBackendType() const;
+
+  bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
 
   const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
@@ -542,8 +530,9 @@ class QnnModelWrapper {
 
   // BF16 conversion helper methods
   bool IsBF16ConversionEnabled() const {
+    QnnBackendType qnn_backend_type = GetQnnBackendType();
     return model_settings_.htp_bf16_enable &&
-           (qnn_backend_type_ == QnnBackendType::HTP || qnn_backend_type_ == QnnBackendType::SERIALIZER);
+           (qnn_backend_type == QnnBackendType::HTP || qnn_backend_type == QnnBackendType::SERIALIZER);
   }
 
   bool ProcessBF16InputConversion(const std::string& qnn_node_name,
@@ -570,14 +559,15 @@ class QnnModelWrapper {
 
   bool ProcessBF16Conversions(std::vector<QnnOpProperty>& final_ops);
 
+  // QNN requires node names to be unique within a graph. Reserve names here,
+  // where every composed QNN node is collected.
+  std::string MakeUniqueQnnNodeName(const std::string& requested_name);
+
   const std::string* GetTensorNameOverride(const std::string& internal) const;
 
   const OrtGraph& ort_graph_;
   const Ort::Logger& logger_;
-  const QNN_INTERFACE_VER_TYPE& qnn_interface_;
-  const Qnn_BackendHandle_t& backend_handle_;
-  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
-  const Qnn_BackendHandle_t& validator_backend_handle_;
+  const QnnBackendManager& qnn_backend_manager_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`
@@ -590,12 +580,12 @@ class QnnModelWrapper {
   // All QnnParamWrapper for the graph
   std::unordered_map<std::string, QnnParamWrapper> model_params_map_;
   std::vector<QnnOpProperty> qnn_op_property_list_;
+  std::unordered_set<std::string> qnn_node_names_;
   // <tensor_name, qnn_tensor_id> -- stores the QNN-assigned ID once the tensor is created
   // it includes normal qnn_tensors and qnn_tensors inside param_tensors
   std::unordered_map<std::string, uint32_t> qnn_tensor_id_map_;
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
-  QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
   const ApiPtrs api_ptrs_;
@@ -615,6 +605,9 @@ class QnnModelWrapper {
   // QnnModel::ComposeGraph (stack-allocated unique_ptr).
   // Null when tracing is disabled.
   OpTraceCollector* op_trace_collector_ = nullptr;
+
+  // A flag for model wrapper users (e.g., op builders, node group fusions) to know whether pre- or post-layout transform.
+  bool is_post_layout_transform_ = false;
 };  // QnnModelWrapper
 
 template <typename T>

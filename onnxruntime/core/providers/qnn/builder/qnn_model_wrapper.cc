@@ -10,13 +10,50 @@
 #include <utility>
 #include <vector>
 
+#include "QnnInterface.h"
+
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
+                                 const ApiPtrs& api_ptrs,
+                                 const Ort::Logger& logger,
+                                 const QnnBackendManager& qnn_backend_manager,
+                                 const GraphInputOutputInfo& graph_inputs,
+                                 const GraphInputOutputInfo& graph_outputs,
+                                 const ModelSettings& model_settings,
+                                 std::unordered_map<std::string, std::string>* tensor_name_overrides,
+                                 OpTraceCollector* op_trace_collector,
+                                 bool is_post_layout_transform)
+    : ort_graph_(ort_graph),
+      logger_(logger),
+      qnn_backend_manager_(qnn_backend_manager),
+      graph_inputs_(graph_inputs),
+      graph_outputs_(graph_outputs),
+      model_settings_(model_settings),
+      api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
+      tensor_name_overrides_(tensor_name_overrides),
+      op_trace_collector_(op_trace_collector),
+      is_post_layout_transform_(is_post_layout_transform) {
+  // Invariant: validator interface and handle must both be set or both be null.
+  // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
+  assert((qnn_backend_manager_.GetQnnValidatorBackendHandle() == nullptr) ==
+         (qnn_backend_manager_.GetQnnValidatorInterface().backendValidateOpConfig == nullptr));
+}
+
+QnnHtpDevice_Arch_t QnnModelWrapper::GetHtpArch() const {
+  return qnn_backend_manager_.GetHtpArch();
+}
+
+QnnBackendType QnnModelWrapper::GetQnnBackendType() const {
+  return qnn_backend_manager_.GetQnnBackendType();
+}
 
 bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
                                      const std::string& graph_name,
@@ -35,13 +72,14 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
     return false;
   }
 
-  auto rt = qnn_interface_.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
+  const auto& qnn_interface = qnn_backend_manager_.GetQnnInterface();
+  auto rt = qnn_interface.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-    rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
+    rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
                   ("Failed to create Qnn graph: " + graph_name + ". " +
-                   utils::FormatQnnError(qnn_interface_, rt))
+                   utils::FormatQnnError(qnn_interface, rt))
                       .c_str());
       return false;
     }
@@ -188,7 +226,11 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
         it->second.SetResolvedTensorName(*name);
       }
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
+      auto rt = it->second.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
+                                                graph_,
+                                                qnn_node_name,
+                                                qnn_tensor_id_map_,
+                                                error_string);
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -215,7 +257,11 @@ bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
     if (!do_op_validation) {
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
+      auto rt = it->second.CreateQnnGraphParam(qnn_backend_manager_.GetQnnInterface(),
+                                               graph_,
+                                               qnn_node_name,
+                                               qnn_tensor_id_map_,
+                                               error_string);
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -248,12 +294,16 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
 
 Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
   bool ok;
-  if (validator_backend_handle_ != nullptr) {
+  if (qnn_backend_manager_.GetQnnValidatorBackendHandle() != nullptr) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
 
-    ok = op_config.QnnGraphOpValidation(qnn_validator_interface_, validator_backend_handle_, error_msg);
+    ok = op_config.QnnGraphOpValidation(qnn_backend_manager_.GetQnnValidatorInterface(),
+                                        qnn_backend_manager_.GetQnnValidatorBackendHandle(),
+                                        error_msg);
   } else {
-    ok = op_config.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+    ok = op_config.QnnGraphOpValidation(qnn_backend_manager_.GetQnnInterface(),
+                                        qnn_backend_manager_.GetQnnBackendHandle(),
+                                        error_msg);
   }
   RETURN_IF_NOT(ok, error_msg.c_str());
   return Ort::Status();
@@ -306,7 +356,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("BF16: Adding Cast op " + input_name + " -> " + cast_output_name).c_str());
 
-        QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+        QnnOpProperty cast_op(MakeUniqueQnnNodeName(cast_output_name),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW,
+                              QNN_OP_CAST,
                               std::vector<std::string>{input_name},
                               std::vector<std::string>{cast_output_name},
                               std::vector<std::string>{});
@@ -328,7 +380,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("BF16: Adding Cast op for static tensor " + input_name + " -> " + cast_output_name).c_str());
-        QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+        QnnOpProperty cast_op(MakeUniqueQnnNodeName(cast_output_name),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW,
+                              QNN_OP_CAST,
                               std::vector<std::string>{input_name},
                               std::vector<std::string>{cast_output_name},
                               std::vector<std::string>{});
@@ -513,12 +567,13 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     return validation_status.IsOK();
   } else {
     // Standard execution - just add the node to the op list
-    QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
+    const std::string unique_node_name = MakeUniqueQnnNodeName(qnn_node_name);
+    QnnOpProperty qnn_op(unique_node_name, package_name, qnn_node_type,
                          std::move(input_names), std::move(output_names), std::move(param_tensor_names));
     qnn_op_property_list_.push_back(std::move(qnn_op));
 
     if (op_trace_collector_) {
-      op_trace_collector_->RecordOpMapping(qnn_node_name, qnn_node_type,
+      op_trace_collector_->RecordOpMapping(unique_node_name, qnn_node_type,
                                            qnn_op_property_list_.back().GetOutputNames());
     }
 
@@ -575,7 +630,7 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
                 ("[BF16] Adding " + std::to_string(graph_output_cast_ops.size()) + "output cast operations").c_str());
     for (size_t i = 0; i < graph_output_cast_ops.size(); ++i) {
       const auto& [bf16_name, fp32_name] = graph_output_cast_ops[i];
-      std::string cast_node_name = bf16_name;
+      std::string cast_node_name = MakeUniqueQnnNodeName(bf16_name);
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_VERBOSE,
                   ("[BF16] Adding output Cast op: " + cast_node_name + " (" + bf16_name + " -> " + fp32_name + ")")
@@ -600,6 +655,25 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
   }
 
   return true;
+}
+
+std::string QnnModelWrapper::MakeUniqueQnnNodeName(const std::string& requested_name) {
+  if (qnn_node_names_.insert(requested_name).second) {
+    return requested_name;
+  }
+
+  // requested_name already occupies one entry, so one suffix in this range is free.
+  const size_t max_suffix = qnn_node_names_.size() + 1;
+  for (size_t suffix = 2; suffix <= max_suffix; ++suffix) {
+    std::string unique_name = requested_name + "_" + std::to_string(suffix);
+    if (qnn_node_names_.insert(unique_name).second) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Renamed duplicate QNN node " + requested_name + " to " + unique_name).c_str());
+      return unique_name;
+    }
+  }
+
+  ORT_CXX_API_THROW("Failed to allocate a unique QNN node name.", ORT_EP_FAIL);
 }
 
 // Register graph inputs/outputs in ONNX declaration order. This ensures DLC
@@ -628,7 +702,11 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
       }
 
       std::string error;
-      if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, io_type, qnn_tensor_id_map_, error)) {
+      if (!it->second.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
+                                           graph_,
+                                           io_type,
+                                           qnn_tensor_id_map_,
+                                           error)) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
                     (std::string("Failed to pre-register ") + io_type + ": " + name + ". " + error).c_str());
         return false;
@@ -693,7 +771,7 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
-    bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_interface_, graph_, error_msg);
+    bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_backend_manager_.GetQnnInterface(), graph_, error_msg);
     if (!rt) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_msg.c_str());
       return false;
@@ -858,7 +936,7 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   RETURN_IF_ERROR(utils::GetQnnDataType(tensor.quant_param.has_value(),
                                         tensor.type,
                                         tensor_info.qnn_data_type,
-                                        qnn_backend_type_));
+                                        GetQnnBackendType()));
 
   // Fill in shape.
   RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");

@@ -20,6 +20,11 @@
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
+#include "qnn_ep_min_ort_api_version.h"
+
+#ifdef _WIN32
+#include "core/providers/qnn/qnn_external_resource_importer.h"
+#endif
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
@@ -86,6 +91,12 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
+#ifdef _WIN32
+  CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
+#else
+  CreateExternalResourceImporterForDevice = nullptr;
+#endif
+
   // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
@@ -98,6 +109,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
                                              &mem_info);
   if (status != nullptr) {
     ort_api.ReleaseMemoryInfo(mem_info);
+    ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }
@@ -190,7 +202,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
-      // Triggers: WoS without DXCore enumeration (Makena), or Qualcomm Linux/Android arm64.
+      // Triggers: WoS without DXCore enumeration (Makena), Qualcomm Linux arm64 (/dev/fastrpc-cdsp*),
+      // or Qualcomm Android arm64 (ro.soc.manufacturer == QTI).
       OrtHardwareDevice* undetected_npu_hw_device = nullptr;
       RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
       factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
@@ -501,6 +514,41 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   return nullptr;
 }
 
+// External resource importer from D3D12
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImpl(
+    OrtEpFactory* this_ptr,
+    const OrtEpDevice* /*ep_device*/,
+    OrtExternalResourceImporterImpl** out_importer) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+  if (out_importer == nullptr) {
+    return factory->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "out_importer cannot be nullptr");
+  }
+
+  *out_importer = nullptr;
+
+#ifdef _WIN32
+  // Since CreateExternalResourceImporterForDeviceImpl doesn't take memory_device
+  // as a parameter (unlike CreateSyncStreamForDeviceImpl), and we don't have direct API
+  // to extract device ID from OrtEpDevice, we currently use 0.
+  // In the future, we could extract device ID from ep_device using OrtApi::EpDevice_MemoryInfo
+  // and then query the resulting OrtMemoryInfo for device ID.
+  int device_id = 0;
+
+  // Create the external resource importer
+  try {
+    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
+  } catch (...) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
+  }
+
+  return nullptr;
+#else
+  return factory->ort_api.CreateStatus(
+      ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
+#endif
+}
+
 }  // namespace onnxruntime
 
 extern "C" {
@@ -517,10 +565,11 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return nullptr;
   }
 
-  // kMinOrtApiVersion must be at least the ORT API version that introduced
-  // the newest ORT API method this EP calls. Below this floor, GetApi()
-  // returns a function table missing members the EP would dereference.
-  constexpr uint32_t kMinOrtApiVersion = 24;
+  // kMinOrtApiVersion is computed at build time by
+  // qcom/scripts/all/compute_min_ort_api_version.py from \since annotations
+  // on every ORT API method this EP calls. Below this floor, GetApi() returns
+  // a function table that lacks members the EP would dereference.
+  constexpr uint32_t kMinOrtApiVersion = QNN_EP_MIN_ORT_API_VERSION;
   static_assert(kMinOrtApiVersion <= ORT_API_VERSION,
                 "kMinOrtApiVersion must not exceed ORT_API_VERSION");
 

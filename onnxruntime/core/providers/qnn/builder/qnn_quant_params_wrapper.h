@@ -121,6 +121,11 @@ class QnnQuantParamsWrapper {
             params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
   }
 
+  // Returns the number of per-channel scale entries stored in this wrapper.
+  // Valid for LPBQ (BLOCKWISE_EXPANSION) and per-channel (AXIS_SCALE_OFFSET / BW_AXIS_SCALE_OFFSET)
+  // encodings. Returns 0 for per-tensor or unquantized encodings.
+  uint32_t GetPerChannelScalesSize() const { return per_channel_scales_size_; }
+
   // Get a copy of scales. Works for both per-tensor and per-channel.
   Ort::Status GetScales(/*out*/ std::vector<float>& scales) const;
 

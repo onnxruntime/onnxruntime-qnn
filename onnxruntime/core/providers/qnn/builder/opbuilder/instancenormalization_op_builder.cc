@@ -236,7 +236,8 @@ Ort::Status InstanceNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModel
                                                 GetQnnOpType(node_unit.OpType()),
                                                 std::move(input_names),
                                                 {op_output_name},
-                                                std::move(param_tensor_names)),
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
                 "Failed to add node.");
 
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);

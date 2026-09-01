@@ -170,6 +170,10 @@ class Serializer {
   QNN_SYSTEM_INTERFACE_VER_TYPE qnn_system_interface_;
   bool tracelogging_provider_ep_enabled_ = false;
   std::ofstream outfile_;
+  // Whether the CSV rows include the trailing "ONNX Source Ops" column. Normally driven by
+  // profiling_info_.op_trace_lookup, but when appending to an existing CSV it is reconciled to
+  // that file's existing header so rows never desync from the header across sessions.
+  bool emit_onnx_sources_column_ = false;
 };
 
 }  // namespace profile

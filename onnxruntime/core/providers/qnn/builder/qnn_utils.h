@@ -33,8 +33,17 @@ namespace onnxruntime {
 namespace qnn {
 class QnnOpConfigWrapper;
 class QnnModelWrapper;
+class QnnQuantParamsWrapper;
 
 namespace utils {
+
+template <typename T>
+inline bool IsCompatibleFcBiasShape(const std::vector<T>& bias_shape, T output_channels) {
+  return (bias_shape.empty() && output_channels == 1) ||
+         (bias_shape.size() == 1 && bias_shape[0] == output_channels) ||
+         (bias_shape.size() == 2 && bias_shape[0] == 1 && bias_shape[1] == output_channels);
+}
+
 /**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
@@ -113,6 +122,9 @@ class QnnJSONGraph {
   std::unordered_set<std::string> seen_op_types_;  // Tracks unique operator types.
 };
 
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type);
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type);
+
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
@@ -129,6 +141,12 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
                            Qnn_DataType_t& tensor_data_type,
                            QnnBackendType backend_type = QnnBackendType::CPU);
+
+// Returns true if the QNN data type is a 16-bit fixed-point quantized type.
+inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
+}
 
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
@@ -244,6 +262,15 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
                                  gsl::span<const float> scales, gsl::span<const int32_t> offsets,
                                  /*out*/ gsl::span<float> data, Qnn_DataType_t data_type,
                                  std::optional<int64_t> axis = std::nullopt);
+
+// Recovers the true two's-complement value of sub-byte data that UnpackInitializerData() expanded
+// to one byte per element with the unused high bits masked off (UnpackInt4ToInt8 / UnpackInt2ToInt8
+// mask to work around a QNN INT4 accuracy bug; that mask must stay). Consumers that read those
+// bytes as plain integers need this: DequantizePerChannel is told SFIXED_POINT_8, since
+// CreateMapQuantize collapses INT4 into it on non-GPU backends, so a negative 4-bit value would
+// read back as q + 16. UINT4/UINT2 are never masked and are left alone.
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes);
 
 Ort::Status Quantize(const double double_value,
                      const float scale,
@@ -496,6 +523,31 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   return Ort::Status();
 }
 
+// Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
+// (right-aligned dimensions; a dim of 1 broadcasts against any dim).
+template <typename T>
+Ort::Status BroadcastShape(const std::vector<T>& a, const std::vector<T>& b,
+                           /*out*/ std::vector<T>& out) {
+  const size_t rank = std::max(a.size(), b.size());
+  out.assign(rank, 1);
+  for (size_t i = 0; i < rank; ++i) {
+    const T da = (i < a.size()) ? a[a.size() - 1 - i] : 1;
+    const T db = (i < b.size()) ? b[b.size() - 1 - i] : 1;
+    T dim = 0;
+    if (da == db) {
+      dim = da;
+    } else if (da == 1) {
+      dim = db;
+    } else if (db == 1) {
+      dim = da;
+    } else {
+      return MAKE_EP_FAIL("BroadcastShape: incompatible dimensions, cannot broadcast.");
+    }
+    out[rank - 1 - i] = dim;
+  }
+  return Ort::Status();
+}
+
 // Gets error message associated with QNN error handle value.
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                Qnn_ErrorHandle_t qnn_error_handle);
@@ -517,6 +569,40 @@ Ort::Status NchwShapeToNhwc(gsl::span<const T> nchw_shape, gsl::span<T> nhwc_sha
   nhwc_shape[3] = nchw_shape[1];
 
   return Ort::Status();
+}
+
+// Returns the channel-first (NCHW/NCDHW) -> channel-last (NHWC/NDHWC) permutation for the
+// given tensor rank. Works for any rank >= 2: e.g. rank 4 -> {0,2,3,1}, rank 5 -> {0,2,3,4,1}.
+inline std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i - 1] = static_cast<uint32_t>(i);
+  }
+  perm[rank - 1] = 1;
+  return perm;
+}
+
+// Returns the channel-last (NHWC/NDHWC) -> channel-first (NCHW/NCDHW) permutation for the
+// given tensor rank (inverse of ChannelFirstToLastPerm).
+inline std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  perm[1] = static_cast<uint32_t>(rank - 1);
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i] = static_cast<uint32_t>(i - 1);
+  }
+  return perm;
+}
+
+// Applies a permutation to a shape vector and returns the permuted shape.
+inline std::vector<uint32_t> ApplyPermToShape(const std::vector<uint32_t>& shape,
+                                              const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out(shape.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    out[i] = shape[perm[i]];
+  }
+  return out;
 }
 
 // NCHW shape to HWCN shape, required for Conv weight
@@ -652,6 +738,33 @@ uint64_t GetTimeStampInUs();
 // Returns true if they match within a tolerance, false otherwise
 bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
                          float tolerance = 1e-5f);
+
+// Extracts weight scales from a QnnQuantParamsWrapper.
+// Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,
+// BW_AXIS_SCALE_OFFSET), and LPBQ (BLOCKWISE_EXPANSION).
+Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
+                                 std::vector<float>& weights_scales);
+
+// Extracts current scales, offsets, and axis from a bias's quant params.
+// Supports SCALE_OFFSET, BW_SCALE_OFFSET, AXIS_SCALE_OFFSET, BW_AXIS_SCALE_OFFSET.
+// Returns failure for unsupported encodings.
+Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
+                                         std::vector<float>& scales,
+                                         std::vector<int32_t>& offsets,
+                                         int32_t& axis);
+
+// Quantizes a float bias tensor to int32 using bias_scale = activation_scale * weight_scale.
+// Used when the bias is provided as float (no quantization info) but activation and weight are quantized.
+// If weights_scales has a single element, per-tensor bias quantization is used (all channels share one scale).
+// Otherwise, per-channel bias quantization is used (one scale per output channel).
+// The output quantized_bias_bytes contains packed int32 values (4 bytes per channel).
+// bias_offsets is always all-zeros (symmetric quantization).
+Ort::Status QuantizeFloatBiasTensor(gsl::span<const float> float_bias_data,
+                                    gsl::span<const float> weights_scales,
+                                    float activation_scale,
+                                    /*out*/ std::vector<uint8_t>& quantized_bias_bytes,
+                                    /*out*/ std::vector<float>& bias_scales,
+                                    /*out*/ std::vector<int32_t>& bias_offsets);
 
 // Requantizes a static bias tensor with new quantization parameters
 // This function:
@@ -843,6 +956,26 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
    Intended for ORT logging
 */
 std::string PtrToString(const void* const ptr);
+
+/**
+ * Dequantizes a packed INT32 bias tensor to FP16 bytes.
+ * Each element is computed as: fp16(int32[i] * scale[i or 0]).
+ * @param raw_int32_bytes  Packed INT32 data (num_elems * sizeof(int32_t) bytes).
+ * @param scales           Per-tensor (size 1) or per-channel (size num_elems) float scales.
+ *                         Empty means all scales are 1.0f.
+ * @param fp16_bytes       Output: FP16 bytes (num_elems * sizeof(uint16_t) bytes).
+ */
+Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
+                                      gsl::span<const float> scales,
+                                      std::vector<uint8_t>& fp16_bytes);
+
+// Returns true if all packed zero_points in the given initializer tensor are symmetric
+// (i.e., each sub-byte element equals 2^(bits-1)).
+// MatMulNBits stores zero_points as packed sub-byte integers in uint8 bytes
+// (e.g., two 4-bit values per byte, four 2-bit values per byte).
+bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper,
+                                    const std::string& zp_tensor_name,
+                                    int64_t bits);
 
 }  // namespace utils
 }  // namespace qnn
