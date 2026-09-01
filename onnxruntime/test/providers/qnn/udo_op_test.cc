@@ -258,6 +258,85 @@ TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainFromEnvVar) {
                                session_options));
 }
 
+// Verifies RunOpTestOnCPU with register_domain_manually=false:
+// the QNN EP factory domain (from ORT_QNN_CUSTOM_OP_DOMAINS) is the only domain
+// registered. The udo_domain::MyAdd node is assigned to and executed by QNN EP.
+// Uses the same direct-session pattern as UDO_Op_MyAdd_AutoDomainFromEnvVar to avoid
+// the CPU-EP reference session inside RunQnnModelTest (which also needs the domain).
+TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainOnly) {
+  std::filesystem::path path = getLibPath("cpu");
+  if (!std::filesystem::exists(path)) {
+    GTEST_SKIP() << "UDO CPU op package not found: " << path;
+  }
+
+  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
+  ASSERT_EQ(set_result, 0) << "setenv failed";
+  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
+      reinterpret_cast<void*>(1),
+      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
+
+  // Build a minimal ONNX model with a udo_domain::MyAdd node.
+  const auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
+      onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))};
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildUDOTestCase<float>("MyAdd", input_def, attrs, std::string(kUdoDomain))(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["op_packages"] = "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider";
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::string registration_name = "QNNExecutionProvider";
+  Ort::SessionOptions session_options;
+  session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+
+  // Session construction and node assignment verification — no CPU reference needed.
+  Ort::Session session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), session_options);
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, registration_name, ExpectedEPNodeAssignment::All));
+}
+
+// Verifies that manual domain registration (CPU fallback kernel) and automatic domain
+// registration (ORT_QNN_CUSTOM_OP_DOMAINS factory hook) coexist safely.
+// ORT deduplicates the domain via ShouldAddDomain() — no double-registration error.
+// The manual CPU kernel enables full output comparison against the CPU EP reference.
+TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_ManualPlusAutoDomain) {
+  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
+  std::filesystem::path path = getLibPath("cpu");
+  if (!std::filesystem::exists(path)) {
+    GTEST_SKIP() << "UDO CPU op package not found: " << path;
+  }
+
+  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
+  ASSERT_EQ(set_result, 0) << "setenv failed";
+  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
+      reinterpret_cast<void*>(1),
+      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
+
+  // Both automatic (factory) and manual (user-supplied) domains are active.
+  // The manual domain provides the CPU reference kernel; the factory placeholder
+  // op is deduplicated by ORT and the node is still compiled by QNN EP.
+  RunOpTestOnCPU("MyAdd",
+                 input_def,
+                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
+                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
+                 11,
+                 ExpectedEPNodeAssignment::All,
+                 /*register_domain_manually=*/true);
+}
+
 TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
   // Skip cleanly on hosts where the HTP backend / x86 simulator libs are not usable.
   // QnnHTPBackendTests::SetUp() already gates on cached_htp_support_; this macro adds the
