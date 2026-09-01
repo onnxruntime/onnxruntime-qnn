@@ -42,7 +42,7 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.6.0         | v2.50.0           | v1.27.0              |
+| v2.6.0         | v2.50.40          | v1.27.0              |
 
 > **Note**: ONNX Runtime QNN EP 2.6.0 was built and tested with ORT 1.27.0 but it is compatible with ORT >= 1.24.1
 
