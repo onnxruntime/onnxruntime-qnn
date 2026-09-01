@@ -76,8 +76,7 @@ namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
 QnnEpFactory::QnnEpFactory(const char* ep_name,
-                           ApiPtrs ort_api_in,
-                           const OrtLogger* default_logger)
+                           ApiPtrs ort_api_in)
     : OrtEpFactory{}, ApiPtrs(ort_api_in), ep_name_{ep_name} {
   ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
@@ -98,11 +97,9 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
   // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
   // so we parse once here at factory construction and cache the result for all sessions.
-  // default_logger is passed in directly by CreateEpFactories (ultimately
-  // logging::LoggingManager::DefaultLogger().ToExternal() from ORT core) and is always non-null;
-  // OrtLoggingManager's own default logger is not yet set at this point in CreateEpFactories
-  // (SetDefaultLogger runs after the factory is constructed), so it cannot be used here.
-  BuildCustomOpDomainsFromEnv(Ort::Logger(default_logger), ep_name_, custom_op_domains_, custom_op_objects_);
+  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
+  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
+  BuildCustomOpDomainsFromEnv(Ort::Logger(OrtLoggingManager::GetDefaultLoggerPtr()), ep_name_, custom_op_domains_, custom_op_objects_);
 
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
@@ -670,14 +667,17 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return ort_api->CreateStatus(ORT_FAIL, "Failed to get Model Editor API.");
   }
 
+  // Set default logger before factory construction so that the factory ctor can read it
+  // via OrtLoggingManager::GetDefaultLoggerPtr() without needing a separate parameter.
+  onnxruntime::OrtLoggingManager::SetDefaultLogger(default_logger);
+
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactory> factory;
   try {
     factory = std::make_unique<onnxruntime::QnnEpFactory>(registration_name,
                                                           onnxruntime::ApiPtrs{*ort_api,
                                                                                *ep_api,
-                                                                               *model_editor_api},
-                                                          default_logger);
+                                                                               *model_editor_api});
   } catch (const std::exception& e) {
     return ort_api->CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
@@ -686,9 +686,6 @@ OrtStatus* CreateEpFactories(const char* registration_name,
 
   factories[0] = factory.release();
   *num_factories = 1;
-
-  // Set default logger for later use.
-  onnxruntime::OrtLoggingManager::SetDefaultLogger(default_logger);
 
   return nullptr;
 }

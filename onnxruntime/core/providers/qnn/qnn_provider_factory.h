@@ -14,7 +14,7 @@ namespace onnxruntime {
 
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
-  QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in, const OrtLogger* default_logger);
+  QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
