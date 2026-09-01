@@ -289,14 +289,12 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     trace_collector = std::make_unique<OpTraceCollector>();
   }
 
-  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
-                                                      qnn_backend_manager_->GetQnnInterface(),
-                                                      qnn_backend_manager_->GetQnnBackendHandle(),
-                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
-                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
+  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph,
+                                                      api_ptrs_,
+                                                      logger,
+                                                      *qnn_backend_manager_,
                                                       graph_inputs_,
                                                       graph_outputs_,
-                                                      qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),

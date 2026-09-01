@@ -30,6 +30,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
@@ -233,6 +234,124 @@ TEST(QnnUnit_BackendManagerTest, ParseLoraConfig_ValidFormatNoContext_ReturnsErr
 
   std::filesystem::remove(cfg);
   std::filesystem::remove(bin_file);
+}
+
+// ---------------------------------------------------------------------------
+// Group 6: HTP arch / SoC model holders, and const-qualified getters
+// ---------------------------------------------------------------------------
+
+// Builds a manager with a user-provided HTP arch and SoC model. Nothing is dlopen'd —
+// Create() only stores the config.
+static std::shared_ptr<qnn::QnnBackendManager> MakeManagerWithHtpArch(
+    QnnHtpDevice_Arch_t htp_arch,
+    uint32_t soc_model,
+    const ApiPtrs& api_ptrs,
+    const Ort::Logger& logger) {
+  qnn::QnnBackendManagerConfig cfg{};
+  cfg.backend_path = "libQnnHtp.so";
+  cfg.context_priority = qnn::ContextPriority::NORMAL;
+  cfg.device_id = 0;
+  cfg.htp_arch = htp_arch;
+  cfg.soc_model = soc_model;
+  cfg.skip_qnn_version_check = true;
+  return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
+}
+
+// A user-provided htp_arch alone does NOT make GetHtpArch() report it — the internal
+// holder stays NONE until SetupDeviceAndContext runs. soc_model has no such split and
+// is readable straight from the config.
+TEST(QnnUnit_BackendManagerTest, GetHtpArch_UserProvidedArchBeforeSetup_ReturnsNone) {
+  StubApiEnv env;
+  auto manager = MakeManagerWithHtpArch(QNN_HTP_DEVICE_ARCH_V73, QNN_SOC_MODEL_SM8550,
+                                        env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_SM8550));
+}
+
+// SetupDeviceAndContext is guarded by backend_partial_setup_completed_, so calling it
+// without SetupBackendExceptDeviceAndContext first must fail and must not publish the
+// requested arch to the internal holder.
+TEST(QnnUnit_BackendManagerTest, SetupDeviceAndContext_WithoutPartialSetup_ReturnsErrorAndLeavesArchNone) {
+  StubApiEnv env;
+  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  auto status = manager->SetupDeviceAndContext(QNN_HTP_DEVICE_ARCH_V79, QNN_SOC_MODEL_SM8550);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("partially setup"), std::string::npos)
+      << "Expected the partial-setup guard to reject the call; got: " << status.GetErrorMessage();
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+}
+
+// ReleaseDeviceAndContext resets both arch holders and the SoC model to their defaults.
+// Safe to call before any setup: ReleaseContext / ReleaseDevice report failures via the
+// logger and the reset still happens.
+TEST(QnnUnit_BackendManagerTest, ReleaseDeviceAndContext_BeforeSetup_ResetsArchAndSocModel) {
+  StubApiEnv env;
+  auto manager = MakeManagerWithHtpArch(QNN_HTP_DEVICE_ARCH_V73, QNN_SOC_MODEL_SM8550,
+                                        env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  manager->ReleaseDeviceAndContext();
+
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
+}
+
+// QnnModelWrapper stores a `const QnnBackendManager&`, so every getter it calls has to be
+// const-qualified. Calling them through a const reference is the compile-time check;
+// the static_asserts state the requirement explicitly so a future non-const overload
+// fails here rather than in the wrapper.
+TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
+  StubApiEnv env;
+  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  const qnn::QnnBackendManager& const_manager = *manager;
+
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnInterface),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnInterface must be const — QnnModelWrapper holds a const manager");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnValidatorInterface),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnValidatorInterface must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnSystemInterface),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnSystemInterface must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnBackendHandle),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnBackendHandle must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnValidatorBackendHandle),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnValidatorBackendHandle must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnDeviceHandle),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnDeviceHandle must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnProfileHandle),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnProfileHandle must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnBackendType),
+                                    const qnn::QnnBackendManager&>,
+                "GetQnnBackendType must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetHtpArch),
+                                    const qnn::QnnBackendManager&>,
+                "GetHtpArch must be const — op builders query it through a const manager");
+
+  // Before setup these are the zero-initialised defaults; the point is that the calls
+  // compile and are readable on a const manager.
+  EXPECT_EQ(const_manager.GetQnnBackendHandle(), nullptr);
+  EXPECT_EQ(const_manager.GetQnnValidatorBackendHandle(), nullptr);
+  EXPECT_EQ(const_manager.GetQnnDeviceHandle(), nullptr);
+  EXPECT_EQ(const_manager.GetQnnProfileHandle(), nullptr);
+  EXPECT_EQ(const_manager.GetQnnBackendType(), qnn::QnnBackendType::CPU);
+  EXPECT_EQ(const_manager.GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_EQ(const_manager.GetQnnInterface().backendCreate,
+            const_manager.GetQnnValidatorInterface().backendCreate);
+  // qnn_sys_interface_ is only bound by SetupBackend, so every entry is still NULL here.
+  EXPECT_EQ(const_manager.GetQnnSystemInterface().systemContextCreate, nullptr);
 }
 
 // ===========================================================================
@@ -474,16 +593,26 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithSocModel_Succeeds) {
 }
 
 // HTP emulator accepts arbitrary arch values.
-TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_Succeeds) {
+//
+// Also covers the x86 half of GetPlatformInfo(): with no real device to query, its
+// #else branch copies the configured htp_arch into htp_arch_internal_, the holder
+// GetHtpArch() reads. (The __aarch64__ / _M_ARM64 branch queries the hardware
+// instead and is not reachable from x86 tests.)
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsConfiguredArch) {
   StubApiEnv env;
   auto manager = MakeHTPManager(env.api_ptrs, env.logger,
                                 qnn::ContextPriority::NORMAL, 0,
                                 qnn::ProfilingLevel::OFF, qnn::ProfilingLevel::OFF,
                                 QNN_HTP_DEVICE_ARCH_V73);
   ASSERT_NE(manager, nullptr);
+  // A configured htp_arch reaches htp_arch_ only; the internal holder stays NONE
+  // until setup runs.
+  ASSERT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+
   auto status = SetupBackendHtp(*manager);
   ASSERT_TRUE(status.IsOK()) << "SetupBackend failed: " << status.GetErrorMessage();
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V73);
 }
 
 // ---------------------------------------------------------------------------
@@ -669,6 +798,39 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithQnnIrSerializer_Cover
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
 
   std::filesystem::remove_all(tmp_dir);
+}
+
+// ---------------------------------------------------------------------------
+// HTP backend — SetupDeviceAndContext publishes the HTP arch to op builders
+// ---------------------------------------------------------------------------
+
+// The multi-SoC EP-context entry points, driven in order: partial setup, then
+// SetupDeviceAndContext with an explicit arch + SoC model. SetupDeviceAndContext is
+// what copies the caller-supplied arch into the internal holder GetHtpArch() reads,
+// which is how an op builder sees a user-provided htp_arch on x86. Then
+// ReleaseDeviceAndContext must put both holders back to their defaults.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_PublishesHtpArchThenResetsOnRelease) {
+  StubApiEnv env;
+  auto manager = MakeHTPManager(env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  // Nothing published before device/context setup.
+  ASSERT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+
+  auto partial = manager->SetupBackendExceptDeviceAndContext();
+  ASSERT_TRUE(partial.IsOK()) << "SetupBackendExceptDeviceAndContext failed: "
+                              << partial.GetErrorMessage();
+
+  auto status = manager->SetupDeviceAndContext(QNN_HTP_DEVICE_ARCH_V73, QNN_SOC_MODEL_SM8550);
+  ASSERT_TRUE(status.IsOK()) << "SetupDeviceAndContext failed: " << status.GetErrorMessage();
+
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V73);
+  EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_SM8550));
+
+  manager->ReleaseDeviceAndContext();
+
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
 }
 
 }  // namespace test
