@@ -13,6 +13,7 @@ namespace qnn {
 OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
+  CreateArrayFeatureExtractorOpBuilder("ArrayFeatureExtractor", *this);
   CreateAttentionOpBuilder("Attention", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateBernoulliOpBuilder("Bernoulli", *this);

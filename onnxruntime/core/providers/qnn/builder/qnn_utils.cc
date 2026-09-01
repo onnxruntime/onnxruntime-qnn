@@ -99,7 +99,12 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, sizeof(uint16_t)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, sizeof(uint32_t)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, sizeof(uint64_t)},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ, 1},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, 2},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16, 2},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, sizeof(float)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, sizeof(double)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, sizeof(bool)}};
@@ -135,6 +140,25 @@ std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
     ORT_CXX_API_THROW("Unknown element type " + std::to_string(elem_type), ORT_EP_FAIL);
   }
   return pos->second;
+}
+
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type) {
+  SafeInt<size_t> safe_num_elements = num_elements;
+  if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 || element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
+    return (safe_num_elements + 3) / 4;
+  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 || element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
+    return (safe_num_elements + 1) / 2;
+  }
+  return (safe_num_elements * GetElementSizeByType(element_type));
+}
+
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type) {
+  // Empty shape means a 0D scalar: exactly 1 element.
+  if (shape.empty()) {
+    return GetOnnxTensorDataSizeInBytes(static_cast<size_t>(1), element_type);
+  }
+  SafeInt<size_t> num_elements = std::accumulate(shape.begin(), shape.end(), SafeInt<size_t>{1}, std::multiplies<>{});
+  return GetOnnxTensorDataSizeInBytes(num_elements, element_type);
 }
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_type) {

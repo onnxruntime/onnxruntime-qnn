@@ -36,6 +36,14 @@ class QnnModelWrapper;
 class QnnQuantParamsWrapper;
 
 namespace utils {
+
+template <typename T>
+inline bool IsCompatibleFcBiasShape(const std::vector<T>& bias_shape, T output_channels) {
+  return (bias_shape.empty() && output_channels == 1) ||
+         (bias_shape.size() == 1 && bias_shape[0] == output_channels) ||
+         (bias_shape.size() == 2 && bias_shape[0] == 1 && bias_shape[1] == output_channels);
+}
+
 /**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
@@ -113,6 +121,9 @@ class QnnJSONGraph {
   std::unordered_set<std::string> seen_tensors_;   // Tracks tensors already added to JSON graph.
   std::unordered_set<std::string> seen_op_types_;  // Tracks unique operator types.
 };
+
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type);
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type);
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
