@@ -196,74 +196,13 @@ TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd) {
                  ExpectedEPNodeAssignment::All);
 }
 
-// Verifies the full factory-level custom-op domain registration path:
-//   ORT_QNN_CUSTOM_OP_DOMAINS env var → QnnEpFactory construction → GetNumCustomOpDomains /
-//   GetCustomOpDomains callbacks → ORT registers domain → ONNX model containing a
-//   udo_domain::MyAdd node loads successfully with no manual Ort::CustomOpDomain.
-// We bypass the RunQnnModelTest helper (which also creates a CPU-EP reference session that
-// needs the domain) and directly assert that Ort::Session construction succeeds — confirming
-// the factory hook delivers the domain. An "Unknown domain" exception indicates the hook
-// did NOT fire, which would be a regression.
-TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainFromEnvVar) {
-  std::filesystem::path path = getLibPath("cpu");
-  if (!std::filesystem::exists(path)) {
-    GTEST_SKIP() << "UDO CPU op package not found: " << path;
-  }
-
-  // Set ORT_QNN_CUSTOM_OP_DOMAINS before RegisterExecutionProviderLibrary so the factory
-  // reads it during CreateEpFactories() (called from RegisterExecutionProviderLibrary).
-  // The previous test unregisters the QNN library on teardown, so a fresh factory is
-  // constructed for this test. Restore the env var on exit to avoid cross-test leakage.
-  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
-  ASSERT_EQ(set_result, 0) << "setenv failed";
-  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
-      reinterpret_cast<void*>(1),
-      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
-
-  // Build a minimal ONNX model with a udo_domain::MyAdd node.
-  const auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
-      onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))};
-  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
-
-  ModelTestBuilder helper;
-  BuildUDOTestCase<float>("MyAdd", input_def, attrs, std::string(kUdoDomain))(helper);
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
-  }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  std::string model_data;
-  helper.model_.SerializeToString(&model_data);
-
-  // Register QNN EP — AppendExecutionProvider_V2 fires GetCustomOpDomains on the factory,
-  // which reads ORT_QNN_CUSTOM_OP_DOMAINS and injects udo_domain::MyAdd into session_options.
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["op_packages"] = "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider";
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  // Intentionally do NOT add a domain manually here.
-  session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  // Session construction must succeed — the factory hook delivers the domain.
-  // Throws "not a registered function/op" if GetCustomOpDomains did NOT fire.
-  ASSERT_NO_THROW(Ort::Session(*GetOrtEnv(),
-                               model_data.data(),
-                               static_cast<int>(model_data.size()),
-                               session_options));
-}
-
-// Verifies RunOpTestOnCPU with register_domain_manually=false:
-// the QNN EP factory domain (from ORT_QNN_CUSTOM_OP_DOMAINS) is the only domain
-// registered. The udo_domain::MyAdd node is assigned to and executed by QNN EP.
-// Uses the same direct-session pattern as UDO_Op_MyAdd_AutoDomainFromEnvVar to avoid
-// the CPU-EP reference session inside RunQnnModelTest (which also needs the domain).
+// Verifies the full factory-level custom-op domain registration path with no manual
+// domain registration: ORT_QNN_CUSTOM_OP_DOMAINS env var → QnnEpFactory construction
+// → GetCustomOpDomains hook → ORT registers domain → model loads, node is assigned to
+// QNN EP, and inference runs.  verify_outputs is false (no CPU-side kernel for reference);
+// RunAndVerifyOutputsWithEP skips the CPU reference session when verify_outputs=false.
 TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainOnly) {
+  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
   std::filesystem::path path = getLibPath("cpu");
   if (!std::filesystem::exists(path)) {
     GTEST_SKIP() << "UDO CPU op package not found: " << path;
@@ -275,37 +214,13 @@ TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainOnly) {
       reinterpret_cast<void*>(1),
       [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
 
-  // Build a minimal ONNX model with a udo_domain::MyAdd node.
-  const auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
-      onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))};
-  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
-
-  ModelTestBuilder helper;
-  BuildUDOTestCase<float>("MyAdd", input_def, attrs, std::string(kUdoDomain))(helper);
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
-  }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  std::string model_data;
-  helper.model_.SerializeToString(&model_data);
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["op_packages"] = "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider";
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
-  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  // Session construction and node assignment verification — no CPU reference needed.
-  Ort::Session session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), session_options);
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, registration_name, ExpectedEPNodeAssignment::All));
+  RunOpTestOnCPU("MyAdd",
+                 input_def,
+                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
+                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
+                 11,
+                 ExpectedEPNodeAssignment::All,
+                 /*register_domain_manually=*/false);
 }
 
 // Verifies that manual domain registration (CPU fallback kernel) and automatic domain
