@@ -674,20 +674,28 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
 
+// Transposes a [rows, cols] buffer of `elem_byte_size`-wide elements into a [cols, rows] buffer.
+// Both buffers must hold exactly rows * cols * elem_byte_size bytes.
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer);
+
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   const std::vector<uint32_t>& data_shape,
                                   /* out */ std::vector<T>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false) {
+  transposed_data.resize(data.size(), 0);
+
   if (skip_output_data_copy) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
-                "Skipping initializer data transpose during op validation.");
+                "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
     return Ort::Status();
   }
-
-  transposed_data.resize(data.size(), 0);
 
   const size_t rows = data_shape[0];
   const size_t cols = data_shape[1];
