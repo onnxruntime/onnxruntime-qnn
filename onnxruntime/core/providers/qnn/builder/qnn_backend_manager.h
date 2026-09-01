@@ -219,6 +219,19 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                   Qnn_ContextHandle_t& new_context,
                                   const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
 
+  // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
+  // Attempts contextCreateFromBinaryWithCallback when use_file_mapping is true; falls back to
+  // contextCreateFromBinary on failure or when file mapping is disabled/unavailable.
+  // bin_buffer: pre-acquired mapped or pre-read buffer; pass nullptr to read from context_bin_filepath.
+  // Does NOT call AddQnnContextHandle — callers are responsible for registering the handle.
+  Ort::Status CreateContextHandleFromBinary(void* bin_buffer,
+                                            uint64_t buffer_length,
+                                            bool use_file_mapping,
+                                            const QnnContext_Config_t** context_configs,
+                                            const std::string& context_bin_filepath,
+                                            const qnn::EpContextIoDispatch& io_dispatch,
+                                            Qnn_ContextHandle_t& context);
+
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
     return context_map_.find(context_handle) != context_map_.end();
