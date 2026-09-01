@@ -1522,6 +1522,31 @@ bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
   return true;
 }
 
+namespace {
+// General QDQ well-formedness, as the Conv/MatMul/Gemm/Variadic selectors enforce: every quantized
+// output must share the activation input X's element width. GRU legitimately mixes input widths (u8
+// or u16 W/R, int32 bias), so only X (dq_nodes[0], always the first DQ-produced input) is the
+// reference -- not every DQ input. A mismatched-width in/out group is not a genuine same-width QDQ
+// Gru, so decline the fold; DQ -> fp GRU -> Q then run as separate ops on QNN.
+bool HasConsistentOutputWidth(const OrtApi& ort_api, const std::vector<const OrtNode*>& dq_nodes,
+                              const std::vector<const OrtNode*>& q_nodes) {
+  if (dq_nodes.empty()) {
+    return true;
+  }
+  auto dt_x = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  if (!dt_x.has_value()) {
+    return false;
+  }
+  for (const OrtNode* q_node : q_nodes) {
+    auto dt_out = GetNodeOutputDataType(q_node, ort_api, 0);
+    if (!dt_out.has_value() || dt_out.value() != dt_x.value()) {
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace
+
 bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                     const OrtNode* redundant_clip_node,
                                     const std::vector<const OrtNode*>& dq_nodes,
@@ -1537,22 +1562,8 @@ bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
     return false;
   }
 
-  // General QDQ well-formedness, as the Conv/MatMul/Gemm/Variadic selectors enforce: every quantized
-  // output must share the activation input X's element width. GRU legitimately mixes input widths (u8
-  // or u16 W/R, int32 bias), so only X (dq_nodes[0], always the first DQ-produced input) is the
-  // reference -- not every DQ input. A mismatched-width in/out group is not a genuine same-width QDQ
-  // Gru, so decline the fold; DQ -> fp GRU -> Q then run as separate ops on QNN.
-  if (!dq_nodes.empty()) {
-    auto dt_x = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
-    if (!dt_x.has_value()) {
-      return false;
-    }
-    for (const OrtNode* q_node : q_nodes) {
-      auto dt_out = GetNodeOutputDataType(q_node, ort_api, 0);
-      if (!dt_out.has_value() || dt_out.value() != dt_x.value()) {
-        return false;
-      }
-    }
+  if (!HasConsistentOutputWidth(ort_api, dq_nodes, q_nodes)) {
+    return false;
   }
   return true;
 }
