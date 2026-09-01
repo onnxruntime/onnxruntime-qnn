@@ -20,6 +20,7 @@
 #include "HTP/QnnHtpSystemContext.h"
 #include "IR/QnnIrCommon.h"
 #include "IR/QnnIrGraph.h"
+#include "QnnGlobalConfig.h"
 #include "QnnOpDef.h"
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
@@ -467,6 +468,30 @@ Ort::Status QnnBackendManager::LoadQnnSystemLib() {
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
 
   system_lib_loaded_ = true;
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::SetGlobalConfig() {
+  std::vector<const QnnGlobalConfig_t*> configs;
+
+#ifdef QNN_CROSS_DEVICE_PREPARE_AVAILABLE
+  QnnGlobalConfig_t machine_type_config = QNN_GLOBAL_CONFIG_INIT;
+  if (configure_host_mode_) {
+    machine_type_config.option = QNN_GLOBAL_CONFIG_OPTION_MACHINE_TYPE;
+    machine_type_config.machineType = QNN_GLOBAL_CONFIG_OPTION_MACHINE_TYPE_HOST;
+    configs.push_back(&machine_type_config);
+  }
+#endif
+
+  if (!configs.empty()) {
+    RETURN_IF(qnn_interface_.globalConfigSet == nullptr,
+              "Failed to set global config without QnnGlobalConfig_set API.");
+
+    configs.push_back(nullptr);
+    Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
+    RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
+  }
+
   return Ort::Status();
 }
 
@@ -2027,6 +2052,13 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "LoadBackend succeed.");
   }
 
+  if (status.IsOK()) {
+    status = SetGlobalConfig();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SetGlobalConfig succeed.");
+  }
+
   if (status.IsOK() && (load_from_cached_context || need_load_system_lib)) {
     status = LoadQnnSystemLib();
   }
@@ -2164,6 +2196,13 @@ Ort::Status QnnBackendManager::SetupBackendExceptDeviceAndContext() {
   Ort::Status status = LoadBackend();
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend library loaded.");
+  }
+
+  if (status.IsOK()) {
+    status = SetGlobalConfig();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SetGlobalConfig succeed.");
   }
 
   if (status.IsOK()) {
@@ -3048,7 +3087,22 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
     return Ort::Status();
   }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
+#if QNN_ARCH_ARM64
+  if (IsBackendHostMode()) {
+    // Backend is configured to host mode and thus should adopt user-specified value like on x86 platform.
+#else
+  {
+#endif  // QNN_ARCH_ARM64
+    // QnnDevice_getPlatformInfo will always return HTP arch 68 and VTCM size 4 on x86 platform even if GetPlatformInfo
+    // is called after device is created. Thus, adopting user-specified value is the only option.
+    if (htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
+      htp_arch_internal_ = htp_arch_;
+    }
+
+    return Ort::Status();
+  }
+
+#if QNN_ARCH_ARM64
   RETURN_IF(qnn_interface_.deviceGetPlatformInfo == nullptr || qnn_interface_.deviceFreePlatformInfo == nullptr,
             "Failed to get valid QnnDevice function pointers.");
 
@@ -3087,13 +3141,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
 
   RETURN_IF(htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE, "Failed to get HTP arch.");
   RETURN_IF(vtcm_size_internal_ == 0, "Failed to get VTCM size.");
-#else
-  // QnnDevice_getPlatformInfo will always return HTP arch 68 and VTCM size 4 on x86 platform even if GetPlatformInfo
-  // is called after device is created. Thus, adopting user-specified value is the only option.
-  if (htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
-    htp_arch_internal_ = htp_arch_;
-  }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
+#endif  // QNN_ARCH_ARM64
 
   return Ort::Status();
 }

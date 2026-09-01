@@ -2176,6 +2176,12 @@ inline HRESULT CreateD3D12Buffer(
 
 #endif  // _WIN32 && ...
 
+#if defined(_WIN32) && defined(_M_ARM64)
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_CROSS_DEVICE_PREPARE_AVAILABLE
+#endif  //  QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(_WIN32) && defined(_M_ARM64)
+
 }  // namespace test
 }  // namespace onnxruntime
 
