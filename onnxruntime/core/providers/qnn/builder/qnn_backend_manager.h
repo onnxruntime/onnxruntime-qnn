@@ -29,6 +29,7 @@
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
@@ -192,6 +193,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::string node_name,
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size,
+      const qnn::EpContextIoDispatch& io_dispatch,
       bool is_multi_soc_buffer = false);
 
   // Remove a single context handle from all tracking structures and free it via contextFree.
@@ -202,9 +204,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
   // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
-  // file I/O logic.
+  // file I/O logic. If io_dispatch is non-null and carries a read callback, the
+  // callback is dispatched instead of reading from disk.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer);
+                                    std::vector<char>& buffer,
+                                    const qnn::EpContextIoDispatch& io_dispatch);
 
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
@@ -224,6 +228,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+      // Defaults to a no-callback dispatch so callers that have nothing to do with EPContext
+      // encryption (e.g. compatibility probes) don't have to construct and pass a dummy.
+      const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false);
@@ -263,11 +270,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void RemovePerThreadHtpPowerConfigMapping(const std::thread::id& thread_id);
 
-  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() { return qnn_interface_; }
+  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() const { return qnn_interface_; }
 
-  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() { return qnn_validator_interface_; }
+  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() const { return qnn_validator_interface_; }
 
-  const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() { return qnn_sys_interface_; }
+  const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() const { return qnn_sys_interface_; }
 
   const Qnn_ContextHandle_t& GetQnnContext(int index = 0) {
     if (!((contexts_.size() > 0) && (static_cast<size_t>(index) < contexts_.size()))) {
@@ -280,13 +287,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return contexts_.size();
   }
 
-  const Qnn_BackendHandle_t& GetQnnBackendHandle() { return backend_handle_; }
+  const Qnn_BackendHandle_t& GetQnnBackendHandle() const { return backend_handle_; }
 
-  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() { return validator_backend_handle_; }
+  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() const { return validator_backend_handle_; }
 
-  const Qnn_DeviceHandle_t& GetQnnDeviceHandle() { return device_handle_; }
+  const Qnn_DeviceHandle_t& GetQnnDeviceHandle() const { return device_handle_; }
 
-  const Qnn_ProfileHandle_t& GetQnnProfileHandle() { return profile_backend_handle_; }
+  const Qnn_ProfileHandle_t& GetQnnProfileHandle() const { return profile_backend_handle_; }
 
   // Resets the QNN log level to the given ORT log level or to the default log level if the argument is
   // std::nullopt.
@@ -326,7 +333,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t GetBackendId() { return backend_id_; }
 
   void SetQnnBackendType(uint32_t backend_id);
-  QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
+  QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
@@ -418,6 +425,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     logger_ptr_ = &logger;
   }
 
+  // Release the current QNN context handles (frees HW resources).
+  // Idempotent — safe to call even if no context is active.
+  Ort::Status ReleaseContext();
+
   bool IsDx12SharedMemoryAllocatorSupported();
 
   power::HtpPowerConfigManager& GetHtpPowerConfigManager() {
@@ -489,19 +500,19 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          const qnn::EpContextIoDispatch& io_dispatch,
                                                           bool enable_htp_graph_splitting = false);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
-                                                            std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+                                                            std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                         const qnn::EpContextIoDispatch& io_dispatch);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   Ort::Status CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
                                                      std::unordered_map<std::string,
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 #endif
-
-  Ort::Status ReleaseContext();
 
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
   Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
@@ -742,6 +753,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   ProfilingLevel profiling_level_;
   ProfilingLevel profiling_level_merge_;
   const std::string profiling_file_path_;
+  bool backend_lib_loaded_ = false;
   bool system_lib_loaded_ = false;
 
   // ----------------------------------------------------------------------

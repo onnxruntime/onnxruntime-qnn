@@ -30,6 +30,12 @@
 #include "QnnLog.h"
 #include "QnnTypes.h"
 
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#include <d3d12.h>
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
+#endif  // _WIN32 && ...
+
 namespace onnxruntime {
 namespace test {
 constexpr const char* kOnnxDomain = "";
@@ -1719,6 +1725,41 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
   };
 }
 
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
+// Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
+// not include EP-private headers can gate on it without breaking the public-API-only boundary.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif
+
+// Returns a function that builds a single fp16 Conv model with overflow-triggering
+// inputs and weights (300.0f). Each output element = 8 * (300 * 300) = 720000,
+// which overflows fp16 max (~65504): without fp16_clamp_overflow the output is NaN;
+// with it it saturates to fp16-max (finite), making an isfinite assertion a real fence.
+// Used by EPContext and SSR tests for enable_htp_fp16_clamp_overflow validation.
+inline GetTestModelFn BuildFp16ClampOverflowConvTestCase() {
+  return [](ModelTestBuilder& builder) {
+    auto input_def = TestInputDef<float>({1, 2, 4, 4}, false, std::vector<float>(32, 300.0f));
+    auto weights_def = TestInputDef<float>({2, 2, 2, 2}, true, std::vector<float>(16, 300.0f));
+    auto bias_def = TestInputDef<float>({2}, true, {0.0f, 0.0f});
+
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weights_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
+
+    builder.MakeOutput("output");
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
 /**
  * Returns a function that builds a model with a single QDQ operator with N float (quantizeable) inputs
  * and M inputs of a potentially different type.
@@ -2103,6 +2144,37 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     } else                                                                                             \
       static_assert(true, "");                                                                         \
   }
+
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+
+inline HRESULT CreateD3D12Buffer(
+    ID3D12Device* device,
+    UINT64 size,
+    D3D12_HEAP_FLAGS heap_flags,
+    D3D12_HEAP_TYPE heap_type,
+    ID3D12Resource** resource) {
+  D3D12_HEAP_PROPERTIES heap_props = {};
+  heap_props.Type = heap_type;
+
+  D3D12_RESOURCE_DESC desc = {};
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  desc.Width = size;
+  desc.Height = 1;
+  desc.DepthOrArraySize = 1;
+  desc.MipLevels = 1;
+  desc.SampleDesc.Count = 1;
+  desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+  return device->CreateCommittedResource(
+      &heap_props,
+      heap_flags,
+      &desc,
+      D3D12_RESOURCE_STATE_COMMON,
+      nullptr,
+      IID_PPV_ARGS(resource));
+}
+
+#endif  // _WIN32 && ...
 
 }  // namespace test
 }  // namespace onnxruntime

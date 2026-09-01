@@ -9,12 +9,13 @@
 #include <unordered_set>
 #include <vector>
 
+#include "HTP/QnnHtpDeviceConfigShared.h"
 #include "nlohmann/json.hpp"
-#include "QnnInterface.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -23,6 +24,8 @@ namespace qnn {
 // Forward declarations
 class BF16ConversionGuard;
 class OpTraceCollector;
+// Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
+class QnnBackendManager;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -40,6 +43,7 @@ struct ModelSettings {
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
   bool enable_htp_monolithic_lstm = false;
+  OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 
 class QnnModelWrapper {
@@ -50,41 +54,20 @@ class QnnModelWrapper {
   QnnModelWrapper(const OrtGraph& ort_graph,
                   const ApiPtrs& api_ptrs,
                   const Ort::Logger& logger,
-                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                  const Qnn_BackendHandle_t& backend_handle,
-                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
-                  const Qnn_BackendHandle_t& validator_backend_handle,
+                  const QnnBackendManager& qnn_backend_manager,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
-                  QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr,
-                  bool is_post_layout_transform = false)
-      : ort_graph_(ort_graph),
-        logger_(logger),
-        qnn_interface_(qnn_interface),
-        backend_handle_(backend_handle),
-        qnn_validator_interface_(qnn_validator_interface),
-        validator_backend_handle_(validator_backend_handle),
-        graph_inputs_(graph_inputs),
-        graph_outputs_(graph_outputs),
-        qnn_backend_type_(qnn_backend_type),
-        model_settings_(model_settings),
-        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
-        tensor_name_overrides_(tensor_name_overrides),
-        op_trace_collector_(op_trace_collector),
-        is_post_layout_transform_(is_post_layout_transform) {
-    // Invariant: validator interface and handle must both be set or both be null.
-    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
-    assert((validator_backend_handle == nullptr) ==
-           (qnn_validator_interface.backendValidateOpConfig == nullptr));
-  }
+                  bool is_post_layout_transform = false);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
+
+  QnnHtpDevice_Arch_t GetHtpArch() const;
 
   bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
                       const std::string& graph_name,
@@ -388,7 +371,7 @@ class QnnModelWrapper {
                                     std::vector<uint8_t>& unpacked_tensor,
                                     const bool unpack_sub_byte_to_8_bit = true) const;
 
-  QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
+  QnnBackendType GetQnnBackendType() const;
 
   bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
 
@@ -418,17 +401,39 @@ class QnnModelWrapper {
 
     // Handle float scales
     if constexpr (std::is_same_v<T, float>) {
-      // Verify data type for float scales
-      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                    "Expected scale initializer to be of type FLOAT");
+      // Validate dtype up front so an unsupported type returns before any (potentially external)
+      // initializer read, mirroring the early RETURN_IF_NOT guard in the uint8_t branch below.
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 ||
+                        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+                    "Expected scale initializer to be of type FLOAT, FLOAT16, or BFLOAT16");
 
       std::vector<uint8_t> initializer_bytes;
       RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
-      gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
-                                                  initializer_bytes.size() / sizeof(float));
+      // Reinterpret the raw bytes as SrcT and append each element as a float. static_cast covers
+      // float (identity), Ort::Float16_t, and Ort::BFloat16_t (both have operator float()). fp16/bf16
+      // scale initializers are produced by quantization tools that match the scale dtype to the
+      // activation dtype (e.g. fp16 models); QNN quantization structs use float, so decode here.
+      auto append_scales = [&scales, &initializer_bytes](auto src_type_tag) {
+        using SrcT = decltype(src_type_tag);
+        gsl::span<const SrcT> src = gsl::make_span(reinterpret_cast<const SrcT*>(initializer_bytes.data()),
+                                                   initializer_bytes.size() / sizeof(SrcT));
+        scales.reserve(scales.size() + src.size());
+        for (const auto& val : src) {
+          scales.push_back(static_cast<float>(val));
+        }
+      };
 
-      scales.insert(scales.end(), src.begin(), src.end());
+      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        append_scales(float{});
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+        append_scales(Ort::Float16_t{});
+      } else if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
+        // Spelled out (rather than a bare else) so a future dtype added to the guard above
+        // without a matching branch here fails to compile instead of silently aliasing BFLOAT16.
+        append_scales(Ort::BFloat16_t{});
+      }
     }
     // Handle uint8_t scales (for block quantization)
     else if constexpr (std::is_same_v<T, uint8_t>) {
@@ -525,8 +530,9 @@ class QnnModelWrapper {
 
   // BF16 conversion helper methods
   bool IsBF16ConversionEnabled() const {
+    QnnBackendType qnn_backend_type = GetQnnBackendType();
     return model_settings_.htp_bf16_enable &&
-           (qnn_backend_type_ == QnnBackendType::HTP || qnn_backend_type_ == QnnBackendType::SERIALIZER);
+           (qnn_backend_type == QnnBackendType::HTP || qnn_backend_type == QnnBackendType::SERIALIZER);
   }
 
   bool ProcessBF16InputConversion(const std::string& qnn_node_name,
@@ -561,10 +567,7 @@ class QnnModelWrapper {
 
   const OrtGraph& ort_graph_;
   const Ort::Logger& logger_;
-  const QNN_INTERFACE_VER_TYPE& qnn_interface_;
-  const Qnn_BackendHandle_t& backend_handle_;
-  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
-  const Qnn_BackendHandle_t& validator_backend_handle_;
+  const QnnBackendManager& qnn_backend_manager_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`
@@ -583,7 +586,6 @@ class QnnModelWrapper {
   std::unordered_map<std::string, uint32_t> qnn_tensor_id_map_;
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
-  QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
   const ApiPtrs api_ptrs_;

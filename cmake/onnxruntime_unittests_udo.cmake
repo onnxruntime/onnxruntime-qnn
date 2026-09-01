@@ -13,10 +13,11 @@ set(_LLVM_VERSION "21.1.8")
 # Must match qcom/packages.yml:hexagon_linux_x86_64.version (also referenced from
 # onnxruntime/test/providers/qnn/udo/HTP_Makefile HEXAGON_SDK_ROOT_V*).
 set(_HEXAGON_SDK_VERSION "6.5.0.0")
-# qnn-op-package-generator requires Python 3.10. Skip the UDO unit test build when the
-# discovered interpreter is any other version (e.g. Windows CI uses 3.11+).
-if(NOT (Python_VERSION_MAJOR EQUAL 3 AND Python_VERSION_MINOR EQUAL 10))
-    message(STATUS "Skipping QNN UDO unit test build: requires Python 3.10, found ${Python_VERSION}")
+# qnn-op-package-generator ships Python-version-tagged extensions in the QAIRT SDK.
+# The Linux x86_64 SDK provides 3.10 and 3.12 variants; skip other interpreter versions
+# (e.g. 3.11/3.13/3.14) which have no matching extension.
+if(NOT (Python_VERSION_MAJOR EQUAL 3 AND (Python_VERSION_MINOR EQUAL 10 OR Python_VERSION_MINOR EQUAL 12)))
+    message(STATUS "Skipping QNN UDO unit test build: requires Python 3.10 or 3.12, found ${Python_VERSION}")
     return()
 endif()
 if(UNIX)

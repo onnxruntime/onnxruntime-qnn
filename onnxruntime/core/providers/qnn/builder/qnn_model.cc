@@ -9,9 +9,11 @@
 #include <thread>
 
 #include "HTP/QnnHtpContext.h"
+#include "HTP/QnnHtpGraph.h"
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -287,14 +289,12 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     trace_collector = std::make_unique<OpTraceCollector>();
   }
 
-  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
-                                                      qnn_backend_manager_->GetQnnInterface(),
-                                                      qnn_backend_manager_->GetQnnBackendHandle(),
-                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
-                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
+  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph,
+                                                      api_ptrs_,
+                                                      logger,
+                                                      *qnn_backend_manager_,
                                                       graph_inputs_,
                                                       graph_outputs_,
-                                                      qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
@@ -440,6 +440,60 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
   return Ort::Status();
 }
 
+Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
+                                               const Ort::Logger& logger) {
+  // Caches configs for re-application after an SSR event re-retrieves the graph handle.
+  // Each call overwrites runtime_graph_configs_; RecoverFromSSR always re-applies the most
+  // recently cached value. Normal usage calls this once at session creation, but correctness
+  // does not depend on that.
+  runtime_graph_configs_ = configs;
+
+  if (qnn_backend_type_ != QnnBackendType::HTP || graph_info_ == nullptr) {
+    return Ort::Status();
+  }
+
+  // Build the runtime-settable subset of graph configs using the same builder pattern as
+  // QnnEp::InitQnnHtpGraphConfigs. Only add options confirmed settable on a finalized graph;
+  // a compile-time-only option here would come back as QNN_GRAPH_ERROR_GRAPH_FINALIZED.
+  QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  if (configs.enable_htp_fp16_clamp_overflow) {
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> cc = builder.PushCustomConfig();
+    cc->option = QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW;
+    cc->fp16ClampOverflow = true;
+    gsl::not_null<QnnGraph_Config_t*> gc = builder.PushConfig();
+    gc->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    gc->customConfig = cc;
+  }
+  // NOTE: future runtime-settable options append their own guarded block here.
+#endif
+
+  const QnnGraph_Config_t** graph_configs = builder.GetQnnConfigs();
+  if (graph_configs == nullptr) {
+    return Ort::Status();  // Nothing runtime-applicable was requested.
+  }
+
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+  RETURN_IF(nullptr == qnn_interface.graphSetConfig,
+            "Invalid function pointer for graphSetConfig; cannot apply runtime graph configs.");
+  Qnn_ErrorHandle_t rt = qnn_interface.graphSetConfig(graph_info_->Graph(), graph_configs);
+  if (QNN_SUCCESS != rt) {
+    // QNN_GRAPH_ERROR_GRAPH_FINALIZED here means an option in the set is not runtime-settable
+    // on this SDK and must move back to compile-time wiring in InitQnnHtpGraphConfigs.
+    const std::string message = "Failed to apply runtime graph configs for graph: " +
+                                graph_info_->Name() + ". " +
+                                utils::FormatQnnError(qnn_interface, rt);
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return MAKE_EP_FAIL(message.c_str());
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Applied runtime graph configs for graph: " + graph_info_->Name()).c_str());
+  return Ort::Status();
+}
+
 static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
                                                        const Ort::Logger& logger,
                                                        QnnBackendManager& qnn_backend_manager,
@@ -454,24 +508,27 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   const bool uses_shared_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
+  const bool uses_imported_memory =
+      ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU &&
+      ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_DEFAULT;
 
-  if (!uses_shared_memory) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
-    SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
-    SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
-  } else {
+  if (uses_shared_memory || uses_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
     RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
                                                                       qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
+  } else {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
+    SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
+    SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
   }
 
   return Ort::Status();
 }
 
-Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
+Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
@@ -497,7 +554,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
       // Use the unified file I/O helper instead of duplicating the read logic.
       std::vector<char> buffer;
-      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer));
+      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer, io_dispatch));
 
       const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
@@ -551,7 +608,10 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
   graph_info_->ResetHandles(new_graph, new_context);
 
   // Re-build the tensor I/O metadata against the new graph handles.
-  return SetupQnnInputOutput(logger);
+  RETURN_IF_ERROR(SetupQnnInputOutput(logger));
+
+  // The freshly retrieved graph handle does not carry runtime graph configs, so re-apply them.
+  return ApplyRuntimeGraphConfigs(runtime_graph_configs_, logger);
 }
 
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
@@ -743,7 +803,8 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 }
 
 Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
-                                   const Ort::Logger& logger) {
+                                   const Ort::Logger& logger,
+                                   const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
@@ -771,7 +832,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                   "SSR recovery: context was already freed by another QnnModel in the same context, "
                   "recovering proactively.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
     }
   }
 
@@ -784,7 +845,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));

@@ -154,3 +154,23 @@ command = [
     '@{{PATHSFILE}}'
 ]
 is_formatter = false
+
+[[linter]]
+code = 'MIN-ORT-API-VERSION'
+include_patterns = [
+    'onnxruntime/core/providers/qnn/**/*.h',
+    'onnxruntime/core/providers/qnn/**/*.cc',
+    'qcom/MIN_ORT_API_VERSION.txt',
+    'qcom/scripts/all/compute_min_ort_api_version.py',
+    'qcom/packages.yml',
+    'cmake/deps.txt',
+    'cmake/onnxruntime_providers_qnn.cmake',
+]
+command = [
+    'python',
+    'qcom/scripts/all/compute_min_ort_api_version.py',
+    '--lintrunner',
+    '--fetch-from-deps-txt',
+    '@{{PATHSFILE}}'
+]
+is_formatter = false
