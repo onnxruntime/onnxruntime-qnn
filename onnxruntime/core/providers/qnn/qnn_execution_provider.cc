@@ -891,7 +891,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-
   // HTP share resource optimization
   std::string htp_share_resource_optimization_str;
   GetSessionConfigEntryOrDefault(ort_api,
