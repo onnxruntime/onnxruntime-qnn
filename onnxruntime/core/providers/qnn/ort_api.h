@@ -240,6 +240,59 @@ class OrtLoggingManager {
   }
 };
 
+// Best-effort logging of an exception caught at the C API boundary by a function that has no
+// OrtStatus* to return it through.
+inline void LogApiBoundaryException(const char* message,
+                                    const ORTCHAR_T* file,
+                                    int line,
+                                    const char* func) noexcept {
+  const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
+  if (logger == nullptr) {
+    // No logger. Give up.
+    return;
+  }
+
+  if (OrtStatus* status = Ort::GetApi().Logger_LogMessage(logger, ORT_LOGGING_LEVEL_ERROR,
+                                                          message, file, line, func)) {
+    Ort::GetApi().ReleaseStatus(status);
+  }
+}
+
+#define QNN_EP_API_IMPL_BEGIN try {
+#define QNN_EP_API_IMPL_END                                             \
+  }                                                                     \
+  catch (const Ort::Exception& ex) {                                    \
+    return Ort::GetApi().CreateStatus(ex.GetOrtErrorCode(), ex.what()); \
+  }                                                                     \
+  catch (const std::exception& ex) {                                    \
+    return Ort::GetApi().CreateStatus(ORT_FAIL, ex.what());             \
+  }                                                                     \
+  catch (...) {                                                         \
+    return Ort::GetApi().CreateStatus(ORT_FAIL, "Unknown exception");   \
+  }
+
+#define QNN_EP_API_IMPL_END_RETURN(fallback)                                             \
+  }                                                                                      \
+  catch (const std::exception& ex) {                                                     \
+    ::onnxruntime::LogApiBoundaryException(ex.what(), ORT_FILE, __LINE__, __FUNCTION__); \
+    return (fallback);                                                                   \
+  }                                                                                      \
+  catch (...) {                                                                          \
+    ::onnxruntime::LogApiBoundaryException("Unknown exception", ORT_FILE, __LINE__,      \
+                                           __FUNCTION__);                                \
+    return (fallback);                                                                   \
+  }
+
+#define QNN_EP_API_IMPL_END_VOID                                                         \
+  }                                                                                      \
+  catch (const std::exception& ex) {                                                     \
+    ::onnxruntime::LogApiBoundaryException(ex.what(), ORT_FILE, __LINE__, __FUNCTION__); \
+  }                                                                                      \
+  catch (...) {                                                                          \
+    ::onnxruntime::LogApiBoundaryException("Unknown exception", ORT_FILE, __LINE__,      \
+                                           __FUNCTION__);                                \
+  }
+
 struct ApiPtrs {
   const OrtApi& ort_api;
   const OrtEpApi& ep_api;

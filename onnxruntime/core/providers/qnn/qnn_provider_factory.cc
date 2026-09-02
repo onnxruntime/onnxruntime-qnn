@@ -143,6 +143,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                                               OrtEpDevice** ep_devices,
                                                               size_t max_ep_devices,
                                                               size_t* p_num_ep_devices) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
   size_t& num_ep_devices = *p_num_ep_devices;
@@ -217,6 +218,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
@@ -226,6 +228,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                                    _In_ const OrtSessionOptions* session_options,
                                                    _In_ const OrtLogger* logger,
                                                    _Out_ OrtEp** ep) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   *ep = nullptr;
 
@@ -323,14 +326,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     session_options = autoep_session_options.get();
   }
 
-  std::unique_ptr<QnnEp> qnn_ep;
-  try {
-    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
-  } catch (const std::runtime_error& e) {
-    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
-  } catch (...) {
-    return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
-  }
+  auto qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
 
   factory->qnn_allocator_type_ = qnn_ep->qnn_allocator_type_;
   if (factory->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
@@ -343,18 +339,22 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   *ep = qnn_ep.release();
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp* ep) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   if (ep == nullptr) {
     return;
   }
 
   QnnEp* dummy_ep = static_cast<QnnEp*>(ep);
   delete dummy_ep;
+  QNN_EP_API_IMPL_END_VOID
 }
 
 void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
   if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
@@ -371,6 +371,7 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
                                                      __LINE__,
                                                      __FUNCTION__);
   }
+  QNN_EP_API_IMPL_END_VOID
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
@@ -390,7 +391,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     _In_ size_t num_devices,
     _In_ const char* compatibility_info,
     _Out_ OrtCompiledModelCompatibility* model_compatibility) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+  *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
 
   if (factory->qnn_ep_ != nullptr) {
     return factory->qnn_ep_->ValidateCompiledModelCompatibilityInfo(devices,
@@ -412,7 +416,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     }
   }
   if (backend_type.empty()) {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
     return factory->ort_api.CreateStatus(ORT_EP_FAIL,
                                          "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
                                          "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
@@ -420,46 +423,32 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
 
   using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
   OrtSessionOptions* temp_session_options = nullptr;
-  if (OrtStatus* _status = factory->ort_api.CreateSessionOptions(&temp_session_options)) {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return _status;
-  }
+  RETURN_IF_NOT_NULL(factory->ort_api.CreateSessionOptions(&temp_session_options));
   SessionOptionsUniquePtr session_options(temp_session_options, factory->ort_api.ReleaseSessionOptions);
 
-  if (OrtStatus* _status = factory->ort_api.AddSessionConfigEntry(session_options.get(),
-                                                                  (provider_prefix + "backend_type").c_str(),
-                                                                  backend_type.c_str())) {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return _status;
-  }
+  RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(session_options.get(),
+                                                            (provider_prefix + "backend_type").c_str(),
+                                                            backend_type.c_str()));
 
   if (!OrtLoggingManager::HasDefaultLogger()) {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
     return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Default logger is not available for model compatibility check.");
   }
   const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
 
-  std::unique_ptr<QnnEp> temp_qnn_ep;
-  try {
-    temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
-  } catch (const std::exception& e) {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_EP_FAIL, e.what());
-  } catch (...) {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Unknown exception occurred while creating temporary QNN EP for compatibility check.");
-  }
+  auto temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
 
   return temp_qnn_ep->ValidateCompiledModelCompatibilityInfo(devices,
                                                              num_devices,
                                                              compatibility_info,
                                                              model_compatibility);
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImpl(
     _In_ OrtEpFactory* this_ptr,
     _In_ const OrtHardwareDevice* hw,
     _Inout_ OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
@@ -512,6 +501,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
         "Unknown exception occurred while creating QNN EP for compatibility check");
   }
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 // External resource importer from D3D12
@@ -519,6 +509,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
     OrtEpFactory* this_ptr,
     const OrtEpDevice* /*ep_device*/,
     OrtExternalResourceImporterImpl** out_importer) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
   if (out_importer == nullptr) {
@@ -536,17 +527,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
   int device_id = 0;
 
   // Create the external resource importer
-  try {
-    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
-  } catch (...) {
-    return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
-  }
+  *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
 
   return nullptr;
 #else
   return factory->ort_api.CreateStatus(
       ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
 #endif
+  QNN_EP_API_IMPL_END
 }
 
 }  // namespace onnxruntime
@@ -561,6 +549,8 @@ OrtStatus* CreateEpFactories(const char* registration_name,
                              OrtEpFactory** factories,
                              size_t max_factories,
                              size_t* num_factories) {
+  // NOTE: Do not use QNN_EP_API_IMPL_BEGIN/END in this function,
+  // because Ort::InitApi() is not called until midway through.
   if (ort_api_base == nullptr) {
     return nullptr;
   }
