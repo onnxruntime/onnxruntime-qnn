@@ -248,6 +248,28 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |'0'|Default. Disabled.|
 |'1'|Enable HTP extended UDMA mode for better performance on supported hardware.|
 
+|`"gpu_precision_mode"`|Description|
+|---|---|
+|'0'|Sets the precision mode to floating point 32-bit (FP32).|
+|'1'|Sets the precision mode to floating point 16-bit (FP16).|
+|'2'|Sets the precision mode to FP16 for storage and FP32 for calculations.|
+|'3'|Default. Uses the tensor data type provided by the user.|
+
+|`"disable_gpu_memory_optimizations"`|Description|
+|---|---|
+|'0'|Default. QNN GPU memory optimizations enabled.|
+|'1'|Disable QNN GPU memory optimizations.|
+
+|`"disable_gpu_node_optimizations"`|Description|
+|---|---|
+|'0'|Default. QNN GPU node optimizations enabled.|
+|'1'|Disable QNN GPU node optimizations.|
+
+|`"disable_gpu_queue_recording"`|Description|
+|---|---|
+|'0'|Default. QNN GPU recordable command queue (RCQ) enabled.|
+|'1'|Disable the QNN GPU recordable command queue (RCQ).|
+
 |`"op_packages"`|Description|
 |---|---|
 |Op package config (string)|Register custom op packages. Format: `<OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>]`. Multiple packages can be separated by commas.|

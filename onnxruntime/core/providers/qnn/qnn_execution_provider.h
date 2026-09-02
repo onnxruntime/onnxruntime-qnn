@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "HTP/QnnHtpGraph.h"
+#include "GPU/QnnGpuGraph.h"
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
@@ -161,6 +162,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void InitQnnHtpGraphConfigs(
       const qnn::HtpGraphConfigs_t& configs,
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
+  void InitQnnGpuGraphConfigs(
+      qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnGpuGraph_CustomConfigV2_t>& configs_builder) const;
 
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
 
@@ -255,6 +258,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t dynamic_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
+
+  // Configurations for GPU backend.
+  QnnGpu_Precision_t gpu_precision_mode_ = QNN_GPU_PRECISION_USER_PROVIDED;
+  bool gpu_disable_memory_optimizations_ = false;
+  bool gpu_disable_node_optimizations_ = false;
+  bool gpu_disable_rcq_ = false;
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
