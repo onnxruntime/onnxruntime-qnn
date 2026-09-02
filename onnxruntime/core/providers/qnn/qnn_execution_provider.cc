@@ -2979,6 +2979,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                   "prepare_and_load=1 is ignored because the input model is already a pre-compiled context model. "
                   "The model will be loaded directly via the AOT path.");
     }
+    if (ep->enable_htp_graph_splitting_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "enable_htp_graph_splitting=1 has no effect because the input model is already a pre-compiled "
+                  "context binary. Graph splitting is applied at context creation time, not at load time.");
+    }
     uint32_t htp_power_config_id = 0;
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};

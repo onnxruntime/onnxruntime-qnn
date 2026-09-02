@@ -456,7 +456,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
                                                    original_shape_copy,  // Will be modified to new shape (unnecessary)
                                                    input_info_1.initializer_tensor,
                                                    unpacked_tensor,
-                                                   logger));
+                                                   logger,
+                                                   do_op_validation));
     } else {
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
     }

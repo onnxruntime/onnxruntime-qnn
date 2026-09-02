@@ -1,14 +1,14 @@
 # Ownership is resolved per file; for each file the LAST matching pattern wins.
 
 # Build & CI
-/.github/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti @tirupath-qti @qti-chuteng
-/.vscode/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
-/cmake/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
-/csharp/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
-/docs/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
-/java/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
-/qcom/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
-/tools/ @qti-mbadnara @qti-kromero @huaychou @kuanyul-qti
+/.github/ @qti-kromero @tirupath-qti @qti-chuteng
+/.vscode/ @qti-kromero @tirupath-qti @qti-chuteng
+/cmake/ @qti-kromero @tirupath-qti @qti-chuteng
+/csharp/ @qti-kromero @tirupath-qti @qti-chuteng
+/docs/ @qti-kromero @tirupath-qti @qti-chuteng
+/java/ @qti-kromero @tirupath-qti @qti-chuteng
+/qcom/ @qti-kromero @tirupath-qti @qti-chuteng
+/tools/ @qti-kromero @tirupath-qti @qti-chuteng
 
 # Runtime: EP core (session, context cache, allocator, telemetry, backend manager)
 /onnxruntime/core/providers/qnn/ @qti-kromero @quic-calvnguy @qti-chuteng @minfhong-qti @tirupath-qti
