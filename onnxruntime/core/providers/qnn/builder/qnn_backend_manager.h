@@ -137,6 +137,7 @@ struct QnnBackendManagerConfig {
   // remains constant for the manager's lifetime.
   bool enable_framework_op_trace = false;
   bool skip_backend_op_validation = false;
+  uint64_t context_memory_limit_hint_mb = 0;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -165,6 +166,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         profiling_file_path_(config.profiling_file_path),
         enable_framework_op_trace_(config.enable_framework_op_trace),
         context_priority_(config.context_priority),
+        context_memory_limit_hint_mb_(config.context_memory_limit_hint_mb),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
         htp_arch_(config.htp_arch),
@@ -799,6 +801,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::optional<bool> dx12_shared_memory_allocator_supported_ = std::nullopt;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;
   ContextPriority context_priority_;
+  uint64_t context_memory_limit_hint_mb_ = 0;
+  // Keeps context binary buffers alive for graph-switching (persistent binary).
+  // QNN requires the binary buffer to remain valid for the lifetime of the context
+  // so it can reload graphs on demand.
+  std::vector<std::vector<char>> persistent_context_buffers_;
   std::string sdk_build_version_ = "";
 #ifdef _WIN32
   std::set<HMODULE> mod_handles_;

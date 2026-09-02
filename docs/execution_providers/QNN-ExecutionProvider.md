@@ -142,6 +142,10 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |Size in MB (string)|QNN VTCM size in MB. Defaults to "0" (not set). Must be > 0 to take effect.|
 
+|`"context_memory_limit_hint_mb"`|Description|
+|---|---|
+|Size in MB (string)|Memory limit hint for HTP context loading in MB. When set to a positive value, enables graph switching for large multi-graph contexts: graphs are loaded and unloaded on demand to stay within the memory budget. Defaults to "0" (disabled). Incompatible with shared EP contexts (`share_ep_contexts`). Only effective on HTP backend.|
+
 |`"enable_vtcm_backup_buffer_sharing"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

@@ -854,6 +854,43 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ParseQnnContextPriority(context_priority_str, context_priority, logger_);
   }
 
+  // VTCM MB
+  std::string vtcm_mb_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("vtcm_mb"), "0", vtcm_mb_str);
+  if (!vtcm_mb_str.empty() && vtcm_mb_str != "0") {
+    vtcm_size_in_mb_ = std::stoi(vtcm_mb_str);
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("vtcm_mb: " + vtcm_mb_str).c_str());
+    if (vtcm_size_in_mb_ <= 0) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, ("Skip invalid vtcm_mb: " + vtcm_mb_str).c_str());
+    }
+  }
+
+  // Context memory limit hint (MB) — triggers graph-switching for large multi-graph contexts
+  std::string context_memory_limit_hint_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey("context_memory_limit_hint_mb"), "0",
+                                 context_memory_limit_hint_str);
+  if (!context_memory_limit_hint_str.empty() && context_memory_limit_hint_str != "0") {
+    try {
+      size_t pos = 0;
+      uint64_t val = std::stoull(context_memory_limit_hint_str, &pos);
+      if (pos != context_memory_limit_hint_str.size()) {
+        throw std::invalid_argument("trailing characters");
+      }
+      context_memory_limit_hint_mb_ = val;
+    } catch (const std::exception&) {
+      context_memory_limit_hint_mb_ = 0;
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  ("Invalid value for context_memory_limit_hint_mb: " + context_memory_limit_hint_str +
+                   ", expected a non-negative integer. Graph switching disabled.")
+                      .c_str());
+    }
+    if (context_memory_limit_hint_mb_ > 0) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("context_memory_limit_hint_mb: " + context_memory_limit_hint_str).c_str());
+    }
+  }
+
   // HTP share resource optimization
   std::string htp_share_resource_optimization_str;
   GetSessionConfigEntryOrDefault(ort_api,
@@ -879,6 +916,17 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
     // htp_share_resource_optimization not set, fall back to enable_vtcm_backup_buffer_sharing
     htp_share_resource_optimization_ = 1;
+  }
+
+  // Graph switching cannot be combined with SHARE_RESOURCES: that path reuses a
+  // shared context handle and never applies the memory-limit config, so graph
+  // switching would silently no-op. Disable it and warn.
+  if (context_memory_limit_hint_mb_ > 0 && htp_share_resource_optimization_ == 1) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "context_memory_limit_hint_mb (graph switching) cannot be combined with "
+                "htp_share_resource_optimization / enable_vtcm_backup_buffer_sharing. "
+                "Graph switching disabled.");
+    context_memory_limit_hint_mb_ = 0;
   }
 
   ORT_CXX_LOG(logger_,
@@ -1414,7 +1462,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      op_packages,
                                      skip_qnn_version_check,
                                      enable_framework_op_trace_,
-                                     skip_backend_op_validation},
+                                     skip_backend_op_validation,
+                                     context_memory_limit_hint_mb_},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);

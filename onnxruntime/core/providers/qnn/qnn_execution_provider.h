@@ -222,6 +222,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
   int htp_share_resource_optimization_ = -1;
+  uint64_t context_memory_limit_hint_mb_ = 0;
   std::string context_node_name_prefix_ = "";
   std::string context_cache_path_cfg_ = "";
   const OrtSessionOptions& session_options_;
