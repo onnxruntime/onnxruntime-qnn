@@ -3,10 +3,15 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
+#include <optional>
+#include <string>
 #include <type_traits>
 
+#include <gsl/gsl_util>
 #include "gtest/gtest.h"
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -183,6 +188,7 @@ static void RunMatMulNBitsTest(const TestParams params,
 //   - output Y    : MatMulNBits → Q(ActQType) → DQ → graph output
 template <int bits, typename ActQType>
 static void RunHtpQDQMatMulNBitsTest(const TestParams params,
+                                     std::optional<bool> expect_native_bq = std::nullopt,
                                      ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                                      QDQTolerance tolerance = QDQTolerance()) {
   static_assert(std::is_same_v<ActQType, uint16_t> || std::is_same_v<ActQType, int16_t>,
@@ -193,10 +199,39 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
   provider_options["offload_graph_io_quantization"] = "0";
   if (params.enable_lpbq) {
     provider_options["enable_block_quant_weight_optimization"] = "1";
+  } else {
+    // Explicit: keep the BQ→LPBQ conversion off so the BQ (native BLOCK / BW_FLOAT_BLOCK) path is exercised.
+    provider_options["enable_block_quant_weight_optimization"] = "0";
   }
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
+
+#ifndef QNN_HTP_NATIVE_BQ_AVAILABLE
+  // HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
+  // Disable here to avoid guarding everywhere.
+  if (expect_native_bq.has_value()) {
+    *expect_native_bq = false;
+  }
+#endif
+
+  // When expect_native_bq is set, dump the QNN graph JSON so the selected BQ encoding can be verified:
+  //   - Native BQ (QNN_QUANTIZATION_ENCODING_BLOCK): consumes/produces INT16 directly, so only the
+  //     activation Quantize and output Dequantize of the QDQ model remain → Quantize=1, Dequantize=1.
+  //   - Fallback (QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK): computes in FP16, so an extra INT16→FP16
+  //     activation Dequantize and FP16→INT16 output Quantize are inserted → Quantize=2, Dequantize=2.
+  const std::filesystem::path json_qnn_graph_dir = "MatMulNBitsNativeBQ";
+  auto cleanup = gsl::finally([&expect_native_bq, &json_qnn_graph_dir]() {
+    if (expect_native_bq.has_value()) {
+      std::filesystem::remove_all(json_qnn_graph_dir);
+    }
+  });
+  if (expect_native_bq.has_value()) {
+    std::filesystem::remove_all(json_qnn_graph_dir);
+    ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  }
 
   // Generate the raw float data once so that the float and QDQ models use identical inputs and weights.
   RandomValueGenerator random{1234};
@@ -258,6 +293,12 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
                                  21,  // opset 21 for 16-bit Q/DQ
                                  expected_ep_assignment,
                                  tolerance);
+
+  if (expect_native_bq.has_value()) {
+    const size_t expected_count = *expect_native_bq ? 1 : 2;
+    AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", expected_count);
+    AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", expected_count);
+  }
 }
 
 #if defined(_M_ARM64)
@@ -531,7 +572,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B2_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B2_BS32_ZP) {
@@ -543,7 +584,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B2_BS32_ZP) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B2_BS64) {
@@ -555,7 +596,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B2_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B2_BS64_ZP) {
@@ -567,7 +608,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B2_BS64_ZP) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B2_BS128) {
@@ -579,7 +620,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B2_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B2_BS128_ZP) {
@@ -591,11 +632,13 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B2_BS128_ZP) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
 
   TestParams params;
   params.M = 1;
@@ -603,7 +646,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32_ZP) {
@@ -615,11 +658,37 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32_ZP) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 32;
+  params.K = 64;
+  params.block_size = 16;
+  params.has_zero_point = false;
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N16_K64_B4_BS32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 16;
+  params.K = 64;
+  params.block_size = 32;
+  params.has_zero_point = false;
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
 
   TestParams params;
   params.M = 1;
@@ -627,7 +696,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64_ZP) {
@@ -639,11 +708,13 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64_ZP) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto htp_arch = GetPlatformAttributes().htp_arch;
 
   TestParams params;
   params.M = 1;
@@ -651,7 +722,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128_ZP) {
@@ -663,7 +734,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128_ZP) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B8_BS32) {
@@ -675,7 +746,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B8_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B8_BS32_ZP) {
@@ -687,7 +758,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B8_BS32_ZP) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B8_BS64) {
@@ -699,7 +770,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B8_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B8_BS64_ZP) {
@@ -711,7 +782,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B8_BS64_ZP) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B8_BS128) {
@@ -723,7 +794,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B8_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B8_BS128_ZP) {
@@ -735,7 +806,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B8_BS128_ZP) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
 // QDQ MatMulNBits with INT16 (SFIXED_POINT_16) activations/output.
@@ -749,7 +820,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B2_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<2, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B2_BS32_ZP) {
@@ -761,7 +832,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B2_BS32_ZP) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<2, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B2_BS64) {
@@ -773,7 +844,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B2_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<2, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B2_BS64_ZP) {
@@ -785,7 +856,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B2_BS64_ZP) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<2, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B2_BS128) {
@@ -797,7 +868,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B2_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<2, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B2_BS128_ZP) {
@@ -809,7 +880,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B2_BS128_ZP) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<2, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B4_BS32) {
@@ -821,7 +892,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B4_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B4_BS32_ZP) {
@@ -833,7 +904,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B4_BS32_ZP) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B4_BS64) {
@@ -845,7 +916,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B4_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B4_BS64_ZP) {
@@ -857,7 +928,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B4_BS64_ZP) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B4_BS128) {
@@ -869,7 +940,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B4_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B4_BS128_ZP) {
@@ -881,7 +952,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B4_BS128_ZP) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B8_BS32) {
@@ -893,7 +964,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B8_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B8_BS32_ZP) {
@@ -905,7 +976,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K64_B8_BS32_ZP) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B8_BS64) {
@@ -917,7 +988,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B8_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B8_BS64_ZP) {
@@ -929,7 +1000,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N32_K128_B8_BS64_ZP) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B8_BS128) {
@@ -941,7 +1012,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B8_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B8_BS128_ZP) {
@@ -953,7 +1024,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B8_BS128_ZP) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = true;
-  RunHtpQDQMatMulNBitsTest<8, int16_t>(params);
+  RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16) {
@@ -966,7 +1037,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16) {
   params.block_size = 16;
   params.has_zero_point = false;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K128_B4_BS32) {
@@ -979,7 +1050,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K128_B4_BS32) {
   params.block_size = 32;
   params.has_zero_point = false;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K128_B4_BS64) {
@@ -992,7 +1063,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N2_K128_B4_BS64) {
   params.block_size = 64;
   params.has_zero_point = false;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K64_B4_BS32_ZP) {
@@ -1006,7 +1077,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K64_B4_BS32_ZP) {
   params.has_zero_point = true;
   params.is_zp_symmetric = true;
   params.enable_lpbq = true;
-  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
 }
 
 // Should fallback to BW_FLOAT_BLOCK (bits=8)
