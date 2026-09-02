@@ -149,43 +149,66 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   bool reencode_scale = false;
   float scale_quant_scale = 0.0f;
   int32_t scale_quant_offset = 0;
+  // BW_SCALE_OFFSET is deliberately excluded: it only ever pairs with a 4-bit datatype, and its
+  // bitwidth has no equivalent in the SCALE_OFFSET encoding re-emitted below.
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
       scale_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 &&
-      scale_info.quant_param.IsPerTensor()) {
+      scale_info.quant_param.IsPerTensor(/*include_bw=*/false)) {
     RETURN_IF_ERROR(scale_info.quant_param.GetPerTensorScaleOffset(scale_quant_scale, scale_quant_offset));
     reencode_scale = scale_quant_offset != 0;
   }
 
   if (reencode_scale) {
+    // Distance between the INT16 and UINT16 representations of the same value.
+    constexpr int32_t kInt16ToUint16Shift = 32768;
+
     RETURN_IF_NOT(scale_info.is_initializer,
                   "QNN RMSNorm requires a static SFIXED_POINT_16 scale when its offset is nonzero");
-    RETURN_IF(scale_quant_offset < -32767 || scale_quant_offset > 32768,
+    // QNN offsets negate ONNX zero points, so an INT16 zero point maps to [-32767, 32768].
+    RETURN_IF(scale_quant_offset < 1 - kInt16ToUint16Shift || scale_quant_offset > kInt16ToUint16Shift,
               "QNN RMSNorm scale offset is outside the valid INT16 range");
 
     std::vector<uint8_t> signed_bytes;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_info.initializer_tensor, signed_bytes));
-    RETURN_IF(signed_bytes.size() % sizeof(int16_t) != 0,
-              "QNN RMSNorm INT16 scale data has an invalid byte size");
+    const size_t expected_num_bytes = utils::GetQnnTensorDataSizeInBytes(*squeezed_shape,
+                                                                         QNN_DATATYPE_SFIXED_POINT_16);
+    RETURN_IF(signed_bytes.size() != expected_num_bytes,
+              ("QNN RMSNorm INT16 scale holds " + std::to_string(signed_bytes.size()) +
+               " bytes of data but its shape implies " + std::to_string(expected_num_bytes) + ".")
+                  .c_str());
 
     std::vector<uint8_t> unsigned_bytes(signed_bytes.size());
     for (size_t i = 0; i < signed_bytes.size(); i += sizeof(int16_t)) {
       int16_t signed_value = 0;
       std::memcpy(&signed_value, signed_bytes.data() + i, sizeof(signed_value));
-      const uint16_t unsigned_value = static_cast<uint16_t>(static_cast<int32_t>(signed_value) + 32768);
+      const uint16_t unsigned_value = static_cast<uint16_t>(static_cast<int32_t>(signed_value) +
+                                                            kInt16ToUint16Shift);
       std::memcpy(unsigned_bytes.data() + i, &unsigned_value, sizeof(unsigned_value));
     }
 
     // q_s + offset_s == (q_s + 32768) + (offset_s - 32768).
+    const int32_t unsigned_quant_offset = scale_quant_offset - kInt16ToUint16Shift;
+
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("RMSNorm node " + node_unit.Name() + ": re-encoding SFIXED_POINT_16 scale `" + scale_name +
+                 "` as UFIXED_POINT_16, offset " + std::to_string(scale_quant_offset) + " -> " +
+                 std::to_string(unsigned_quant_offset) + ", because HTP rejects a shifted INT16 gamma.")
+                    .c_str());
+
     const std::string unsigned_scale_name = utils::UniqueNameGenerator().New(scale_name, "_u16");
     QnnTensorWrapper unsigned_scale(unsigned_scale_name,
                                     QNN_TENSOR_TYPE_STATIC,
                                     QNN_DATATYPE_UFIXED_POINT_16,
-                                    QnnQuantParamsWrapper::PerTensor(scale_quant_scale, scale_quant_offset - 32768),
+                                    QnnQuantParamsWrapper::PerTensor(scale_quant_scale, unsigned_quant_offset),
                                     std::vector<uint32_t>(*squeezed_shape),
                                     std::move(unsigned_bytes));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(unsigned_scale)),
                   "Failed to add converted RMSNorm scale tensor.");
     input_names.push_back(unsigned_scale_name);
+
+    // Keep scale_info describing the tensor QNN actually receives; the dummy beta below derives its
+    // datatype and rank from it.
+    scale_info.qnn_data_type = QNN_DATATYPE_UFIXED_POINT_16;
     scale_info.shape = *squeezed_shape;
   } else if (squeezed_shape->size() == scale_info.shape.size()) {
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names));
