@@ -1,4 +1,4 @@
-From 878eb49ffe4c70c85ec9eb15e720a58fc84af4b0 Mon Sep 17 00:00:00 2001
+From 5cafdc533d432b7b4c5345ac9cd9beabcf413d7d Mon Sep 17 00:00:00 2001
 From: QNN EP team <noreply@qualcomm.com>
 Date: Tue, 21 Jul 2026 00:00:00 +0000
 Subject: [PATCH 6/7] perftest: enable QnnHtpShared zero-copy input on

@@ -1,4 +1,4 @@
-From 1fecfec2179f2ca40ff2c279b402d727edefa514 Mon Sep 17 00:00:00 2001
+From 9e78cfd582f4388f9d009c2b0d794a60cad8ef92 Mon Sep 17 00:00:00 2001
 From: QNN EP team <noreply@qualcomm.com>
 Date: Tue, 18 Aug 2026 00:00:00 +0000
 Subject: [PATCH 7/7] cmake: guard QNN_LIB_FILES copy in

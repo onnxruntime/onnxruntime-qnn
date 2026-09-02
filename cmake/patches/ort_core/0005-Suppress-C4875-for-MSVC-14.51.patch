@@ -1,4 +1,4 @@
-From 61ba80b75300f15e4458cde2ff1f3e10be780e5a Mon Sep 17 00:00:00 2001
+From 17dc1290ec9651c54ea72251e044fedab2f7aa0a Mon Sep 17 00:00:00 2001
 From: Badri Narayanan <mbadnara@qti.qualcomm.com>
 Date: Tue, 1 Sep 2026 16:10:31 -0700
 Subject: [PATCH 5/7] Suppress C4875 for MSVC 14.51
