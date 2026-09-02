@@ -348,6 +348,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   uint32_t GetVtcmSize() const { return vtcm_size_internal_; }
 
+  uint32_t GetNumCores() const { return num_cores_internal_; }
+
   // Get backend library directory by adopting identical logic as in LoadLib.
   std::string GetBackendLibDir() {
     auto backend_path = std::filesystem::path(backend_path_);
@@ -824,6 +826,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // On x86 platforms, they are set to user-provided ones (e.g., htp_arch_).
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t vtcm_size_internal_ = 0;
+  uint32_t num_cores_internal_ = 0;
 
   // File mapping.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;

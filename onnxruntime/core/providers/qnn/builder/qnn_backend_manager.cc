@@ -3078,6 +3078,7 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
       if (htp_ext && htp_ext->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP) {
         htp_arch_internal_ = htp_ext->onChipDevice.arch;
         vtcm_size_internal_ = static_cast<uint32_t>(htp_ext->onChipDevice.vtcmSize);
+        num_cores_internal_ = hw_info.v1.numCores;
         break;
       }
     }

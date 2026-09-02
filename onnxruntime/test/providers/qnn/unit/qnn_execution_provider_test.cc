@@ -856,6 +856,29 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Su
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCores_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_num_cores")] = "2";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresDefault_Succeeds) {
+  EpStubContext ctx;
+  // htp_num_cores not set — default 0, no NUM_CORES config pushed.
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresMalformed_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "abc";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: abc will be skipped");
+}
+
 // ===========================================================================
 // Group 8: Constructor — early throws
 // ===========================================================================
