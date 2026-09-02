@@ -742,10 +742,12 @@ Ort::Status GetPermToLastAxis(uint32_t axis, uint32_t rank, std::vector<uint32_t
  */
 uint64_t GetTimeStampInUs();
 
-// Checks if bias scale matches the expected scale (weights_scale * activation_scale)
-// Returns true if they match within a tolerance, false otherwise
-bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
-                         float tolerance = 1e-5f);
+// Checks that a quantized bias scale is exactly the scale a (weights_scale * activation_scale).
+// Any other value has to be requantized before emission.
+// The comparison is exact because quantizers emit exactly float(weights_scale * activation_scale).
+// It must not use an absolute epsilon: bias scales are a product of two small scales and get as
+// small as 1e-10, so an epsilon like 1e-5 is far larger than the scales being compared
+bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale);
 
 // Extracts weight scales from a QnnQuantParamsWrapper.
 // Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,

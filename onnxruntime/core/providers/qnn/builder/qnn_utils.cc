@@ -1839,9 +1839,9 @@ uint64_t GetTimeStampInUs() {
   return std::chrono::duration_cast<std::chrono::microseconds>(timestamp).count();
 }
 
-bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale, float tolerance) {
-  float expected_scale = weights_scale * activation_scale;
-  return std::abs(bias_scale - expected_scale) <= tolerance;
+bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale) {
+  const float expected_scale = weights_scale * activation_scale;
+  return bias_scale == expected_scale;
 }
 
 Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
