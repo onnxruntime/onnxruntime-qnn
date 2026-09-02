@@ -3639,8 +3639,8 @@ TEST_F(QnnGPUBackendTests, ConstantOnlyGraph) {
       BuildOpTestCase<Ort::Float16_t>(
           "abs_node", "Abs",
           {TestInputDef<Ort::Float16_t>({6}, true,
-                                         {Ort::Float16_t(-3.0f), Ort::Float16_t(-2.0f), Ort::Float16_t(-1.0f),
-                                          Ort::Float16_t(0.0f), Ort::Float16_t(1.0f), Ort::Float16_t(2.0f)})},
+                                        {Ort::Float16_t(-3.0f), Ort::Float16_t(-2.0f), Ort::Float16_t(-1.0f),
+                                         Ort::Float16_t(0.0f), Ort::Float16_t(1.0f), Ort::Float16_t(2.0f)})},
           {}, {}),
       provider_options,
       13,
