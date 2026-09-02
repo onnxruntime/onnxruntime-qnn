@@ -39,6 +39,7 @@
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -1614,6 +1615,8 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const size_t node_unit_size,
                                     std::vector<const OrtNode*>& supported_nodes,
+                                    std::vector<utils::QnnNodeGroupInfo>& groups,
+                                    std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id,
                                     std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
   size_t num_graph_inputs = 0;
   size_t num_graph_outputs = 0;
@@ -1670,13 +1673,34 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
     return qnn_status.release();
   }
 
+  // Build one QnnNodeGroupInfo per IQnnNodeGroup (fused or trivial 1-member wrapper) so that every NodeUnit in
+  // the graph belongs to exactly one group. The partitioner later treats each group as an atomic scheduling unit.
+  groups.clear();
+  node_unit_to_group_id.clear();
+  groups.reserve(qnn_node_groups.size());
+
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
     Ort::Status support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
     const bool supported = support_status.IsOK();
 
     LogNodeSupport(logger_, *qnn_node_group, support_status);
+
+    utils::QnnNodeGroupInfo info;
+    info.group_id = groups.size();
+    info.target_node_unit = qnn_node_group->GetTargetNodeUnit();
+    for (const OrtNodeUnit* nu : qnn_node_group->GetNodeUnits()) {
+      info.member_node_units.push_back(nu);
+      info.member_set.insert(nu);
+    }
+    info.is_supported = supported;
+
+    // Map each member NodeUnit to this group's id.
+    for (const OrtNodeUnit* nu : info.member_node_units) {
+      node_unit_to_group_id[nu] = info.group_id;
+    }
+
     if (supported) {
-      for (const OrtNodeUnit* node_unit : qnn_node_group->GetNodeUnits()) {
+      for (const OrtNodeUnit* node_unit : info.member_node_units) {
         for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
           supported_nodes.push_back(node);
         }
@@ -1700,7 +1724,184 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                  std::make_move_iterator(batch.end()));
       }
     }
+
+    groups.push_back(std::move(info));
   }
+
+  // Helper: rechecks whether a NodeUnit is supported standalone (equivalent to wrapping it in a
+  // QnnNodeUnitWrapper and calling IsSupported). Used during demotion.
+  auto check_standalone = [&](const OrtNodeUnit& nu) -> bool {
+    const auto* op_builder = qnn::GetOpBuilder(nu.OpType());
+    if (!op_builder) {
+      return false;
+    }
+    Ort::Status s = op_builder->IsOpSupported(qnn_model_wrapper, nu, logger_);
+    return s.IsOK();
+  };
+
+  // Helper: computes external in-degree for every non-defunct group.
+  auto recompute_in_degrees = [&]() {
+    for (utils::QnnNodeGroupInfo& g : groups) {
+      if (g.is_defunct) {
+        continue;
+      }
+      g.external_in_degree = utils::ComputeGroupExternalInDegree(g, node_unit_map, ort_api);
+    }
+  };
+
+  // Iterative cycle-detection + demotion loop.
+  //
+  // A multi-member fusion is "un-fittable" if there's a path member -> unsupported_non_member -> member, which
+  // means the members cannot be scheduled atomically in one partition without creating a dependency cycle
+  // against the group supernode. We detect this by running a dry-run topological ordering over groups and
+  // demoting any multi-member group whose supernode cannot be reached. Demoted groups become one 1-member
+  // group per member; each member is rechecked individually via check_standalone.
+  //
+  // Termination: each iteration strictly reduces multi-member group count. Bounded by initial multi-member count.
+  constexpr int kMaxDemotionIterations = 16;
+  bool any_demoted = false;
+  for (int iter = 0; iter < kMaxDemotionIterations; ++iter) {
+    recompute_in_degrees();
+
+    // Dry-run topological sort over groups.
+    std::vector<size_t> dry_in_degree(groups.size(), 0);
+    size_t live_count = 0;
+    for (const utils::QnnNodeGroupInfo& g : groups) {
+      if (g.is_defunct) {
+        continue;
+      }
+      dry_in_degree[g.group_id] = g.external_in_degree;
+      ++live_count;
+    }
+
+    std::deque<size_t> q;
+    for (const utils::QnnNodeGroupInfo& g : groups) {
+      if (g.is_defunct) {
+        continue;
+      }
+      if (dry_in_degree[g.group_id] == 0) {
+        q.push_back(g.group_id);
+      }
+    }
+
+    size_t processed = 0;
+    while (!q.empty()) {
+      size_t gid = q.front();
+      q.pop_front();
+      ++processed;
+      const utils::QnnNodeGroupInfo& g = groups[gid];
+      for (const OrtNodeUnit* member_nu : g.member_node_units) {
+        for (const OrtNode* out : member_nu->GetOutputNodes(ort_api)) {
+          auto nu_it = node_unit_map.find(out);
+          if (nu_it == node_unit_map.cend()) {
+            continue;
+          }
+          const OrtNodeUnit* downstream_nu = nu_it->second;
+          if (g.member_set.count(downstream_nu) > 0) {
+            continue;
+          }
+          auto gid_it = node_unit_to_group_id.find(downstream_nu);
+          if (gid_it == node_unit_to_group_id.cend()) {
+            continue;
+          }
+          size_t dgid = gid_it->second;
+          if (dgid == gid) {
+            continue;
+          }
+          if (groups[dgid].is_defunct) {
+            continue;
+          }
+          if (dry_in_degree[dgid] > 0) {
+            --dry_in_degree[dgid];
+            if (dry_in_degree[dgid] == 0) {
+              q.push_back(dgid);
+            }
+          }
+        }
+      }
+    }
+
+    if (processed == live_count) {
+      break;  // No cycles; group graph is a valid DAG.
+    }
+
+    // Demote every multi-member group still blocked (in_degree > 0 after dry-run). Over-demotion is safe: a
+    // 1-member group can never participate in a cycle (NodeUnit graph is a DAG by construction), so after enough
+    // demotion the loop terminates.
+    size_t demoted_this_iter = 0;
+    const size_t original_count = groups.size();
+    for (size_t i = 0; i < original_count; ++i) {
+      utils::QnnNodeGroupInfo& g = groups[i];
+      if (g.is_defunct) {
+        continue;
+      }
+      if (g.member_node_units.size() <= 1) {
+        continue;
+      }
+      if (dry_in_degree[g.group_id] == 0) {
+        continue;
+      }
+
+      // Demote: mark the original group defunct and append a fresh 1-member group per member. Members that pass
+      // standalone support-check stay in supported_nodes; others are dropped.
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("[QNN EP] Demoting un-fittable fusion group (target: " +
+                   g.target_node_unit->OpType() + " '" + g.target_node_unit->Name() +
+                   "'). Members will be rechecked individually.")
+                      .c_str());
+
+      // Remove this group's member OrtNodes from supported_nodes; they will be re-added below if still supported.
+      for (const OrtNodeUnit* member_nu : g.member_node_units) {
+        for (const OrtNode* n : member_nu->GetAllNodesInGroup()) {
+          supported_nodes.erase(std::remove(supported_nodes.begin(), supported_nodes.end(), n),
+                                supported_nodes.end());
+        }
+      }
+
+      g.is_defunct = true;
+      ++demoted_this_iter;
+
+      // Snapshot members before mutating `groups` (push_back may invalidate references to g).
+      std::vector<const OrtNodeUnit*> members_copy = g.member_node_units;
+      for (const OrtNodeUnit* member_nu : members_copy) {
+        utils::QnnNodeGroupInfo new_g;
+        new_g.group_id = groups.size();
+        new_g.target_node_unit = member_nu;
+        new_g.member_node_units.push_back(member_nu);
+        new_g.member_set.insert(member_nu);
+        new_g.is_supported = check_standalone(*member_nu);
+        new_g.is_defunct = false;
+        new_g.external_in_degree = 0;  // Recomputed next iteration.
+
+        node_unit_to_group_id[member_nu] = new_g.group_id;
+
+        if (new_g.is_supported) {
+          for (const OrtNode* n : member_nu->GetAllNodesInGroup()) {
+            supported_nodes.push_back(n);
+          }
+        }
+
+        groups.push_back(std::move(new_g));
+      }
+    }
+
+    if (demoted_this_iter == 0) {
+      // No multi-member groups left to demote but dry-run still reports a cycle. This indicates a bug in group
+      // construction (a 1-member group graph should be a DAG). Log and break to avoid infinite loop.
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  "[QNN EP] Fusion-aware partitioner reports an unexpected cycle among 1-member groups. "
+                  "Proceeding without further demotion; BFS will throw if the cycle is real.");
+      break;
+    }
+
+    any_demoted = true;
+  }
+
+  if (any_demoted) {
+    // Final recompute so that external_in_degree reflects the current group set passed to the partitioner.
+    recompute_in_degrees();
+  }
+
   return nullptr;
 }
 
@@ -1708,6 +1909,8 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
                                             const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                             const size_t node_unit_size,
                                             std::vector<const OrtNode*>& supported_nodes,
+                                            std::vector<utils::QnnNodeGroupInfo>& groups,
+                                            std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id,
                                             std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
   // Collect each SoC's rejections tagged with its SoC label, then merge into one
   // row per ONNX node via MergePerSocUnsupportedNodes.
@@ -1731,10 +1934,17 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
     // Get SoC-specific supported and unsupported nodes.
     std::vector<const OrtNode*> supported_nodes_per_soc;
     std::vector<qnn::UnsupportedNodeInfo> unsupported_nodes_per_soc;
+    // Node groups (fusion structure) are graph-derived and identical across SoCs, so only the
+    // first pass's groups/node_unit_to_group_id are kept; later passes only need supported_nodes
+    // to intersect.
+    std::vector<utils::QnnNodeGroupInfo> groups_per_soc;
+    std::unordered_map<const OrtNodeUnit*, size_t> node_unit_to_group_id_per_soc;
     RETURN_IF_NOT_NULL(GetSupportedNodes(graph,
                                          node_unit_map,
                                          node_unit_size,
                                          supported_nodes_per_soc,
+                                         groups_per_soc,
+                                         node_unit_to_group_id_per_soc,
                                          unsupported_nodes_per_soc));
 
     // Tag this SoC's rejections with its (htp_arch, soc_model) label for merging.
@@ -1748,6 +1958,8 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
     if (idx == 0) {
       // Directly move for the first SoC.
       supported_nodes = std::move(supported_nodes_per_soc);
+      groups = std::move(groups_per_soc);
+      node_unit_to_group_id = std::move(node_unit_to_group_id_per_soc);
     } else {
       // Incrementally remove nodes not supported in later SoC from the list.
       std::unordered_set<size_t> supported_node_ids_per_soc;
@@ -2245,17 +2457,23 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;
+  std::vector<utils::QnnNodeGroupInfo> node_groups;
+  std::unordered_map<const OrtNodeUnit*, size_t> node_unit_to_group_id;
   if (!ep->enable_multi_soc_ep_context_) {
     RETURN_IF_NOT_NULL(ep->GetSupportedNodes(graph,
                                              node_unit_map,
                                              node_unit_holder.size(),
                                              supported_nodes,
+                                             node_groups,
+                                             node_unit_to_group_id,
                                              ep->op_trace_builder_.UnsupportedNodes()));
   } else {
     RETURN_IF_NOT_NULL(ep->GetMultiSocSupportedNodes(graph,
                                                      node_unit_map,
                                                      node_unit_holder.size(),
                                                      supported_nodes,
+                                                     node_groups,
+                                                     node_unit_to_group_id,
                                                      ep->op_trace_builder_.UnsupportedNodes()));
   }
 
@@ -2304,7 +2522,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                                                                   ep->ort_api,
                                                                                                   supported_nodes,
                                                                                                   ep->name_,
-                                                                                                  node_unit_map);
+                                                                                                  node_unit_map,
+                                                                                                  node_groups,
+                                                                                                  node_unit_to_group_id,
+                                                                                                  ep->logger_);
 
   // Filter out partitions that consist of a single QuantizeLinear or DequantizeLinear node.
   // We also count the number of supported nodes in all valid partitions.

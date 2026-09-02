@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <optional>
 #include <tuple>
@@ -341,13 +342,44 @@ class OrtSelectorManager {
 
 namespace utils {
 
+// Describes an IQnnNodeGroup (multi-NodeUnit fusion or a single NodeUnit wrapped as a trivial 1-member group)
+// in terms the partitioner can reason about. One entry exists per IQnnNodeGroup produced by GetQnnNodeGroups
+// (supported or not), so every NodeUnit in the graph belongs to exactly one group.
+//
+// The partitioner treats each group as an atomic BFS scheduling unit: all members are admitted into the same
+// partition, or none. This prevents BFS from splitting fusion members across partition boundaries when an
+// unsupported op sits topologically between them.
+struct QnnNodeGroupInfo {
+  size_t group_id = 0;                                // Dense index into the groups vector.
+  const OrtNodeUnit* target_node_unit = nullptr;      // From IQnnNodeGroup::GetTargetNodeUnit(); nullptr if defunct.
+  std::vector<const OrtNodeUnit*> member_node_units;  // All member NodeUnits (includes the target).
+  std::unordered_set<const OrtNodeUnit*> member_set;  // O(1) membership test; mirrors member_node_units.
+  bool is_supported = false;                          // Cached IQnnNodeGroup::IsSupported() result.
+  bool is_defunct = false;                            // Set when the group is demoted; BFS skips defunct entries.
+  size_t external_in_degree = 0;                      // Count of input edges from NodeUnits NOT in member_set.
+};
+
+// Walks each member's OrtNode inputs and counts edges whose producer NodeUnit is not in the group's member_set.
+// Initializers (null producer) are skipped. For QDQGroup members, walks DQ/target/Q nodes.
+size_t ComputeGroupExternalInDegree(
+    const QnnNodeGroupInfo& group,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+    const OrtApi& ort_api);
+
 // Refer to CreateSupportedPartitions in partitioning_utils.cc.
+//
+// Group-aware partitioner. `groups` describes every IQnnNodeGroup (fusion or 1-member wrapper);
+// `node_unit_to_group_id` maps each NodeUnit to its owning group. The BFS iterates groups as atomic units,
+// guaranteeing that members of any multi-NodeUnit fusion land in the same partition.
 std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     const OrtGraph* graph,
     const OrtApi& ort_api,
     const std::vector<const OrtNode*>& supported_nodes,
     const std::string& ep_type,
-    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map);
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+    const std::vector<QnnNodeGroupInfo>& groups,
+    const std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id,
+    const Ort::Logger& logger);
 
 }  // namespace utils
 
