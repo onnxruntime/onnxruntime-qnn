@@ -33,6 +33,7 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/shared_context.h"
+#include "core/providers/qnn/qnn_external_resource_importer.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
@@ -1283,8 +1284,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-    const qnn::EpContextIoDispatch& io_dispatch,
-    bool enable_htp_graph_splitting) {
+    const qnn::EpContextIoDispatch& io_dispatch) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
@@ -1316,30 +1316,12 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  QnnContext_Config_t context_config_graph_splitting_vtcm = QNN_CONTEXT_CONFIG_INIT;
-  QnnHtpContext_CustomConfig_t graph_splitting_custom_config_vtcm;
-  if (enable_htp_graph_splitting) {
-    graph_splitting_custom_config_vtcm.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS;
-    graph_splitting_custom_config_vtcm.graphSplittingConfigs.graphSplittingEnabled = true;
-    context_config_graph_splitting_vtcm.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-    context_config_graph_splitting_vtcm.customConfig = &graph_splitting_custom_config_vtcm;
-  }
-#else
-  ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
-#endif
-
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   configs_vec.push_back(&context_config_resource_sharing);
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
-#endif
-#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
-  if (enable_htp_graph_splitting) {
-    configs_vec.push_back(&context_config_graph_splitting_vtcm);
-  }
 #endif
   configs_vec.push_back(nullptr);
 
@@ -2001,8 +1983,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                           io_dispatch,
-                                                           enable_htp_graph_splitting);
+                                                           io_dispatch);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2151,8 +2132,7 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                               io_dispatch,
-                                                               enable_htp_graph_splitting)
+                                                               io_dispatch)
                  : CreateContext(enable_htp_weight_sharing,
                                  enable_htp_extended_udma_mode,
                                  enable_htp_prepare_only,
@@ -2257,7 +2237,8 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
   }
 
   // Override cached values.
-  htp_arch_ = htp_arch;
+  // Update htp_arch_internal_ as well to make sure GetHtpArch returns correct value.
+  htp_arch_ = htp_arch_internal_ = htp_arch;
   soc_model_ = soc_model;
 
   Ort::Status status = CreateDevice();
@@ -2521,7 +2502,7 @@ void QnnBackendManager::ReleaseDeviceAndContext() {
   }
 
   // Reset to default values as opposed to cached values set in `SetupDeviceAndContext`.
-  htp_arch_ = QNN_HTP_DEVICE_ARCH_NONE;
+  htp_arch_ = htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   soc_model_ = QNN_SOC_MODEL_UNKNOWN;
 
   backend_setup_completed_ = false;
@@ -2979,11 +2960,11 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
 }
 
 Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t context_handle,
-                                                             void* shared_memory_address,
+                                                             void* memory_address,
                                                              const Qnn_Tensor_t& qnn_tensor,
                                                              Qnn_MemHandle_t& mem_handle) {
   // Multi-threading situations to consider:
-  // 1) Shared memory allocation is being freed in another thread while we are processing `shared_memory_address`.
+  // 1) Shared memory allocation is being freed in another thread while we are processing `memory_address`.
   //    This implies incorrect usage as the memory is being freed while it is still in use. Let's assume this won't
   //    happen.
   // 2) The shared memory allocation clean up function is being run from another thread while the
@@ -2998,7 +2979,7 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   auto& context_mem_handle_manager = context_handle_record->mem_handles;
 
   bool did_register{};
-  RETURN_IF_ERROR(context_mem_handle_manager->GetOrRegister(shared_memory_address,
+  RETURN_IF_ERROR(context_mem_handle_manager->GetOrRegister(memory_address,
                                                             qnn_tensor,
                                                             mem_handle,
                                                             did_register,
@@ -3007,10 +2988,10 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   if (did_register) {
     // The cleanup lambda is the same for both HTP and DX12: unregister the QNN mem handle when the allocation is freed.
     auto unregister_mem_handle =
-        [shared_memory_address,
+        [memory_address,
          weak_backend_manager = weak_from_this(),
          weak_context_handle_record = std::weak_ptr{context_handle_record}](
-            void* /* allocation_base_address */) {
+            void* /* allocation_base_address  */) {
           // Lock QnnBackendManager shared_ptr to ensure that QNN interface is still valid.
           auto backend_manager = weak_backend_manager.lock();
           if (!backend_manager) {
@@ -3025,31 +3006,32 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
 
           auto& context_mem_handle_manager = context_handle_record->mem_handles;
 
-          auto unregister_status = context_mem_handle_manager->Unregister(shared_memory_address);
+          auto unregister_status = context_mem_handle_manager->Unregister(memory_address);
           if (!unregister_status.IsOK()) {
             std::ostringstream oss;
-            oss << "Failed to unregister shared memory mem handle for address: "
-                << shared_memory_address
+            oss << "Failed to unregister mem handle for address: "
+                << memory_address
                 << ", error: "
                 << unregister_status.GetErrorMessage();
             ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
           }
         };
 
-    Ort::Status add_cleanup_status = Ort::Status();
-    if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
-      RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
-          shared_memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-    }
 #ifdef _WIN32
-    else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+    if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address)) {
+      RETURN_IF_ERROR(QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
+          memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)}));
+    } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
       RETURN_IF_ERROR(Dx12SharedMemoryAllocator::AddAllocationCleanUp(
-          shared_memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-    }
+          memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+    } else
 #endif  // _WIN32
-    else {
-      return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
-    }
+      if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
+        RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
+            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+      } else {
+        return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+      }
   }
 
   return Ort::Status();

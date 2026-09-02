@@ -289,14 +289,12 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     trace_collector = std::make_unique<OpTraceCollector>();
   }
 
-  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
-                                                      qnn_backend_manager_->GetQnnInterface(),
-                                                      qnn_backend_manager_->GetQnnBackendHandle(),
-                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
-                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
+  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph,
+                                                      api_ptrs_,
+                                                      logger,
+                                                      *qnn_backend_manager_,
                                                       graph_inputs_,
                                                       graph_outputs_,
-                                                      qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
@@ -510,18 +508,21 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   const bool uses_shared_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
+  const bool uses_imported_memory =
+      ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU &&
+      ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_DEFAULT;
 
-  if (!uses_shared_memory) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
-    SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
-    SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
-  } else {
+  if (uses_shared_memory || uses_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
     RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
                                                                       qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
+  } else {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
+    SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
+    SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
   }
 
   return Ort::Status();

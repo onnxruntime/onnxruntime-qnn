@@ -21,8 +21,9 @@
 #include "gtest/gtest.h"
 namespace onnxruntime {
 namespace test {
-// qnn-op-package-generator requires Python 3.10, while our CI only supports 3.11 and later on Windows,
-// so we do not add the UDO unit test on Windows.
+// qnn-op-package-generator supports Python 3.10 and 3.12 on Linux x86_64 (via version-tagged
+// SDK extensions). Windows is excluded by the platform guard below because the Hexagon toolchain
+// only targets HTP on Linux and the Windows CI environment uses Python 3.11+.
 #if defined(__linux__) && defined(__x86_64__) && defined(BUILD_QNN_UDO_TEST)
 constexpr std::string_view kUdoDomain = "udo_domain";
 /*

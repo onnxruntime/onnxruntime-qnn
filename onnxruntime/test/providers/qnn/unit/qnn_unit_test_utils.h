@@ -30,6 +30,7 @@
 
 #include "QnnInterface.h"
 
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
@@ -165,6 +166,84 @@ struct OrtApiStubContext {
     }
     return ApiPtrs{stub_ort_api, stub_ep_api, stub_editor_api};
   }
+};
+
+// ---------------------------------------------------------------------------
+// StubBackendManager — a QnnBackendManager whose QNN interface can be stubbed
+// ---------------------------------------------------------------------------
+//
+// Why this exists
+//
+// QnnModelWrapper reaches the QNN interface, backend handles, and backend type
+// through a `const QnnBackendManager&` (it used to take them as separate
+// constructor arguments). Those live in QnnBackendManager's private section with
+// no setter, so the mock layer this suite depends on — "zero-init a
+// QNN_INTERFACE_VER_TYPE and override only the function pointers the test path
+// exercises" — is no longer reachable through the public API, and
+// core/providers/qnn/ is not modified for testing.
+//
+// The accessors below hand out mutable references to those private members.
+// They are deliberately declared here and *defined* in qnn_unit_test_utils.cc,
+// because reaching the private members needs an explicit-instantiation +
+// friend-injection trick that must exist in exactly one translation unit:
+// repeating an explicit instantiation definition of the same specialization
+// across translation units is IFNDR ([temp.explicit]/13), and this header is
+// included by every unit/*_test.cc. Confining the machinery to the .cc keeps
+// it to a single definition; see that file for how it works and why it is
+// standard-sanctioned rather than a `#define private public` ODR violation.
+//
+// Caveats — read before extending:
+//   - Test-only. Gated by QNN_EP_INTERNAL_SYMBOL_ACCESS, so it exists only in
+//     the coverage build (Linux x86_64, GCC/Clang).
+//   - The machinery in the .cc names QnnBackendManager's private members
+//     directly. If a member is renamed or retyped, the build breaks there and
+//     the tag must be updated.
+//   - Adding an accessor for another private member means editing both files:
+//     declare it here, define it (plus its tag and instantiation) there.
+//   - Prefer the public API where one exists. QnnBackendManager::SetQnnBackendType()
+//     is the public path when you hold a QNN backend *id*; BackendType() below
+//     exists because the fixtures take a qnn::QnnBackendType directly (and
+//     QnnBackendType::HTP_FP16 has no corresponding backend id).
+
+// Owns a QnnBackendManager created through the public Create() factory with no
+// backend library loaded (nothing is dlopen'd, SetupBackend is never called), and
+// exposes the pieces QnnModelWrapper reads as mutable references so tests can
+// stub them.
+//
+// Note that a freshly created manager reports QNN_HTP_DEVICE_ARCH_NONE from
+// GetHtpArch() even when QnnBackendManagerConfig::htp_arch is set — the arch a
+// caller supplies is only copied into the internal holder by
+// SetupDeviceAndContext(). Use HtpArch() to simulate a set-up backend.
+//
+// Non-copyable / non-movable: the manager stores a reference-holding ApiPtrs and
+// a pointer to the logger, so both must outlive it.
+class StubBackendManager {
+ public:
+  StubBackendManager(const ApiPtrs& api_ptrs, const Ort::Logger& logger) {
+    qnn::QnnBackendManagerConfig cfg{};  // value-init zeroes every field
+    cfg.profiling_level = qnn::ProfilingLevel::OFF;
+    cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
+    cfg.context_priority = qnn::ContextPriority::NORMAL;
+    cfg.htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
+    cfg.soc_model = QNN_SOC_MODEL_UNKNOWN;
+    cfg.skip_qnn_version_check = true;
+    manager_ = qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
+  }
+
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(StubBackendManager);
+
+  const qnn::QnnBackendManager* Get() const { return manager_.get(); }
+
+  // Defined in qnn_unit_test_utils.cc — see the comment block above.
+  QNN_INTERFACE_VER_TYPE& QnnInterface();
+  Qnn_BackendHandle_t& BackendHandle();
+  QNN_INTERFACE_VER_TYPE& ValidatorInterface();
+  Qnn_BackendHandle_t& ValidatorBackendHandle();
+  qnn::QnnBackendType& BackendType();
+  QnnHtpDevice_Arch_t& HtpArch();
+
+ private:
+  std::shared_ptr<qnn::QnnBackendManager> manager_;
 };
 
 // Context for tests that need a real QNN HTP backend (e.g., ValidateQnnNode).

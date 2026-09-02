@@ -104,8 +104,8 @@ Pick the lowest-cost layer that lets you write the test. Cost increases top to b
 |---|---|
 | Pure logic / utility — touches neither QNN nor ORT | Direct call, no fixture |
 | Needs `OrtApi` but no real graph/logger object | Declare an `OrtApi stub{}` locally and stub only the function pointers your test path exercises |
-| Needs `QnnModelWrapper`, no real graph/logger | Use `QnnModelWrapperTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
-| Needs the QNN backend interface but no real SDK | Zero-init `QNN_INTERFACE_VER_TYPE` and override the function pointers your test path exercises (lowest cost, fully controllable) |
+| Needs `QnnModelWrapper`, no real graph/logger | Use `QnnModelWrapperTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + a `StubBackendManager` + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
+| Needs the QNN backend interface but no real SDK | Use `StubBackendManager` from `qnn_unit_test_utils.h` and override the function pointers your test path exercises (e.g. `ctx.qnn_interface.graphAddNode = ...`). `QnnModelWrapper` reads the interface, backend handles, backend type, and HTP arch through `QnnBackendManager`, so they must be stubbed on the manager rather than passed in |
 | Needs a real `Qnn_BackendHandle_t` (e.g., `backendValidateOpConfig`) | Use `QnnRealHtpBackendContext`: `dlopen` `libQnnHtp.so` + `backendCreate`. **Does not create a QNN context/session** — the validation path does not need one. Use `GTEST_SKIP()` when the SDK is unavailable |
 | Needs a real QNN context/session, graph operations | **No helper today.** Please raise it — we need a fixture-shared session (avoid rebuilding per test) before adding such tests |
 | Needs a real `OrtGraph` or `Ort::Logger` object | **Not currently possible** — public ORT headers are insufficient and private ORT headers are forbidden. Redesign the test to remove this dependency |
@@ -145,8 +145,9 @@ wrap with `OrtGlobalApiOverride` from `qnn_unit_test_utils.h` to redirect the gl
 **Constraints — common traps to avoid**
 - **No private ORT headers.** Only the public C API (`onnxruntime_c_api.h`) and the EP's own headers under `core/providers/qnn/` are allowed. ORT's internal source tree (`core/graph/...`, `core/framework/...`) and ORT's internal test infrastructure (`test/util/include/...`) are off-limits.
 - **No new cmake include paths** pointing into private ORT source — the linter rejects these.
+- **`StubBackendManager` reaches `QnnBackendManager`'s private members.** `QnnModelWrapper` takes a `const QnnBackendManager&`, so the QNN interface / handles / backend type / HTP arch have no public setter, and `core/providers/qnn/` is not modified for testing. The helper uses the explicit-instantiation idiom — access checking is not performed on an explicit instantiation's template arguments ([temp.spec]/6), so it is conforming C++ rather than a `#define private public` ODR violation. It names private members directly, so it must be updated if they are renamed or retyped; prefer a public setter (e.g. `SetQnnBackendType()`) whenever one exists.
 - **`OrtApi` stub lambdas are `noexcept`.** Never call `assert`, `abort`, or `ORT_ENFORCE` inside — they terminate the process instead of failing the test. Document invariants in a comment.
-- **Reference parameters need stable lvalues.** Some EP types store constructor args as const references. Passing a literal (e.g., `nullptr`, a temporary) creates an object that dies right after the call — the stored reference then dangles. Always pass a named local or member variable, even when the intended value is `nullptr`.
+- **Reference parameters need stable lvalues.** Some EP types store constructor args as const references. Passing a literal (e.g., `nullptr`, a temporary) creates an object that dies right after the call — the stored reference then dangles. Always pass a named local or member variable, even when the intended value is `nullptr`. `QnnBackendManager` also keeps a pointer to its `Ort::Logger`, so declare the logger *before* any `StubBackendManager` that consumes it.
 - **Stub only what your test path exercises.** Pre-stubbing entire APIs (every `OrtApi` / QNN function pointer, default return values everywhere) hides which call site actually fired and makes failures harder to diagnose. If an unstubbed pointer is hit at runtime, treat it as a signal and add the stub case-by-case.
 
 **Coverage target**
@@ -189,8 +190,8 @@ Policy (must follow):
    - Pure logic: direct call, no fixture.
    - Needs OrtApi: local OrtApi stub{} + stub only the function pointers used.
    - Needs QnnModelWrapper: QnnModelWrapperTestContext from qnn_unit_test_utils.h.
-   - Needs QNN backend interface only: zero-init QNN_INTERFACE_VER_TYPE + override
-     the function pointers used.
+   - Needs QNN backend interface only: StubBackendManager from qnn_unit_test_utils.h +
+     override the function pointers used (the wrapper reads them via QnnBackendManager).
    - Needs a real Qnn_BackendHandle_t: QnnRealHtpBackendContext + GTEST_SKIP if !IsValid().
      (This only creates a backend handle, NOT a QNN context/session.)
    - Needs a real QNN context/session OR real OrtGraph/Ort::Logger object: STOP and

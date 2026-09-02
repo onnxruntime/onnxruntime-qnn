@@ -54,6 +54,28 @@ TEST_F(QnnCPUBackendTests, Clip_4D_f32_DefaultMinMax) {
                      ExpectedEPNodeAssignment::All);
 }
 
+// clip in range [-inf, 5.0] on CPU
+TEST_F(QnnCPUBackendTests, Clip_NegativeInfMin) {
+  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
+                     {TestInputDef<float>({}, true, {-std::numeric_limits<float>::infinity()}),
+                      TestInputDef<float>({}, true, {5.0f})},
+                     ExpectedEPNodeAssignment::All,
+                     "cpu",
+                     13,
+                     5e-3f);
+}
+
+// clip in range [-5.0, inf] on CPU
+TEST_F(QnnCPUBackendTests, Clip_PositiveInfMin) {
+  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
+                     {TestInputDef<float>({}, true, {-5.0}),
+                      TestInputDef<float>({}, true, {std::numeric_limits<float>::infinity()})},
+                     ExpectedEPNodeAssignment::All,
+                     "cpu",
+                     13,
+                     5e-3f);
+}
+
 // Test Clip with 5D input.
 TEST_F(QnnCPUBackendTests, Clip_5D_f32) {
   RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
@@ -76,6 +98,28 @@ TEST_F(QnnHTPBackendTests, Clip_f32) {
   RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
                      {TestInputDef<float>({}, true, {-5.0f}),
                       TestInputDef<float>({}, true, {5.0f})},
+                     ExpectedEPNodeAssignment::All,
+                     "htp",
+                     13,
+                     5e-3f);
+}
+
+// clip in range [-inf, 5.0] on HTP
+TEST_F(QnnHTPBackendTests, Clip_NegativeInfMin) {
+  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
+                     {TestInputDef<float>({}, true, {-std::numeric_limits<float>::infinity()}),
+                      TestInputDef<float>({}, true, {5.0f})},
+                     ExpectedEPNodeAssignment::All,
+                     "htp",
+                     13,
+                     5e-3f);
+}
+
+// clip in range [-5.0, inf] on HTP
+TEST_F(QnnHTPBackendTests, Clip_PositiveInfMin) {
+  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
+                     {TestInputDef<float>({}, true, {-5.0}),
+                      TestInputDef<float>({}, true, {std::numeric_limits<float>::infinity()})},
                      ExpectedEPNodeAssignment::All,
                      "htp",
                      13,
@@ -483,6 +527,26 @@ TEST_F(QnnGPUBackendTests, Clip_fp32) {
   RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
                      {TestInputDef<float>({}, true, {-5.0f}),
                       TestInputDef<float>({}, true, {5.0f})},
+                     ExpectedEPNodeAssignment::All,
+                     "gpu",
+                     13);
+}
+
+// clip in range [-inf, 5.0] on GPU
+TEST_F(QnnGPUBackendTests, Clip_NegativeInfMin) {
+  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
+                     {TestInputDef<float>({}, true, {-std::numeric_limits<float>::infinity()}),
+                      TestInputDef<float>({}, true, {5.0f})},
+                     ExpectedEPNodeAssignment::All,
+                     "gpu",
+                     13);
+}
+
+// clip in range [-5.0, inf] on GPU
+TEST_F(QnnGPUBackendTests, Clip_PositiveInfMin) {
+  RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
+                     {TestInputDef<float>({}, true, {-5.0}),
+                      TestInputDef<float>({}, true, {std::numeric_limits<float>::infinity()})},
                      ExpectedEPNodeAssignment::All,
                      "gpu",
                      13);

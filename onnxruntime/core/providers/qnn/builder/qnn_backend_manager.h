@@ -270,11 +270,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void RemovePerThreadHtpPowerConfigMapping(const std::thread::id& thread_id);
 
-  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() { return qnn_interface_; }
+  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() const { return qnn_interface_; }
 
-  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() { return qnn_validator_interface_; }
+  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() const { return qnn_validator_interface_; }
 
-  const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() { return qnn_sys_interface_; }
+  const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() const { return qnn_sys_interface_; }
 
   const Qnn_ContextHandle_t& GetQnnContext(int index = 0) {
     if (!((contexts_.size() > 0) && (static_cast<size_t>(index) < contexts_.size()))) {
@@ -287,13 +287,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return contexts_.size();
   }
 
-  const Qnn_BackendHandle_t& GetQnnBackendHandle() { return backend_handle_; }
+  const Qnn_BackendHandle_t& GetQnnBackendHandle() const { return backend_handle_; }
 
-  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() { return validator_backend_handle_; }
+  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() const { return validator_backend_handle_; }
 
-  const Qnn_DeviceHandle_t& GetQnnDeviceHandle() { return device_handle_; }
+  const Qnn_DeviceHandle_t& GetQnnDeviceHandle() const { return device_handle_; }
 
-  const Qnn_ProfileHandle_t& GetQnnProfileHandle() { return profile_backend_handle_; }
+  const Qnn_ProfileHandle_t& GetQnnProfileHandle() const { return profile_backend_handle_; }
 
   // Resets the QNN log level to the given ORT log level or to the default log level if the argument is
   // std::nullopt.
@@ -333,7 +333,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t GetBackendId() { return backend_id_; }
 
   void SetQnnBackendType(uint32_t backend_id);
-  QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
+  QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
@@ -428,6 +428,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Release the current QNN context handles (frees HW resources).
   // Idempotent — safe to call even if no context is active.
   Ort::Status ReleaseContext();
+
   bool IsDx12SharedMemoryAllocatorSupported();
 
   power::HtpPowerConfigManager& GetHtpPowerConfigManager() {
@@ -499,8 +500,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-                                                          const qnn::EpContextIoDispatch& io_dispatch,
-                                                          bool enable_htp_graph_splitting = false);
+                                                          const qnn::EpContextIoDispatch& io_dispatch);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,

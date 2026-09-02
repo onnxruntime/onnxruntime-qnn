@@ -378,8 +378,9 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       input_1_shape = {input_info_1.shape[0], 1};
     }
     if (!input_info_1.is_initializer) {
-      // Only insert Convert for asymmetric quantization (i.e., offset != 2^(16-1)).
-      if (quant_param.scaleOffsetEncoding.offset != 32768) {
+      // QNN offsets negate ONNX zero points, so symmetric uint16 uses -32768.
+      constexpr int32_t kSymmetricU16Offset = -32768;
+      if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,
                                                convert_output_name,
@@ -455,7 +456,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
                                                    original_shape_copy,  // Will be modified to new shape (unnecessary)
                                                    input_info_1.initializer_tensor,
                                                    unpacked_tensor,
-                                                   logger));
+                                                   logger,
+                                                   do_op_validation));
     } else {
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
     }

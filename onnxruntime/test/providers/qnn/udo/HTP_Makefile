@@ -82,7 +82,7 @@ LIBRARY_NAME := libQnn$(PACKAGE_NAME).so
 SUPPORTED_TARGETS = x86_64-linux-clang hexagon-v68 hexagon-v69 hexagon-v73 hexagon-v75 hexagon-v79  hexagon-v81  hexagon-v85 aarch64-android
 
 
-COMMON_CXX_FLAGS = -std=c++17 -I$(QNN_INCLUDE) -fPIC -Wall -Wreorder -Wno-missing-braces -Wno-unused-function
+COMMON_CXX_FLAGS = -std=c++17 -I$(QNN_INCLUDE) -I$(QNN_INCLUDE)/HTP/core -fPIC -Wall -Wreorder -Wno-missing-braces -Wno-unused-function
 COMMON_CXX_FLAGS += -Werror -Wno-format -Wno-unused-command-line-argument -fvisibility=default -stdlib=libc++
 COMMON_CXX_FLAGS += -DQNN_API="__attribute__((visibility(\"default\")))"  -D__QAIC_HEADER_EXPORT="__attribute__((visibility(\"default\")))"
 

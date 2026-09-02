@@ -98,6 +98,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static const char* ORT_API_CALL GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                         _In_ const OrtGraph* graph) noexcept;
 
+  OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
+                                   const OrtNode** fused_nodes,
+                                   size_t count);
+
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,

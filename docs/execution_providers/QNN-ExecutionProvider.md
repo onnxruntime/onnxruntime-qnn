@@ -70,7 +70,8 @@ For build instructions, please see the [BUILD page](./build.md).
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
     | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.26.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.49.40` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.49.0` |
+  - **Version note:** QNN EP v2.5.0 was built and tested with QAIRT SDK 2.49.40; the public Android Maven runtime artifact is versioned `2.49.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -205,8 +206,10 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 
 |`"enable_htp_fp16_precision"`|Description [Example](https://github.com/microsoft/onnxruntime-inference-examples/tree/main/c_cxx/QNN_EP/mobilenetv2_classification)|
 |---|---|
-|'0'|Default. Disabled. Inference with fp32 precision if it's fp32 model.|
-|'1'|Enable the float32 model to be inferenced with fp16 precision.|
+|'0'|Default. Does not add `QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION`. With QAIRT 2.35 or later, this does not select FP32 precision.|
+|'1'|Adds `QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION` with `QNN_PRECISION_FLOAT16`. With QAIRT 2.35 or later, this configuration no longer changes HTP execution precision.|
+
+> **Note:** Starting with QAIRT 2.35, HTP floating-point operations use FP16 math on SoCs with floating-point model support, regardless of this setting. `htp_bf16_enable` configures BF16 separately on supported SoCs.
 
 |`"enable_htp_monolithic_lstm"`|Description|
 |---|---|
@@ -683,7 +686,6 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
 |com.microsoft:QuickGelu||
-|com.microsoft:RotaryEmbedding|HTP backend only|
 |com.microsoft:SimplifiedLayerNormalization||
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
@@ -1615,7 +1617,7 @@ Once registered, UDOs integrate transparently into model conversion and runtime 
 
 **HTP UDO is not supported on Windows.** `qnn-op-package-generator` and the Hexagon toolchain only target HTP on Linux; the `x86_64-windows-msvc` host platform supports the CPU backend only. On Windows, CPU UDO must be generated with the `--gen_cmakelists` flag (see Step 2), which produces a `CMakeLists.txt`-based build instead of the Linux Makefile flow.
 
-**The shipped UDO unit test runs on Linux x86_64 only.** `qnn-op-package-generator` requires Python 3.10, while the Windows CI environment ships with Python 3.11+, so the end-to-end UDO build/run loop is currently gated on Linux x86_64. Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
+**The shipped UDO unit test runs on Linux x86_64 only.** The Linux x86_64 CI build uses Python 3.12, and `qnn-op-package-generator` supports Python 3.10 and 3.12 via version-tagged extensions in the QAIRT SDK. Windows is excluded because the Hexagon toolchain only targets HTP on Linux; Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
 
 ### UDO Workflow
 

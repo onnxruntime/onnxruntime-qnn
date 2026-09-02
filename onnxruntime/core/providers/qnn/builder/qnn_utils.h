@@ -122,6 +122,9 @@ class QnnJSONGraph {
   std::unordered_set<std::string> seen_op_types_;  // Tracks unique operator types.
 };
 
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type);
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type);
+
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
@@ -670,6 +673,14 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint8_t>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
+
+// Transposes a [rows, cols] buffer of `elem_byte_size`-wide elements into a [cols, rows] buffer.
+// Both buffers must hold exactly rows * cols * elem_byte_size bytes.
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer);
 
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,

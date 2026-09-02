@@ -41,12 +41,16 @@ struct MockInitWrapperFixture {
   // through dispatch on the GLOBAL Ort::GetApi(), not on api_ptrs_, so without this the mock
   // OrtValueInfo* would be handed to the real ORT runtime and SIGSEGV.
   OrtGlobalApiOverride global_api_override{&ctx.stub_ort_api};
-  QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t backend_handle = nullptr;
-  QNN_INTERFACE_VER_TYPE qnn_validator_interface = QNN_INTERFACE_VER_TYPE_INIT;
-  Qnn_BackendHandle_t validator_backend_handle = nullptr;
   Ort::Logger null_logger_{MakeNullLogger()};
   int fake_graph_sentinel_{};
+  // QnnModelWrapper reads the QNN interface / handles / backend type through a
+  // QnnBackendManager. None of the tests here touch the QNN interface — they only
+  // need a manager reporting HTP — so it is left unstubbed.
+  //
+  // Declared after null_logger_ (the manager keeps a pointer to it) and safe to
+  // build before the ctor body reseeds ctx.stub_ort_api, because ApiPtrs holds a
+  // reference to that table rather than a copy of it.
+  StubBackendManager backend_manager{ctx.MakeApiPtrs(), null_logger_};
   qnn::GraphInputOutputInfo input_info;
   qnn::GraphInputOutputInfo output_info;
   std::unique_ptr<qnn::QnnModelWrapper> wrapper;
@@ -60,12 +64,12 @@ struct MockInitWrapperFixture {
     SetupMockInitRegistryStubs(ctx);
     ApiPtrs api_ptrs = ctx.MakeApiPtrs();
     const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    backend_manager.BackendType() = qnn::QnnBackendType::HTP;
     wrapper = std::make_unique<qnn::QnnModelWrapper>(
         fake_graph, api_ptrs, null_logger_,
-        qnn_interface, backend_handle,
-        qnn_validator_interface, validator_backend_handle,
+        *backend_manager.Get(),
         input_info, output_info,
-        qnn::QnnBackendType::HTP, qnn::ModelSettings{});
+        qnn::ModelSettings{});
   }
 };
 
