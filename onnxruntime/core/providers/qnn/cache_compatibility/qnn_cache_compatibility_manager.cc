@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
 
+#include <cctype>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -54,13 +56,23 @@ enum class CompatibilityInfoIndexV2 : size_t {
   SIZE  // Sentinel.
 };
 
+// Strictly parses a non-negative integer field of a compatibility info string. Unlike
+// std::stoi, this rejects leading whitespace/sign, trailing garbage, and out-of-range
+// values instead of silently truncating or throwing past the caller's Ort::Status contract.
 template <typename DType>
 Ort::Status DeserializeString(std::string_view str, /*out*/ DType& val) {
-  try {
-    val = static_cast<DType>(std::stoi(std::string(str)));
-  } catch (const std::invalid_argument& /*ex*/) {
+  if (str.empty() || !std::isdigit(static_cast<unsigned char>(str.front()))) {
     return MAKE_EP_FAIL("Unrecognized compatibility info format: malformed numeric value.");
-  } catch (const std::out_of_range& /*ex*/) {
+  }
+  try {
+    size_t pos = 0;
+    int64_t parsed = std::stoll(std::string(str), &pos);
+    if (pos != str.size() || parsed < 0 ||
+        parsed > static_cast<int64_t>(std::numeric_limits<DType>::max())) {
+      return MAKE_EP_FAIL("Unrecognized compatibility info format: malformed numeric value.");
+    }
+    val = static_cast<DType>(parsed);
+  } catch (const std::exception&) {
     return MAKE_EP_FAIL("Unrecognized compatibility info format: malformed numeric value.");
   }
   return Ort::Status();
