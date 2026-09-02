@@ -473,7 +473,24 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           }
         }
 
-        if (!used_lpbq) {
+        bool used_bw_block_mapped = false;
+#if defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
+        // 2-bit Standard Symmetric BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
+        // Gated to SDK >= 2.51: the native W2A16 HTP kernel is not available until 2.51.
+        if (bits == 2 && is_act_16bitquant && zp_is_symmetric) {
+          const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
+          const std::vector<int32_t> per_block_int32_offset(total_blocks, 0);
+          quantize_param = QnnQuantParamsWrapper::BwBlockMapped(per_block_float_scale,
+                                                                per_block_int32_offset,
+                                                                gsl::narrow_cast<uint32_t>(bits),
+                                                                block_sizes,
+                                                                QNN_QUANTIZATION_ENCODING_MAPPING_STANDARD_SYMMETRIC);
+          used_bw_block_mapped = true;
+          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (STANDARD_SYMMETRIC) for " + weight_tensor_name).c_str());
+        }
+#endif  // QNN_SDK_VERSION_MINOR >= 51
+
+        if (!used_lpbq && !used_bw_block_mapped) {
           // BwFloatBlock (float block-quantized) path.
           const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
                                : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
@@ -640,12 +657,16 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     assert(output_info.shape.size() == 3);
     std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
 
-    // Detect LPBQ from the registered weight tensor's quant encoding.
-    // For LPBQ, the Conv2D output uses the actual output data type (e.g., uint16/int16 for QDQ models).
-    // For BwFloatBlock, the Conv2D kernel always outputs FP16.
+    // Detect LPBQ / BW_BLOCK_MAPPED from the registered weight tensor's quant encoding.
+    // For LPBQ and BW_BLOCK_MAPPED, the Conv2D output uses the actual output data type (e.g., uint16/int16
+    // for QDQ models). For BwFloatBlock, the Conv2D kernel always outputs FP16.
     const bool is_lpbq = qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
                          qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsLPBQ();
-    const Qnn_DataType_t conv2d_output_dtype = is_lpbq ? output_info.qnn_data_type : QNN_DATATYPE_FLOAT_16;
+    const bool is_bw_block_mapped = qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
+                                    qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsBwBlockMapped();
+    const Qnn_DataType_t conv2d_output_dtype = (is_lpbq || is_bw_block_mapped)
+                                                    ? output_info.qnn_data_type
+                                                    : QNN_DATATYPE_FLOAT_16;
 
     const std::string conv2d_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
     QnnTensorWrapper conv2d_output_tensor_wrapper(conv2d_output_name,
@@ -680,7 +701,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                     do_op_validation));
 
       reshape_input_name = cast_output_name;
-    } else if (utils::IsQuant16bit(output_info.qnn_data_type) && !is_lpbq) {
+    } else if (utils::IsQuant16bit(output_info.qnn_data_type) && !is_lpbq && !is_bw_block_mapped) {
       // 2. Add Quantize to FP16 → UINT16/INT16.
       const std::string q_suffix = output_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ? "_q_int16" : "_q_uint16";
       const std::string q_output_name = utils::UniqueNameGenerator().New(output_tensor.name, q_suffix);
