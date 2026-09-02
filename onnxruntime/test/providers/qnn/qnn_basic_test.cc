@@ -3629,6 +3629,23 @@ TEST_F(QnnGPUBackendTests, import_memory_inference_output_input) {
   CloseHandle(d3d12buffer_shared_handle);
 }
 
+// Test that the QNN EP can execute a graph with no runtime inputs if using the GPU backend.
+TEST_F(QnnGPUBackendTests, ConstantOnlyGraph) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+
+  // Float16 Abs with a constant tensor is not folded by ORT Core because it has no CPU kernel.
+  RunQnnModelTest(
+      BuildOpTestCase<Ort::Float16_t>(
+          "abs_node", "Abs",
+          {TestInputDef<Ort::Float16_t>({6}, true,
+                                         {Ort::Float16_t(-3.0f), Ort::Float16_t(-2.0f), Ort::Float16_t(-1.0f),
+                                          Ort::Float16_t(0.0f), Ort::Float16_t(1.0f), Ort::Float16_t(2.0f)})},
+          {}, {}),
+      provider_options,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.001f)});
+}
 #endif  // defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
 
 // ============================ QNN EP input graph dump ============================
