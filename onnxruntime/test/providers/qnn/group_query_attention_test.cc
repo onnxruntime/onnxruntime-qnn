@@ -731,6 +731,22 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
   std::filesystem::remove(path);
 }
 
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_OpNameHtpOverridesDefaultCpu) {
+  const auto path = WriteOpAffinityConfig(R"({ "op_name": { "GQA": "HTP" } })", "op_name_htp");
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::All, &session_failed);
+  ASSERT_FALSE(session_failed);
+  std::filesystem::remove(path);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_UnmatchedOpNameSessionFails) {
+  const auto path = WriteOpAffinityConfig(R"({ "op_name": { "missing_gqa": "HTP" } })", "op_name_missing");
+  bool session_failed = false;
+  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
+  ASSERT_TRUE(session_failed);
+  std::filesystem::remove(path);
+}
+
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
   const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
   bool session_failed = false;

@@ -1610,11 +1610,72 @@ static void LogNodeSupport(const Ort::Logger& logger,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, msg.c_str());
 }
 
+static Ort::Status ValidateOpAffinityNodeNames(
+    const qnn::OpAffinityMap& affinity,
+    const qnn::CanonicalNodeNameMap& canonical_node_names,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+    const std::string& graph_name,
+    bool is_post_layout_transform) {
+  if (!affinity.HasOpNameRules()) {
+    return Ort::Status();
+  }
+
+  std::unordered_map<std::string, const OrtNode*> node_by_canonical_name;
+  node_by_canonical_name.reserve(canonical_node_names.size());
+  for (const auto& [node, canonical_name] : canonical_node_names) {
+    node_by_canonical_name.emplace(canonical_name, node);
+  }
+
+  const char* pass_name = is_post_layout_transform ? "pass 2" : "pass 1";
+  for (const auto& [configured_name, backend] : affinity.GetOpNameRules()) {
+    ORT_UNUSED_PARAMETER(backend);
+    const auto node_it = node_by_canonical_name.find(configured_name);
+    if (node_it == node_by_canonical_name.end()) {
+      const std::string message = "op_affinity op name '" + configured_name +
+                                  "' was not found in main graph '" + graph_name +
+                                  "' during GetCapability " + pass_name + ".";
+      return MAKE_EP_FAIL(message.c_str());
+    }
+
+    const auto node_unit_it = node_unit_map.find(node_it->second);
+    if (node_unit_it == node_unit_map.end()) {
+      const std::string message = "op_affinity could not resolve NodeUnit for op name '" +
+                                  configured_name + "'.";
+      return MAKE_EP_FAIL(message.c_str());
+    }
+
+    const OrtNodeUnit* node_unit = node_unit_it->second;
+    const OrtNode* target_node = &node_unit->GetNode();
+    if (node_it->second != target_node) {
+      const auto target_name_it = canonical_node_names.find(target_node);
+      const std::string target_name = target_name_it == canonical_node_names.end()
+                                          ? node_unit->Name()
+                                          : target_name_it->second;
+      const std::string message = "op_affinity op name '" + configured_name +
+                                  "' is not a NodeUnit target; use target '" + target_name +
+                                  "' (op type '" + node_unit->OpType() + "').";
+      return MAKE_EP_FAIL(message.c_str());
+    }
+  }
+
+  return Ort::Status();
+}
+
 OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                                     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                     const size_t node_unit_size,
                                     std::vector<const OrtNode*>& supported_nodes,
                                     std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const {
+  const qnn::CanonicalNodeNameMap canonical_node_names = qnn::BuildCanonicalNodeNameMap(graph);
+  Ort::Status affinity_status = ValidateOpAffinityNodeNames(model_settings_.op_affinity,
+                                                            canonical_node_names,
+                                                            node_unit_map,
+                                                            std::string(Ort::ConstGraph{graph}.GetName()),
+                                                            is_post_layout_transform_);
+  if (!affinity_status.IsOK()) {
+    return affinity_status.release();
+  }
+
   size_t num_graph_inputs = 0;
   size_t num_graph_outputs = 0;
   RETURN_IF_NOT_NULL(ort_api.Graph_GetNumInputs(graph, &num_graph_inputs));
@@ -1665,7 +1726,8 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_size);
 
-  Ort::Status qnn_status = qnn::GetQnnNodeGroups(qnn_node_groups, qnn_model_wrapper, node_unit_map, node_unit_size, logger_);
+  Ort::Status qnn_status = qnn::GetQnnNodeGroups(qnn_node_groups, qnn_model_wrapper, node_unit_map,
+                                                 canonical_node_names, node_unit_size, logger_);
   if (!qnn_status.IsOK()) {
     return qnn_status.release();
   }
@@ -2049,8 +2111,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // including subgraphs and sessions that later fail to set up a backend
   // (precisely the cases where a "what did the EP see?" artifact is most
   // useful). Filename is sanitized graph name + per-EP counter; the
-  // matcher's recommended consumption is "highest counter per unique
-  // sanitized name" (see docs/execution_providers/QNN-ExecutionProvider.md).
+  // The offline matcher's recommended input is the highest counter per
+  // unique sanitized name. op_name affinity instead uses the main graph's
+  // first-pass (lowest-counter) dump; see the provider documentation.
   if (ep->dump_qnn_ep_input_graph_) {
     Ort::ConstGraph dump_graph{graph};
     // SanitizeGraphNameForFilename returns "graph" when the input is empty
@@ -2095,6 +2158,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
+
+  if (is_qnn_ctx_model && ep->model_settings_.op_affinity.HasOpNameRules()) {
+    return ep->ort_api.CreateStatus(
+        ORT_EP_FAIL,
+        "op_name affinity is not supported when loading a precompiled EPContext; apply it during context generation instead.");
+  }
 
   if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
     if (EpSharedContextsHasAllGraphs(graph, ep->ort_api, ep->logger_)) {

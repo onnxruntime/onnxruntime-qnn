@@ -14,6 +14,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -277,6 +278,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
   // GetQDQNodeUnits
   std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, &ort_graph, logger);
+  const CanonicalNodeNameMap canonical_node_names = BuildCanonicalNodeNameMap(&ort_graph);
 
   // This name must be same with the EPContext node name
   const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
@@ -328,7 +330,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   qnn_node_groups.reserve(node_unit_holder.size());
 
   RETURN_IF_ERROR(qnn::GetQnnNodeGroups(qnn_node_groups, qnn_model_wrapper, node_unit_map,
-                                        node_unit_holder.size(), logger));
+                                        canonical_node_names, node_unit_holder.size(), logger));
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
     NodeGroupGuard guard(trace_collector.get(), qnn_node_group.get());

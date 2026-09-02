@@ -378,19 +378,51 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 
 |`"op_affinity"`|Description|
 |---|---|
-|Path to a JSON config file (string)|Pins specific ONNX op types to a backend. See [Op Affinity](#op-affinity) below. Not set by default.|
+|Path to a JSON config file (string)|Pins specific ONNX op types or nodes to a backend. See [Op Affinity](#op-affinity) below. Not set by default.|
 
 #### Op Affinity
 
-The `op_affinity` option points at a JSON config file that pins ONNX op types to a single backend:
+The `op_affinity` option points at a JSON config file that pins ONNX op types and/or individual
+nodes to a single backend:
 
 ```json
 { "op_type": { "GroupQueryAttention": "HTP" } }
 ```
 
+To target individual nodes, add an `op_name` object. An exact, case-sensitive node-name match takes
+priority over an `op_type` match:
+
+```json
+{
+  "op_type": { "GroupQueryAttention": "CPU" },
+  "op_name": { "gqa_layer_12": "HTP" }
+}
+```
+
+In this example, `gqa_layer_12` is eligible for HTP and all other `GroupQueryAttention` nodes fall
+back to CPU. Affinity does not bypass the normal QNN capability checks, so a pin to the active
+backend does not guarantee assignment.
+
+To configure `op_name`:
+
+1. Enable [`dump_qnn_ep_input_graph`](#qnn-ep-input-graph-dump) and create a session with the same
+   model, ORT version, and optimization settings that will be used for inference.
+2. Open the main graph's first-pass dump. When the main graph has multiple dump files, use the one
+   with the lowest counter.
+3. Copy the target node name from the dump into the `op_name` object. For a Q/DQ NodeUnit, select
+   the operator between QuantizeLinear and DequantizeLinear, not a Q/DQ node.
+4. Create the session again with `op_affinity` set to the config file path.
+
 - Backend names are case-insensitive (`"HTP"` == `"htp"`).
 - A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
 - Pinning an op type to a backend other than the one the session is running on fails session creation, since heterogeneous execution is not supported — except a `"cpu"` pin, which is a legitimate way to opt an op out of QNN EP (falls back to the CPU EP without failing the session).
+- `op_name` uses exact, case-sensitive matching. Every configured name must identify a NodeUnit
+  target and remain present in every main-graph capability pass; otherwise session creation fails.
+  Pass-2-only nodes, subgraph nodes, and name patterns are not supported.
+- An `op_name` config is tied to the model, ORT version, and optimization settings that produced the
+  dump. Regenerate the dump when any of these change.
+- `op_name` affinity is not supported when loading a precompiled EPContext. Apply it while generating
+  the context instead.
 - On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`. This applies to the legacy built-in QNN EP path (`-e qnn -i ...`); when registering QNN EP via the plugin-EP path (`--plugin_eps`/`--plugin_ep_options`), provider options are passed through generically and are not subject to the built-in QNN EP's key allowlist.
 
 ### Flexible Context Binary (FCB) / multi-SoC EP context
@@ -1125,6 +1157,11 @@ compiled, and its node names are exactly the names that appear in
 `qnn_op_trace.json`'s `sources[]`. Lower-numbered files are intermediate
 snapshots (useful for debugging the layout transformer itself, not for
 matcher input).
+
+This differs from `op_name` affinity: use the main graph's **lowest `<n>`**
+(the first capability pass) when choosing names for an affinity config. The
+same name must still exist in later main-graph passes, or session creation
+fails with an error.
 
 If a model has subgraphs (different graph names), pick the highest-numbered
 file *per unique graph name* and run the matcher per graph.

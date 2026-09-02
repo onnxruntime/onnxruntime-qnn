@@ -61,6 +61,33 @@ TEST(QnnUnit_OpAffinityMap, BackendNameIsCaseInsensitive) {
   }
 }
 
+TEST(QnnUnit_OpAffinityMap, ParsesOpNameOnlyConfig) {
+  const auto path = WriteTempConfig(R"({ "op_name": { "gqa_layer_12": "HTP" } })", "opname_only");
+  const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
+  EXPECT_TRUE(map.HasOpNameRules());
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", "gqa_layer_12", QnnBackendType::HTP).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", "gqa_layer_12", QnnBackendType::GPU).IsOK());
+  std::filesystem::remove(path);
+}
+
+TEST(QnnUnit_OpAffinityMap, OpNameTakesPriorityOverOpType) {
+  const auto path = WriteTempConfig(
+      R"({ "op_type": { "GroupQueryAttention": "CPU" }, "op_name": { "gqa_layer_12": "HTP" } })",
+      "opname_priority");
+  const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", "gqa_layer_12", QnnBackendType::HTP).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", "gqa_layer_13", QnnBackendType::HTP).IsOK());
+  std::filesystem::remove(path);
+}
+
+TEST(QnnUnit_OpAffinityMap, OpNameMatchIsCaseSensitive) {
+  const auto path = WriteTempConfig(R"({ "op_name": { "GQA": "CPU" } })", "opname_case");
+  const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", "GQA", QnnBackendType::HTP).IsOK());
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", "gqa", QnnBackendType::HTP).IsOK());
+  std::filesystem::remove(path);
+}
+
 // ---------------- Parse: throw paths ----------------
 
 TEST(QnnUnit_OpAffinityMap, ThrowsWhenFileMissing) {
@@ -75,8 +102,21 @@ TEST(QnnUnit_OpAffinityMap, ThrowsOnBadJson) {
   std::filesystem::remove(path);
 }
 
-TEST(QnnUnit_OpAffinityMap, ThrowsWhenOpTypeMissing) {
+TEST(QnnUnit_OpAffinityMap, ThrowsWhenNoRuleMapIsPresent) {
   const auto path = WriteTempConfig(R"({ "something_else": {} })", "nooptype");
+  EXPECT_THROW(OpAffinityMap::FromConfigFile(path), std::runtime_error);
+  std::filesystem::remove(path);
+}
+
+TEST(QnnUnit_OpAffinityMap, ThrowsWhenOpNameNotObject) {
+  const auto path = WriteTempConfig(R"({ "op_name": "gqa_layer_12" })", "opname_notobj");
+  EXPECT_THROW(OpAffinityMap::FromConfigFile(path), std::runtime_error);
+  std::filesystem::remove(path);
+}
+
+TEST(QnnUnit_OpAffinityMap, ThrowsOnInvalidOpNameBackendValue) {
+  const auto path = WriteTempConfig(R"({ "op_name": { "gqa_layer_12": ["HTP", "CPU"] } })",
+                                    "opname_multiarr");
   EXPECT_THROW(OpAffinityMap::FromConfigFile(path), std::runtime_error);
   std::filesystem::remove(path);
 }
@@ -178,6 +218,15 @@ TEST(QnnUnit_OpAffinityMap, SeedDoesNotOverrideExistingConfigPin) {
   std::filesystem::remove(path);
 }
 
+TEST(QnnUnit_OpAffinityMap, NamedRuleOverridesSeedOnlyForMatchingNode) {
+  const auto path = WriteTempConfig(R"({ "op_name": { "gqa_layer_12": "HTP" } })", "seed_named");
+  OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
+  map.SeedDefaultIfAbsent("GroupQueryAttention", QnnBackendType::CPU);
+  EXPECT_TRUE(map.Evaluate("GroupQueryAttention", "gqa_layer_12", QnnBackendType::HTP).IsOK());
+  EXPECT_FALSE(map.Evaluate("GroupQueryAttention", "gqa_layer_13", QnnBackendType::HTP).IsOK());
+  std::filesystem::remove(path);
+}
+
 // ---------------- ValidateForSessionBackend ----------------
 
 TEST(QnnUnit_OpAffinityMap, ValidateReportsErrorWhenPinnedToOtherAccelerator) {
@@ -201,6 +250,14 @@ TEST(QnnUnit_OpAffinityMap, ValidatePassesWhenPinnedToCpu) {
   // CPU pin is a legitimate silent-off intent, never a validation error, regardless of session backend.
   EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
   EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::GPU).IsOK());
+  std::filesystem::remove(path);
+}
+
+TEST(QnnUnit_OpAffinityMap, ValidateOpNameBackend) {
+  const auto path = WriteTempConfig(R"({ "op_name": { "gqa_layer_12": "GPU" } })", "validate_name");
+  const OpAffinityMap map = OpAffinityMap::FromConfigFile(path);
+  EXPECT_TRUE(map.ValidateForSessionBackend(QnnBackendType::GPU).IsOK());
+  EXPECT_FALSE(map.ValidateForSessionBackend(QnnBackendType::HTP).IsOK());
   std::filesystem::remove(path);
 }
 
