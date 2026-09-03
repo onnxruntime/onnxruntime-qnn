@@ -209,9 +209,9 @@ python_314_windows_arm64:
   version: 3.14.3
   md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
-  version: 2.49.40.260810
+  version: 2.50.0.260828
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
-  sha256: 8b1e00d03806b026c41dbc51aec40d6b6c684fff34806409dc2283d00926629a
+  sha256: a346ea0e2c8631b46d57261a4969994cd9cc34124a8355bbc7b08b2c8bd859a5
   content_root: qairt/{version}
   bindir: bin
 qualcomm_device_cloud_sdk:
