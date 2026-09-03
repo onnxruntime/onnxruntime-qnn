@@ -772,6 +772,17 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BoolOptionInvalidValue_LogsVerbose) {
                "Invalid value for ep.qnnexecutionprovider.offload_graph_io_quantization");
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IoMemoryEstimationTrue_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("io_memory_estimation")] = "1";
+  auto factory = MakeFactory(ctx);
+
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "User specified ep.qnnexecutionprovider.io_memory_estimation: 1");
+}
+
 // IR backend path AND dump enabled → "IR  backend path" info log in InitQnnSerializerConfig.
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrBackendPathWithDumpEnabled_LogsInfo) {
   EpStubContext ctx;

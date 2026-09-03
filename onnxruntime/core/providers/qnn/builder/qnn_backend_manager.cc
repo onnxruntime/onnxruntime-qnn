@@ -1284,7 +1284,8 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-    const qnn::EpContextIoDispatch& io_dispatch) {
+    const qnn::EpContextIoDispatch& io_dispatch,
+    const HtpContextConfigs_t& htp_context_configs) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
@@ -1308,10 +1309,33 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   custom_config.weightSharingEnabled = true;
   context_config_weight_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_weight_sharing.customConfig = &custom_config;
+
+#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 35
+  QnnContext_Config_t io_memory_estimation_config = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t io_memory_estimation_custom_config = QNN_HTP_CONTEXT_CUSTOM_CONFIG_INIT;
+  if (htp_context_configs.enable_io_memory_estimation) {
+    io_memory_estimation_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_IO_MEM_ESTIMATION;
+    io_memory_estimation_custom_config.ioMemEstimation = true;
+    io_memory_estimation_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    io_memory_estimation_config.customConfig = &io_memory_estimation_custom_config;
+  }
+
+  QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t reused_io_limit_custom_config = QNN_HTP_CONTEXT_CUSTOM_CONFIG_INIT;
+  if (htp_context_configs.reused_io_limit_mb > 0) {
+    reused_io_limit_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+    reused_io_limit_custom_config.reusedIoLimitMb = htp_context_configs.reused_io_limit_mb;
+    reused_io_limit_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    reused_io_limit_config.customConfig = &reused_io_limit_custom_config;
+  }
+#else
+  ORT_UNUSED_PARAMETER(htp_context_configs);
+#endif
 #else
   ORT_CXX_LOG_PTR(logger_ptr_,
                   ORT_LOGGING_LEVEL_WARNING,
                   "Called CreateContextVtcmBackupBufferSharingEnabled() but QNN API version is older than 2.26!");
+  ORT_UNUSED_PARAMETER(htp_context_configs);
 #endif
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
@@ -1322,6 +1346,14 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(&context_config_resource_sharing);
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
+#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 35
+  if (htp_context_configs.enable_io_memory_estimation) {
+    configs_vec.push_back(&io_memory_estimation_config);
+  }
+  if (htp_context_configs.reused_io_limit_mb > 0) {
+    configs_vec.push_back(&reused_io_limit_config);
+  }
+#endif
 #endif
   configs_vec.push_back(nullptr);
 
@@ -1836,7 +1868,41 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
 
-    const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_config_pointer, nullptr};
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 35)
+    QnnContext_Config_t io_memory_estimation_config = QNN_CONTEXT_CONFIG_INIT;
+    QnnHtpContext_CustomConfig_t io_memory_estimation_custom_config = QNN_HTP_CONTEXT_CUSTOM_CONFIG_INIT;
+    if (htp_context_configs_.enable_io_memory_estimation) {
+      io_memory_estimation_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_IO_MEM_ESTIMATION;
+      io_memory_estimation_custom_config.ioMemEstimation = true;
+      io_memory_estimation_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+      io_memory_estimation_config.customConfig = &io_memory_estimation_custom_config;
+    }
+
+    QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
+    QnnHtpContext_CustomConfig_t reused_io_limit_custom_config = QNN_HTP_CONTEXT_CUSTOM_CONFIG_INIT;
+    if (htp_context_configs_.reused_io_limit_mb > 0) {
+      reused_io_limit_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+      reused_io_limit_custom_config.reusedIoLimitMb = htp_context_configs_.reused_io_limit_mb;
+      reused_io_limit_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+      reused_io_limit_config.customConfig = &reused_io_limit_custom_config;
+    }
+#endif
+
+    std::vector<const QnnContext_Config_t*> context_configs_vec;
+    context_configs_vec.push_back(&qnn_context_config);
+    if (spill_fill_config_pointer != nullptr) {
+      context_configs_vec.push_back(spill_fill_config_pointer);
+    }
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 35)
+    if (htp_context_configs_.enable_io_memory_estimation) {
+      context_configs_vec.push_back(&io_memory_estimation_config);
+    }
+    if (htp_context_configs_.reused_io_limit_mb > 0) {
+      context_configs_vec.push_back(&reused_io_limit_config);
+    }
+#endif
+    context_configs_vec.push_back(nullptr);
+    const QnnContext_Config_t** context_configs = context_configs_vec.data();
 
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
               "Invalid function pointer for contextCreateFromBinary.");
@@ -1962,8 +2028,10 @@ Ort::Status QnnBackendManager::SetupBackend(
     const qnn::EpContextIoDispatch& io_dispatch,
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
-    bool enable_htp_graph_splitting) {
+    bool enable_htp_graph_splitting,
+    const HtpContextConfigs_t& htp_context_configs) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
+  htp_context_configs_ = htp_context_configs;
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
@@ -1983,7 +2051,8 @@ Ort::Status QnnBackendManager::SetupBackend(
       if (first_mapping_it == ep_context_handle_map_.end()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                           io_dispatch);
+                                                           io_dispatch,
+                                                           htp_context_configs_);
       }
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
@@ -2002,7 +2071,6 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   htp_share_resource_optimization_ = htp_share_resource_optimization;
-
   auto status = Ort::Status();
   if (!qnn_serializer_config_) {
     status = LoadBackend();
@@ -2132,12 +2200,13 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                               io_dispatch)
+                                                               io_dispatch,
+                                                               htp_context_configs_)
                  : CreateContext(enable_htp_weight_sharing,
-                                 enable_htp_extended_udma_mode,
-                                 enable_htp_prepare_only,
-                                 false /*enable_htp_ref_weight_sharing*/,
-                                 enable_htp_graph_splitting);
+                                  enable_htp_extended_udma_mode,
+                                  enable_htp_prepare_only,
+                                  false /*enable_htp_ref_weight_sharing*/,
+                                  enable_htp_graph_splitting);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");

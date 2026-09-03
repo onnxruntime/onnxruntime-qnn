@@ -233,7 +233,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
-      bool enable_htp_graph_splitting = false);
+      bool enable_htp_graph_splitting = false,
+      const HtpContextConfigs_t& htp_context_configs = {});
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -499,8 +500,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
-                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-                                                          const qnn::EpContextIoDispatch& io_dispatch);
+                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          const qnn::EpContextIoDispatch& io_dispatch,
+                                                          const HtpContextConfigs_t& htp_context_configs = {});
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                          std::unordered_map<std::string,
@@ -780,6 +782,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
   int htp_share_resource_optimization_ = -1;
+  HtpContextConfigs_t htp_context_configs_;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;

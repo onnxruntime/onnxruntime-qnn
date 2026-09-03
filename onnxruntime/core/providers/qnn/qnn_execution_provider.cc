@@ -1353,6 +1353,39 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
+  htp_context_configs_.enable_io_memory_estimation = ParseBoolOption(ort_api,
+                                                                     session_options_,
+                                                                     FormatEPConfigKey("io_memory_estimation"),
+                                                                     false,
+                                                                     logger_);
+  std::string reused_io_limit_mb_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("reused_io_limit_mb"), "0",
+                                 reused_io_limit_mb_str);
+  if (!reused_io_limit_mb_str.empty() && reused_io_limit_mb_str != "0") {
+    try {
+      htp_context_configs_.reused_io_limit_mb = std::stoull(reused_io_limit_mb_str);
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("reused_io_limit_mb: " + reused_io_limit_mb_str).c_str());
+    } catch (const std::exception& /*ex*/) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("Ignoring malformed reused_io_limit_mb, expecting a positive integer: " + reused_io_limit_mb_str).c_str());
+    }
+  }
+
+  if (htp_context_configs_.reused_io_limit_mb > 0 && !htp_context_configs_.enable_io_memory_estimation) {
+    htp_context_configs_.enable_io_memory_estimation = true;
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "reused_io_limit_mb requires io_memory_estimation=1 to take effect. Auto-enabling io_memory_estimation.");
+  }
+
+#if QNN_API_VERSION_MAJOR < 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 35)
+  if (htp_context_configs_.enable_io_memory_estimation || htp_context_configs_.reused_io_limit_mb > 0) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "io_memory_estimation and reused_io_limit_mb require QNN API version >= 2.35. Ignoring.");
+  }
+#endif
+
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -2152,7 +2185,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 *ep->io_dispatch_,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
-                                                ep->enable_htp_graph_splitting_);
+                                                ep->enable_htp_graph_splitting_,
+                                                ep->htp_context_configs_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
