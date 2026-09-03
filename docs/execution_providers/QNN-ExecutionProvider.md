@@ -321,6 +321,15 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 **Note:** `htp_share_resource_optimization` and `enable_vtcm_backup_buffer_sharing` both enable the same underlying feature. Prefer `htp_share_resource_optimization`.
 
+|`"io_memory_estimation"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable HTP I/O memory estimation during context-binary loading. May increase peak RAM during context initialization, but sustained RAM is unaffected. Requires QNN API version >= 2.35.|
+
+|`"reused_io_limit_mb"`|Description|
+|---|---|
+|Unsigned integer|Default `0` leaves the QAIRT default behavior unchanged. When nonzero, sets the HTP reused I/O buffer limit in MB for context-binary loading. Requires `io_memory_estimation=1` to take effect (auto-enabled if not set). Requires QNN API version >= 2.35.|
+
 |`"disable_file_mapped_weights"`|Description|
 |---|---|
 |'0'|Default. File-mapped weights enabled (when supported).|

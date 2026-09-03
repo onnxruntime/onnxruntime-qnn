@@ -772,6 +772,39 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BoolOptionInvalidValue_LogsVerbose) {
                "Invalid value for ep.qnnexecutionprovider.offload_graph_io_quantization");
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IoMemoryEstimationTrue_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("io_memory_estimation")] = "1";
+  auto factory = MakeFactory(ctx);
+
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "User specified ep.qnnexecutionprovider.io_memory_estimation: 1");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ReusedIoLimitMbValid_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("reused_io_limit_mb")] = "100";
+  auto factory = MakeFactory(ctx);
+
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "User specified ep.qnnexecutionprovider.reused_io_limit_mb: 100");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ReusedIoLimitMbInvalid_LogsVerbose) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("reused_io_limit_mb")] = "-1";
+  auto factory = MakeFactory(ctx);
+
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.reused_io_limit_mb");
+}
+
 // IR backend path AND dump enabled → "IR  backend path" info log in InitQnnSerializerConfig.
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IrBackendPathWithDumpEnabled_LogsInfo) {
   EpStubContext ctx;

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <climits>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -165,6 +166,12 @@ typedef struct HtpGraphConfigs {
   bool enable_htp_monolithic_lstm = false;
   bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
 } HtpGraphConfigs_t;
+
+// Define context configs used by HTP backend.
+typedef struct HtpContextConfigs {
+  bool enable_io_memory_estimation = false;
+  uint64_t reused_io_limit_mb = 0;
+} HtpContextConfigs_t;
 
 enum class QnnBackendType : uint8_t {
   CPU = 0,

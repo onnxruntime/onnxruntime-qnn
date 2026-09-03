@@ -346,6 +346,44 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
+static uint64_t ParseUint64Option(const OrtApi& ort_api,
+                                  const OrtSessionOptions& session_options,
+                                  const std::string& key,
+                                  uint64_t default_value,
+                                  const Ort::Logger& logger) {
+  uint64_t result = default_value;
+  std::string value_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
+
+  if (!value_str.empty()) {
+    try {
+      size_t parsed_chars = 0;
+      if (value_str.front() == '-') {
+        throw std::invalid_argument("negative value");
+      }
+      uint64_t parsed_value = std::stoull(value_str, &parsed_chars);
+      if (parsed_chars == value_str.size()) {
+        result = parsed_value;
+      } else {
+        ORT_CXX_LOG(logger,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Invalid value for " + key + " (" + value_str + "). Only unsigned integers allowed.").c_str());
+      }
+    } catch (const std::invalid_argument& /*ex*/) {
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Invalid value for " + key + " (" + value_str + "). Only unsigned integers allowed.").c_str());
+    } catch (const std::out_of_range& /*ex*/) {
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Invalid value for " + key + " (" + value_str + "). Value is out of range.").c_str());
+    }
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("User specified " + key + ": " + std::to_string(result)).c_str());
+  return result;
+}
+
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -1353,6 +1391,31 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
+  htp_context_configs_.enable_io_memory_estimation = ParseBoolOption(ort_api,
+                                                                     session_options_,
+                                                                     FormatEPConfigKey("io_memory_estimation"),
+                                                                     false,
+                                                                     logger_);
+  htp_context_configs_.reused_io_limit_mb = ParseUint64Option(ort_api,
+                                                              session_options_,
+                                                              FormatEPConfigKey("reused_io_limit_mb"),
+                                                              0,
+                                                              logger_);
+
+  if (htp_context_configs_.reused_io_limit_mb > 0 && !htp_context_configs_.enable_io_memory_estimation) {
+    htp_context_configs_.enable_io_memory_estimation = true;
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "reused_io_limit_mb requires io_memory_estimation=1 to take effect. Auto-enabling io_memory_estimation.");
+  }
+
+#if QNN_API_VERSION_MAJOR < 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 35)
+  if (htp_context_configs_.enable_io_memory_estimation || htp_context_configs_.reused_io_limit_mb > 0) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "io_memory_estimation and reused_io_limit_mb require QNN API version >= 2.35. Ignoring.");
+  }
+#endif
+
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -2152,7 +2215,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 *ep->io_dispatch_,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
-                                                ep->enable_htp_graph_splitting_);
+                                                ep->enable_htp_graph_splitting_,
+                                                ep->htp_context_configs_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }

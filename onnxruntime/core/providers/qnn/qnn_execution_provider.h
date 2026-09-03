@@ -255,6 +255,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   uint32_t dynamic_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
+  qnn::HtpContextConfigs_t htp_context_configs_;
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
