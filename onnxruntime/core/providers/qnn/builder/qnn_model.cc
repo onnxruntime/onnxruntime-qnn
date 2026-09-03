@@ -879,7 +879,14 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
                                    const std::vector<QnnTensorWrapper>& tensor_wrappers,
                                    bool is_input) {
   size_t tensor_count = tensor_wrappers.size();
-  RETURN_IF(0 == tensor_count, "Zero tensor size!");
+  if (tensor_count == 0) {
+    RETURN_IF_NOT(is_input, "The count of graph outputs should be nonzero!");
+    RETURN_IF_NOT(IsGpuBackend(qnn_backend_manager_->GetQnnBackendType()),
+                  "Having zero graph inputs is not supported on this backend.");
+    qnn_tensor_infos.clear();
+    return Ort::Status();
+  }
+
   if (is_input) {
     auto input_count = graph_inputs_.indices.size();
     RETURN_IF(input_count < tensor_count, "The count of graph inputs should be at least the count of tensor_wrapper!");
