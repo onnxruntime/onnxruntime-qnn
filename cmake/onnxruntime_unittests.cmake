@@ -469,6 +469,32 @@ endif()
     endif()
 
     set_target_properties(ep_weight_sharing_ctx_gen PROPERTIES FOLDER "ONNXRuntimeTest")
+
+    # Compiled-model-encryption prepare/run sample apps
+    set(qnn_enc_apps_src_dir ${TEST_SRC_DIR}/qnn_ep_context_encryption_apps)
+
+    onnxruntime_add_executable(prepare_app
+      ${qnn_enc_apps_src_dir}/prepare_app.cc
+      ${qnn_enc_apps_src_dir}/enc_common.h)
+    target_include_directories(prepare_app PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES} ${qnn_enc_apps_src_dir})
+
+    onnxruntime_add_executable(run_app
+      ${qnn_enc_apps_src_dir}/run_app.cc
+      ${qnn_enc_apps_src_dir}/enc_common.h)
+    target_include_directories(run_app PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES} ${qnn_enc_apps_src_dir})
+
+    if (onnxruntime_BUILD_SHARED_LIB)
+      set(qnn_enc_apps_libs onnxruntime ${onnxruntime_EXTERNAL_LIBRARIES})
+      target_link_libraries(prepare_app PRIVATE ${qnn_enc_apps_libs})
+      target_link_libraries(run_app PRIVATE ${qnn_enc_apps_libs})
+    else()
+      set(qnn_enc_apps_libs onnxruntime_session ${onnxruntime_test_providers_libs} ${onnxruntime_EXTERNAL_LIBRARIES})
+      target_link_libraries(prepare_app PRIVATE ${qnn_enc_apps_libs})
+      target_link_libraries(run_app PRIVATE ${qnn_enc_apps_libs})
+    endif()
+
+    set_target_properties(prepare_app PROPERTIES FOLDER "ONNXRuntimeTest")
+    set_target_properties(run_app PROPERTIES FOLDER "ONNXRuntimeTest")
   endif()
 
   #some ETW tools
