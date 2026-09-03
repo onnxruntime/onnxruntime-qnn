@@ -33,6 +33,17 @@
 // in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
 
+// Exported from QnnMockSSR.dll: returns true if contextCreateFromBinaryWithCallback
+// was called after SSR was injected (i.e., file mapping was used for recovery).
+// Only meaningful on Windows ARM64 with QNN >= 2.32 (QNN_FILE_MAPPED_WEIGHTS_AVAILABLE);
+// always returns false on other platforms.
+extern "C" bool QnnMockSSR_WasFileMappingUsedForRecovery();
+
+// Exported from QnnMockSSR.dll: when set to true, contextCreateFromBinaryWithCallback
+// returns QNN_COMMON_ERROR_NOT_SUPPORTED during SSR recovery (simulating a pre-3.3.3
+// context binary).  Must be reset to false explicitly after the test.
+extern "C" void QnnMockSSR_SetSimulateOldBlobVersion(bool simulate);
+
 using namespace ONNX_NAMESPACE;
 
 namespace onnxruntime {
@@ -160,6 +171,94 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedMode) {
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,  // Load from the generated context model
                        run_session_opts);
+
+  // Verify that SSR recovery used file mapping (contextCreateFromBinaryWithCallback)
+  // when the feature is available.  On platforms without file mapping support this
+  // assertion is vacuously true (the function always returns false there).
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  EXPECT_TRUE(QnnMockSSR_WasFileMappingUsedForRecovery())
+      << "SSR recovery should have used contextCreateFromBinaryWithCallback (file mapping) "
+         "but it did not. Check ReloadContextForSSR in qnn_backend_manager.cc.";
+#endif
+
+  CleanUpCtxFile(context_model_file);
+}
+
+// Test that SSR recovery falls back to direct read (contextCreateFromBinary) and produces
+// correct outputs when contextCreateFromBinaryWithCallback fails during recovery —
+// simulating the behavior expected for a pre-3.3.3 context binary.
+//
+// Because producing an actual pre-3.3.3 binary is not feasible in these tests, we use
+// QnnMockSSR_SetSimulateOldBlobVersion(true) to make the mock reject the callback API with
+// QNN_COMMON_ERROR_NOT_SUPPORTED, which exercises the same reactive-fallback branch of
+// ReloadContextForSSR.  The test asserts:
+//   (a) WasFileMappingUsedForRecovery() == false  (callback API was not successfully used)
+//   (b) session outputs match the CPU reference  (direct-read fallback produced a working context)
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeFileMappingRejected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string context_model_file = "./ssr_ep_ctx_fm_rejected_test.onnx";
+  std::remove(context_model_file.c_str());
+
+  const std::string op_type = "Atan";
+  const TestInputDef<float> input_def_qdq({1, 2, 3}, false, -10.0f, 10.0f);
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate the embed_mode=0 context binary with the real HTP backend.
+  // -----------------------------------------------------------------------
+  ProviderOptions htp_options;
+  htp_options["backend_type"] = "htp";
+  htp_options["offload_graph_io_quantization"] = "0";
+
+  std::unordered_map<std::string, std::string> gen_session_opts;
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEnable, "1");
+  gen_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEmbedMode, "0");
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       htp_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       gen_session_opts);
+
+  ASSERT_TRUE(std::filesystem::exists(context_model_file))
+      << "Context model file was not generated: " << context_model_file;
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load the context model via QnnMockSSR.dll with the callback API
+  //         rejected, simulating a pre-3.3.3 blob.  Recovery must succeed via
+  //         the direct-read fallback.
+  // -----------------------------------------------------------------------
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // RAII guard: ensures the flag is always cleared even if an ASSERT_* exits the test early.
+  struct OldBlobGuard {
+    ~OldBlobGuard() { QnnMockSSR_SetSimulateOldBlobVersion(false); }
+  } old_blob_guard;
+  QnnMockSSR_SetSimulateOldBlobVersion(true);
+#endif
+
+  std::unordered_map<std::string, std::string> run_session_opts;
+  run_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       provider_options,  // QnnMockSSR.dll
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       context_model_file,
+                       run_session_opts);
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  EXPECT_FALSE(QnnMockSSR_WasFileMappingUsedForRecovery())
+      << "SSR recovery should NOT have used contextCreateFromBinaryWithCallback when "
+         "the callback API is rejected (pre-3.3.3 simulation). Direct read should be used.";
+#endif
 
   CleanUpCtxFile(context_model_file);
 }
