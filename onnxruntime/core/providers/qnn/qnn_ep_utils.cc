@@ -741,31 +741,34 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   std::vector<const OrtValueInfo*> outputs(num_outputs);
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
-  // Check if any of the outputs are graph outputs
+  // Walk the output slots and validate them against the Q nodes.
   bool produces_graph_output = false;
+  size_t total_consumers = 0;
+  size_t present_outputs = 0;
 
   for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
+    // Skip an absent optional output slot -- a nullptr OrtValueInfo* from ORT core, e.g. GRU's
+    // optional Y / Y_h. A missing optional output is valid ONNX, not a malformed group; the present
+    // slots are still validated below (graph-output + consumer-count). The null check also avoids a
+    // nullptr deref in the C API calls below.
+    if (value_info == nullptr) {
+      continue;
+    }
+    ++present_outputs;
+
     bool is_graph_output = false;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
-
     if (is_graph_output) {
       produces_graph_output = true;
-      break;
     }
-  }
 
-  // Count the total number of consumers for all outputs
-  size_t total_consumers = 0;
-  for (size_t i = 0; i < num_outputs; i++) {
-    const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
-
     total_consumers += num_consumers;
   }
 
-  return (num_outputs == q_nodes.size()) &&
+  return (present_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
@@ -1519,6 +1522,52 @@ bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
   return true;
 }
 
+namespace {
+// General QDQ well-formedness, as the Conv/MatMul/Gemm/Variadic selectors enforce: every quantized
+// output's element data type must match the first input's (activation X, dq_nodes[0], always the
+// first DQ-produced input). GRU legitimately mixes input data types (u8 or u16 W/R, int32 bias), so
+// only X is the reference -- not every DQ input. A mismatched in/out data type is not a genuine
+// same-precision QDQ Gru, so decline the fold; DQ -> fp GRU -> Q then run as separate ops on QNN.
+bool IsOutputDataTypeMatchingFirstInput(const OrtApi& ort_api, const std::vector<const OrtNode*>& dq_nodes,
+                                        const std::vector<const OrtNode*>& q_nodes) {
+  if (dq_nodes.empty()) {
+    return true;
+  }
+  auto dt_x = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  if (!dt_x.has_value()) {
+    return false;
+  }
+  for (const OrtNode* q_node : q_nodes) {
+    auto dt_out = GetNodeOutputDataType(q_node, ort_api, 0);
+    if (!dt_out.has_value() || dt_out.value() != dt_x.value()) {
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace
+
+bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                    const OrtNode* redundant_clip_node,
+                                    const std::vector<const OrtNode*>& dq_nodes,
+                                    const std::vector<const OrtNode*>& q_nodes) const {
+  // Structural selector: fold DQ -> GRU -> Q into a single QDQGroup NodeUnit whenever the boundary
+  // Q/DQ nodes are well-formed. GRU's outputs Y and Y_h are both optional, so an absent slot is
+  // skipped by CheckQDQNodes; the present slots must still be consumed only by Q and must not be
+  // graph outputs. The HTP-specific op-semantic fp-fallback decisions -- LBR=0, missing-output, and
+  // non-supported input dtype combos -- live in gru_op_builder.cc, which emits an explicit
+  // Dequantize -> fp32 GRU -> Quantize (all on QNN) for those configs.
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                     static_cast<int>(dq_nodes.size()), /*is_empty_q_nodes_allowed=*/false)) {
+    return false;
+  }
+
+  if (!IsOutputDataTypeMatchingFirstInput(ort_api, dq_nodes, q_nodes)) {
+    return false;
+  }
+  return true;
+}
+
 // =============================================================================
 // GetOrtQDQSelection — attempt to form a QDQ node group anchored at `node`.
 //
@@ -1737,6 +1786,10 @@ void OrtSelectorManager::CreateSelectors() {
   OrtOpVersionsAndSelector::OpVersionsMap gemm_ops = {
       {"Gemm", {}}};
   ort_selectors_.RegisterSelector(gemm_ops, std::make_unique<OrtGemmNodeGroupSelector>());
+
+  // Register GRU ops
+  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
+  ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 
   // Register instance and layer normalization ops
   OrtOpVersionsAndSelector::OpVersionsMap instance_layer_norm_ops = {
