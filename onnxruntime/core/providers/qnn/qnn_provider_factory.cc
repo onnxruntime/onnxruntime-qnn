@@ -19,8 +19,8 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
-#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "core/providers/qnn/soc_utils.h"
+#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "qnn_ep_min_ort_api_version.h"
 
 #ifdef _WIN32

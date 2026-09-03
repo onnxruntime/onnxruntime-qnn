@@ -1731,7 +1731,7 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="udo_domain:MyAdd;other_domain:OpA,OpB"
 
 ```bash
 ./onnxruntime_plugin_ep_onnx_test -v -e qnn -j 1 \
-  -i "backend_path|./libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>]" \
+  -i "backend_path|./libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_name2>[:<target2>]" \
   <model>
 ```
 

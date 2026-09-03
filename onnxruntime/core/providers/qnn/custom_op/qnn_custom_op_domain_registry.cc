@@ -43,6 +43,9 @@ void BuildCustomOpDomainsFromEnv(const Ort::Logger& logger,
   std::vector<CustomOpDomainSpec> specs;
   ParseCustomOpDomains(custom_op_domains_spec, specs, logger);
   for (const auto& spec : specs) {
+    // Ort::CustomOpDomain copies the domain name string internally (via CreateCustomOpDomain),
+    // and QnnUdoPlaceholderOp stores op_type by value (std::move), so spec may safely go out
+    // of scope after this loop iteration.
     Ort::CustomOpDomain domain{spec.domain.c_str()};
     for (const auto& op_type : spec.op_types) {
       auto op = std::make_unique<qnn::QnnUdoPlaceholderOp>(op_type, ep_name);

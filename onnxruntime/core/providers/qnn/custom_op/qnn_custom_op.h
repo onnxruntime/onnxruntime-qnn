@@ -68,28 +68,27 @@ struct QnnUdoPlaceholderOp
   }
   bool GetVariadicOutputHomogeneity() const { return false; }
 
-  // Propagate the first input's type/shape to all outputs so ORT's type-inference pass
-  // succeeds during model load. Without this, UNDEFINED output type causes an inference
-  // error even though the node will be fused+compiled by QNN EP and the placeholder kernel
-  // is never executed.
+  // ORT calls InferOutputShapeFn unconditionally for every custom-op node during
+  // Graph::PerformTypeAndShapeInferencing, even when the model already carries
+  // output value_info. Without this function, loading an ONNX model whose
+  // custom-domain node uses UNDEFINED input/output types fails with a type
+  // inference error ("output arg ... type inference failed") because ORT cannot
+  // resolve the output type from the variadic heterogeneous schema alone.
   //
-  // KNOWN LIMITATION: SetOutputShape's type defaults to FLOAT, and there is no API on
-  // Ort::ShapeInferContext to read the actual runtime input tensor type, so this always
-  // declares the output as FLOAT regardless of the UDO's real element type. This matches
-  // every currently-supported UDO test: the ONNX-graph-level custom-domain node is float
-  // in both the CPU path and the HTP QDQ path (UDOQDQFusion strips the surrounding DQ/Q
-  // pair before the node reaches QNN, so quantization never touches the node's own declared
-  // type). A UDO whose ONNX-level type genuinely isn't FLOAT will fail Ort::Session
-  // construction with a clear type-inference error (fail-fast, not a silent wrong answer),
-  // because SetOutputShape unconditionally calls SetTensorElementType with this value. Per-op
-  // type configurability (e.g. an optional type suffix in ORT_QNN_CUSTOM_OP_DOMAINS) is
-  // deferred to a follow-up if a concrete non-FLOAT UDO use case arises.
+  // This implementation propagates input[0]'s shape to all outputs with type
+  // FLOAT (the default of SetOutputShape). For the placeholder op the kernel
+  // never executes (the node is fused and compiled by QNN EP), so the type
+  // is only needed to satisfy model-load validation. Current UDO usage is float
+  // at the ONNX graph level (QDQ wrapping is stripped by UDOQDQFusion before
+  // QNN sees the node), so FLOAT matches the model's declared type. A UDO whose
+  // ONNX-level output shape genuinely differs from input[0], or whose type is
+  // non-FLOAT, needs per-op type/shape configuration — deferred to a follow-up.
   static OrtStatusPtr InferOutputShape(Ort::ShapeInferContext& ctx) {
     if (ctx.GetInputCount() == 0) {
       return nullptr;
     }
     const auto& input_shape = ctx.GetInputShape(0);
-    for (size_t i = 0; i < 1 /* GetOutputCount not available; placeholder has 1 output */; ++i) {
+    for (size_t i = 0; i < 1 /* placeholder has exactly 1 output */; ++i) {
       ctx.SetOutputShape(i, input_shape);
     }
     return nullptr;
