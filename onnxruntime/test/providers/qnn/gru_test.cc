@@ -599,9 +599,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
 // forward, both outputs). Skipped on the x86 HTP emulator (no faithful native-INT16 Gru kernel; see
 // GRU_QDQ_u16_linear_before_reset); validated on real silicon @3.0%.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
-#if defined(__linux__) && defined(__x86_64__)
-  GTEST_SKIP() << "native INT16 Gru kernel unsupported on linux x86_64 HTP emulator; requires real device.";
-#endif
+  QNN_SKIP_TEST_ON_LINUX_X86_64("native INT16 Gru kernel unsupported on linux x86_64 HTP emulator; requires real device.");
   std::string direction = "forward";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
@@ -640,12 +638,10 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_sanity_forward) {
 // emulator INT8 kernel merely drifts (~1.9x its silicon peak and still bounded). So the test is skipped on
 // that emulator; real silicon keeps the tight 3.0% bound.
 TEST_F(QnnHTPBackendTests, GRU_QDQ_u16_linear_before_reset) {
-#if defined(__linux__) && defined(__x86_64__)
   // No faithful native INT16 Gru kernel on the x86 HTP emulator (output degenerates to a constant -- see
   // the note above). Validated instead on real silicon; mirrors the x86-sim skips in cast_test.cc and
   // framework_op_trace_test.cc.
-  GTEST_SKIP() << "native INT16 Gru kernel unsupported on linux x86_64 HTP emulator; requires real device.";
-#endif
+  QNN_SKIP_TEST_ON_LINUX_X86_64("native INT16 Gru kernel unsupported on linux x86_64 HTP emulator; requires real device.");
   std::string direction = "forward";
   uint32_t num_direction = 1;
   uint32_t batch_size = 3;
