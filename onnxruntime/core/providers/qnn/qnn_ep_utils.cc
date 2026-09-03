@@ -543,42 +543,44 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
     return false;
   }
 
-  // Check if the number of Q outputs matches the number of outputs that exist
   size_t num_outputs = 0;
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs), ort_api);
-  if (num_outputs < q_nodes.size()) {
-    return false;
-  }
 
   std::vector<const OrtValueInfo*> outputs(num_outputs);
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
-  // Check if any of the outputs are graph outputs
-  bool produces_graph_output = false;
+  // Fusing deletes the tensor between `node` and each absorbed Q, so an output may only be absorbed
+  // if that Q is its sole consumer and it is not a graph output. An output with no Q consumer
+  // survives and is unconstrained -- TopK's integer indices output is never quantized.
+  size_t num_absorbed_outputs = 0;
   for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
-    bool is_graph_output = false;
-    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
 
-    if (is_graph_output) {
-      produces_graph_output = true;
-      break;
-    }
-  }
-
-  // Count the total number of consumers for all outputs
-  size_t total_consumers = 0;
-  for (size_t i = 0; i < num_outputs; i++) {
-    const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
+    if (num_consumers != 1) {
+      continue;
+    }
 
-    total_consumers += num_consumers;
+    const OrtNode* consumer = nullptr;
+    int64_t consumer_input_index = 0;
+    ORT_CONTINUE_ON_ERROR(
+        ort_api.ValueInfo_GetValueConsumers(value_info, &consumer, &consumer_input_index, 1), ort_api);
+    if (std::find(q_nodes.cbegin(), q_nodes.cend(), consumer) == q_nodes.cend()) {
+      continue;
+    }
+
+    bool is_graph_output = false;
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
+    if (is_graph_output) {
+      return false;
+    }
+
+    ++num_absorbed_outputs;
   }
 
-  return (num_outputs == q_nodes.size()) &&
-         (q_nodes.size() == total_consumers) &&
-         !produces_graph_output;
+  // An unabsorbed Q would be folded away while the tensor it reads is still live.
+  return num_absorbed_outputs == q_nodes.size();
 }
 
 // Helper function to check if a QDQ pair is supported
