@@ -1,0 +1,32 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "Upload Tool Artifact"
+description: "Upload a versioned tool artifact to Artifactory (stable path, not scoped to a CI run)"
+
+inputs:
+  src_pattern:
+    description: Pattern of files to upload, relative to build/
+    required: true
+    type: string
+  name:
+    description: Name of the artifact to create
+    required: true
+    type: string
+  version:
+    description: Artifact version. Defaults to the QAIRT SDK version pinned in qcom/packages.yml.
+    required: false
+    type: string
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Upload to Artifactory
+      shell: bash
+      run: >
+        python3
+        qcom/scripts/artifactory/publish_tool.py
+        --src-pattern "${{ inputs.src_pattern }}"
+        --name "${{ inputs.name }}"
+        ${{ inputs.version != '' && format('--version {0}', inputs.version) || '' }}

@@ -1617,7 +1617,7 @@ Once registered, UDOs integrate transparently into model conversion and runtime 
 
 **HTP UDO is not supported on Windows.** `qnn-op-package-generator` and the Hexagon toolchain only target HTP on Linux; the `x86_64-windows-msvc` host platform supports the CPU backend only. On Windows, CPU UDO must be generated with the `--gen_cmakelists` flag (see Step 2), which produces a `CMakeLists.txt`-based build instead of the Linux Makefile flow.
 
-**The shipped UDO unit test runs on Linux x86_64 only.** The Linux x86_64 CI build uses Python 3.12, and `qnn-op-package-generator` supports Python 3.10 and 3.12 via version-tagged extensions in the QAIRT SDK. Windows is excluded because the Hexagon toolchain only targets HTP on Linux; Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
+**The shipped UDO unit test runs on Linux x86_64 only.** Its fixture (a prebuilt "MyAdd" op package for both the CPU and HTP backends) is built out-of-band by [build_udo_test_package.py](../../qcom/scripts/linux/build_udo_test_package.py) and published to Artifactory keyed on the pinned QAIRT SDK version, rather than compiled inline by cmake — see "Maintaining the UDO test fixture" below. `onnxruntime_provider_test` downloads it automatically in CI; on a fork PR or a local build without Artifactory credentials, the two tests (`QnnCPUBackendTests.UDO_Op_MyAdd`, `QnnHTPBackendTests.UDO_Op_MyAdd`) are skipped rather than failing. To run them locally, build the fixture yourself first: `python3 qcom/scripts/linux/build_udo_test_package.py` stages it at `build/qnn-udo-test-package/`, which `cmake/onnxruntime_unittests_udo.cmake` picks up automatically on the next configure. Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
 
 ### UDO Workflow
 
@@ -1635,7 +1635,7 @@ and [MyAddOpPackageHtp.xml](../../onnxruntime/test/providers/qnn/udo/MyAddOpPack
 
 #### **Step 2: Generate the UDO Package**
 
-Use the QNN Op Package Generator:
+Use the QNN Op Package Generator (ships Python-version-tagged SDK extensions; on Linux x86_64, only Python 3.10 and 3.12 are supported):
 
 ```bash
 qnn-op-package-generator -p <path/to/op.xml> -o <output_dir>
@@ -1694,17 +1694,34 @@ make -C <output_dir>/MyAddOpPackage all_x86
 
 **HTP backend (`htp_x86` target):**
 
-The HTP `htp_x86` target needs a Makefile that links the LLVM C++ runtime statically; use the
-[HTP_Makefile](../../onnxruntime/test/providers/qnn/udo/HTP_Makefile) shipped with this repo
-in place of the one produced by the generator.
+Use the SDK's own HTP Makefile template directly (`share/QNN/OpPackageGenerator/makefiles/HTP/Makefile`
+under `QNN_SDK_ROOT`) — do not copy the generator's per-package output over it. The three variables
+below are the only overrides needed; passing them on the `make` command line takes precedence over
+the template's own (community-Hexagon-SDK-specific) defaults:
 
 ```bash
 export QNN_SDK_ROOT=<path-to-qnn-sdk>
 export HEXAGON_SDK_ROOT=<path-to-hexagon-sdk>/6.5.0.0
-cp onnxruntime/test/providers/qnn/udo/HTP_Makefile <output_dir>/MyAddOpPackage/Makefile
-make -C <output_dir>/MyAddOpPackage htp_x86
+export LLVM_BIN=$(realpath ./LLVM-21.1.8-Linux-X64/bin)
+make -C <output_dir>/MyAddOpPackage \
+     -f "${QNN_SDK_ROOT}/share/QNN/OpPackageGenerator/makefiles/HTP/Makefile" \
+     "X86_LIBNATIVE_RELEASE_DIR=${HEXAGON_SDK_ROOT}/tools/HEXAGON_Tools/19.0.07/Tools" \
+     "X86_CXX=${LLVM_BIN}/clang++ -stdlib=libc++" \
+     "X86_LDFLAGS=-Wl,--whole-archive -L${HEXAGON_SDK_ROOT}/tools/HEXAGON_Tools/19.0.07/Tools/libnative/lib -lnative -Wl,--no-whole-archive -lpthread -l:libc++.a -l:libc++abi.a" \
+     htp_x86
 # Output: <output_dir>/MyAddOpPackage/build/x86_64-linux-clang/libQnnMyAddOpPackage.so
 ```
+
+`X86_LDFLAGS` re-adds this LLVM's own static `libc++.a`/`libc++abi.a` (no `-L` needed: `-stdlib=libc++`
+makes clang++ search its own installation's lib directory automatically). This is required, not
+optional: the `.so`'s runtime `libc++.so.1` dependency is unversioned and will typically resolve to
+an older distro libc++ at load time (e.g. Ubuntu 22.04's `libc++1-14`), which does not export every
+symbol LLVM 21.1.8's `HTP/core` headers can pull in (verified: `std::__1::__hash_memory`) — statically
+linking this LLVM's own C++ runtime avoids depending on the load-time one for those symbols.
+
+`19.0.07` is the Hexagon Tools version that ships inside the community Hexagon SDK release linked
+above; see [build_udo_test_package.py](../../qcom/scripts/linux/build_udo_test_package.py) for the
+exact, version-checked invocation this repo's own test fixture uses.
 
 #### **Step 5: Execute the Model with UDO**
 
@@ -1712,7 +1729,30 @@ make -C <output_dir>/MyAddOpPackage htp_x86
 ./onnx_test_runner -v -e qnn -j 1 -i "backend_path|./libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_nam2e>[:<target2>]" <models>
 ```
 
-For the whole pipeline, refer [udo unit test](../../cmake/onnxruntime_unittests_udo.cmake)
+For the whole pipeline, refer to [build_udo_test_package.py](../../qcom/scripts/linux/build_udo_test_package.py)
+(builds and validates the fixture) and [udo unit test cmake](../../cmake/onnxruntime_unittests_udo.cmake)
+(consumes the published fixture).
+
+### Maintaining the UDO test fixture
+
+`onnxruntime/test/providers/qnn/udo_op_test.cc` needs a prebuilt "MyAdd" op package (CPU and HTP)
+to exercise QNN EP's UDO/op-package support end to end. Because a prebuilt op package is locked to
+the QAIRT SDK's HTP/CPU backend ABI — not just its documented C API — this fixture is version-locked
+to `qcom/packages.yml:qairt.version` and is rebuilt and republished whenever that pin moves:
+
+1. Run `python3 qcom/scripts/linux/build_udo_test_package.py`. It resolves the pinned QAIRT SDK,
+   LLVM, and Hexagon SDK via `qcom/scripts/all/package_manager.py`, builds both backends, and
+   validates every undefined C++ symbol each `.so` imports against the QAIRT SDK's own
+   `libQnnCpu.so` / `libQnnHtp.so` before staging anything — this is what would have caught the
+   QAIRT 2.46→2.49 `PackageOpStorageBase` constructor ABI change, and what caught the QAIRT 2.50
+   header reshuffle fixed by PR #772, at build time instead of at `dlopen()`.
+2. Run the `qualcomm-internal-publish-udo-package` GitHub Actions workflow (`workflow_dispatch`)
+   to rebuild and republish the fixture to Artifactory at the new pinned QAIRT version. It also
+   runs weekly on a schedule against whatever QAIRT version is currently pinned, so an SDK-side ABI
+   break surfaces there before anyone bumps the pin.
+3. Bump `qcom/packages.yml:qairt.version` in the same PR (or a follow-up) as usual. No other file
+   needs to change — the fixture's Artifactory path is derived from that version, so a PR build
+   will fail loudly (not silently skip) if the two are out of sync.
 
 ### UDO References
 

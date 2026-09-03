@@ -153,6 +153,29 @@ jobs:
         if: ${{ inputs.has_code_changes }}
         run: git submodule update --init --recursive
 
+      # QNN EP's UDO unit tests need a prebuilt test-only op-package fixture (see
+      # cmake/onnxruntime_unittests_udo.cmake and qcom/scripts/linux/build_udo_test_package.py).
+      # It's published to a stable Artifactory path keyed on the pinned QAIRT SDK version by
+      # qualcomm-internal-publish-udo-package.yml, rather than built from source (LLVM + Hexagon
+      # SDK toolchain, ~17 GB) on every build. Linux x86_64 only: the fixture's HTP backend is a
+      # Linux-only x86 HTP simulator build; Windows UDO support is covered separately by the
+      # ParseOpPackages parsing tests in qnn_basic_test.cc.
+      - name: Setup JFrog CLI for UDO test package download
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' && inputs.target_os == 'linux' && (inputs.target_arch == 'x86_64' || inputs.target_arch == 'x86_64_ubuntu_22_04') }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download UDO test package from Artifactory
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' && inputs.target_os == 'linux' && (inputs.target_arch == 'x86_64' || inputs.target_arch == 'x86_64_ubuntu_22_04') }}
+        uses: ./.github/actions/download-tool-artifact
+        with:
+          name: qnn-udo-test-package
+
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes }}
         run: >
@@ -164,6 +187,15 @@ jobs:
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
+
+      # Closes a fail-open hole: cmake/onnxruntime_unittests_udo.cmake soft-skips the UDO tests
+      # (and udo_op_test.cc GTEST_SKIPs them individually) when the fixture is missing, so a
+      # broken or expired download would otherwise report green instead of failing the build.
+      - name: Assert UDO test package fixture is present
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' && inputs.target_os == 'linux' && (inputs.target_arch == 'x86_64' || inputs.target_arch == 'x86_64_ubuntu_22_04') }}
+        run: |
+          test -f "build/${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/libMyAddOpPackage_cpu.so"
+          test -f "build/${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/libMyAddOpPackage_htp.so"
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}

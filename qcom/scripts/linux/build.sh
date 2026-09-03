@@ -117,14 +117,8 @@ if [ -z "${qairt_sdk_root}" ]; then
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
-llvm_contentdir="$(get_llvm_contentdir)"
-# Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH.
-get_hexagon_sdk_contentdir > /dev/null
-# Surface the canonical tools dir to cmake so onnxruntime_unittests_udo.cmake can locate
-# LLVM / Hexagon SDK without relying on a CMAKE_*_BINARY_DIR-relative fallback (which can
-# resolve outside ${REPO_ROOT}/build/tools depending on where the cmake file is included).
 export ORT_BUILD_TOOLS_PATH="$(get_tools_dir)"
-PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
+PATH="${cmake_bindir}:$(get_ninja_bindir):${PATH}"
 
 mkdir -p "${build_dir}/${config}"
 
