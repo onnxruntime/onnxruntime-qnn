@@ -145,7 +145,11 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   ONNXTensorElementDataType input_data_type = input_0.type;
   std::string error_msg = "QNN EP: Data type " + std::to_string(static_cast<int>(input_data_type)) +
                           " is not supported for Conv operator in CPU backend.";
-  RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, input_data_type, error_msg));
+  bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  bool is_allowed_cpu_dtype = input_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+                              input_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 ||
+                              input_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  RETURN_IF(is_cpu_backend && !is_allowed_cpu_dtype, error_msg.c_str());
 
   OrtNodeAttrHelper node_helper(node_unit);
   auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
