@@ -346,44 +346,6 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
-static uint64_t ParseUint64Option(const OrtApi& ort_api,
-                                  const OrtSessionOptions& session_options,
-                                  const std::string& key,
-                                  uint64_t default_value,
-                                  const Ort::Logger& logger) {
-  uint64_t result = default_value;
-  std::string value_str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
-
-  if (!value_str.empty()) {
-    try {
-      size_t parsed_chars = 0;
-      if (value_str.front() == '-') {
-        throw std::invalid_argument("negative value");
-      }
-      uint64_t parsed_value = std::stoull(value_str, &parsed_chars);
-      if (parsed_chars == value_str.size()) {
-        result = parsed_value;
-      } else {
-        ORT_CXX_LOG(logger,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Invalid value for " + key + " (" + value_str + "). Only unsigned integers allowed.").c_str());
-      }
-    } catch (const std::invalid_argument& /*ex*/) {
-      ORT_CXX_LOG(logger,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Invalid value for " + key + " (" + value_str + "). Only unsigned integers allowed.").c_str());
-    } catch (const std::out_of_range& /*ex*/) {
-      ORT_CXX_LOG(logger,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Invalid value for " + key + " (" + value_str + "). Value is out of range.").c_str());
-    }
-  }
-
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("User specified " + key + ": " + std::to_string(result)).c_str());
-  return result;
-}
-
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -1396,11 +1358,19 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                      FormatEPConfigKey("io_memory_estimation"),
                                                                      false,
                                                                      logger_);
-  htp_context_configs_.reused_io_limit_mb = ParseUint64Option(ort_api,
-                                                              session_options_,
-                                                              FormatEPConfigKey("reused_io_limit_mb"),
-                                                              0,
-                                                              logger_);
+  std::string reused_io_limit_mb_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("reused_io_limit_mb"), "0",
+                                 reused_io_limit_mb_str);
+  if (!reused_io_limit_mb_str.empty() && reused_io_limit_mb_str != "0") {
+    try {
+      htp_context_configs_.reused_io_limit_mb = std::stoull(reused_io_limit_mb_str);
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("reused_io_limit_mb: " + reused_io_limit_mb_str).c_str());
+    } catch (const std::exception& /*ex*/) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  ("Ignoring malformed reused_io_limit_mb, expecting a positive integer: " + reused_io_limit_mb_str).c_str());
+    }
+  }
 
   if (htp_context_configs_.reused_io_limit_mb > 0 && !htp_context_configs_.enable_io_memory_estimation) {
     htp_context_configs_.enable_io_memory_estimation = true;
