@@ -1677,6 +1677,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Softplus", {}},
       {"SpaceToDepth", {}},
       {"Sqrt", {}},
+      {"Swish", {}},
       {"Tanh", {}}};
   ort_selectors_.RegisterSelector(unary_ops, std::make_unique<OrtUnaryNodeGroupSelector>());
 
