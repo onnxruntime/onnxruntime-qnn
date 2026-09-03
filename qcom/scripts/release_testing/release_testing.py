@@ -236,11 +236,8 @@ def verify_artifact_counts(args: argparse.Namespace) -> None:
 
     # --- Wheels: 4 Python versions x 4 arches = 16 ---
     wheels = list_artifacts("wheel", args.artifact_version, ".whl")
-    expected_wheels = [
-        f"cp{v.replace('.', '')}-cp{v.replace('.', '')}-{arch}.whl"
-        for v in python_versions
-        for arch in _WHEEL_ARCHES
-    ]
+    py_tags = [f"cp{v.replace('.', '')}" for v in python_versions]
+    expected_wheels = [f"{t}-{t}-{arch}.whl" for t in py_tags for arch in _WHEEL_ARCHES]
     missing_wheels = [e for e in expected_wheels if not any(e in f for f in wheels)]
     if missing_wheels:
         log.error("Wheels: FAIL — %d missing:\n%s", len(missing_wheels), "\n".join(f"  {m}" for m in missing_wheels))
