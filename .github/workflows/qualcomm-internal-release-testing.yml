@@ -1,0 +1,361 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Perform ONNX Runtime Execution Provider wheel, nuget, archive Release Testing
+
+permissions:
+  checks: write
+  contents: read
+  id-token: write
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      artifact_format:
+        description: "The format of artifacts to test. Choose one of [wheel, nuget, zip, tgz, all]."
+        type: string
+        required: true
+      artifact_version:
+        description: |
+          Source version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+        type: string
+        required: true
+      test_package_version:
+        description: |
+          Version folder of the test package archive.
+          Required when artifact_format is zip, tgz, or all.
+        type: string
+        default: "2.5.0rc3"
+  workflow_dispatch:
+    inputs: *common_inputs
+
+env:
+  ARTIFACT_VERSION:     ${{ inputs.artifact_version }}
+  TEST_PACKAGE_VERSION: ${{ inputs.test_package_version }}
+  ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+  ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+
+jobs:
+
+  # ===========================================================================
+  # ARTIFACT COUNT CHECK (runs first — gates all other jobs)
+  # ===========================================================================
+
+  verify-artifact-counts:
+    name: "Verify Artifact Counts"
+    runs-on: [Linux, self-hosted, X64]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify Artifact Counts
+        shell: bash
+        run: |
+          bash "${GITHUB_WORKSPACE}/qcom/scripts/release_testing/run_release_testing.sh" \
+            --artifact-type all \
+            --artifact-version "${ARTIFACT_VERSION}" \
+            --source-directory "${GITHUB_WORKSPACE}/release_testing" \
+            --only-count-check
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  # ===========================================================================
+  # WHEEL JOBS
+  # ===========================================================================
+
+  verify-windows-wheel-metadata:
+    name: "Verify Windows Wheel Metadata"
+    runs-on: [Windows, self-hosted, Build]
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify Windows Wheel Metadata
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type wheel `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --download-from-artifactory `
+            --only-metadata
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  test-wheel-on-windows:
+    name: "Test Wheel - ${{ matrix.platform.name }} - Py${{ matrix.python-version }}"
+    runs-on: ${{ matrix.platform.os }}
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: "Windows ARM64"
+            os: [Windows, self-hosted, ARM64]
+          - name: "Windows x86_64"
+            os: [Windows, self-hosted, X64]
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test Wheel
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type wheel `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --download-from-artifactory `
+            --python-versions "${{ matrix.python-version }}"
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  test-wheel-on-linux:
+    name: "Test Wheel - ${{ matrix.platform.name }} - Py${{ matrix.python-version }}"
+    runs-on: ${{ matrix.platform.os }}
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: "Linux ARM64"
+            os: [Linux, self-hosted, ARM64]
+          - name: "Linux x86_64"
+            os: [Linux, self-hosted, X64]
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: '${{ matrix.python-version }}'
+
+      - name: Test Wheel
+        shell: bash
+        run: |
+          bash "${GITHUB_WORKSPACE}/qcom/scripts/release_testing/run_release_testing.sh" \
+            --artifact-type wheel \
+            --artifact-version "${ARTIFACT_VERSION}" \
+            --source-directory "${GITHUB_WORKSPACE}/release_testing" \
+            --download-from-artifactory \
+            --python-versions "${{ matrix.python-version }}"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  verify-backward-compatibility:
+    name: "Verify Backward Compatibility (Windows ARM64, Python 3.12)"
+    runs-on: [Windows, self-hosted, ARM64]
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Backward Compatibility Test
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type wheel `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --download-from-artifactory `
+            --only-backward-compat
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  # ===========================================================================
+  # ZIP JOBS
+  # ===========================================================================
+
+  verify-windows-zip-metadata:
+    name: "Verify Windows Zip Metadata"
+    runs-on: [Windows, self-hosted, Build]
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'zip' || inputs.artifact_format == 'all'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify Windows Zip Metadata
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type zip `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --test-package-version "$env:TEST_PACKAGE_VERSION" `
+            --download-from-artifactory `
+            --only-metadata
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  smoke-test-zip-on-windows:
+    name: "Smoke Test Zip - ${{ matrix.platform.name }}"
+    runs-on: ${{ matrix.platform.os }}
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'zip' || inputs.artifact_format == 'all'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: "Windows ARM64"
+            os: [Windows, self-hosted, ARM64]
+          - name: "Windows x86_64"
+            os: [Windows, self-hosted, X64]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Smoke Test Zip
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type zip `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --test-package-version "$env:TEST_PACKAGE_VERSION" `
+            --download-from-artifactory
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  # ===========================================================================
+  # TGZ JOBS
+  # ===========================================================================
+
+  smoke-test-tgz-on-linux:
+    name: "Smoke Test TGZ - ${{ matrix.platform.name }}"
+    runs-on: ${{ matrix.platform.os }}
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: "Linux ARM64"
+            os: [Linux, self-hosted, ARM64]
+          - name: "Linux x86_64"
+            os: [Linux, self-hosted, X64]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Smoke Test TGZ
+        shell: bash
+        run: |
+          bash "${GITHUB_WORKSPACE}/qcom/scripts/release_testing/run_release_testing.sh" \
+            --artifact-type tgz \
+            --artifact-version "${ARTIFACT_VERSION}" \
+            --source-directory "${GITHUB_WORKSPACE}/release_testing" \
+            --test-package-version "${TEST_PACKAGE_VERSION}" \
+            --download-from-artifactory
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  # ===========================================================================
+  # NUGET JOBS
+  # ===========================================================================
+
+  verify-windows-nuget-metadata:
+    name: "Verify Windows NuGet Metadata"
+    runs-on: [Windows, self-hosted, Build]
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify NuGet Metadata
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type nuget `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --download-from-artifactory `
+            --only-metadata
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
+
+  test-nuget-on-windows:
+    name: "Test NuGet - ${{ matrix.platform.name }}"
+    runs-on: ${{ matrix.platform.os }}
+    needs: verify-artifact-counts
+    if: inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: "Windows ARM64"
+            os: [Windows, self-hosted, ARM64]
+          - name: "Windows x86_64"
+            os: [Windows, self-hosted, X64]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test NuGet Package
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/run_release_testing.ps1" `
+            --artifact-type nuget `
+            --artifact-version "$env:ARTIFACT_VERSION" `
+            --source-directory "${{ github.workspace }}/release_testing" `
+            --download-from-artifactory
+
+      - name: Summary
+        if: always()
+        shell: powershell
+        run: |
+          echo "Job result: ${{ job.status }}"
