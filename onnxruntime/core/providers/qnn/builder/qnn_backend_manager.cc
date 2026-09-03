@@ -2387,7 +2387,9 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
     }
   } else {
     if (htp_power_configs.post_run_perf_mode.has_value()) {
-      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      // rpc_polling_time is only populated when a pre-run or default perf mode is also set.
+      // A post-run-only override (no pre-run, no default) leaves it empty — fall back to disabled.
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.post_run_perf_mode, htp_power_configs.rpc_polling_time.value_or(kDisableRpcPolling), *htp_power_configs.rpc_control_latency};
       RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
       power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};

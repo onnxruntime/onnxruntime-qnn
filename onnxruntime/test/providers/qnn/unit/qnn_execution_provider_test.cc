@@ -19,6 +19,8 @@
 //   - SetDynamicOptionsImpl: prepare_only early return, kvcache_rewind without genie
 //     manager, HTP perf mode on CPU backend (no-op), unsupported key error.
 //   - GetHardwareDeviceIncompatibilityDetails: non-existent backend path → MISSING_DEPENDENCY.
+//   - GetPerThreadHtpPowerConfigs: burst session mode does not set default_perf_mode;
+//     sustained_high_performance session mode does set it (regression guard for PR #38).
 //
 // All tests run without loading any real QNN backend shared library and without
 // constructing a real ORT session. QnnBackendManager::Create stores config only —
@@ -1149,6 +1151,70 @@ TEST_F(QnnUnit_ExecutionProviderHtpTest, GetHardwareDeviceIncompatibilityDetails
 
   EXPECT_EQ(s, nullptr);
   EXPECT_EQ(ctx_.last_incompatibility_reason, OrtDeviceEpIncompatibility_NONE);
+}
+
+// ===========================================================================
+// Group 14: GetPerThreadHtpPowerConfigs — session-level mode gating
+//
+// Verifies that only kHtpSustainedHighPerformance (not kHtpBurst or other
+// session-level modes) sets default_perf_mode on the per-thread config struct.
+// Regression guard for PR #38 which inadvertently routed burst through the
+// per-inference SetState/timer path, causing ~87% throughput regression when
+// htp_performance_mode|burst was used.
+// ===========================================================================
+
+// Burst mode set at session level must NOT populate default_perf_mode.
+// Without this fix, burst goes through SetSustainedPerformance() per inference,
+// arming a 300ms release timer that periodically cold-wakes the DSP.
+TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_BurstSessionMode_DoesNotSetDefaultPerfMode) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "burst";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  // GetRunConfigEntry must not be null when GetPerThreadHtpPowerConfigs calls it.
+  // Stub returns nullptr → no per-run override, only session-level defaults apply.
+  ctx.stub_ort_api.GetRunConfigEntry = [](const OrtRunOptions*, const char*) noexcept -> const char* {
+    return nullptr;
+  };
+
+  qnn::PerThreadHtpPowerConfigs_t configs;
+  bool configs_set = ep->GetPerThreadHtpPowerConfigs(configs, nullptr);
+
+  // Burst at session level: set-and-forget at init, zero per-inference power calls.
+  EXPECT_FALSE(configs_set)
+      << "kHtpBurst session option must not trigger AddPerThreadHtpPowerConfigMapping per inference";
+  EXPECT_FALSE(configs.default_perf_mode.has_value())
+      << "kHtpBurst session option must not set default_perf_mode (regression guard for PR #38)";
+  EXPECT_FALSE(configs.pre_run_perf_mode.has_value());
+  // rpc_polling_time must be empty for burst session mode: it is only populated on paths
+  // where SetPerThreadHtpPowerConfigs will actually dereference it (dynamic, sustained,
+  // or per-run override). Leaving it unset prevents any per-inference RPC overhead.
+  EXPECT_FALSE(configs.rpc_polling_time.has_value())
+      << "rpc_polling_time must not be set for burst session mode (no per-inference RPC overhead)";
+}
+
+// Sustained-high-performance mode set at session level MUST populate default_perf_mode
+// so that the per-inference SetState/timer path keeps the DSP active between runs.
+TEST_F(QnnUnit_ExecutionProviderTest, GetPerThreadHtpPowerConfigs_SustainedSessionMode_SetsDefaultPerfMode) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_performance_mode")] = "sustained_high_performance";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  ctx.stub_ort_api.GetRunConfigEntry = [](const OrtRunOptions*, const char*) noexcept -> const char* {
+    return nullptr;
+  };
+
+  qnn::PerThreadHtpPowerConfigs_t configs;
+  bool configs_set = ep->GetPerThreadHtpPowerConfigs(configs, nullptr);
+
+  EXPECT_TRUE(configs_set)
+      << "kHtpSustainedHighPerformance must trigger AddPerThreadHtpPowerConfigMapping per inference";
+  ASSERT_TRUE(configs.default_perf_mode.has_value())
+      << "kHtpSustainedHighPerformance must set default_perf_mode for per-inference timer path";
+  EXPECT_EQ(*configs.default_perf_mode, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance);
+  EXPECT_FALSE(configs.pre_run_perf_mode.has_value());
 }
 
 }  // namespace test
