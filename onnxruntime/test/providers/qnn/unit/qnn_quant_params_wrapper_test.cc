@@ -1143,6 +1143,107 @@ TEST(QnnUnit_QuantParamsWrapperTest, HandleUnsqueeze_NoShiftNeeded_LeavesAxisUnc
   EXPECT_EQ(q.Get().axisScaleOffsetEncoding.axis, 0);
 }
 
+TEST(QnnUnit_QuantParamsWrapperTest, HandleSqueeze_NotPerChannel_NoOp) {
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerTensor(0.5f, 0);
+  std::vector<uint32_t> orig{1, 1, 4, 5};
+  std::vector<uint32_t> nu{4, 5};
+  EXPECT_TRUE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, HandleSqueeze_RankNotDecreased_ReturnsError) {
+  QnnQuantParamsWrapper q = MakePerChannelNonInt4(/*axis=*/0);
+  std::vector<uint32_t> orig{3, 4};
+  std::vector<uint32_t> nu{3, 4};  // same size — error
+  EXPECT_FALSE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest,
+     HandleSqueeze_AxisScaleOffset_ShiftsWhenLeadingOnesRemoved) {
+  // Per-channel along axis 3 (N) of a {1, 1, 3, 4} weight; squeeze to {3, 4}
+  // should move the per-channel axis from 3 to 1.
+  const std::vector<float> scales{0.1f, 0.2f, 0.3f, 0.4f};
+  const std::vector<int32_t> offsets{0, 0, 0, 0};
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/3);
+  std::vector<uint32_t> orig{1, 1, 3, 4};
+  std::vector<uint32_t> nu{3, 4};
+  ASSERT_TRUE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+  EXPECT_EQ(q.Get().axisScaleOffsetEncoding.axis, 1);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest,
+     HandleSqueeze_BwAxisScaleOffset_ShiftsWhenLeadingOnesRemoved) {
+  const std::vector<float> scales{0.1f, 0.2f, 0.3f};
+  const std::vector<int32_t> offsets{0, 0, 0};
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannelBw(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/1, /*bitwidth=*/4);
+  std::vector<uint32_t> orig{1, 3};
+  std::vector<uint32_t> nu{3};
+  ASSERT_TRUE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+  EXPECT_EQ(q.Get().bwAxisScaleOffsetEncoding.axis, 0);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, HandleSqueeze_AxisOutOfRange_ReturnsError) {
+  QnnQuantParamsWrapper q = MakePerChannelNonInt4(/*axis=*/5);
+  std::vector<uint32_t> orig{1, 3, 4};
+  std::vector<uint32_t> nu{3, 4};
+  EXPECT_FALSE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest,
+     HandleSqueeze_SurvivingContractionDimIsOne_StillShiftsAxisCorrectly) {
+  // Regression test: weight [1, 1, 1, 4] (K=1, N=4) squeezed to [1, 4], axis=3 (N).
+  // A naive by-value alignment can desync at i=0 (orig[0]=1 spuriously matches
+  // new_shape[0]=1, the surviving K dim) even though this squeeze is valid and
+  // the axis is on N, not K. HandleSqueeze must align by position (trailing
+  // new_shape.size() dims), not by value, to get this right.
+  const std::vector<float> scales{0.1f, 0.2f, 0.3f, 0.4f};
+  const std::vector<int32_t> offsets{0, 0, 0, 0};
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/3);
+  std::vector<uint32_t> orig{1, 1, 1, 4};
+  std::vector<uint32_t> nu{1, 4};
+  ASSERT_TRUE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+  EXPECT_EQ(q.Get().axisScaleOffsetEncoding.axis, 1);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest,
+     HandleSqueeze_AxisOnSqueezedLeadingDim_ReturnsError) {
+  // axis=1 falls inside the two squeezed leading dims of {1, 1, 3, 4} -> {3, 4}.
+  const std::vector<float> scales{0.1f};
+  const std::vector<int32_t> offsets{0};
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/1);
+  std::vector<uint32_t> orig{1, 1, 3, 4};
+  std::vector<uint32_t> nu{3, 4};
+  EXPECT_FALSE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest,
+     HandleSqueeze_TrailingDimsMismatch_ReturnsError) {
+  // new_shape's trailing dims don't match orig_shape's trailing dims positionally.
+  const std::vector<float> scales{0.1f, 0.2f, 0.3f, 0.4f};
+  const std::vector<int32_t> offsets{0, 0, 0, 0};
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/3);
+  std::vector<uint32_t> orig{1, 1, 3, 4};
+  std::vector<uint32_t> nu{4, 3};  // swapped — does not align positionally with orig's trailing {3, 4}.
+  EXPECT_FALSE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, HandleSqueeze_NonLeadingNonUnitDimSqueezed_ReturnsError) {
+  // Only leading dims may be squeezed; a non-1 leading dim must be rejected.
+  const std::vector<float> scales{0.1f, 0.2f, 0.3f, 0.4f};
+  const std::vector<int32_t> offsets{0, 0, 0, 0};
+  QnnQuantParamsWrapper q = QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/3);
+  std::vector<uint32_t> orig{2, 1, 3, 4};  // leading dim is 2, not 1 — cannot be squeezed.
+  std::vector<uint32_t> nu{3, 4};
+  EXPECT_FALSE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, HandleSqueeze_LPBQ_ShiftsWhenLeadingOnesRemoved) {
+  QnnQuantParamsWrapper q = MakeLPBQ();  // axis=1, rank assumed 2 in MakeLPBQ's own shape model.
+  std::vector<uint32_t> orig{1, 1, 3};
+  std::vector<uint32_t> nu{1, 3};
+  ASSERT_TRUE(q.HandleSqueeze<uint32_t>(gsl::make_span(orig), gsl::make_span(nu)).IsOK());
+  EXPECT_EQ(q.Get().blockwiseExpansion->axis, 0);
+}
+
 // `Get() const` overload — only reachable from a const-context call site.
 // All other tests use a non-const wrapper and therefore call the non-const
 // overload (line 49 in the header). Without this test the const-Get line

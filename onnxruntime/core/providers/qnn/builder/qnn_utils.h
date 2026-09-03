@@ -509,6 +509,24 @@ inline std::vector<int64_t> GetInitializerShape(const OrtValueInfo* initializer,
 
 // TensorShape GetTensorProtoShape(const ONNX_NAMESPACE::TensorShapeProto& tensor_shape_proto);
 
+// Returns `shape` with leading 1-dims dropped to reach `target_rank`, or std::nullopt if a non-1
+// dim would have to be dropped. A shape already at or below `target_rank` is returned unchanged,
+// so such a shape is always (vacuously) squeezable. Used where ONNX accepts an operand that is
+// unidirectionally broadcastable to a higher rank but the QNN OpDef requires the lower rank, e.g.
+// RMSNorm scale [1, 1, C] against X [1, S, C], or a MatMul weight [1, 1, K, N] against [K, N].
+template <typename T>
+std::optional<std::vector<T>> TrySqueezeLeadingOnesTo(const std::vector<T>& shape, size_t target_rank) {
+  if (shape.size() <= target_rank) {
+    return shape;
+  }
+
+  const size_t num_leading_dims = shape.size() - target_rank;
+  if (std::any_of(shape.begin(), shape.begin() + num_leading_dims, [](T dim) { return dim != 1; })) {
+    return std::nullopt;
+  }
+  return std::vector<T>(shape.begin() + num_leading_dims, shape.end());
+}
+
 template <typename T, typename P>
 Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm, gsl::span<T> output_shape) {
   const size_t rank = input_shape.size();

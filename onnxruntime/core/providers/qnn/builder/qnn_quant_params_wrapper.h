@@ -214,6 +214,54 @@ class QnnQuantParamsWrapper {
     return Ort::Status();
   }
 
+  // Handle "squeeze" of a per-channel or LPBQ quantized tensor's LEADING dimensions.
+  // The quantization parameter's axis is shifted left by the number of leading unit
+  // dimensions removed. Only leading dims may be squeezed by this method: unlike
+  // HandleUnsqueeze (which locates inserted 1s by value, since inserted dims are
+  // always 1 and the rest of the shape is untouched), squeeze cannot be resolved
+  // from shapes by value alone — a squeezed leading dim and the surviving trailing
+  // dims can both legitimately be 1 (e.g. weight [1,1,1,4] squeezed to [1,4]), so
+  // this method anchors on the trailing `new_shape.size()` dims by position instead.
+  template <typename IntType>
+  Ort::Status HandleSqueeze(gsl::span<const IntType> orig_shape,
+                            gsl::span<const IntType> new_shape) {
+    if (!IsPerChannel() && !IsLPBQ()) {
+      return Ort::Status();
+    }
+
+    RETURN_IF_NOT(orig_shape.size() > new_shape.size(), "Expected squeezed shape to have a smaller rank.");
+
+    int32_t* quant_axis = nullptr;
+    if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
+      quant_axis = &params_.axisScaleOffsetEncoding.axis;
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET) {
+      quant_axis = &params_.bwAxisScaleOffsetEncoding.axis;
+    } else if (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION &&
+               params_.blockwiseExpansion != nullptr) {
+      quant_axis = &params_.blockwiseExpansion->axis;
+    } else {
+      return MAKE_EP_FAIL(("Unhandled quantization encoding: " + std::to_string(params_.quantizationEncoding)).c_str());
+    }
+
+    RETURN_IF_NOT(*quant_axis >= 0 && static_cast<size_t>(*quant_axis) < orig_shape.size(),
+                  "Axis value is out of range of the original shape.");
+
+    const size_t num_squeezed = orig_shape.size() - new_shape.size();
+    for (size_t i = 0; i < num_squeezed; ++i) {
+      RETURN_IF_NOT(orig_shape[i] == 1, "Only leading dimensions of size 1 can be squeezed.");
+    }
+    for (size_t j = 0; j < new_shape.size(); ++j) {
+      RETURN_IF_NOT(orig_shape[num_squeezed + j] == new_shape[j],
+                    "Squeezed shape does not align with the trailing dimensions of the original shape.");
+    }
+
+    RETURN_IF_NOT(static_cast<size_t>(*quant_axis) >= num_squeezed,
+                  "Cannot squeeze a leading dimension that contains the quantization axis.");
+    *quant_axis = static_cast<int32_t>(static_cast<size_t>(*quant_axis) - num_squeezed);
+
+    return Ort::Status();
+  }
+
  private:
   Qnn_QuantizeParams_t params_;
 
