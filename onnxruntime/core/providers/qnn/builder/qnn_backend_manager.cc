@@ -1636,7 +1636,8 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
                                              bool enable_htp_extended_udma_mode,
                                              bool enable_htp_prepare_only,
                                              bool enable_htp_ref_weight_sharing,
-                                             bool enable_htp_graph_splitting) {
+                                             bool enable_htp_graph_splitting,
+                                             uint32_t htp_graph_splitting_num_prepare_threads) {
   if (true == context_created_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
@@ -1697,6 +1698,19 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
 #endif
 
+#ifdef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+  QnnContext_Config_t context_config_num_prepare_threads = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t num_prepare_threads_custom_config;
+  if (enable_htp_graph_splitting) {
+    num_prepare_threads_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_NUM_PREPARE_THREADS;
+    num_prepare_threads_custom_config.numPrepareThreads = htp_graph_splitting_num_prepare_threads;
+    context_config_num_prepare_threads.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    context_config_num_prepare_threads.customConfig = &num_prepare_threads_custom_config;
+  }
+#else
+  ORT_UNUSED_PARAMETER(htp_graph_splitting_num_prepare_threads);
+#endif
+
   std::vector<const QnnContext_Config_t*> npu_context_configs_vec;
   npu_context_configs_vec.push_back(&context_priority_config);
   npu_context_configs_vec.push_back(&context_config_weight_sharing);
@@ -1708,6 +1722,11 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   if (enable_htp_graph_splitting) {
     npu_context_configs_vec.push_back(&context_config_graph_splitting);
+  }
+#endif
+#ifdef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+  if (enable_htp_graph_splitting) {
+    npu_context_configs_vec.push_back(&context_config_num_prepare_threads);
   }
 #endif
   npu_context_configs_vec.push_back(nullptr);
@@ -2029,7 +2048,8 @@ Ort::Status QnnBackendManager::SetupBackend(
     const qnn::EpContextIoDispatch& io_dispatch,
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
-    bool enable_htp_graph_splitting) {
+    bool enable_htp_graph_splitting,
+    uint32_t htp_graph_splitting_num_prepare_threads) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
@@ -2204,7 +2224,8 @@ Ort::Status QnnBackendManager::SetupBackend(
                                  enable_htp_extended_udma_mode,
                                  enable_htp_prepare_only,
                                  false /*enable_htp_ref_weight_sharing*/,
-                                 enable_htp_graph_splitting);
+                                 enable_htp_graph_splitting,
+                                 htp_graph_splitting_num_prepare_threads);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
@@ -2296,7 +2317,8 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                                                      bool enable_htp_extended_udma_mode,
                                                      bool enable_htp_prepare_only,
                                                      bool enable_htp_ref_weight_sharing,
-                                                     bool enable_htp_graph_splitting) {
+                                                     bool enable_htp_graph_splitting,
+                                                     uint32_t htp_graph_splitting_num_prepare_threads) {
   RETURN_IF_NOT(backend_partial_setup_completed_, "QNN backend manager must be partially setup first.");
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager completely setup already.");
@@ -2318,7 +2340,8 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
                            enable_htp_extended_udma_mode,
                            enable_htp_prepare_only,
                            enable_htp_ref_weight_sharing,
-                           enable_htp_graph_splitting);
+                           enable_htp_graph_splitting,
+                           htp_graph_splitting_num_prepare_threads);
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN context created.");
