@@ -91,7 +91,7 @@ Ort::Status CastOpBuilder::ProcessExtraInputForNotEqual(QnnModelWrapper& qnn_mod
   }
 
   // Build additional static input with value 0.
-  const std::string& input_name = utils::UniqueNameGenerator().New(node_unit, "_notequal_zero");
+  const std::string input_name = node_unit.Name() + "_notequal_zero";
 
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_UNDEFINED;
   ONNXTensorElementDataType input_type = input.type;
@@ -193,8 +193,8 @@ Ort::Status CastOpBuilder::EmitSignAbsCastDecomposition(QnnModelWrapper& qnn_mod
                 "Cannot get shape for FP-to-Bool Cast input.");
 
   // 2. Reserve deterministic intermediate names so DLC inspection and context cache lookups stay stable.
-  const std::string sign_out_name = utils::UniqueNameGenerator().New(node_unit, "_signabs_sign");
-  const std::string abs_out_name = utils::UniqueNameGenerator().New(node_unit, "_signabs_abs");
+  const std::string sign_out_name = node_unit.Name() + "_signabs_sign";
+  const std::string abs_out_name = node_unit.Name() + "_signabs_abs";
 
   // 3. Register the two NATIVE intermediates with the same shape/dtype as the Cast input.
   QnnTensorWrapper sign_out_wrapper(sign_out_name,
