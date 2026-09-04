@@ -1367,6 +1367,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Graph splitting is not available and the option will be ignored.");
     enable_htp_graph_splitting_ = false;
   }
+#else
+  if (enable_htp_graph_splitting_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "enable_htp_graph_splitting: 1");
+  }
 #endif
 
   // Number of threads used to prepare split subgraphs in parallel. Requires QAIRT SDK 2.51+.
@@ -1381,6 +1385,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                    num_threads_str);
     if (!num_threads_str.empty()) {
       htp_graph_splitting_num_prepare_threads_ = static_cast<uint32_t>(std::stoul(num_threads_str));
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("htp_graph_splitting_num_prepare_threads: " + num_threads_str).c_str());
 #ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
                   "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "

@@ -851,10 +851,136 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpJsonGraphDirNonWritable_Succeeds)
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Succeeds) {
   EpStubContext ctx;
-  ctx.session_config[EPKey("htp_graphsplitter_num_prepare_threads")] = "4";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {
+  // Default (not set) must not log any graph-splitting warnings.
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  for (const auto& rec : ctx.log_records) {
+    EXPECT_EQ(rec.message.find("graph_splitting"), std::string::npos)
+        << "Unexpected graph-splitting log: " << rec.message;
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Enabled_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+// Two sessions: one with graph splitting enabled, one without.
+// Verifies the enabled flag is independently translated per session via the
+// VERBOSE log emitted when enable_htp_graph_splitting=1 is parsed.
+// Gated: the VERBOSE log is only compiled in when QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+// (SDK >= 2.49); on older builds enable_htp_graph_splitting_ is silently forced
+// to false and no VERBOSE log is emitted.
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_TwoSessions_EachTranslatesOwnValue) {
+  // Session 1: graph splitting enabled — must log the verbose confirmation.
+  {
+    EpStubContext ctx1;
+    ctx1.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx1.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+    auto factory1 = MakeFactory(ctx1);
+    EXPECT_NO_THROW({ auto ep1 = MakeEp(*factory1, ctx1); });
+    ExpectLogged(ctx1, ORT_LOGGING_LEVEL_VERBOSE, "enable_htp_graph_splitting: 1");
+  }
+
+  // Session 2: graph splitting not set — must NOT emit the graph-splitting verbose log.
+  {
+    EpStubContext ctx2;
+    ctx2.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    auto factory2 = MakeFactory(ctx2);
+    EXPECT_NO_THROW({ auto ep2 = MakeEp(*factory2, ctx2); });
+    for (const auto& rec : ctx2.log_records) {
+      EXPECT_EQ(rec.message.find("enable_htp_graph_splitting: 1"), std::string::npos)
+          << "Session 2 (splitting disabled) unexpectedly logged: " << rec.message;
+    }
+  }
+}
+#endif  // QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_WithEnable_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_ZeroSingleThreaded_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "0";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+// Two sessions with different htp_graph_splitting_num_prepare_threads values must
+// each translate their own value independently. The VERBOSE log emitted at parse
+// time is the observable signal: each EP's log capture must contain exactly its
+// own value and not the other session's value.
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_TwoSessions_EachTranslatesOwnValue) {
+  // Session 1: 4 threads.
+  {
+    EpStubContext ctx1;
+    ctx1.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx1.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+    ctx1.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
+    auto factory1 = MakeFactory(ctx1);
+    EXPECT_NO_THROW({ auto ep1 = MakeEp(*factory1, ctx1); });
+    ExpectLogged(ctx1, ORT_LOGGING_LEVEL_VERBOSE, "htp_graph_splitting_num_prepare_threads: 4");
+    for (const auto& rec : ctx1.log_records) {
+      if (rec.message.find("htp_graph_splitting_num_prepare_threads:") != std::string::npos) {
+        EXPECT_NE(rec.message.find("4"), std::string::npos)
+            << "Session 1 logged wrong thread count: " << rec.message;
+        EXPECT_EQ(rec.message.find("8"), std::string::npos)
+            << "Session 1 unexpectedly contains session 2's value: " << rec.message;
+      }
+    }
+  }
+
+  // Session 2: 8 threads — entirely independent EP instance with its own config.
+  {
+    EpStubContext ctx2;
+    ctx2.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx2.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+    ctx2.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "8";
+    auto factory2 = MakeFactory(ctx2);
+    EXPECT_NO_THROW({ auto ep2 = MakeEp(*factory2, ctx2); });
+    ExpectLogged(ctx2, ORT_LOGGING_LEVEL_VERBOSE, "htp_graph_splitting_num_prepare_threads: 8");
+    for (const auto& rec : ctx2.log_records) {
+      if (rec.message.find("htp_graph_splitting_num_prepare_threads:") != std::string::npos) {
+        EXPECT_NE(rec.message.find("8"), std::string::npos)
+            << "Session 2 logged wrong thread count: " << rec.message;
+        EXPECT_EQ(rec.message.find("4"), std::string::npos)
+            << "Session 2 unexpectedly contains session 1's value: " << rec.message;
+      }
+    }
+  }
+}
+
+#ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSdk_LogsWarning) {
+  // When built against SDK < 2.51, setting the option must log a warning and be ignored.
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
+               "QAIRT SDK < 2.51");
+}
+#endif
 
 // ===========================================================================
 // Group 8: Constructor — early throws
