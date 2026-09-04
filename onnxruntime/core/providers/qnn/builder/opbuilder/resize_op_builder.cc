@@ -183,7 +183,7 @@ Ort::Status ResizeOpBuilder::ProcessTfHalfPixelForNN(QnnModelWrapper& qnn_model_
 
   const size_t input_rank = output_shape.size();
 
-  const std::string resize_out_name = utils::UniqueNameGenerator().New(node_unit, "_tfhp_resize_out");
+  const std::string resize_out_name = node_unit.Name() + "_tfhp_resize_out";
   const std::string resize_node_name = utils::UniqueNameGenerator().New(node_unit, "_tfhp_resize");
 
   // Compute 2x output shape: double only the spatial dims (indices 1 .. rank-2 in NHWC).

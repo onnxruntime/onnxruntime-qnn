@@ -26,7 +26,7 @@ class QnnModelWrapper;
 /// </summary>
 class ReshapeGemmFusionGroup : public IQnnNodeGroup {
  public:
-  explicit ReshapeGemmFusionGroup(std::vector<const OrtNodeUnit*> node_units);
+  explicit ReshapeGemmFusionGroup(std::vector<const OrtNodeUnit*> node_units) noexcept;
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeGemmFusionGroup);
 
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;

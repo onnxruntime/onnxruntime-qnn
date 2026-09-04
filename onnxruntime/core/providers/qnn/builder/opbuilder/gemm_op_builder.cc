@@ -204,7 +204,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
       input_shape[0] = old_input_shape[1];
       input_shape[1] = old_input_shape[0];
       const std::string& node_input_name(input_name);
-      input_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_transpose");
+      input_tensor_name = input_tensor_name + "_transpose";
       std::vector<uint32_t> perm{1, 0};
       RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), node_input_name, input_tensor_name,
                                                          old_input_shape, perm, input_shape,
@@ -291,7 +291,7 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
     if (trans_a != 0) {
       RETURN_IF_NOT(act_shape_2d.size() == 2, "QNN EP: BQ Gemm transA=1 requires a rank-2 activation");
       const std::vector<uint32_t> transposed_shape = {act_shape_2d[1], act_shape_2d[0]};
-      const std::string transposed_name = utils::UniqueNameGenerator().New(fp16_name, "_transpose");
+      const std::string transposed_name = fp16_name + "_transpose";
       RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), fp16_name, transposed_name,
                                                          act_shape_2d, /*transpose_perm=*/{1u, 0u},
                                                          transposed_shape, QNN_DATATYPE_FLOAT_16,
@@ -397,7 +397,7 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
       bias_shape = {bias_shape[1]};
     }
 
-    const std::string fp16_bias_name = utils::UniqueNameGenerator().New(inputs[2].name, "_fp16");
+    const std::string fp16_bias_name = inputs[2].name + "_fp16";
     std::vector<uint8_t> fp16_bias_bytes(static_cast<size_t>(N) * sizeof(uint16_t));
 
     RETURN_IF_NOT(bias_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32,
@@ -515,7 +515,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool final_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
 
     // FC intermediate tensor: rank-2 shape, same encoding as the final output.
-    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(final_output_name, "_fc");
+    const std::string fc_output_name = final_output_name + "_fc";
     QnnTensorWrapper fc_out_wrapper(fc_output_name, QNN_TENSOR_TYPE_NATIVE, final_output_info.qnn_data_type,
                                     final_output_info.quant_param.Copy(), std::vector<uint32_t>(fc_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fc_out_wrapper)),
@@ -569,7 +569,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::vector<std::string> gemm_input_0_1;
     gemm_input_0_1.push_back(input_names[0]);
     gemm_input_0_1.push_back(input_names[1]);
-    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(org_output_name, "_fc");
+    const std::string fc_output_name = org_output_name + "_fc";
     QnnTensorWrapper fully_connected_output(fc_output_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
                                             QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fully_connected_output)),
