@@ -411,8 +411,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -440,8 +438,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto fused = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit});
+  if (auto status = fused->CreateOrValidateOnQnn(qnn_model_wrapper, logger, true); !status.IsOK()) {
+    return nullptr;
+  }
+  return fused;
 }
 
 // 3-node fusion: Reshape -> Gemm -> Reshape
@@ -450,8 +452,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -486,8 +486,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto fused = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape});
+  if (auto status = fused->CreateOrValidateOnQnn(qnn_model_wrapper, logger, true); !status.IsOK()) {
+    return nullptr;
+  }
+  return fused;
 }
 
 // 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
@@ -496,8 +500,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -545,8 +547,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto fused = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape1, output_reshape2});
+  if (auto status = fused->CreateOrValidateOnQnn(qnn_model_wrapper, logger, true); !status.IsOK()) {
+    return nullptr;
+  }
+  return fused;
 }
 
 }  // namespace qnn

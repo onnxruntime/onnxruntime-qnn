@@ -83,8 +83,104 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                   const OrtNodeUnit& post_reshape_node_unit,
                                   const Ort::Logger& logger,
                                   bool do_op_validation) {
+  const OrtNodeUnitIODef& pre_reshape_input_def = pre_reshape_node_unit.Inputs()[0];
+  const OrtNodeUnitIODef& pre_reshape_output_def = pre_reshape_node_unit.Outputs()[0];
+  const OrtNodeUnitIODef& einsum_output_def = einsum_node_unit.Outputs()[0];
+  const OrtNodeUnitIODef& post_reshape_output_def = post_reshape_node_unit.Outputs()[0];
+
+  // Get the 6D pre-reshape output shape — used by both validate and create paths.
+  TensorInfo pre_reshape_output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(pre_reshape_output_def, pre_reshape_output_info));
+  // If any QDQ node exists, the previous matching will fail and thus it is guaranteed not quantized.
+  assert(!pre_reshape_output_info.quant_param.IsQuantized());
+
+  // 4D reshape output shape: collapse last 3 dims for DepthToSpace input.
+  const std::vector<uint32_t> reshape4d_shape = {
+      pre_reshape_output_info.shape[0],
+      pre_reshape_output_info.shape[1],
+      pre_reshape_output_info.shape[2],
+      pre_reshape_output_info.shape[3] * pre_reshape_output_info.shape[4] * pre_reshape_output_info.shape[5]};
+
+  // D2S output shape.
+  const std::vector<uint32_t> d2s_out_shape = {
+      pre_reshape_output_info.shape[0],
+      pre_reshape_output_info.shape[1] * pre_reshape_output_info.shape[3],
+      pre_reshape_output_info.shape[2] * pre_reshape_output_info.shape[4],
+      pre_reshape_output_info.shape[5]};
+
+  if (do_op_validation) {
+    // Validate path: build tensors/params on the stack and call ValidateQnnNode directly.
+    // This does NOT modify the QnnModelWrapper, so TryFusion can call safely without
+    // interfering with the subsequent IsSupported call.
+
+    // Input tensor (read QNN type/shape from model without registering).
+    QnnTensorWrapper input_wrapper;
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(pre_reshape_input_def, input_wrapper));
+
+    // 4D reshape output (synthetic — not in ONNX graph at this rank).
+    QnnTensorWrapper reshape_out_wrapper(pre_reshape_output_def.name, QNN_TENSOR_TYPE_NATIVE,
+                                         pre_reshape_output_info.qnn_data_type, QnnQuantParamsWrapper(),
+                                         std::vector<uint32_t>(reshape4d_shape));
+
+    // D2S output (synthetic).
+    TensorInfo einsum_output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(einsum_output_def, einsum_output_info));
+    QnnTensorWrapper d2s_out_wrapper(einsum_output_def.name, QNN_TENSOR_TYPE_NATIVE,
+                                     einsum_output_info.qnn_data_type, QnnQuantParamsWrapper(),
+                                     std::vector<uint32_t>(d2s_out_shape));
+
+    // Final (Transpose) output.
+    TensorInfo post_reshape_output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(post_reshape_output_def, post_reshape_output_info));
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(post_reshape_output_def.name);
+    QnnTensorWrapper final_out_wrapper(post_reshape_output_def.name,
+                                       is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
+                                       post_reshape_output_info.qnn_data_type, QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>(post_reshape_output_info.shape));
+
+    // D2S params: block_size tensor + mode scalar.
+    QnnParamWrapper block_size_param(einsum_node_unit.Index(), einsum_node_unit.Name(),
+                                     QNN_OP_DEPTH_TO_SPACE_PARAM_BLOCK_SIZE,
+                                     {2},
+                                     {pre_reshape_output_info.shape[3], pre_reshape_output_info.shape[4]});
+    Qnn_Scalar_t mode_scalar = {};
+    mode_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mode_scalar.uint32Value = static_cast<uint32_t>(QNN_OP_DEPTH_TO_SPACE_MODE_DCR);
+    QnnParamWrapper mode_param(einsum_node_unit.Index(), einsum_node_unit.Name(),
+                               QNN_OP_DEPTH_TO_SPACE_PARAM_MODE, mode_scalar);
+
+    // Transpose param: perm = [0, 3, 1, 2].
+    QnnParamWrapper perm_param(post_reshape_node_unit.Index(), post_reshape_node_unit.Name(),
+                               QNN_OP_TRANSPOSE_PARAM_PERM,
+                               {4}, {0u, 3u, 1u, 2u});
+
+    // Validate Reshape.
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(
+        utils::UniqueNameGenerator().New(pre_reshape_node_unit),
+        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+        {input_wrapper.GetQnnTensor()}, {reshape_out_wrapper.GetQnnTensor()}, {}));
+
+    // Validate DepthToSpace.
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(
+        utils::UniqueNameGenerator().New(einsum_node_unit),
+        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_DEPTH_TO_SPACE,
+        {reshape_out_wrapper.GetQnnTensor()}, {d2s_out_wrapper.GetQnnTensor()},
+        {block_size_param.GetQnnParam(), mode_param.GetQnnParam()}));
+
+    // Validate Transpose.
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(
+        utils::UniqueNameGenerator().New(post_reshape_node_unit),
+        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_TRANSPOSE,
+        {d2s_out_wrapper.GetQnnTensor()}, {final_out_wrapper.GetQnnTensor()},
+        {perm_param.GetQnnParam()}));
+
+    return Ort::Status();
+  }
+
+  // Create path: add tensors/params to the model and materialise QNN nodes.
+
   // Reshape.
-  const OrtNodeUnitIODef& pre_reshape_input = pre_reshape_node_unit.Inputs()[0];
+  const OrtNodeUnitIODef& pre_reshape_input = pre_reshape_input_def;
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(pre_reshape_input.name)) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
@@ -95,18 +191,11 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pre_reshape_input_wrapper)), "Failed to add tensor.");
   }
 
-  const OrtNodeUnitIODef& pre_reshape_output = pre_reshape_node_unit.Outputs()[0];
-  TensorInfo pre_reshape_output_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(pre_reshape_output, pre_reshape_output_info));
-  // If any QDQ node exists, the previous matching will fail and thus it is guaranteed not quantized.
-  assert(!pre_reshape_output_info.quant_param.IsQuantized());
+  const OrtNodeUnitIODef& pre_reshape_output = pre_reshape_output_def;
+  // pre_reshape_output_info already computed above.
 
   // Combine the last 3 dimensions to serve as the input depth for the following DepthToSpace.
-  std::vector<uint32_t> pre_reshape_output_shape = {
-      pre_reshape_output_info.shape[0],
-      pre_reshape_output_info.shape[1],
-      pre_reshape_output_info.shape[2],
-      pre_reshape_output_info.shape[3] * pre_reshape_output_info.shape[4] * pre_reshape_output_info.shape[5]};
+  std::vector<uint32_t> pre_reshape_output_shape(reshape4d_shape);
   QnnTensorWrapper pre_reshape_output_wrapper(pre_reshape_output.name,
                                               QNN_TENSOR_TYPE_NATIVE,
                                               pre_reshape_output_info.qnn_data_type,
@@ -223,7 +312,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
     QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& einsum_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    const Ort::Logger& /*logger*/) {
+    const Ort::Logger& logger) {
   if (einsum_node_unit.OpType() != "Einsum" || einsum_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
   }
@@ -275,9 +364,19 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeEinsumReshapeNodeGroup>(pre_reshape_node_unit,
-                                                         &einsum_node_unit,
-                                                         post_reshape_node_unit);
+  // Validate on QNN before claiming NodeUnits — catches backend rejections early.
+  auto fused = std::make_unique<ReshapeEinsumReshapeNodeGroup>(pre_reshape_node_unit,
+                                                               &einsum_node_unit,
+                                                               post_reshape_node_unit);
+  if (const auto status = CreateOrValidateOnQnn(qnn_model_wrapper,
+                                                *pre_reshape_node_unit,
+                                                einsum_node_unit,
+                                                *post_reshape_node_unit,
+                                                logger, /*do_op_validation=*/true);
+      !status.IsOK()) {
+    return nullptr;
+  }
+  return fused;
 }
 
 }  // namespace qnn
