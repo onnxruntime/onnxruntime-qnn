@@ -215,6 +215,6 @@ qairt:
   content_root: qairt/{version}
   bindir: bin
 qualcomm_device_cloud_sdk:
-  version: 0.3.0
-  url: https://softwarecenter.qualcomm.com/api/download/software/tools/Qualcomm_Device_Cloud_SDK/Windows/{version}/qualcomm_device_cloud_sdk-{version}.zip
-  sha256: 80e690591a576b8bcbe0357e3a2d364a03768cc801acd15358b4b740e43a9a1b
+  version: 0.4.1
+  url: https://softwarecenter.qualcomm.com/api/download/software/tools/Qualcomm_Device_Cloud_SDK/All/{version}/qualcomm_device_cloud_sdk-{version}.zip
+  sha256: 716a862ce64f9146078cd0b7b7ab18d2672520e068345accbb094e848cc22cfb
