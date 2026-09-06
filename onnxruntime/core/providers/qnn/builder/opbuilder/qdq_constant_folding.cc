@@ -114,6 +114,20 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF(output_info.qnn_data_type != QNN_DATATYPE_FLOAT_32,
             "Folded DequantizeLinear only supports float32 output.");
 
+  // Skip folding for large tensors: storing the dequantized FP32 blob in the DLC costs 4× the
+  // space of the original quantized bytes. Bias/scale tensors are small (< 1 MB) and benefit from
+  // folding because it eliminates a runtime op. Large weight tensors (e.g. 1536×6144 = 36 MB FP32)
+  // should remain as a QNN DequantizeLinear op so the DLC only stores the compact quantized data.
+  // A threshold of 1 MB (256 K float32 elements) keeps folding for bias-sized tensors.
+  constexpr size_t kMaxFoldElemCount = 256 * 1024;  // 256 K × 4 B = 1 MB FP32
+  size_t num_elems_check = 1;
+  for (uint32_t d : output_info.shape) {
+    num_elems_check *= d;
+    if (num_elems_check > kMaxFoldElemCount) {
+      return MAKE_EP_FAIL("DequantizeLinear output too large to fold; leaving as a runtime op to avoid FP32 DLC bloat.");
+    }
+  }
+
   std::vector<uint8_t> quant_bytes;
   RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input_def.name, quant_bytes));
 
