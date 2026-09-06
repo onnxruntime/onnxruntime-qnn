@@ -857,14 +857,20 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Su
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {
-  // Default (not set) must not log any graph-splitting warnings.
+  // Default (not set) must not log any graph-splitting warnings or errors.
+  // VERBOSE is intentionally captured so the severity filter below can verify
+  // there are no WARNING/ERROR-level graph-splitting messages; the pre-existing
+  // VERBOSE "User specified ... enable_htp_graph_splitting: 0" from ParseBoolOption
+  // is expected and excluded by the severity check.
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   for (const auto& rec : ctx.log_records) {
-    EXPECT_EQ(rec.message.find("graph_splitting"), std::string::npos)
-        << "Unexpected graph-splitting log: " << rec.message;
+    if (rec.severity >= ORT_LOGGING_LEVEL_WARNING) {
+      EXPECT_EQ(rec.message.find("graph_splitting"), std::string::npos)
+          << "Unexpected graph-splitting warning: " << rec.message;
+    }
   }
 }
 
