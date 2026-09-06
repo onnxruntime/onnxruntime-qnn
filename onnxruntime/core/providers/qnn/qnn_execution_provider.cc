@@ -1367,7 +1367,34 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Graph splitting is not available and the option will be ignored.");
     enable_htp_graph_splitting_ = false;
   }
+#else
+  if (enable_htp_graph_splitting_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "enable_htp_graph_splitting: 1");
+  }
 #endif
+
+  // Number of threads used to prepare split subgraphs in parallel. Requires QAIRT SDK 2.51+.
+  // UINT32_MAX (default) enables auto-selection: min(max(1, hardware_concurrency), num_splits).
+  // Only meaningful when enable_htp_graph_splitting=1.
+  {
+    std::string num_threads_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey("htp_graph_splitting_num_prepare_threads"),
+                                   "",
+                                   num_threads_str);
+    if (!num_threads_str.empty()) {
+      htp_graph_splitting_num_prepare_threads_ = static_cast<uint32_t>(std::stoul(num_threads_str));
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("htp_graph_splitting_num_prepare_threads: " + num_threads_str).c_str());
+#ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
+                  "QAIRT SDK < 2.51. The option will be ignored.");
+      htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
+#endif
+    }
+  }
 
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
@@ -2152,7 +2179,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 *ep->io_dispatch_,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
-                                                ep->enable_htp_graph_splitting_);
+                                                ep->enable_htp_graph_splitting_,
+                                                ep->htp_graph_splitting_num_prepare_threads_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3719,7 +3747,8 @@ Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
                                                                   ep_.enable_htp_ref_weight_sharing_,
-                                                                  ep_.enable_htp_graph_splitting_));
+                                                                  ep_.enable_htp_graph_splitting_,
+                                                                  ep_.htp_graph_splitting_num_prepare_threads_));
 
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
     ep_.CreateHtpPowerConfigId();
