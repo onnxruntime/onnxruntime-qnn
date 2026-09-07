@@ -361,7 +361,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   //                         |
   //     input_1_uint16 -----+
   //
-  // Dynamic input[1] uses the value-domain U16-to-U8 error gate:
+  // Dynamic asymmetric U16 input[1] uses the value-domain U16-to-U8 error gate:
   //     input_0_uint16 ----------------------------------> MatMul ---> output_uint16
   //                                                        ^
   //                                                        |
@@ -391,7 +391,12 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       // QNN offsets negate ONNX zero points, so symmetric uint16 uses -32768.
       constexpr int32_t kSymmetricU16Offset = -32768;
       if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
-        const bool use_symmetric_u16 = ShouldUseSymmetricU16ForMatMul(input_info_1);
+        // Only a QDQ MatMul whose second input is originally UINT16 may use the
+        // U8 conversion. All other cases keep the existing symmetric U16 conversion.
+        const bool is_target_u16_input = node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup &&
+                                         inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+        const bool use_symmetric_u16 =
+            !is_target_u16_input || ShouldUseSymmetricU16ForMatMul(input_info_1);
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,
                                                convert_output_name,
