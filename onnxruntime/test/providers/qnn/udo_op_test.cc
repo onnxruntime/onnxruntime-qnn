@@ -104,26 +104,42 @@ static GetTestQDQModelFn<InputQType> BuildUDOQDQTestCase(const std::string& op_t
 }
 
 // Runs a non-QDQ model on the QNN CPU backend and compares output to CPU EP.
+// When `register_domain_manually` is true (default), a real MyAdd kernel is registered in the
+// session so the CPU EP fallback path also works. When false, no manual Ort::CustomOpDomain is
+// registered — the test relies solely on the QNN EP factory having registered the domain via
+// ORT_QNN_CUSTOM_OP_DOMAINS. In that case the node must be fully assigned to QNN EP (no CPU
+// fallback) for the session to run correctly.
 static void RunOpTestOnCPU(const std::string& op_type,
                            const TestInputDef<float>& input_def,
                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                            const std::string& op_packages,
                            int opset_version,
-                           ExpectedEPNodeAssignment expected_ep_assignment) {
+                           ExpectedEPNodeAssignment expected_ep_assignment,
+                           bool register_domain_manually = true) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["op_packages"] = op_packages;
-  Ort::CustomOpDomain v2_domain{kUdoDomain.data()};
-  std::unique_ptr<Ort::Custom::OrtLiteCustomOp> my_add_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
-  v2_domain.Add(my_add_op_ptr.get());
 
-  RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
-                  provider_options,
-                  opset_version,
-                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
-                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  true,
-                  &v2_domain);
+  if (register_domain_manually) {
+    Ort::CustomOpDomain v2_domain{kUdoDomain.data()};
+    std::unique_ptr<Ort::Custom::OrtLiteCustomOp> my_add_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
+    v2_domain.Add(my_add_op_ptr.get());
+    RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
+                    provider_options,
+                    opset_version,
+                    EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
+                    OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                    true,
+                    &v2_domain);
+  } else {
+    RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
+                    provider_options,
+                    opset_version,
+                    EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
+                    OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                    /*verify_outputs=*/false,
+                    /*custom_op_domain=*/nullptr);
+  }
 }
 
 // Runs a QDQ model on the QNN HTP backend and compares output to CPU EP.
@@ -178,6 +194,62 @@ TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd) {
                  "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
                  11,
                  ExpectedEPNodeAssignment::All);
+}
+
+// Verifies the full factory-level custom-op domain registration path with no manual
+// domain registration: ORT_QNN_CUSTOM_OP_DOMAINS env var → QnnEpFactory construction
+// → GetCustomOpDomains hook → ORT registers domain → model loads, node is assigned to
+// QNN EP, and inference runs.  verify_outputs is false (no CPU-side kernel for reference);
+// RunAndVerifyOutputsWithEP skips the CPU reference session when verify_outputs=false.
+TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainOnly) {
+  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
+  std::filesystem::path path = getLibPath("cpu");
+  if (!std::filesystem::exists(path)) {
+    GTEST_SKIP() << "UDO CPU op package not found: " << path;
+  }
+
+  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
+  ASSERT_EQ(set_result, 0) << "setenv failed";
+  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
+      reinterpret_cast<void*>(1),
+      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
+
+  RunOpTestOnCPU("MyAdd",
+                 input_def,
+                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
+                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
+                 11,
+                 ExpectedEPNodeAssignment::All,
+                 /*register_domain_manually=*/false);
+}
+
+// Verifies that manual domain registration (CPU fallback kernel) and automatic domain
+// registration (ORT_QNN_CUSTOM_OP_DOMAINS factory hook) coexist safely.
+// ORT deduplicates the domain via ShouldAddDomain() — no double-registration error.
+// The manual CPU kernel enables full output comparison against the CPU EP reference.
+TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_ManualPlusAutoDomain) {
+  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
+  std::filesystem::path path = getLibPath("cpu");
+  if (!std::filesystem::exists(path)) {
+    GTEST_SKIP() << "UDO CPU op package not found: " << path;
+  }
+
+  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
+  ASSERT_EQ(set_result, 0) << "setenv failed";
+  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
+      reinterpret_cast<void*>(1),
+      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
+
+  // Both automatic (factory) and manual (user-supplied) domains are active.
+  // The manual domain provides the CPU reference kernel; the factory placeholder
+  // op is deduplicated by ORT and the node is still compiled by QNN EP.
+  RunOpTestOnCPU("MyAdd",
+                 input_def,
+                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
+                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
+                 11,
+                 ExpectedEPNodeAssignment::All,
+                 /*register_domain_manually=*/true);
 }
 
 TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
