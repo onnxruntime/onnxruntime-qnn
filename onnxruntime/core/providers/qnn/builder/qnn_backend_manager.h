@@ -374,8 +374,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
 
-  uint64_t GetReusedIoLimitMb() const { return reused_io_limit_mb_; }
-
   Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }

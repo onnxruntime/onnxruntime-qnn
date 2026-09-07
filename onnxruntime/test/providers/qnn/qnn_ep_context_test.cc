@@ -2468,7 +2468,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 #endif
 }
 
-static void RunFileMappingOffTest(const char* htp_reused_io_limit_mb = nullptr) {
+static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_io_limit_mb = nullptr) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2594,7 +2594,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
-  RunFileMappingOffTest();
+  RunSharedContextWithFileMappingDisabledTest();
 #endif
 }
 
@@ -2608,7 +2608,7 @@ TEST_F(QnnHTPBackendTests, CreateFromBinaryListAsync_HtpReusedIoLimitMb_LoadsSuc
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
-  RunFileMappingOffTest("128");
+  RunSharedContextWithFileMappingDisabledTest("128");
 #endif
 }
 
