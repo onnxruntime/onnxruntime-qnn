@@ -1711,7 +1711,9 @@ make -C <output_dir>/MyAddOpPackage htp_x86
 When a model contains nodes in a custom ONNX domain (e.g., `udo_domain::MyAdd`), ORT must have
 the domain registered before it can load and validate the model. Starting with QNN EP support for
 `ORT_QNN_CUSTOM_OP_DOMAINS`, the EP factory registers the domain automatically — no manual
-`Ort::CustomOpDomain` construction is required.
+`Ort::CustomOpDomain` construction is required. This auto-registration is language-agnostic: it
+applies to any ORT binding (C, C++, Python, etc.) that registers the QNN EP through the plugin EP
+device path.
 
 **Set the environment variable before the process starts:**
 
@@ -1730,8 +1732,10 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="udo_domain:MyAdd;other_domain:OpA,OpB"
 **Then run inference as usual:**
 
 ```bash
-./onnxruntime_plugin_ep_onnx_test -v -e qnn -j 1 \
-  -i "backend_path|./libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_name2>[:<target2>]" \
+./onnxruntime_plugin_ep_onnx_test -v -j 1 \
+  --plugin_ep_libs "QNNExecutionProvider|libonnxruntime_providers_qnn.so" \
+  --plugin_eps "QNNExecutionProvider" \
+  --plugin_ep_options "backend_path|libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_name2>[:<target2>]" \
   <model>
 ```
 
@@ -1749,7 +1753,8 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="udo_domain:MyAdd;other_domain:OpA,OpB"
 > domain and a user-supplied domain for the same domain name are deduplicated by ORT — both
 > coexist safely.
 
-For the whole pipeline, refer to the [udo unit test](../../cmake/onnxruntime_unittests_udo.cmake)
+For a complete end-to-end example, see the QNN UDO unit test at
+`onnxruntime/test/providers/qnn/udo_op_test.cc` in the source tree.
 
 ### UDO References
 
