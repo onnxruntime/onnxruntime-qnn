@@ -1692,7 +1692,8 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
 // htp_reused_io_limit_mb: a valid numeric value is accepted and does not block AOT context load.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
-#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+#if QNN_API_VERSION_MAJOR < 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
 #elif defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
@@ -2601,7 +2602,8 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 // Verifies that htp_reused_io_limit_mb is accepted as a group-level config by
 // contextCreateFromBinaryListAsync. File mapping is disabled to select the non-callback list API.
 TEST_F(QnnHTPBackendTests, CreateFromBinaryListAsync_HtpReusedIoLimitMb_LoadsSucceeds) {
-#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+#if QNN_API_VERSION_MAJOR < 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
 #elif !defined(__aarch64__) && !defined(_M_ARM64)
   GTEST_SKIP() << "contextCreateFromBinaryListAsync execution requires a real ARM64 HTP device.";
