@@ -2468,22 +2468,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 #endif
 }
 
-// Verifies that htp_reused_io_limit_mb is accepted as a group-level config by
-// contextCreateFromBinaryListAsync. File mapping is disabled to select the non-callback list API.
-TEST_F(QnnHTPBackendTests, CreateFromBinaryListAsync_HtpReusedIoLimitMb_LoadsSucceeds) {
-#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
-  GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
-#elif !defined(__aarch64__) && !defined(_M_ARM64)
-  GTEST_SKIP() << "contextCreateFromBinaryListAsync execution requires a real ARM64 HTP device.";
-#elif defined(__ANDROID__)
-  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#else
-
+static void RunFileMappingOffTest(const char* htp_reused_io_limit_mb = nullptr) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["disable_file_mapped_weights"] = "1";
-  provider_options["htp_reused_io_limit_mb"] = "128";
+  if (htp_reused_io_limit_mb != nullptr) {
+    provider_options["htp_reused_io_limit_mb"] = htp_reused_io_limit_mb;
+  }
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // By default, 8 is used, which will impact time to run all
@@ -2593,6 +2585,30 @@ TEST_F(QnnHTPBackendTests, CreateFromBinaryListAsync_HtpReusedIoLimitMb_LoadsSuc
     std::remove(ctx_model_path.c_str());
   }
   std::remove(qnn_ctx_binary_file_name1.c_str());
+}
+
+TEST_F(QnnHTPBackendTests, FileMapping_Off) {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  RunFileMappingOffTest();
+#endif
+}
+
+// Verifies that htp_reused_io_limit_mb is accepted as a group-level config by
+// contextCreateFromBinaryListAsync. File mapping is disabled to select the non-callback list API.
+TEST_F(QnnHTPBackendTests, CreateFromBinaryListAsync_HtpReusedIoLimitMb_LoadsSucceeds) {
+#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
+#elif !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "contextCreateFromBinaryListAsync execution requires a real ARM64 HTP device.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  RunFileMappingOffTest("128");
 #endif
 }
 
