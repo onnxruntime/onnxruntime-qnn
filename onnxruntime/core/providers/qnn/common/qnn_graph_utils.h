@@ -22,6 +22,9 @@ inline constexpr const char* kOnnxDomain = "";
 inline constexpr const char* kMSDomain = "com.microsoft";
 inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
 inline constexpr const char* kMLOnnxDomain = "ai.onnx.ml";
+// Custom Qualcomm block-op domain (qti_aisw). Ops such as Buffer, StatefulLstm and StatefulGru
+// live here; QNN EP recognizes them via their op-builder registrations.
+inline constexpr const char* kQtiAiswDomain = "qti_aisw";
 
 }  // namespace onnxruntime
 // QNN-EP COPY END

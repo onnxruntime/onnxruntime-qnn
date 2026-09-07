@@ -62,6 +62,7 @@ void CreateArrayFeatureExtractorOpBuilder(const std::string& op_type, OpBuilderR
 void CreateAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBernoulliOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateBufferOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateCastOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateClipOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -119,6 +120,8 @@ void CreateSimpleOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateSliceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSoftmaxOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSplitOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateStatefulGruOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateStatefulLstmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSTFTOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateTanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateThresholdedReluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

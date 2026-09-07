@@ -456,6 +456,33 @@ void InferenceModel(const std::string& model_data,
   RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
+void VerifyQnnEpModelAssignment(const std::string& model_data,
+                                const char* log_id,
+                                const ProviderOptions& provider_options,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                OrtLoggingLevel log_severity) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::string registration_name = "QNNExecutionProvider";
+  Ort::SessionOptions session_options;
+
+  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+
+  session_options.SetLogId(log_id);
+  session_options.SetLogSeverityLevel(log_severity);
+  if (QNNTestEnvironment::GetInstance().verbose()) {
+    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+  }
+
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+
+  // Create the session (loads + compiles the model) and verify EP node assignment. Inference is
+  // intentionally not run: these tests assert node-to-EP assignment only. The qti_aisw block ops
+  // have no CPU kernel, so there is no meaningful CPU reference to compare against.
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, expected_ep_assignment));
+}
+
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
                                  const std::string& name,
                                  const TestInputDef<float>& bias_def,

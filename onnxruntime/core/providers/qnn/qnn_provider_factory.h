@@ -3,8 +3,12 @@
 
 #pragma once
 
+#include <memory>
+#include <vector>
+
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
+#include "core/providers/qnn/qnn_onnx_custom_op.h"
 
 namespace onnxruntime {
 
@@ -50,6 +54,15 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
       _In_ const OrtEpDevice* ep_device,
       _Out_ OrtExternalResourceImporterImpl** out_importer) noexcept;
 
+  // Reports the qti_aisw custom-op domain so ORT can validate models that use the block ops
+  // (Buffer, StatefulLstm, StatefulGru) when this EP is appended to the session.
+  static OrtStatus* ORT_API_CALL GetNumCustomOpDomainsImpl(_In_ OrtEpFactory* this_ptr,
+                                                           _Out_ size_t* num_domains) noexcept;
+  static OrtStatus* ORT_API_CALL GetCustomOpDomainsImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
+      _In_ size_t num_domains) noexcept;
+
   // const OrtApi& ort_api;
   const std::string ep_name_;              // EP name
   const std::string vendor_{"Qualcomm"};   // EP vendor name
@@ -71,6 +84,11 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+
+  // qti_aisw placeholder custom ops. The factory owns both the ops and the domain for their
+  // whole lifetime (ORT holds raw pointers into them via GetCustomOpDomains).
+  std::vector<std::unique_ptr<QtiAiswPlaceholderOp>> qti_aisw_ops_;
+  Ort::CustomOpDomain qti_aisw_domain_{nullptr};
 };
 
 }  // namespace onnxruntime
