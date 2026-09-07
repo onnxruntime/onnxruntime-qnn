@@ -1524,16 +1524,31 @@ bool OrtMatMulNBitsNodeGroupSelector::Check(const OrtGraph* graph,
 
 namespace {
 // General QDQ well-formedness, as the Conv/MatMul/Gemm/Variadic selectors enforce: every quantized
-// output's element data type must match the first input's (activation X, dq_nodes[0], always the
-// first DQ-produced input). GRU legitimately mixes input data types (u8 or u16 W/R, int32 bias), so
-// only X is the reference -- not every DQ input. A mismatched in/out data type is not a genuine
-// same-precision QDQ Gru, so decline the fold; DQ -> fp GRU -> Q then run as separate ops on QNN.
-bool IsOutputDataTypeMatchingFirstInput(const OrtApi& ort_api, const std::vector<const OrtNode*>& dq_nodes,
+// output's element data type must match the activation input X's. GRU legitimately mixes input data
+// types (u8 or u16 W/R, int32 bias), so only X is the reference -- not every DQ input. Unlike
+// Conv/Gemm/MatMul, GRU's selector doesn't require every input to be DQ-fed (seq_lens is never
+// quantized, and B/initial_h/seq_lens are optional), so dq_nodes[0] is not guaranteed to be DQ(X);
+// explicitly look up the producer of input 0 instead of assuming its position in dq_nodes. A
+// mismatched in/out data type, or an unquantized X, is not a genuine same-precision QDQ Gru, so
+// decline the fold; DQ -> fp GRU -> Q then run as separate ops on QNN.
+bool IsOutputDataTypeMatchingFirstInput(const OrtApi& ort_api, const OrtNode* node,
                                         const std::vector<const OrtNode*>& q_nodes) {
-  if (dq_nodes.empty()) {
-    return true;
+  size_t num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+  if (num_inputs == 0) {
+    return false;
   }
-  auto dt_x = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api);
+  if (inputs[0] == nullptr) {
+    return false;
+  }
+  const OrtNode* x_dq_node = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(inputs[0], &x_dq_node, nullptr), ort_api);
+  if (x_dq_node == nullptr || Ort::ConstNode(x_dq_node).GetOperatorType() != "DequantizeLinear") {
+    return false;
+  }
+  auto dt_x = GetNodeInputDataType(x_dq_node, ort_api, 0);
   if (!dt_x.has_value()) {
     return false;
   }
@@ -1562,7 +1577,7 @@ bool OrtGRUNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
     return false;
   }
 
-  if (!IsOutputDataTypeMatchingFirstInput(ort_api, dq_nodes, q_nodes)) {
+  if (!IsOutputDataTypeMatchingFirstInput(ort_api, node, q_nodes)) {
     return false;
   }
   return true;
