@@ -714,47 +714,73 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
   }
 }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_ConvertOnlyIfAsymmetric) {
+static void RunDynamicInput1QuantErrorTest(const char* test_name,
+                                           float input1_min,
+                                           float input1_max,
+                                           Qnn_DataType_t expected_convert_type) {
   namespace fs = std::filesystem;
-  struct TestCase {
-    const char* name;
-    float input1_min;
-    size_t expected_convert_count;
-  };
+  const fs::path graph_dir = fs::temp_directory_path() /
+                             (std::string("MatMulOp_QDQ_U16DynamicInput1_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
 
-  for (const TestCase& test_case : {TestCase{"symmetric", -0.1f, 0},
-                                    TestCase{"asymmetric", -0.05f, 1}}) {
-    SCOPED_TRACE(test_case.name);
-    const fs::path graph_dir = fs::temp_directory_path() /
-                               (std::string("MatMulOp_QDQ_U16DynamicInput1_") + test_case.name);
-    fs::remove_all(graph_dir);
-    ASSERT_TRUE(fs::create_directories(graph_dir));
-    auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
-
-    ProviderOptions provider_options;
-    provider_options["backend_type"] = "htp";
-    provider_options["offload_graph_io_quantization"] = "0";
-    provider_options["dump_json_qnn_graph"] = "1";
-    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
 #ifdef __linux__
-    provider_options["htp_arch"] = "73";
+  provider_options["htp_arch"] = "73";
 #endif
 
-    TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
-    TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(test_case.input1_min, 0.1f, 6));
-    ASSERT_EQ(GetTestInputQuantParams<uint16_t>(input1_def).IsSymmetric(),
-              test_case.expected_convert_count == 0);
+  TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
+  TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(input1_min, input1_max, 6));
 
-    TestQDQModelAccuracy(
-        BuildMatMulOpTestCase(input0_def, input1_def),
-        BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false),
-        provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+  TestQDQModelAccuracy(
+      BuildMatMulOpTestCase(input0_def, input1_def),
+      BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false),
+      provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
 
-    if (::testing::Test::IsSkipped()) {
-      return;
-    }
-    AssertOpInQnnGraph(graph_dir, "Convert", test_case.expected_convert_count);
+  if (::testing::Test::IsSkipped()) {
+    return;
   }
+  AssertOpInQnnGraph(graph_dir, "Convert");
+  AssertConvertOutputDataType(graph_dir, expected_convert_type);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
+  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 0.2f, QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
+  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 100.0f, QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulOp_QDQ_NonU16Input1";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
+  TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(0.0f, 100.0f, 6));
+  TestQDQModelAccuracy(
+      BuildMatMulOpTestCase(input0_def, input1_def),
+      BuildMatMulOpQDQTestCase<uint16_t, uint8_t, uint16_t>(input0_def, input1_def, false),
+      provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance(0.01f));
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "Convert", 0);
 }
 
 // Tests MatMul with two uint16 (quantized) inputs with weight as static.
@@ -812,7 +838,6 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
         provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
   }
 }
-
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(__linux__)

@@ -45,6 +45,47 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
       << " occurrence(s), found " << actual_count << " in " << json_path;
 }
 
+void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
+                                 uint32_t expected_data_type) {
+  std::filesystem::path json_path;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      json_path = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(json_path.empty()) << "No QNN JSON graph file found in " << dump_dir;
+
+  std::ifstream json_file(json_path);
+  ASSERT_TRUE(json_file.is_open()) << "Failed to open QNN JSON graph: " << json_path;
+
+  nlohmann::json root;
+  json_file >> root;
+  ASSERT_TRUE(root.contains("graph") && root["graph"].contains("nodes") &&
+              root["graph"].contains("tensors"))
+      << "JSON missing graph nodes or tensors: " << json_path;
+
+  const auto& nodes = root["graph"]["nodes"];
+  const auto& tensors = root["graph"]["tensors"];
+  const nlohmann::json* convert = nullptr;
+  for (const auto& [node_name, node] : nodes.items()) {
+    if (node.value("type", "") == "Convert") {
+      ASSERT_EQ(convert, nullptr) << "Expected one Convert node, found more than one";
+      convert = &node;
+    }
+  }
+
+  ASSERT_NE(convert, nullptr) << "No Convert node found in " << json_path;
+  ASSERT_TRUE((*convert).contains("output_names") && (*convert)["output_names"].size() == 1);
+  const std::string output_name = (*convert)["output_names"][0].get<std::string>();
+  ASSERT_TRUE(tensors.contains(output_name)) << "Convert output tensor not found: " << output_name;
+  ASSERT_TRUE(tensors[output_name].contains("data_type"));
+  ASSERT_TRUE(tensors[output_name]["data_type"].is_number_unsigned());
+  EXPECT_EQ(tensors[output_name]["data_type"].get<uint32_t>(), expected_data_type)
+      << "Unexpected Convert output datatype in " << json_path;
+}
+
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name) {
   std::filesystem::path json_path;
