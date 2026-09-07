@@ -7,6 +7,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <System/QnnSystemInterface.h>
 
@@ -16,8 +17,6 @@
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
 
-#include <vector>
-
 #include <QnnInterface.h>
 #include <QnnProfile.h>
 #include <System/QnnSystemProfile.h>
@@ -26,17 +25,33 @@
 
 namespace onnxruntime {
 namespace qnn {
+class QnnEpProfiler;
 namespace profile {
+
+const std::string& GetUnitString(QnnProfile_EventUnit_t unit_type);
+std::string GetEventTypeString(QnnProfile_EventType_t event_type);
 
 struct ProfilingInfo {
   std::string graph_name = "";
   std::string csv_output_filepath = "";
+  // Host steady-clock timestamp captured immediately before the profiled QNN operation. ORT profiling
+  // uses it to anchor QAIRT root/sub-event offsets to the EP clock used by OrtEpProfilerImpl.
+  uint64_t operation_start_time_us = 0;
+  // Host steady-clock timestamp captured immediately after the profiled QNN operation.
+  // Used only when QAIRT does not return an event for an ORT-profiled operation.
+  uint64_t operation_end_time_us = 0;
+  // Empty for provider-only profiling. Included in ORT JSON when the event is attached to an EP profiler.
+  std::string ort_profiling_operation;
   // Optional trace lookup for NODE event annotation.
   // Non-null when enable_framework_op_trace_ is true and tracing data exists.
-  // Pointer lifetime is owned by QnnBackendManager and outlasts the Serializer.
+  // Pointer lifetime is owned by QnnBackendProfilingManager and outlasts the Serializer.
   const OpTraceLookup* op_trace_lookup = nullptr;
 
+  QnnEpProfiler* ort_profiler = nullptr;  // non-owning; set when this extraction should emit ORT events
+
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
+  // QNN System Profile event header timestamps. These are kept separate from operation_start_time_us
+  // because the system-profile serializer consumes them directly as start/stop metadata.
   uint64_t start_time = 0;
   uint64_t stop_time = 0;
   uint32_t num_events = 0;
@@ -175,6 +190,8 @@ class Serializer {
   // that file's existing header so rows never desync from the header across sessions.
   bool emit_onnx_sources_column_ = false;
 };
+
+std::string ExtractQnnScalarValue(const Qnn_Scalar_t& scalar);
 
 }  // namespace profile
 }  // namespace qnn

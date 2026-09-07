@@ -1321,6 +1321,8 @@ Profiling data is available with the HTP backend. Enabling QNN profiling will ge
 
 If onnxruntime is compiled with a more recent QAIRT SDK (2.39 or later), then a _qnn.log file will also be generated alongside the .csv file. This .log file is parsable by [qnn-profile-viewer](https://docs.qualcomm.com/doc/80-63442-10/topic/general_tools.html#qnn-profile-viewer), which is provided in the SDK.
 
+ORT profiling is supported on CPU and HTP backends through the unified JSON timeline described below. It is independent of provider CSV output.
+
 ### General Usage
 To utilize QNN profiling, simply set the EP option profiling_level to basic, detailed, or optrace. Additionally, the EP option profiling_file_path must also be set to the output .csv filepath you would like to write data to:
 ```python
@@ -1378,6 +1380,32 @@ Additionally, if the profiling_level is set to "detailed" or "optrace", addition
 > **Combining profiling with framework op tracing:** When `profiling_level` is `detailed` or `optrace` **and** `enable_framework_op_trace` is `'1'`, the profiling CSV gains an extra `ONNX Source Ops` column. For each per-layer `NODE` event row, this column lists the originating ONNX operator name(s) (semicolon-separated for fused groups). This makes it easy to correlate QNN-level hardware profiling data back to the original ONNX model operators without manual lookup.
 >
 > At `profiling_level=basic` the `ONNX Source Ops` column is **not** added because basic profiling does not emit per-layer `NODE` events.
+
+### ORT Profiling Timeline
+
+When ORT session profiling is enabled with `SessionOptions::EnableProfiling` (or `sess_options.enable_profiling`) or run profiling is enabled with `RunOptions::EnableProfiling`, QNN profiling events are also added to ORT's unified JSON profiling timeline. QNN events include `qnn_operation` (`execute`, `compose`, `finalize`, or `context_load`), `qnn_event_type`, `qnn_event_identifier`, `qnn_timing_source`, `qnn_graph_name`, `level` (`ROOT` or `SUB-EVENT`), `unit`, `value` for non-time events, and `parent_ort_node`.
+
+If `profiling_level` is not set, enabling ORT profiling activates QNN profiling at the `basic` level. Run profiling records only `execute` events. Session profiling additionally records synchronous graph `compose`, serial graph `finalize`, and synchronous EPContext `context_load` events under ORT's `session_initialization` event. QAIRT events use `qnn_timing_source=BACKEND`; when QAIRT does not report a setup operation, QNN emits one explicitly marked `HOST_OPERATION` event with `qnn_timing_source=HOST`. Parallel graph finalization is excluded because it runs on QNN worker threads outside ORT's thread-local profiling scope. SSR context recreation is retry work and is not profiled, so it is excluded from provider output and the ORT JSON timeline. Existing `profiling_file_path` CSV, `_qnn.log`, and ETW outputs remain available and can be used alongside the ORT timeline.
+
+Enable session profiling from Python and retrieve the generated JSON path after inference:
+```python
+sess_options = ort.SessionOptions()
+sess_options.enable_profiling = True
+sess_options.profile_file_prefix = "qnn_ort_profile"
+session = ort.InferenceSession("model.onnx", sess_options=sess_options)
+# Run inference.
+profile_path = session.end_profiling()
+```
+
+For a single C++ run, enable profiling on `Ort::RunOptions` before `Session::Run`:
+```cpp
+Ort::RunOptions run_options;
+run_options.EnableProfiling("qnn_ort_run_profile");
+auto outputs = session.Run(run_options, input_names, input_values, input_count,
+                           output_names, output_count);
+```
+
+Use either ORT session profiling or ORT run profiling for a session, not both at the same time. QNN provider CSV profiling remains independently controlled by `profiling_level` and `profiling_file_path`.
 
 ### Optrace-Level Profiling
 [Optrace-level profiling](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-profiling) generates a profiling .log file that contains [Qualcomm Hexagon Tensor Processor Analaysis Summary (QHAS)](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-analysis-summary-qhas-) data. This data can be used to generate chrometraces and provide a web browser-friendly UI to visualize data.

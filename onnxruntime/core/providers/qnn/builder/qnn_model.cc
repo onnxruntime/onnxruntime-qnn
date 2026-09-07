@@ -19,6 +19,7 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/shared_context.h"
 
@@ -300,8 +301,20 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       /*is_post_layout_transform=*/true);
 
   qnn::profile::ProfilingInfo profiling_info;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (qnn_backend_manager_->GetProfilingManager().OrtProfilingActive()) {
+    profiling_info.ort_profiler = QnnEpProfiler::Current();
+  }
+  if (profiling_info.ort_profiler != nullptr) {
+    profiling_info.graph_name = graph_name;
+    profiling_info.operation_start_time_us = qnn::utils::GetTimeStampInUs();
+    profiling_info.ort_profiling_operation = "compose";
+  }
+#endif
+  auto profiling_scope = qnn_backend_manager_->GetProfilingManager().AcquireProfilingScope(
+      profiling_info.ort_profiler != nullptr);
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
+  if (profiling_scope.Active()) {
     profiling_info.graph_name = graph_name;
     profiling_info.start_time = qnn::utils::GetTimeStampInUs();
   }
@@ -309,19 +322,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   bool rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, context.graph_configs);
 
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
-    profiling_info.method_type = ProfilingMethodType::COMPOSE_GRAPHS;
-  }
-#endif
-
   RETURN_IF_NOT(rt, "Failed to initialize qnn_model_wrapper.");
-
-  // NOTE: This function returns immediately when profiling is disabled.
-  // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
-  // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_holder.size());
@@ -347,13 +348,32 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
   RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
 
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (profiling_info.ort_profiler != nullptr) {
+    profiling_info.operation_end_time_us = qnn::utils::GetTimeStampInUs();
+  }
+#endif
+
+#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
+  if (profiling_scope.Active()) {
+    profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
+    profiling_info.method_type = ProfilingMethodType::COMPOSE_GRAPHS;
+  }
+#endif
+
+  // Drain after the complete QNN graph composition so both provider CSV and ORT session
+  // profiling include the graph-add and graph-compose QAIRT events.
+  if (profiling_scope.Active() || profiling_info.ort_profiler != nullptr) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info));
+  }
+
   // Collect framework op trace after graph composition
   if (trace_collector) {
     OpTraceLookup per_graph_lookup;
     trace_collector->Finalize(graph_name, qnn_model_wrapper, *context.op_trace_output, per_graph_lookup);
-    // Hand the per-graph lookup off to the backend manager, which holds the
-    // session-wide lookup that ExtractBackendProfilingInfo reads from.
-    qnn_backend_manager_->MergeOpTraceLookup(std::move(per_graph_lookup));
+    // Hand the per-graph lookup off to the profiling manager, which owns the
+    // session-wide lookup that extraction reads from.
+    qnn_backend_manager_->GetProfilingManager().MergeOpTraceLookup(std::move(per_graph_lookup));
   }
 
   LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
@@ -381,21 +401,33 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs started.");
 
   qnn::profile::ProfilingInfo profiling_info;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (qnn_backend_manager_->GetProfilingManager().OrtProfilingActive()) {
+    profiling_info.ort_profiler = QnnEpProfiler::Current();
+  }
+  if (profiling_info.ort_profiler != nullptr) {
+    profiling_info.graph_name = graph_info_->Name();
+    profiling_info.operation_start_time_us = qnn::utils::GetTimeStampInUs();
+    profiling_info.ort_profiling_operation = "finalize";
+  }
+#endif
+  auto profiling_scope = qnn_backend_manager_->GetProfilingManager().AcquireProfilingScope(
+      profiling_info.ort_profiler != nullptr);
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
+  if (profiling_scope.Active()) {
+    profiling_info.graph_name = graph_info_->Name();
     profiling_info.start_time = qnn::utils::GetTimeStampInUs();
   }
 #endif
 
   Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
-                                                                                   qnn_backend_manager_->GetQnnProfileHandle(),
+                                                                                   profiling_scope.Handle(),
                                                                                    nullptr);
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
+  if (profiling_scope.Active()) {
     profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
     profiling_info.method_type = ProfilingMethodType::FINALIZE;
-    profiling_info.graph_name = graph_info_->Name();
   }
 #endif
 
@@ -405,10 +437,18 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
                             .c_str());
   }
 
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (profiling_info.ort_profiler != nullptr) {
+    profiling_info.operation_end_time_us = qnn::utils::GetTimeStampInUs();
+  }
+#endif
+
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
   // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+  if (profiling_scope.Active() || profiling_info.ort_profiler != nullptr) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info));
+  }
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs completed.");
   return Ort::Status();
@@ -578,7 +618,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
 
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                           const Ort::Logger& logger,
-                                          Qnn_ErrorHandle_t& execute_status) {
+                                          Qnn_ErrorHandle_t& execute_status,
+                                          QnnEpProfiler* ort_profiler) {
   using namespace qnn::utils;
   auto TensorDataSize = [&ort_api = api_ptrs_.ort_api](auto ort_tensor) -> size_t {
     OrtTensorTypeAndShapeInfo* tensor_type_and_shape = nullptr;
@@ -691,13 +732,27 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
 
+  QnnProfilingScope profiling_scope;
+  RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().CreateGraphProfilingScope(
+      ort_profiler != nullptr, profiling_scope));
+
   qnn::profile::ProfilingInfo profiling_info;
+  if (profiling_scope.Active() || ort_profiler != nullptr) {
+    profiling_info.graph_name = graph_info_->Name();
+    profiling_info.ort_profiler = ort_profiler;
+  }
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (ort_profiler != nullptr) {
+    profiling_info.operation_start_time_us = qnn::utils::GetTimeStampInUs();
+    profiling_info.ort_profiling_operation = "execute";
+  }
+#endif
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
+  if (profiling_scope.Active()) {
     profiling_info.start_time = qnn::utils::GetTimeStampInUs();
   }
 #endif
-  auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
+  auto profile_backend_handle = profiling_scope.Handle();
 
   auto thread_id = std::this_thread::get_id();
 
@@ -735,11 +790,16 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                               profile_backend_handle,
                                               nullptr);
 
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (ort_profiler != nullptr) {
+    profiling_info.operation_end_time_us = qnn::utils::GetTimeStampInUs();
+  }
+#endif
+
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
+  if (profiling_scope.Active()) {
     profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
     profiling_info.method_type = ProfilingMethodType::EXECUTE;
-    profiling_info.graph_name = graph_info_->Name();
   }
 #endif
 
@@ -756,17 +816,26 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     }
   }
 
-  // NOTE: This function returns immediately when profiling is disabled.
-  // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
-  // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+  bool queued_for_ort = false;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (ort_profiler != nullptr) {
+    // HTP detailed events can be published after graphExecute returns. Keep the shared profile
+    // handle alive until StopEvent, then extract and attach the complete event tree to this ORT scope.
+    ort_profiler->QueueExecuteProfilingExtraction(std::move(profiling_info));
+    queued_for_ort = true;
+  }
+#endif
+  if (!queued_for_ort && profiling_scope.Active()) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info));
+  }
 
   return Ort::Status();
 }
 
 Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                                    const Ort::Logger& logger,
-                                   const qnn::EpContextIoDispatch& io_dispatch) {
+                                   const qnn::EpContextIoDispatch& io_dispatch,
+                                   QnnEpProfiler* ort_profiler) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
@@ -800,9 +869,18 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
   // First attempt: bind tensors and execute.
   Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
-  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  const size_t pending_extraction_mark =
+      ort_profiler ? ort_profiler->MarkPendingExecuteProfilingExtractions() : 0;
+#endif
+  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
 
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+    if (ort_profiler) {
+      ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
+    }
+#endif
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
@@ -810,7 +888,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
 
       // Retry once with fresh context and re-bound tensors.
-      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
+      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
       if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
         return Ort::Status("NPU crashed again after SSR recovery.", QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }

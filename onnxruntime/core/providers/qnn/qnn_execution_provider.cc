@@ -27,6 +27,7 @@
 
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_allocator.h"
@@ -599,6 +600,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   CreateAllocator = CreateAllocatorImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  CreateProfiler = CreateProfilerImpl;
+#endif
 
   // Initialize from session options
   {
@@ -1509,7 +1513,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 // Repro Scenario - start ETW tracing prior to session creation.
                 //    Then disable/enable ETW Tracing with the code below uncommented a few times
                 // auto profiling_level_etw = GetProfilingLevelFromETWLevel(Level);
-                // (void)qnn_backend_manager_->SetProfilingLevelETW(profiling_level_etw);
+                // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(profiling_level_etw);
                 //
                 // NOTE(1/2/2025): It is possible that the above was not working in part because it is using the
                 // *logging ETW* subsystem to modify profiling, which should use an entirely different
@@ -1519,7 +1523,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
           }
 
           if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
-            // (void)qnn_backend_manager_->SetProfilingLevelETW(qnn::ProfilingLevel::INVALID);
+            // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::INVALID);
             (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
           }
         });
@@ -1578,6 +1582,30 @@ const char* ORT_API_CALL QnnEp::GetNameImpl(const OrtEp* this_ptr) noexcept {
   const auto* qnn_ep = static_cast<const QnnEp*>(this_ptr);
   return qnn_ep->name_.c_str();
 }
+
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+/*static*/
+OrtStatus* ORT_API_CALL QnnEp::CreateProfilerImpl(OrtEp* this_ptr,
+                                                  OrtEpProfilerImpl** profiler) noexcept {
+  *profiler = nullptr;
+  auto* ep = static_cast<QnnEp*>(this_ptr);
+  if (!ep->qnn_backend_manager_) {
+    return nullptr;
+  }
+
+  try {
+    auto qnn_profiler = std::make_unique<qnn::QnnEpProfiler>(
+        ep->ep_api, ep->ort_api, ep->qnn_backend_manager_->GetProfilingManager());
+    // ORT owns the returned profiler and releases it via ReleaseImpl.
+    *profiler = qnn_profiler.release();
+    return nullptr;
+  } catch (const std::exception& e) {
+    return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
+  } catch (...) {
+    return ep->ort_api.CreateStatus(ORT_FAIL, "QnnEpProfiler: unknown exception");
+  }
+}
+#endif
 
 // Logs information about the supported/unsupported nodes.
 static void LogNodeSupport(const Ort::Logger& logger,
@@ -2725,7 +2753,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     if (std::filesystem::exists(trace_path, ec) && !ec) {
       qnn::OpTraceLookup loaded;
       if (qnn::LoadTraceLookupFromFile(trace_path, loaded, logger_)) {
-        qnn_backend_manager_->SetOpTraceLookup(std::move(loaded));
+        qnn_backend_manager_->GetProfilingManager().SetOpTraceLookup(std::move(loaded));
       }
     } else {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
@@ -3472,6 +3500,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
 
   return nullptr;
 }
+
 const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                       _In_ const OrtGraph* /*graph*/) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
@@ -3702,7 +3731,15 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   }
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  qnn::QnnEpProfiler* ort_profiler = nullptr;
+  if (ep.qnn_backend_manager_->GetProfilingManager().OrtProfilingActive()) {
+    ort_profiler = qnn::QnnEpProfiler::Current();
+  }
+  RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_, *ep.io_dispatch_, ort_profiler));
+#else
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_, *ep.io_dispatch_));
+#endif
 
   return nullptr;
 }

@@ -10,6 +10,7 @@
 #include <gsl/gsl>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "CPU/QnnCpuCommon.h"
 #include "DSP/QnnDspCommon.h"
@@ -30,6 +31,7 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/shared_context.h"
@@ -201,12 +203,37 @@ Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
 
           graph_retrieve_success = true;
 
+          // OnRunStart has no thread-local ORT event scope. The manager only supplies a QAIRT
+          // profile handle for provider profiling and keeps it alive for this call.
+          auto& profiling_manager = GetProfilingManager();
+          auto profiling_scope = profiling_manager.AcquireProfilingScope();
+          qnn::profile::ProfilingInfo profiling_info;
+          profiling_info.graph_name = graph_name;
+#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
+          if (profiling_scope.Active()) {
+            profiling_info.start_time = qnn::utils::GetTimeStampInUs();
+          }
+#endif
           auto context_apply_binary_section_rt = qnn_interface_.contextApplyBinarySection(
-              contexts_[cIdx], graph, QNN_CONTEXT_SECTION_UPDATABLE, &contextBuffer, profile_backend_handle_, nullptr);
+              contexts_[cIdx], graph, QNN_CONTEXT_SECTION_UPDATABLE, &contextBuffer,
+              profiling_scope.Handle(), nullptr);
+#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
+          if (profiling_scope.Active()) {
+            profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
+            profiling_info.method_type = ProfilingMethodType::APPLY_BINARY_SECTION;
+          }
+#endif
           RETURN_IF(QNN_SUCCESS != context_apply_binary_section_rt,
                     ("Failed to apply binary section. " +
                      utils::FormatQnnError(qnn_interface_, context_apply_binary_section_rt))
                         .c_str());
+
+          // Keep unscoped OnRunStart events in the provider sink. Draining them before the
+          // first node StartEvent prevents a later ORT execute scope from claiming them.
+          if (profiling_scope.Active() && profiling_manager.OrtProfilingActive() &&
+              profiling_manager.ProviderProfilingOutputActive()) {
+            RETURN_IF_ERROR(profiling_manager.ExtractBackendProfilingInfo(profiling_info));
+          }
           break;
         }
         RETURN_IF_NOT(graph_retrieve_success,
@@ -935,94 +962,6 @@ Ort::Status QnnBackendManager::ReleaseValidatorDevice() {
                              validator_device_handle_, validator_device_created_);
 }
 
-Ort::Status QnnBackendManager::InitializeProfiling() {
-  profiling_level_merge_ = profiling_level_;
-  // Only honor ETW-driven profile escalation when the app has explicitly opted into profiling.
-  // If the app did not set profiling_level (default OFF), do not let ETW silently turn it on.
-  if (profiling_level_ != ProfilingLevel::OFF &&
-      profiling_level_etw_ != ProfilingLevel::INVALID &&
-      profiling_level_etw_ > profiling_level_) {
-    profiling_level_merge_ = profiling_level_etw_;
-  }
-
-  if (ProfilingLevel::OFF == profiling_level_merge_ || ProfilingLevel::INVALID == profiling_level_merge_) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Profiling turned off.");
-    return Ort::Status();
-  }
-
-  QnnProfile_Level_t qnn_profile_level = QNN_PROFILE_LEVEL_BASIC;
-  bool enable_optrace = false;
-  if (ProfilingLevel::BASIC == profiling_level_merge_) {
-    qnn_profile_level = QNN_PROFILE_LEVEL_BASIC;
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to basic.");
-  } else if (ProfilingLevel::DETAILED == profiling_level_merge_) {
-    qnn_profile_level = QNN_PROFILE_LEVEL_DETAILED;
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to detailed.");
-  } else if (ProfilingLevel::OPTRACE == profiling_level_merge_) {
-    qnn_profile_level = QNN_PROFILE_LEVEL_DETAILED;
-    enable_optrace = true;
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to optrace.");
-  }
-
-  Qnn_ErrorHandle_t result = qnn_interface_.profileCreate(backend_handle_, qnn_profile_level, &profile_backend_handle_);
-  RETURN_IF(QNN_PROFILE_NO_ERROR != result,
-            ("Failed to create QNN profile! Error: " + QnnErrorHandleToString(result)).c_str());
-
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  profiling_enabled_ = true;
-  RETURN_IF_ERROR(LoadQnnSystemLib());
-
-  if (enable_optrace) {
-    QnnProfile_Config_t optrace_config = QNN_PROFILE_CONFIG_INIT;
-    optrace_config.option = QNN_PROFILE_CONFIG_OPTION_ENABLE_OPTRACE;
-    optrace_config.enableOptrace = enable_optrace;
-
-    const QnnProfile_Config_t* profile_configs[] = {&optrace_config, nullptr};
-    result = qnn_interface_.profileSetConfig(profile_backend_handle_, profile_configs);
-
-    RETURN_IF(QNN_PROFILE_NO_ERROR != result,
-              ("Failed to enable op trace! Error: " + QnnErrorHandleToString(result)).c_str());
-  }
-#else
-  if (enable_optrace) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_WARNING,
-                    "Profiling level set to optrace, but QNN SDK Version is older than 2.29.0. "
-                    "Profiling level will be set to detailed instead.");
-  }
-#endif
-
-  return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::ReleaseProfilehandle() {
-  // Free Profiling object if it was created
-  if (nullptr != profile_backend_handle_) {
-    RETURN_IF(QNN_PROFILE_NO_ERROR != qnn_interface_.profileFree(profile_backend_handle_),
-              "Could not free backend profile handle!");
-  }
-  profile_backend_handle_ = nullptr;
-
-  return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::SetProfilingLevelETW(ProfilingLevel profiling_level_etw_param) {
-  if (profiling_level_etw_ != profiling_level_etw_param) {
-    profiling_level_etw_ = profiling_level_etw_param;
-
-    auto result = ReleaseProfilehandle();
-    if (!result.IsOK()) {
-      ORT_CXX_API_THROW("Failed to ReleaseProfilehandle for previous QNN profiling", ORT_EP_FAIL);
-    }
-
-    result = InitializeProfiling();
-    if (!result.IsOK()) {
-      ORT_CXX_API_THROW("Failed to Re-InitializeProfiling for QNN ETW profiling", ORT_EP_FAIL);
-    }
-  }
-  return Ort::Status();
-}
-
 Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Config_t& qnn_context_config) {
   qnn_context_config.option = QNN_CONTEXT_CONFIG_OPTION_PRIORITY;
   switch (context_priority) {
@@ -1310,6 +1249,7 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
     const QnnContext_Config_t** context_configs,
     const std::string& context_bin_filepath,
     const qnn::EpContextIoDispatch& io_dispatch,
+    Qnn_ProfileHandle_t profile_handle,
     Qnn_ContextHandle_t& context) {
   RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
             "Invalid function pointer for contextCreateFromBinary.");
@@ -1339,7 +1279,7 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                                                             bin_buffer,
                                                             static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                                             &context,
-                                                            profile_backend_handle_,
+                                                            profile_handle,
                                                             NULL);
     if (rt != QNN_SUCCESS) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
@@ -1365,7 +1305,7 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                                                 bin_buffer,
                                                 static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                                 &context,
-                                                profile_backend_handle_);
+                                                profile_handle);
   }
 
   RETURN_IF(QNN_SUCCESS != rt,
@@ -1420,7 +1360,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 
   RETURN_IF_ERROR(CreateContextHandleFromBinary(bin_buffer, buffer_length, use_file_mapping,
                                                 configs_builder.GetQnnConfigs(),
-                                                context_bin_filepath, io_dispatch, new_context));
+                                                context_bin_filepath, io_dispatch, nullptr, new_context));
   RETURN_IF_ERROR(AddQnnContextHandle(new_context));
   return Ort::Status();
 }
@@ -1964,26 +1904,45 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
 
     qnn::profile::ProfilingInfo profiling_info;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+    if (GetProfilingManager().OrtProfilingActive()) {
+      profiling_info.ort_profiler = QnnEpProfiler::Current();
+    }
+    if (profiling_info.ort_profiler != nullptr) {
+      profiling_info.graph_name = node_name;
+      profiling_info.operation_start_time_us = qnn::utils::GetTimeStampInUs();
+      profiling_info.ort_profiling_operation = "context_load";
+    }
+#endif
+    auto profiling_scope = GetProfilingManager().AcquireProfilingScope(profiling_info.ort_profiler != nullptr);
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    if (ProfilingEnabled()) {
+    if (profiling_scope.Active()) {
+      profiling_info.graph_name = node_name;
       profiling_info.start_time = qnn::utils::GetTimeStampInUs();
     }
 #endif
 
     RETURN_IF_ERROR(CreateContextHandleFromBinary(bin_buffer, buffer_length, use_file_mapping,
                                                   configs_builder.GetQnnConfigs(), context_bin_filepath,
-                                                  io_dispatch, context));
+                                                  io_dispatch, profiling_scope.Handle(), context));
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    if (ProfilingEnabled()) {
+    if (profiling_scope.Active()) {
       profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
       profiling_info.method_type = ProfilingMethodType::CREATE_FROM_BINARY;
-      profiling_info.graph_name = node_name;
+    }
+#endif
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+    if (profiling_info.ort_profiler != nullptr) {
+      profiling_info.operation_end_time_us = qnn::utils::GetTimeStampInUs();
     }
 #endif
 
     RETURN_IF_ERROR(AddQnnContextHandle(context));
-    RETURN_IF_ERROR(ExtractBackendProfilingInfo(profiling_info));
+
+    if (profiling_scope.Active() || profiling_info.ort_profiler != nullptr) {
+      RETURN_IF_ERROR(GetProfilingManager().ExtractBackendProfilingInfo(profiling_info));
+    }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   }
@@ -2167,7 +2126,7 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK()) {
-    status = InitializeProfiling();
+    status = GetProfilingManager().InitializeProfilingForCurrentConsumers();
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeProfiling succeed.");
@@ -2267,7 +2226,7 @@ Ort::Status QnnBackendManager::SetupBackendExceptDeviceAndContext() {
   }
 
   if (status.IsOK()) {
-    status = InitializeProfiling();
+    status = GetProfilingManager().InitializeProfilingForCurrentConsumers();
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN profile created.");
@@ -2489,7 +2448,7 @@ void QnnBackendManager::ReleaseResources() {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
   }
 
-  result = ReleaseProfilehandle();
+  result = GetProfilingManager().ReleaseProfileHandle();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_ERROR,
@@ -2573,237 +2532,6 @@ void QnnBackendManager::ReleaseDeviceAndContext() {
   soc_model_ = QNN_SOC_MODEL_UNKNOWN;
 
   backend_setup_completed_ = false;
-}
-
-Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::ProfilingInfo& profiling_info) {
-  if (ProfilingLevel::OFF == profiling_level_merge_ || ProfilingLevel::INVALID == profiling_level_merge_) {
-    return Ort::Status();
-  }
-
-  bool tracelogging_provider_ep_enabled = false;
-#ifdef _WIN32
-  auto& provider = QnnTelemetry::Instance();
-  if (provider.IsEnabled()) {
-    auto level = provider.Level();
-    auto keyword = provider.Keyword();
-    if ((keyword & static_cast<uint64_t>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0 && level >= 5) {
-      tracelogging_provider_ep_enabled = true;
-    }
-  }
-#endif  // defined(_WIN32)
-
-  // ETW disabled previously, but enabled now
-  if (ProfilingLevel::INVALID == profiling_level_etw_ && tracelogging_provider_ep_enabled) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_ERROR,
-                    "ETW disabled previously, but enabled now. Can't do the switch! Won't output any profiling.");
-    return Ort::Status();
-  }
-
-  // ETW enabled previously, but disabled now
-  if (ProfilingLevel::INVALID != profiling_level_etw_ && !tracelogging_provider_ep_enabled) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_ERROR,
-                    "ETW enabled previously, but disabled now. Can't do the switch! Won't output any profiling.");
-    return Ort::Status();
-  }
-
-  RETURN_IF(!tracelogging_provider_ep_enabled && profiling_file_path_.empty(),
-            "Need to specify a CSV file via provider option profiling_file_path if ETW not enabled.");
-
-  RETURN_IF(nullptr == profile_backend_handle_, "Backend profile handle not valid.");
-
-  ORT_CXX_LOG_PTR(logger_ptr_,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Extracting profiling events for graph " + profiling_info.graph_name).c_str());
-
-  const QnnProfile_EventId_t* profile_events{nullptr};
-  uint32_t num_events{0};
-  Qnn_ErrorHandle_t result = qnn_interface_.profileGetEvents(profile_backend_handle_, &profile_events, &num_events);
-  if (qnn_serializer_config_) {  // Using QNN Saver or IR backend
-    // QNN SDK 2.28.2 returns QNN_SAVER_ERROR_DUMMY_RETVALUE, but previous QNN versions return QNN_PROFILE_NO_ERROR.
-    // We accept both values.
-    RETURN_IF(QNN_PROFILE_NO_ERROR != result && QNN_SAVER_ERROR_DUMMY_RETVALUE != result,
-              ("Failed to get profile events. Error: " + QnnErrorHandleToString(result)).c_str());
-  } else {
-    RETURN_IF(QNN_PROFILE_NO_ERROR != result,
-              ("Failed to get profile events. Error: " + QnnErrorHandleToString(result)).c_str());
-  }
-
-  if (num_events > 0) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("profile_events: " + std::to_string(*profile_events) +
-                     " num_events: " + std::to_string(num_events))
-                        .c_str());
-
-    bool backendSupportsExtendedEventData = false;
-    Qnn_ErrorHandle_t resultPropertyHasCapability =
-        qnn_interface_.propertyHasCapability(QNN_PROPERTY_PROFILE_SUPPORTS_EXTENDED_EVENT);
-    uint16_t errorCodePropertyHasCapability = static_cast<uint16_t>(resultPropertyHasCapability & 0xFFFF);
-    if (errorCodePropertyHasCapability == QNN_PROPERTY_SUPPORTED) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "The QNN backend supports extended event data.");
-      backendSupportsExtendedEventData = true;
-    } else {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "The QNN backend does not support extended event data.");
-    }
-
-    profiling_info.csv_output_filepath = profiling_file_path_;
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    profiling_info.num_events = num_events;
-#endif
-
-    // When framework op tracing is enabled, attach the lookup so InitCsvFile()
-    // emits the `ONNX Source Ops` column header and ProcessEvent() annotates each
-    // NODE row with the originating ONNX op names. The lookup is read by pointer
-    // and continues to fill as later graphs compose; only DETAILED/OPTRACE
-    // profiling produces the per-NODE events this column annotates.
-    const bool has_node_level_profiling = profiling_level_merge_ == ProfilingLevel::DETAILED ||
-                                          profiling_level_merge_ == ProfilingLevel::OPTRACE;
-    if (enable_framework_op_trace_ && has_node_level_profiling) {
-      profiling_info.op_trace_lookup = &op_trace_lookup_;
-    }
-
-    profile::Serializer profile_writer(profiling_info,
-                                       qnn_sys_interface_,
-                                       tracelogging_provider_ep_enabled);
-    if (!profiling_file_path_.empty()) {
-      RETURN_IF_ERROR(profile_writer.InitCsvFile());
-    }
-
-    for (size_t event_idx = 0; event_idx < num_events; event_idx++) {
-      RETURN_IF_ERROR(ExtractProfilingEvent(*(profile_events + event_idx),
-                                            "ROOT",
-                                            profile_writer,
-                                            backendSupportsExtendedEventData));
-      RETURN_IF_ERROR(ExtractProfilingSubEvents(*(profile_events + event_idx),
-                                                profile_writer,
-                                                backendSupportsExtendedEventData));
-    }
-
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    RETURN_IF_ERROR(profile_writer.SerializeEventsToQnnLog());
-#endif
-
-    if (!profiling_file_path_.empty()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_VERBOSE,
-                      ("Wrote QNN profiling events (" + std::to_string(num_events) +
-                       ") to file (" + profiling_file_path_ + ")")
-                          .c_str());
-    }
-
-    if (tracelogging_provider_ep_enabled) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_VERBOSE,
-                      ("Wrote QNN profiling events (" + std::to_string(num_events) + ") to ETW").c_str());
-    }
-  }
-
-  return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::ExtractProfilingSubEvents(QnnProfile_EventId_t profile_event_id,
-                                                         profile::Serializer& profile_writer,
-                                                         bool useExtendedEventData) {
-  const QnnProfile_EventId_t* profile_sub_events{nullptr};
-  uint32_t num_sub_events{0};
-  Qnn_ErrorHandle_t result = qnn_interface_.profileGetSubEvents(profile_event_id, &profile_sub_events, &num_sub_events);
-  RETURN_IF(QNN_PROFILE_NO_ERROR != result,
-            ("Failed to get profile sub events. Error: " + QnnErrorHandleToString(result)).c_str());
-
-  if (num_sub_events > 0) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("profile_sub_events: " + std::to_string(*profile_sub_events) +
-                     " num_sub_events: " + std::to_string(num_sub_events))
-                        .c_str());
-
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    QnnSystemProfile_ProfileEventV1_t* parent_system_event = nullptr;
-    parent_system_event = profile_writer.GetParentSystemEvent(profile_event_id);
-    if (parent_system_event == nullptr) {
-      parent_system_event = profile_writer.GetSystemEventPointer(profile_event_id);
-      profile_writer.AddSubEventList(num_sub_events, parent_system_event);
-    }
-#endif
-
-    for (size_t sub_event_idx = 0; sub_event_idx < num_sub_events; sub_event_idx++) {
-      QnnProfile_EventId_t subevent_id = *(profile_sub_events + sub_event_idx);
-
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-      RETURN_IF_ERROR(profile_writer.SetParentSystemEvent(subevent_id, parent_system_event));
-#endif
-      RETURN_IF_ERROR(ExtractProfilingEvent(subevent_id, "SUB-EVENT", profile_writer, useExtendedEventData));
-      RETURN_IF_ERROR(ExtractProfilingSubEvents(subevent_id, profile_writer, useExtendedEventData));
-    }
-
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Wrote QNN profiling sub events (" + std::to_string(num_sub_events) + ")").c_str());
-  }
-
-  return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::ExtractProfilingEvent(QnnProfile_EventId_t profile_event_id,
-                                                     const std::string& event_level,
-                                                     profile::Serializer& profile_writer,
-                                                     bool useExtendedEventData) {
-  if (useExtendedEventData) {
-    return ExtractProfilingEventExtended(profile_event_id, event_level, profile_writer);
-  } else {
-    return ExtractProfilingEventBasic(profile_event_id, event_level, profile_writer);
-  }
-}
-
-Ort::Status QnnBackendManager::ExtractProfilingEventBasic(QnnProfile_EventId_t profile_event_id,
-                                                          const std::string& event_level,
-                                                          profile::Serializer& profile_writer) {
-  QnnProfile_EventData_t event_data;
-  Qnn_ErrorHandle_t result = qnn_interface_.profileGetEventData(profile_event_id, &event_data);
-  QnnProfile_Error_t errorCode = static_cast<QnnProfile_Error_t>(result & 0xFFFF);
-  RETURN_IF(QNN_PROFILE_NO_ERROR != result,
-            ("Failed to get profile event data: " + std::string(QnnProfileErrorToString(errorCode))).c_str());
-
-  RETURN_IF_ERROR(profile_writer.ProcessEvent(profile_event_id, event_level, event_data));
-
-  return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::ExtractProfilingEventExtended(QnnProfile_EventId_t profile_event_id,
-                                                             const std::string& event_level,
-                                                             profile::Serializer& profile_writer) {
-  QnnProfile_ExtendedEventData_t event_data_extended;
-  auto resultGetExtendedEventData = qnn_interface_.profileGetExtendedEventData(profile_event_id, &event_data_extended);
-  QnnProfile_Error_t errorCode = static_cast<QnnProfile_Error_t>(resultGetExtendedEventData & 0xFFFF);
-  RETURN_IF(QNN_PROFILE_NO_ERROR != errorCode,
-            ("Failed to get profile event data: " + std::string(QnnProfileErrorToString(errorCode))).c_str());
-
-  RETURN_IF_ERROR(profile_writer.ProcessExtendedEvent(profile_event_id, event_level, event_data_extended));
-
-  return Ort::Status();
-}
-
-const char* QnnBackendManager::QnnProfileErrorToString(QnnProfile_Error_t error) {
-  switch (error) {
-    case QNN_PROFILE_NO_ERROR:
-      return "QNN_PROFILE_NO_ERROR";
-    case QNN_PROFILE_ERROR_UNSUPPORTED:
-      return "QNN_PROFILE_ERROR_UNSUPPORTED";
-    case QNN_PROFILE_ERROR_INVALID_ARGUMENT:
-      return "QNN_PROFILE_ERROR_INVALID_ARGUMENT";
-    case QNN_PROFILE_ERROR_MEM_ALLOC:
-      return "QNN_PROFILE_ERROR_MEM_ALLOC";
-    case QNN_PROFILE_ERROR_INVALID_HANDLE:
-      return "QNN_PROFILE_ERROR_INVALID_HANDLE";
-    case QNN_PROFILE_ERROR_HANDLE_IN_USE:
-      return "QNN_PROFILE_ERROR_HANDLE_IN_USE";
-    case QNN_PROFILE_ERROR_INCOMPATIBLE_EVENT:
-      return "QNN_PROFILE_ERROR_INCOMPATIBLE_EVENT";
-    default:
-      return "UNKNOWN_ERROR";
-  }
 }
 
 std::string QnnBackendManager::QnnErrorHandleToString(Qnn_ErrorHandle_t error) {
