@@ -1692,7 +1692,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
 // htp_reused_io_limit_mb: a valid numeric value is accepted and does not block AOT context load.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
-#if defined(__linux__) && !defined(__aarch64__)
+#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
+#elif defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
 #else
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);

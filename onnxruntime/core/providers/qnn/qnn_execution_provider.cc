@@ -1384,6 +1384,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   uint64_t reused_io_limit_mb = 0;
   ParseIntOption(ort_api, session_options_, FormatEPConfigKey(kHtpReusedIoLimitMb),
                  uint64_t{0}, reused_io_limit_mb, logger_);
+#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  if (reused_io_limit_mb > 0) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "htp_reused_io_limit_mb was set, but this build was compiled against QAIRT SDK older than 2.45. "
+                "The option will be ignored.");
+    reused_io_limit_mb = 0;
+  }
+#endif
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
               (std::string(kHtpReusedIoLimitMb) + ": " + std::to_string(reused_io_limit_mb)).c_str());
 

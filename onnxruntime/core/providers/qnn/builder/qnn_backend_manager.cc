@@ -1300,9 +1300,7 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     spill_cfg->customConfig = spill_custom;
   }
 
-  // Reused-IO-limit, available since QNN API 2.32 (QAIRT 2.43; version extrapolated, verify if using
-  // an SDK older than 2.49).
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 32)
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
   if (reused_io_limit_mb_ > 0) {
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_INFO,
@@ -1477,9 +1475,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
-  // Group-level property, shared by all contexts in the list. Available since QNN API 2.32
-  // (QAIRT 2.43; version extrapolated, verify if using an SDK older than 2.49).
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 32)
+  // Group-level property, shared by all contexts in the list.
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
   QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t reused_io_limit_custom_config;
   if (reused_io_limit_mb_ > 0) {
@@ -1497,7 +1494,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
 #endif
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 32)
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
   if (reused_io_limit_mb_ > 0) {
     configs_vec.push_back(&reused_io_limit_config);
   }
