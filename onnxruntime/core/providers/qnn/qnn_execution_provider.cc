@@ -357,6 +357,7 @@ static void ParseIntOption(const OrtApi& ort_api,
   out = default_value;
   std::string value_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
+  // An explicitly provided option may have an empty value. Treat it as default.
   if (value_str.empty()) {
     return;
   }
