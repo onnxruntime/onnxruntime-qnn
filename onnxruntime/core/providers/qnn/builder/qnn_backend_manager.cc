@@ -1300,6 +1300,22 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     spill_cfg->customConfig = spill_custom;
   }
 
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  if (reused_io_limit_mb_ > 0) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_INFO,
+                    ("Applying reused_io_limit_mb: " + std::to_string(reused_io_limit_mb_)).c_str());
+    gsl::not_null<QnnHtpContext_CustomConfig_t*> reused_io_limit_custom_config =
+        configs_builder.PushCustomConfig();
+    reused_io_limit_custom_config->option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+    reused_io_limit_custom_config->reusedIoLimitMb = reused_io_limit_mb_;
+
+    gsl::not_null<QnnContext_Config_t*> reused_io_limit_config = configs_builder.PushConfig();
+    reused_io_limit_config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    reused_io_limit_config->customConfig = reused_io_limit_custom_config;
+  }
+#endif
+
   return Ort::Status();
 }
 
@@ -1459,12 +1475,29 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
+  // Group-level property, shared by all contexts in the list.
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  QnnContext_Config_t reused_io_limit_config = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t reused_io_limit_custom_config;
+  if (reused_io_limit_mb_ > 0) {
+    reused_io_limit_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT;
+    reused_io_limit_custom_config.reusedIoLimitMb = reused_io_limit_mb_;
+    reused_io_limit_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    reused_io_limit_config.customConfig = &reused_io_limit_custom_config;
+  }
+#endif
+
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   configs_vec.push_back(&context_config_resource_sharing);
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
+#endif
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  if (reused_io_limit_mb_ > 0) {
+    configs_vec.push_back(&reused_io_limit_config);
+  }
 #endif
   configs_vec.push_back(nullptr);
 

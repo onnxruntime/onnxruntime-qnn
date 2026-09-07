@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -344,6 +345,31 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("User specified " + key + ": " + (result ? "1" : "0")).c_str());
 
   return result;
+}
+
+template <typename T>
+static void ParseIntOption(const OrtApi& ort_api,
+                           const OrtSessionOptions& session_options,
+                           const std::string& key,
+                           T default_value,
+                           T& out,
+                           const Ort::Logger& logger) {
+  out = default_value;
+  std::string value_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
+  // An explicitly provided option may have an empty value. Treat it as default.
+  if (value_str.empty()) {
+    return;
+  }
+
+  const char* begin = value_str.data();
+  const char* end = begin + value_str.size();
+  auto [ptr, ec] = std::from_chars(begin, end, out);
+  if (ec != std::errc{} || ptr != end) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                ("Ignoring malformed " + key + ": " + value_str).c_str());
+    out = default_value;
+  }
 }
 
 // Creates `dir` (and any missing parents) and verifies it is writable by
@@ -1353,6 +1379,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
+  // Caps the reused IO buffer size at context load. See docs; 0 = SDK default.
+  static constexpr const char* kHtpReusedIoLimitMb = "htp_reused_io_limit_mb";
+  uint64_t reused_io_limit_mb = 0;
+  ParseIntOption(ort_api, session_options_, FormatEPConfigKey(kHtpReusedIoLimitMb),
+                 uint64_t{0}, reused_io_limit_mb, logger_);
+#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  if (reused_io_limit_mb > 0) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "htp_reused_io_limit_mb was set, but this build was compiled against QAIRT SDK older than 2.45. "
+                "The option will be ignored.");
+    reused_io_limit_mb = 0;
+  }
+#endif
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              (std::string(kHtpReusedIoLimitMb) + ": " + std::to_string(reused_io_limit_mb)).c_str());
+
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -1414,7 +1456,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      op_packages,
                                      skip_qnn_version_check,
                                      enable_framework_op_trace_,
-                                     skip_backend_op_validation},
+                                     skip_backend_op_validation,
+                                     reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
