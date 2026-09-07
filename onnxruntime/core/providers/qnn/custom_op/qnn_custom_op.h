@@ -30,6 +30,12 @@ struct QnnUdoPlaceholderKernel {
 // register a UDO op schema so ORT can load and validate ONNX models that contain
 // custom-domain nodes.  The factory builds one of these per op-type entry found in
 // ORT_QNN_CUSTOM_OP_DOMAINS and keeps it alive for the factory's lifetime.
+//
+// The placeholder imposes no type or shape constraint on its inputs/outputs (both are
+// VARIADIC with UNDEFINED element type). ORT resolves the output type/shape from the
+// model's own output value_info — standard ONNX models exported by conversion tools
+// always carry this information.  No InferOutputShapeFn is registered; the placeholder
+// solely satisfies schema registration so the domain/op-type is known at load time.
 struct QnnUdoPlaceholderOp
     : Ort::CustomOpBase<QnnUdoPlaceholderOp, QnnUdoPlaceholderKernel, /*WithStatus=*/true> {
   QnnUdoPlaceholderOp(std::string op_type, std::string ep_type)
@@ -67,32 +73,6 @@ struct QnnUdoPlaceholderOp
     return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC;
   }
   bool GetVariadicOutputHomogeneity() const { return false; }
-
-  // ORT calls InferOutputShapeFn unconditionally for every custom-op node during
-  // Graph::PerformTypeAndShapeInferencing, even when the model already carries
-  // output value_info. Without this function, loading an ONNX model whose
-  // custom-domain node uses UNDEFINED input/output types fails with a type
-  // inference error ("output arg ... type inference failed") because ORT cannot
-  // resolve the output type from the variadic heterogeneous schema alone.
-  //
-  // This implementation propagates input[0]'s shape to all outputs with type
-  // FLOAT (the default of SetOutputShape). For the placeholder op the kernel
-  // never executes (the node is fused and compiled by QNN EP), so the type
-  // is only needed to satisfy model-load validation. Current UDO usage is float
-  // at the ONNX graph level (QDQ wrapping is stripped by UDOQDQFusion before
-  // QNN sees the node), so FLOAT matches the model's declared type. A UDO whose
-  // ONNX-level output shape genuinely differs from input[0], or whose type is
-  // non-FLOAT, needs per-op type/shape configuration — deferred to a follow-up.
-  static OrtStatusPtr InferOutputShape(Ort::ShapeInferContext& ctx) {
-    if (ctx.GetInputCount() == 0) {
-      return nullptr;
-    }
-    const auto& input_shape = ctx.GetInputShape(0);
-    for (size_t i = 0; i < 1 /* placeholder has exactly 1 output */; ++i) {
-      ctx.SetOutputShape(i, input_shape);
-    }
-    return nullptr;
-  }
 
  private:
   std::string op_type_;

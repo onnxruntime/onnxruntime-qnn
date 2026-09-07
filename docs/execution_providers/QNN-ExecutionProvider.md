@@ -1742,10 +1742,10 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="udo_domain:MyAdd;other_domain:OpA,OpB"
 > **Note:** `ORT_QNN_CUSTOM_OP_DOMAINS` must be set before `libonnxruntime_providers_qnn.so` is
 > loaded (i.e., before the ORT environment is created). The env var names the *domain and op-types*
 > needed for model-load schema validation. The actual QNN HW kernel still comes from `op_packages` at
-> session time; the two config items are complementary. The registered placeholder schema currently
-> assumes FLOAT input/output element types (matching all supported UDO usage today); a UDO whose
-> ONNX-level type is genuinely non-FLOAT will fail session construction with a clear type-inference
-> error rather than silently misbehaving.
+> session time; the two config items are complementary. The ONNX model must declare the custom-op
+> node's output type and shape in its graph (standard ONNX exports always do this); ORT uses that
+> declared information for load-time validation — QNN EP imposes no additional type or shape
+> constraint through the placeholder schema.
 
 > **Optional — manual domain registration for CPU fallback:** If you need a real CPU kernel to run
 > the op on the CPU EP (e.g., for accuracy comparison), you can still construct an

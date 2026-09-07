@@ -73,7 +73,11 @@ static GetTestModelFn BuildUDOTestCase(const std::string& op_type,
         {"output"},
         op_domain,
         attrs);
-    builder.MakeOutput("output");
+    // Declare the output type and shape explicitly so ORT's type-inference pass can
+    // resolve the output type without a custom shape-inference function on the placeholder op.
+    // Real ONNX models exported by conversion tools carry this information in the graph's
+    // output value_info; this mirrors that behavior.
+    builder.MakeOutput<float>("output", input_def.GetShape());
   };
 }
 
