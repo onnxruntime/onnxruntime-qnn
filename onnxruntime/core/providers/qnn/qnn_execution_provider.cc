@@ -61,6 +61,26 @@ static std::string MakeSharedLibraryPath(std::string_view name) {
 #endif
 }
 
+const std::unordered_map<OrtHardwareDeviceType, std::string>& QnnEp::GetDefaultBackends() {
+  // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
+  // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
+  // But if QNN-EP is distributed separately from the OnnxRuntime library (e.g. EP ABI or WinML), the backend library may
+  // well not be relative to the OnnxRuntime but to the EP library itself instead.
+  // If the EP library is co-located with the OnnxRuntime library, then this is consistent with the existing behavior,
+  // but an EP library that is shipped 'out-of-band' will use a backend relative to itself.
+  static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBackends = {
+#if defined(_WIN32)
+      {OrtHardwareDeviceType_NPU, "QnnHtp.dll"},
+      {OrtHardwareDeviceType_GPU, "QnnGpu.dll"},
+#else
+      {OrtHardwareDeviceType_NPU, "libQnnHtp.so"},
+      {OrtHardwareDeviceType_GPU, "libQnnGpu.so"},
+#endif
+  };
+
+  return kDefaultBackends;
+}
+
 const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
 const std::string kDefaultGenieBackendPath = MakeSharedLibraryPath("Genie");
 const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
@@ -409,6 +429,61 @@ static bool ProbeDumpDirectoryWritable(const std::string& dir,
   return true;
 }
 
+std::string QnnEp::GetDefaultBackendPath(const std::vector<const OrtHardwareDevice*>& devices) const {
+  // If neither "backend_path" nor "backend_type" has been given in the provider options, then determine the backend based
+  // on the provided devices. As QNN EP does not support partitioning across backends, if multiple devices are provided,
+  // default to HTP (if present) or else to the GPU.
+  const OrtHardwareDevice* device_to_use = nullptr;
+  if (devices.size() == 0) {
+    LOG_AND_THROW_ERROR(logger_, "No devices were provided to QNN EP.");
+  } else if (devices.size() == 1) {
+    device_to_use = devices[0];
+  } else {
+    const auto is_npu = [this](const OrtHardwareDevice* device) {
+      return ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_NPU;
+    };
+    const auto is_gpu = [this](const OrtHardwareDevice* device) {
+      return ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU;
+    };
+
+    auto device_it = std::find_if(devices.begin(), devices.end(), is_npu);
+    if (device_it != devices.end()) {
+      ORT_CXX_LOG(logger_,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                  "QNN EP only supports one device. Only the NPU device will be used.");
+      device_to_use = *device_it;
+    } else {
+      device_it = std::find_if(devices.begin(), devices.end(), is_gpu);
+      if (device_it != devices.end()) {
+        ORT_CXX_LOG(logger_,
+                    OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                    "QNN EP only supports one device. An NPU device was not provided, so only the GPU device will be used.");
+        device_to_use = *device_it;
+      } else {
+        LOG_AND_THROW_ERROR(logger_, "Multiple devices were provided to QNN EP, but neither an NPU nor a GPU was included.");
+      }
+    }
+  }
+  assert(device_to_use != nullptr);
+
+  const auto& default_backends = GetDefaultBackends();
+  auto default_backends_it = default_backends.find(ort_api.HardwareDevice_Type(device_to_use));
+  if (default_backends_it == default_backends.end()) {
+    LOG_AND_THROW_ERROR(logger_, "Could not determine default backend path for device");
+  }
+
+  // Identify the path of the current dynamic library, and expect that the backend library is in the same directory.
+  auto current_path = onnxruntime::GetDynamicLibraryLocationByAddress(
+      reinterpret_cast<const void*>(&onnxruntime::GetDynamicLibraryLocationByAddress));
+
+  std::filesystem::path parent_path;
+  if (!current_path.empty()) {
+    parent_path = std::filesystem::path{std::move(current_path)}.parent_path();
+  }
+
+  return (parent_path / default_backends_it->second).string();
+}
+
 void QnnEp::ParsePerSocHtpConfigs() {
   std::string soc_model_per_soc_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("soc_model"), "", soc_model_per_soc_str);
@@ -607,6 +682,7 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
 QnnEp::QnnEp(QnnEpFactory& factory,
              const std::string& name,
              const OrtSessionOptions& session_options,
+             const std::vector<const OrtHardwareDevice*>& devices,
              const OrtLogger* logger)
     : OrtEp{},
       ApiPtrs{static_cast<const ApiPtrs&>(factory)},
@@ -797,6 +873,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (backend_path_from_options.has_value()) {
       backend_path = std::move(*backend_path_from_options);
     } else {
+      backend_path = GetDefaultBackendPath(devices);
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Using default backend path: " + backend_path).c_str());
     }
 
@@ -1071,6 +1148,36 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!vtcm_mb_str.empty() && vtcm_mb_str != "0") {
       ParseVtcmSize(vtcm_mb_str, htp_graph_configs_.vtcm_size_in_mb, logger_);
     }
+  }
+
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__aarch64__))
+  const std::string kDefaultClCompilerLibPath = MakeSharedLibraryPath("qcclarm64xcompiler");
+#elif defined(__ANDROID__)
+  const std::string kDefaultClCompilerLibPath = MakeSharedLibraryPath("llvm-qcom");
+#else
+  const std::string kDefaultClCompilerLibPath = MakeSharedLibraryPath("qclccompiler");
+#endif
+  std::string cl_compiler_lib_path;
+  const std::string QNN_CL_COMPILER_LIB_PATH_KEY = "cl_compiler_lib_path";
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey(QNN_CL_COMPILER_LIB_PATH_KEY),
+                                 "",
+                                 cl_compiler_lib_path);
+
+  if (soc_model != QNN_SOC_MODEL_UNKNOWN) {
+    if (!cl_compiler_lib_path.empty()) {
+      cl_compiler_lib_path_ = cl_compiler_lib_path;
+      ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_VERBOSE, "User specified CL compiler lib path: %s", cl_compiler_lib_path_.c_str());
+    } else {
+      cl_compiler_lib_path_ = (std::filesystem::path(OrtGetRuntimePath()) / kDefaultClCompilerLibPath).string();
+      ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Using default CL compiler lib path: %s", cl_compiler_lib_path_.c_str());
+    }
+  } else if (!cl_compiler_lib_path.empty()) {
+    ORT_CXX_LOGF(logger_,
+                 ORT_LOGGING_LEVEL_WARNING,
+                 "No soc model has been specified. Value provided for '%s' will be ignored.",
+                 QNN_CL_COMPILER_LIB_PATH_KEY.c_str());
   }
 
   // Parallel graph prepare.
@@ -1499,7 +1606,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
-        qnn::QnnBackendManagerConfig{backend_path,
+        qnn::QnnBackendManagerConfig{devices,
+                                     backend_path,
                                      profiling_level_etw,
                                      profiling_level,
                                      profiling_file_path,
@@ -1574,6 +1682,48 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                  ORT_LOGGING_LEVEL_VERBOSE,
                  "QNN allocator set to type: %s.",
                  qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
+  }
+
+  for (const OrtHardwareDevice* device : devices) {
+    const auto device_type = ort_api.HardwareDevice_Type(device);
+    switch (device_type) {
+      case OrtHardwareDeviceType_NPU:
+        if (qnn::IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
+          OrtMemoryInfo* mem_info = nullptr;
+          auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
+                                                     OrtMemoryInfoDeviceType_CPU,
+                                                     /*vendor*/ 0x5143,
+                                                     /*device_id*/ 0,
+                                                     OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                     /*alignment*/ 0,
+                                                     OrtAllocatorType::OrtDeviceAllocator,
+                                                     &mem_info);
+          if (status != nullptr) {
+            ort_api.ReleaseMemoryInfo(mem_info);
+          } else {
+            host_accessible_memory_infos_[device_type] = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+          }
+        }
+        break;
+      case OrtHardwareDeviceType_GPU:
+        if (qnn::IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+          OrtMemoryInfo* mem_info = nullptr;
+          auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
+                                                     OrtMemoryInfoDeviceType_CPU,
+                                                     /*vendor*/ 0x5143,
+                                                     /*device_id*/ 0,
+                                                     OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                     /*alignment*/ 0,
+                                                     OrtAllocatorType::OrtDeviceAllocator,
+                                                     &mem_info);
+          if (status != nullptr) {
+            ort_api.ReleaseMemoryInfo(mem_info);
+          } else {
+            host_accessible_memory_infos_[device_type] = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+          }
+        }
+        break;
+    }
   }
 
 #if defined(_WIN32)
@@ -1965,7 +2115,9 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+    if (op_type == qnn::EPCONTEXT_OP &&
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnnexecutionprovider.virtual" ||
+         cache_source == "qnn" || cache_source == "qnn.virtual")) {
       const char* node_name = nullptr;
       if (ort_api.Node_GetName(node, &node_name) != nullptr) {
         return false;
@@ -2014,7 +2166,8 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
 
     if (is_main_context &&
         op_type == qnn::EPCONTEXT_OP &&
-        (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnnexecutionprovider.virtual" ||
+         cache_source == "qnn" || cache_source == "qnn.virtual")) {
       const char* node_name = nullptr;
       auto node_status = ort_api.Node_GetName(node, &node_name);
       if (node_status != nullptr) {
@@ -2061,7 +2214,9 @@ void QnnEp::PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* grap
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+    if (op_type == qnn::EPCONTEXT_OP &&
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnnexecutionprovider.virtual" ||
+         cache_source == "qnn" || cache_source == "qnn.virtual")) {
       const char* node_name = nullptr;
       auto partition_status = ort_api.Node_GetName(node, &node_name);
       if (partition_status != nullptr) {
@@ -2265,7 +2420,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
                                                 ep->enable_htp_graph_splitting_,
-                                                ep->htp_graph_splitting_num_prepare_threads_);
+                                                ep->htp_graph_splitting_num_prepare_threads_,
+                                                ep->cl_compiler_lib_path_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3496,26 +3652,30 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
+  const auto memory_type = ep->ort_api.MemoryInfoGetDeviceMemType(memory_info);
+  if (memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+    if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
 
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
-    *allocator = htp_allocator.release();
-  }
-#ifdef _WIN32
-  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
-
-    OrtStatus* status = nullptr;
-    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, status);
-
-    if (status != nullptr) {
-      return status;
+      auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
+      *allocator = htp_allocator.release();
     }
+#ifdef _WIN32
+    else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12MemoryAllocator for shared memory.");
 
-    *allocator = dx12_allocator.release();
-  }
+      OrtStatus* status = nullptr;
+      auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, status);
+
+      if (status != nullptr) {
+        return status;
+      }
+
+      *allocator = dx12_allocator.release();
+    }
 #endif  // _WIN32
+  }
+
   return nullptr;
 }
 
