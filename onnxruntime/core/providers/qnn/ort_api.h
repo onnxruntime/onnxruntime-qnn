@@ -29,6 +29,7 @@
 // Public headers from ORT Core
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
 
 // EPContext encryption callbacks were added at ORT API v28.
 #if ORT_API_VERSION >= 28
