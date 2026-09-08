@@ -113,8 +113,7 @@ TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float) {
   RunQnnModelTest(BuildRank6ToRank5FloatTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float_MultiConsumer) {
@@ -122,8 +121,7 @@ TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float_MultiConsumer) {
   RunQnnModelTest(BuildRank6ToRank5FloatMultiConsumerTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

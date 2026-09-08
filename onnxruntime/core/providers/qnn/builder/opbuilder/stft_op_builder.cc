@@ -97,18 +97,10 @@ Ort::Status STFTOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                   "Failed to add expanded signal tensor.");
 
     // Create axis parameter for ExpandDims (add dimension at the end)
-    Qnn_Scalar_t axis_param = QNN_SCALAR_INIT;
-    axis_param.dataType = QNN_DATATYPE_UINT_32;
-    axis_param.uint32Value = static_cast<uint32_t>(2);  // Add at the end
-
-    QnnParamWrapper axis_param_wrapper(node_unit.Index(),
-                                       node_unit.Name(),
-                                       "axis",
-                                       axis_param);
-
     std::vector<std::string> expand_dims_params;
-    expand_dims_params.push_back(axis_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param_wrapper));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(2),  // Add at the end
+                                           "axis", expand_dims_params));
 
     // Create the ExpandDims node
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
@@ -236,15 +228,8 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::vector<uint8_t> frame_step_data;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_step.initializer_tensor, frame_step_data));
     frame_step_info = *reinterpret_cast<uint32_t*>(frame_step_data.data());
-    Qnn_Scalar_t frame_step_param = QNN_SCALAR_INIT;
-    frame_step_param.dataType = QNN_DATATYPE_UINT_32;
-    frame_step_param.uint32Value = frame_step_info;
-    QnnParamWrapper frame_step_param_wrapper(node_unit.Index(),
-                                             node_unit.Name(),
-                                             QNN_OP_STFT_PARAM_FRAME_STEP,
-                                             frame_step_param);
-    param_tensor_names.push_back(frame_step_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(frame_step_param_wrapper));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), frame_step_info,
+                                           QNN_OP_STFT_PARAM_FRAME_STEP, param_tensor_names));
   }
 
   // Process frame_length if it exists
@@ -257,15 +242,8 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     frame_length_info = *reinterpret_cast<uint32_t*>(frame_length_data.data());
 
     // Create frame_length parameter
-    Qnn_Scalar_t frame_length_param = QNN_SCALAR_INIT;
-    frame_length_param.dataType = QNN_DATATYPE_UINT_32;
-    frame_length_param.uint32Value = frame_length_info;
-    QnnParamWrapper frame_length_param_wrapper(node_unit.Index(),
-                                               node_unit.Name(),
-                                               QNN_OP_STFT_PARAM_FRAME_LENGTH,
-                                               frame_length_param);
-    param_tensor_names.push_back(frame_length_param_wrapper.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(frame_length_param_wrapper));
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), frame_length_info,
+                                           QNN_OP_STFT_PARAM_FRAME_LENGTH, param_tensor_names));
   }
 
   const auto& outputs = node_unit.Outputs();
@@ -281,17 +259,9 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                         output_info.quant_param.Copy(), std::move(output_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add output tensor.");
 
-  Qnn_Scalar_t onesided_param = QNN_SCALAR_INIT;
-  onesided_param.dataType = QNN_DATATYPE_BOOL_8;
-  onesided_param.bool8Value = static_cast<bool>(onesided);
-
-  QnnParamWrapper onesided_param_wrapper(node_unit.Index(),
-                                         node_unit.Name(),
-                                         QNN_OP_STFT_PARAM_ONESIDED,
-                                         onesided_param);
-
-  param_tensor_names.push_back(onesided_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(onesided_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                     static_cast<bool>(onesided),
+                                     QNN_OP_STFT_PARAM_ONESIDED, param_tensor_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                     utils::UniqueNameGenerator().New(node_unit),

@@ -32,12 +32,12 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
     RunQnnModelTest(BuildOpTestCase<DataType>("Upsample_node", "Upsample", {input_def}, {}, attrs),
                     provider_options,
                     opset,
-                    expected_ep_assignment);
+                    EPVerificationParams{expected_ep_assignment});
   } else {
     RunQnnModelTest(BuildOpTestCase<DataType, float>("Upsample_node", "Upsample", {input_def}, {scales_def}, attrs),
                     provider_options,
                     opset,
-                    expected_ep_assignment);
+                    EPVerificationParams{expected_ep_assignment});
   }
 }
 

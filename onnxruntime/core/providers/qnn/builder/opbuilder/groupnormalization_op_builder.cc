@@ -121,26 +121,13 @@ Ort::Status GroupNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   std::vector<std::string> param_tensor_names;
 
   const float epsilon = node_helper.Get("epsilon", 1e-05f);
-  Qnn_Scalar_t epsilon_param = QNN_SCALAR_INIT;
-  epsilon_param.dataType = QNN_DATATYPE_FLOAT_32;
-  epsilon_param.floatValue = epsilon;
-  QnnParamWrapper epsilon_param_wrapper(node_unit.Index(),
-                                        node_unit.Name(),
-                                        QNN_OP_GROUP_NORM_PARAM_EPSILON,
-                                        epsilon_param);
-  param_tensor_names.push_back(epsilon_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(epsilon_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), epsilon,
+                                      QNN_OP_GROUP_NORM_PARAM_EPSILON, param_tensor_names));
 
   const int64_t num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
-  Qnn_Scalar_t num_groups_param = QNN_SCALAR_INIT;
-  num_groups_param.dataType = QNN_DATATYPE_UINT_32;
-  num_groups_param.uint32Value = static_cast<uint32_t>(num_groups);
-  QnnParamWrapper num_groups_param_wrapper(node_unit.Index(),
-                                           node_unit.Name(),
-                                           QNN_OP_GROUP_NORM_PARAM_GROUP,
-                                           num_groups_param);
-  param_tensor_names.push_back(num_groups_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(num_groups_param_wrapper));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         static_cast<uint32_t>(num_groups),
+                                         QNN_OP_GROUP_NORM_PARAM_GROUP, param_tensor_names));
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),

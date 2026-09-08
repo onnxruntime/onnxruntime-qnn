@@ -258,8 +258,9 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   if (p_value == 2) {
+    std::string square_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
+                      square_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_MULTIPLY,
                       {input_names[0], input_names[0]},
@@ -268,8 +269,9 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                       do_op_validation),
                   "Failed to create square (Multiply) node.");
   } else {
+    std::string abs_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ABS);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ABS),
+                      abs_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_ABS,
                       {input_names[0]},
@@ -319,13 +321,8 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // honors rounding_mode correctly. rounding_mode was populated by ResolvePoolAttributes from the
   // ONNX ceil_mode attribute.
   if (rounding_mode != 0) {
-    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
-    scalar.dataType = QNN_DATATYPE_UINT_32;
-    scalar.uint32Value = rounding_mode;
-    QnnParamWrapper rounding_mode_param(node_unit.Index(), node_unit.Name(), p_round, scalar);
-    pool_param_names.push_back(rounding_mode_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
-                  "Failed to add param rounding_mode.");
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(rounding_mode), p_round, pool_param_names));
   }
   // count_pad_for_edges intentionally left at the QNN default (false). The denominator becomes
   // count_real per window; the per-position scale tensor below compensates.
@@ -359,8 +356,9 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                      std::vector<uint32_t>(qnn_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_out_tensor)),
                   "Failed to add sqrt output tensor.");
+    std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+                      sqrt_node_name,
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
                       {pool_out_name}, {sqrt_out_name}, {}, do_op_validation),
@@ -454,8 +452,9 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scaled_out_tensor)),
                   "Failed to add scaled intermediate tensor.");
   }
+  std::string scale_mul_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                    utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
+                    scale_mul_node_name,
                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                     QNN_OP_ELEMENT_WISE_MULTIPLY,
                     {sqrt_or_pool_out_name, scale_name},

@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <cassert>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -9,76 +8,88 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
-/* Op Resolution
-  --> Incoming ONNX Node
-    1. MatMulNBits
-      Attributes : INT64
-        - bits            : 2(HTP), 4(GPU/HTP), 8(HTP)
-        - block_size      : 32(GPU), 16x(HTP if bits=2), 8x(HTP if bits=4), 4x(HTP if bits=8)
-        - K               :
-        - N               :
-      Inputs
-        - A           :                 : fp16/fp32 : [batch_size, sequence_len, K]
-        - B           : Init            : uint8     : [N, K / block_size, (block_size * bits) / 8]
-        - scales      : Init            : fp16/fp32 : [N, K / block_size]
-        - zero_points : (optional)Init  : uint8     : [N, (K / block_size) * bits / 8]
-      Outputs
-        -  Y          :                 : fp16/fp32 : [batch_size, sequence_len, N]
-  <-- Outgoing QNN Node (GPU)
-    1. FullyConnected
-      Attributes
-        -
-      Inputs
-        - Input           :        : fp16/fp32            : [batch_size, sequence_len, K]
-        - Weight          : Static : qint4(BlockEncoding) : [N, K]
-          - Scales        :        : fp32                 : [N * (K / block_size)]
-          - Offsets       :        : int32_t              : [N * (K / block_size)]
-      Outputs
-        - Output          :        : fp16/fp32            : [batch_size * sequence_len, N]
-    2. Reshape
-      Inputs
-        - Input           :        : fp16/fp32            : [batch_size * sequence_len, N]
-      Outputs
-        - Output          :        : fp16/fp32            : [batch_size, sequence_len, N]
-  <-- Outgoing QNN Node (HTP)
-    1. Reshape
-      Inputs
-        - Input           :        : fp16/fp32                    : [batch_size, sequence_len, K]
-      Outputs
-        - Output          :        : fp16/fp32                    : [batch_size, 1, sequence_len, K]
-    2. Cast (workaround for fp32)
-      Inputs
-        - Input           :        : fp32                         : [batch_size, 1, sequence_len, K]
-      Outputs
-        - Output          :        : fp16                         : [batch_size, 1, sequence_len, K]
-    3. Conv2d
-      Attributes : UINT32
-        - stride     : [1, 1]
-        - pad_amount : [[0, 0], [0, 0]]
-      Inputs
-        - Input           :        : fp16                         : [batch_size, 1, sequence_len, K]
-        - Weight          : Static : qint8(BwFloatBlockEncoding)  : [1, 1, K, N]
-          - Scales        :        : fp32                         : [N * (K / block_size)]
-          - Offsets       :        : fp32                         : [N * (K / block_size)]
-      Outputs
-        - Output          :        : fp16                         : [batch_size, 1, sequence_len, N]
-    4. Cast (workaround for fp32)
-      Inputs
-        - Input           :        : fp16                         : [batch_size, 1, sequence_len, N]
-      Outputs
-        - Output          :        : fp32                         : [batch_size, 1, sequence_len, N]
-    5. Reshape
-      Inputs
-        - Input           :        : fp16/fp32                    : [batch_size, 1, sequence_len, N]
-      Outputs
-        - Output          :        : fp16/fp32                    : [batch_size, sequence_len, N]
-*/
+/* Op resolution
+ *
+ * =============================================================================================
+ * Incoming ONNX node
+ * =============================================================================================
+ * MatMulNBits
+ *   Attributes (int64)
+ *     bits        : 2 (HTP), 4 (GPU/HTP), 8 (HTP)
+ *     block_size  : 32 (GPU); multiple of 16 / 8 / 4 (HTP, for bits = 2 / 4 / 8)
+ *     K           : contraction dim of input A
+ *     N           : output channels
+ *
+ *     Name           Kind        Data type                       Shape
+ *   Inputs
+ *     A              input       fp16/fp32 (GPU)                 [batch_size, sequence_len, K]
+ *                                fp16/fp32/uint16/int16 (HTP)
+ *     B              init        uint8 (packed)                  [N, K / block_size, (block_size * bits) / 8]
+ *     scales         init        fp16/fp32                       [N, K / block_size]
+ *     zero_points    init (opt)  uint8 (packed)                  [N, (K / block_size) * bits / 8]
+ *   Outputs
+ *     Y              output      same as A                       [batch_size, sequence_len, N]
+ *
+ * =============================================================================================
+ * Outgoing QNN nodes (GPU)
+ *   A -> FullyConnected -> Reshape -> Y
+ * =============================================================================================
+ * 1. FullyConnected
+ *      in   Input     fp16/fp32                [batch_size, sequence_len, K]
+ *      in   Weight    qint4 (BlockEncoding)    [N, K]
+ *                       scales   fp32          [N * (K / block_size)]
+ *                       offsets  int32_t       [N * (K / block_size)]
+ *      out  Output    fp16/fp32                [batch_size * sequence_len, N]
+ * 2. Reshape
+ *      in   Input     fp16/fp32                [batch_size * sequence_len, N]
+ *      out  Output    fp16/fp32                [batch_size, sequence_len, N]
+ *
+ * =============================================================================================
+ * Outgoing QNN nodes (HTP)
+ *   A -> Reshape -> [Cast | Dequantize] -> Conv2d -> [Cast | Quantize] -> Reshape -> Y
+ * =============================================================================================
+ * 1. Reshape
+ *      in   Input     fp16/fp32/uint16/int16   [batch_size, sequence_len, K]
+ *      out  Output    fp16/fp32/uint16/int16   [batch_size, 1, sequence_len, K]
+ * 2a. Cast (only when A is fp32)
+ *      in   Input     fp32                     [batch_size, 1, sequence_len, K]
+ *      out  Output    fp16                     [batch_size, 1, sequence_len, K]
+ * 2b. Dequantize (only when A is uint16/int16 and the weight is BW_FLOAT_BLOCK)
+ *      in   Input     uint16/int16             [batch_size, 1, sequence_len, K]
+ *      out  Output    fp16                     [batch_size, 1, sequence_len, K]
+ * 3. Conv2d
+ *      in   Input     fp16                     [batch_size, 1, sequence_len, K]
+ *                     uint16/int16               (LPBQ / native BQ)
+ *      in   Weight    qint8, one byte per element, transposed [N,K] -> [1, 1, K, N]
+ *                     (BLOCKWISE_EXPANSION)
+ *                       per-channel scales  fp32   [N]
+ *                       per-block scales    uint8  [N * (K / block_size)]
+ *                       offsets             int32  [N], all 0
+ *                     (BLOCK)
+ *                       scales              fp32   [N * (K / block_size)]
+ *                       offsets             int32  [N * (K / block_size)], all 0
+ *                     (BW_FLOAT_BLOCK)
+ *                       scales              fp32   [N * (K / block_size)]
+ *                       offsets             fp32   [N * (K / block_size)]
+ *      out  Output    fp16                     [batch_size, 1, sequence_len, N]
+ *                     uint16/int16               (LPBQ / native BQ)
+ * 4a. Cast (only when Y is fp32)
+ *      in   Input     fp16                     [batch_size, 1, sequence_len, N]
+ *      out  Output    fp32                     [batch_size, 1, sequence_len, N]
+ * 4b. Quantize (only when Y is uint16/int16 and the weight is BW_FLOAT_BLOCK)
+ *      in   Input     fp16                     [batch_size, 1, sequence_len, N]
+ *      out  Output    uint16/int16             [batch_size, 1, sequence_len, N]
+ * 5. Reshape
+ *      in   Input     fp16/fp32/uint16/int16   [batch_size, 1, sequence_len, N]
+ *      out  Output    fp16/fp32/uint16/int16   [batch_size, sequence_len, N]
+ */
 
 class MatMulNBitsOpBuilder : public BaseOpBuilder {
  public:
@@ -132,6 +143,7 @@ void UnpackDataToDatatype(const std::vector<uint8_t>& packed_data,
     }
   }
 }
+
 }  // namespace
 
 Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
@@ -169,7 +181,9 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
   const int64_t num_zp_per_uint8 = K / block_size < num_elements_per_uint8 ? K / block_size : num_elements_per_uint8;
 
   const auto& inputs = node_unit.Inputs();
-  // 1. A: Input datatype should be float16 or float32.
+  // 1. A: Input datatype should be:
+  //   - GPU: float32, float16
+  //   - HTP: float32, float16, uint16, int16
   {
     const OrtNodeUnitIODef& input_tensor = inputs[0];
     TensorInfo input_info{};
@@ -180,12 +194,17 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
                                           input_tensor.type,
                                           input_datatype));
 
-    RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 && input_datatype != QNN_DATATYPE_FLOAT_16,
-              "Unsupported input A datatype, expecting float32 or float16.");
-
-    // Restrict to 3D input for HTP backend due to later inserted Reshape.
-    RETURN_IF(is_htp_backend && input_info.shape.size() != 3,
-              "Unsupported input A rank, expecting 3D for HTP backend.");
+    if (is_gpu_backend) {
+      RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 && input_datatype != QNN_DATATYPE_FLOAT_16,
+                "Unsupported input A datatype, expecting float32 or float16.");
+    } else {
+      RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 &&
+                    input_datatype != QNN_DATATYPE_FLOAT_16 &&
+                    !utils::IsQuant16bit(input_datatype),
+                "Unsupported input A datatype, expecting float32, float16, uint16, or int16.");
+      // Restrict to 3D input due to later inserted Reshape.
+      RETURN_IF(input_info.shape.size() != 3, "Unsupported input A rank, expecting 3D shape.");
+    }
   }
 
   // 2. B: Weight is supported in packed uint8 format.
@@ -246,18 +265,8 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
 
     // QNN GPU expects symmetric quantization.
     if (is_gpu_backend) {
-      std::vector<uint8_t> per_block_uint8_offset;
-      const OrtValueInfo* zero_points_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor.name);
-      RETURN_IF_NOT(zero_points_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zero_points_tensor_proto, per_block_uint8_offset));
-
-      // Since zero_points are stored as uint4 and packed to uint8, the value is expected to be 2^(bits-1)
-      // (i.e., 0b1000) and packed to 0b10001000.
-      const uint8_t expected_offset_value = 0b10001000;
-      for (size_t i = 0; i < per_block_uint8_offset.size(); i++) {
-        RETURN_IF_NOT(per_block_uint8_offset[i] == expected_offset_value,
-                      "Unsupported input zero_points value, expecting 0b1000 for bits=4.");
-      }
+      RETURN_IF_NOT(utils::AreZeroPointsSymmetricConstant(qnn_model_wrapper, zp_tensor.name, bits),
+                    ("Unsupported input zero_points value, expecting symmetric zero_points for bits=" + std::to_string(bits)).c_str());
     }
   }
 
@@ -287,7 +296,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
   const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
 
   // Should already be guaranteed in IsOpSupported.
-  assert(K > 0 && N > 0 && bits > 0 && block_size > 0);
+  RETURN_IF_NOT(K > 0 && N > 0 && bits > 0 && block_size > 0, "Unexpected MatMulNbits attribute values.");
 
   const int64_t num_elements_per_uint8 = kByteBits / bits;
   const int64_t num_zp_per_uint8 = K / block_size < num_elements_per_uint8 ? K / block_size : num_elements_per_uint8;
@@ -295,18 +304,21 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
   // Prepare essential parameters
   const int64_t total_blocks = (N * K) / block_size;
   const auto& inputs = node_unit.Inputs();
+  bool is_act_16bitquant = false;
 
   // 1. Add input A.
   {
+    // 1.1 Create QNN wrapper.
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
     if (is_htp_backend) {
-      // Add pre-Reshape to unsqueeze shape to 4D for HTP backend.
+      // 1.2 Add pre-Reshape to unsqueeze shape to 4D for HTP backend.
       TensorInfo input_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
+      is_act_16bitquant = utils::IsQuant16bit(input_info.qnn_data_type);
 
       // Input A having 3D shape is guaranteed in IsOpSupported.
-      assert(input_info.shape.size() == 3);
+      RETURN_IF_NOT(input_info.shape.size() == 3, "Unexpected MatMulNBits input rank");
       std::vector<uint32_t> reshape_output_shape = {input_info.shape[0], 1, input_info.shape[1], input_info.shape[2]};
 
       const std::string reshape_output_name = utils::UniqueNameGenerator().New(input_names[0], "_reshape_4d");
@@ -331,7 +343,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       input_names[0] = reshape_output_name;
 
       if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
-        // Workaround: Add pre-Cast to cast float32 to float16 to pass HTP validation.
+        // 1.3 (Workaround) Add pre-Cast to cast float32 to float16 to pass HTP validation.
         // TODO: Remove the additional Cast once HTP supports float32.
         const std::string cast_output_name = utils::UniqueNameGenerator().New(input_names[0], "_cast_fp16");
         RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(node_unit, "_cast_fp16"),
@@ -359,11 +371,13 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + weight_tensor_name).c_str());
     } else {
       // 2.1 Block-quantized data.
-      std::vector<uint8_t> quant_data;
+      std::vector<uint8_t> quant_data, weight_data;
       Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
       const OrtValueInfo* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-      RETURN_IF_NOT(weight_tensor_proto != nullptr, "MatMulNBits weight must be a constant initializer.");
+      std::vector<uint32_t> weight_shape = {};
+      Qnn_DataType_t weight_datatype = QNN_DATATYPE_UNDEFINED;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_tensor_proto, quant_data, false));
+      RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(quant_data, bits));
 
       // 2.2 Block-quantized scales.
       std::vector<uint8_t> per_block_uint8_scale;
@@ -386,60 +400,29 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         }
       }
 
+      QnnQuantParamsWrapper quantize_param;
+
       if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
         // 2.3 Block-quantized offsets
         // QNN GPU only supports symmetric quantization. Since block-quantized data is transformed to signed fixed
         // point 4 below, the value should be 0.
         std::vector<int32_t> per_block_int32_offset(total_blocks, 0);
 
-        // 2.4 Transform block-quantized data to signed fixed point 4.
-        RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(quant_data, bits));
-
-        // 2.5 Create QNN wrappers.
+        // 2.4 Create quant params.
         const std::vector<uint32_t> block_sizes = {1, gsl::narrow_cast<uint32_t>(block_size)};
-        QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(per_block_float_scale,
-                                                                     per_block_int32_offset,
-                                                                     block_sizes,
-                                                                     QNN_DATATYPE_SFIXED_POINT_4);
+        quantize_param = QnnQuantParamsWrapper::Block(per_block_float_scale,
+                                                      per_block_int32_offset,
+                                                      block_sizes);
 
-        std::vector<uint32_t> weight_shape = {gsl::narrow_cast<uint32_t>(N), gsl::narrow_cast<uint32_t>(K)};
-        QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
-                                               weight_tensor_type,
-                                               QNN_DATATYPE_SFIXED_POINT_4,
-                                               std::move(quantize_param),
-                                               std::move(weight_shape),
-                                               std::move(quant_data));
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)),
-                      "Failed to add weight tensor.");
+        weight_shape = {gsl::narrow_cast<uint32_t>(N), gsl::narrow_cast<uint32_t>(K)};
+        weight_datatype = QNN_DATATYPE_SFIXED_POINT_4;
+        weight_data = std::move(quant_data);
       } else {
-        // 2.3 Block-quantized offsets
-        std::vector<float> per_block_float_zp;
-        if (inputs.size() > 3 && inputs[3].Exists()) {
-          // Unpack block-quantized offsets to float each.
-          std::vector<uint8_t> per_block_uint8_zp;
-          const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
-          RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
-          UnpackDataToDatatype<float>(per_block_uint8_zp, bits, num_zp_per_uint8, per_block_float_zp);
-
-          // Shift offsets for transformation from unsigned to signed fixed point and negate the values to align with
-          // QNN definition for offsets.
-          const float offset_shift = static_cast<float>(1 << (bits - 1));
-          for (size_t idx = 0; idx < per_block_float_zp.size(); ++idx) {
-            per_block_float_zp[idx] = -(per_block_float_zp[idx] - offset_shift);
-          }
-        } else {
-          // Default to 0.
-          per_block_float_zp.assign(total_blocks, 0);
-        }
-
-        // 2.4 Block-quantized data.
-        // Transform data from unsigned to signed fixed point.
-        RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(quant_data, bits));
-        // Unpack block-quantized data to uint8_t each.
+        // 2.3 Unpack data to one byte per element,
+        // and transpose [N,K] -> [K,N] (= [1,1,K,N] in HWCN Conv2D layout).
         std::vector<uint8_t> unpacked_quant_data;
         UnpackDataToDatatype<uint8_t>(quant_data, bits, num_elements_per_uint8, unpacked_quant_data);
 
-        // Transpose block-quantized data to [K, N] which equals to [1, 1, K, N].
         std::vector<uint8_t> transposed_unpacked_quant_data;
         RETURN_IF_ERROR(utils::TwoDimensionTranspose<uint8_t>(
             unpacked_quant_data,
@@ -448,26 +431,145 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
             logger,
             do_op_validation));
 
-        // 2.5 Create QNN wrappers.
-        // Note that unlike weights requiring transpose, scales/offsets are expected in original ONNX shape.
-        const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
-        QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(per_block_float_scale,
-                                                                     per_block_float_zp,
-                                                                     gsl::narrow_cast<uint32_t>(bits),
-                                                                     block_sizes);
+        weight_shape = {1u, 1u, gsl::narrow_cast<uint32_t>(K), gsl::narrow_cast<uint32_t>(N)};
+        weight_datatype = QNN_DATATYPE_SFIXED_POINT_8;
+        weight_data = std::move(transposed_unpacked_quant_data);
 
-        // Shape is for Conv2d, expecting in HWIO.
-        std::vector<uint32_t> weight_shape = {1, 1, gsl::narrow_cast<uint32_t>(K), gsl::narrow_cast<uint32_t>(N)};
-        QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
-                                               weight_tensor_type,
-                                               // HTP will derive the actual data type from quant param.
-                                               QNN_DATATYPE_SFIXED_POINT_8,
-                                               std::move(quantize_param),
-                                               std::move(weight_shape),
-                                               std::move(transposed_unpacked_quant_data));
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)),
-                      "Failed to add weight tensor.");
+        // 2.4 Compute quant params: try LPBQ (BLOCKWISE_EXPANSION) first, otherwise fall back to BwFloatBlock.
+        bool used_lpbq = false;
+        const bool zp_is_symmetric = !(inputs.size() > 3 && inputs[3].Exists()) ||
+                                     utils::AreZeroPointsSymmetricConstant(qnn_model_wrapper, inputs[3].name, bits);
+
+        if (bits == 4 && is_act_16bitquant && zp_is_symmetric) {
+          // Build a synthetic OrtNodeUnitIODef to drive QnnQuantParamsWrapper::Init's
+          // block-quant branch, which handles the BQ→LPBQ conversion.
+          //
+          // The weight tensor's quant_param does not carry block-quantization info in
+          // the standard ONNX format, so we construct a synthetic def with:
+          //   - scale  = the real scale initializer (provides the BQ scales)
+          //   - zero_point = nullptr  ← ZP symmetry has already been verified above via
+          //                             AreZeroPointsSymmetricConstant, so re-checking is redundant
+          //   - axis   = std::nullopt ← uses Init's DEFAULT_QDQ_AXIS=1, which matches
+          //                             the MatMulNBits scale tensor layout [N, K/block_size]
+          //   - block_size = block_size
+          //   - type   = INT4           4-bit weights
+          //
+          // Only quant_param is consumed from the result; the rest of synthetic_weight_info
+          // is discarded.
+          OrtNodeUnitIODef::QuantParam synthetic_qp;
+          synthetic_qp.scale = scale_tensor_proto;
+          synthetic_qp.zero_point = nullptr;
+          synthetic_qp.axis = std::nullopt;
+          synthetic_qp.block_size = block_size;
+
+          OrtNodeUnitIODef synthetic_weight_def = weight_tensor;
+          synthetic_weight_def.quant_param = synthetic_qp;
+          synthetic_weight_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4;
+
+          TensorInfo synthetic_weight_info = {};
+          Ort::Status lpbq_status = qnn_model_wrapper.GetTensorInfo(synthetic_weight_def, synthetic_weight_info);
+          if (!lpbq_status.IsOK()) {
+            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("LPBQ conversion failed: " + lpbq_status.GetErrorMessage()).c_str());
+          } else if (synthetic_weight_info.quant_param.IsLPBQ()) {
+            //   Update quant params for the shape transformations:
+            //   [N,K] -> transpose -> [K,N]: axis 0 (N) -> axis 1 (N)
+            //   [K,N] -> unsqueeze -> [1,1,K,N]: axis 1 (N) -> axis 3 (N)
+            quantize_param = synthetic_weight_info.quant_param.Copy();
+            RETURN_IF_ERROR(quantize_param.HandleTranspose<uint32_t>(std::vector<uint32_t>({1u, 0u})));
+            const std::vector<uint32_t> kn_shape = {gsl::narrow_cast<uint32_t>(K), gsl::narrow_cast<uint32_t>(N)};
+            RETURN_IF_ERROR(quantize_param.HandleUnsqueeze<uint32_t>(kn_shape, weight_shape));
+            used_lpbq = true;
+            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: LPBQ (BLOCKWISE_EXPANSION) for " + weight_tensor_name).c_str());
+          }
+        }
+
+        if (!used_lpbq) {
+          // Non-LPBQ block-quant path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
+          const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
+                               : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
+                               : !zp_is_symmetric ? "zero-points not symmetric"
+                                                  : "LPBQ conversion failed (enable_block_quant_weight_optimization=0)";
+          ORT_CXX_LOG(logger,
+                      ORT_LOGGING_LEVEL_VERBOSE,
+                      ("MatMulNBits weight encoding: non-LPBQ block-quant path for " + weight_tensor_name +
+                       " [LPBQ skipped: " + reason + "]")
+                          .c_str());
+
+          // 2.5 Block-quantized offsets.
+          std::vector<float> per_block_float_zp;
+          if (inputs.size() > 3 && inputs[3].Exists()) {
+            // Unpack block-quantized offsets to float each.
+            std::vector<uint8_t> per_block_uint8_zp;
+            const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
+            RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
+            UnpackDataToDatatype<float>(per_block_uint8_zp, bits, num_zp_per_uint8, per_block_float_zp);
+
+            // Shift offsets for transformation from unsigned to signed fixed point and negate the values to align with
+            // QNN definition for offsets.
+            const float offset_shift = static_cast<float>(1 << (bits - 1));
+            for (size_t idx = 0; idx < per_block_float_zp.size(); ++idx) {
+              per_block_float_zp[idx] = -(per_block_float_zp[idx] - offset_shift);
+            }
+          } else {
+            // Default to 0.
+            per_block_float_zp.assign(total_blocks, 0);
+          }
+
+          // Note that unlike weights requiring transpose, scales/offsets are expected in original ONNX shape.
+          const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
+
+          // Prefer the HTP native BQ kernel (QNN_QUANTIZATION_ENCODING_BLOCK) when the BQ parameters satisfy
+          // its constraints: it consumes the INT16 activation and produces an INT16 output directly, avoiding
+          // the INT16→FP16 activation Dequantize and FP16→INT16 output Quantize that BW_FLOAT_BLOCK requires.
+          RETURN_IF_NOT(qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0]),
+                        "Expecting MatMulNBits input tensor wrapper should already be constructed.");
+          const Qnn_DataType_t act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+          const bool is_supported_native_bq = bq::IsHTPSupportedNativeBQ(qnn_model_wrapper.GetHtpArch(),
+                                                                         act_dtype,
+                                                                         gsl::narrow_cast<uint32_t>(bits),
+                                                                         gsl::narrow_cast<uint32_t>(block_size),
+                                                                         gsl::narrow_cast<uint32_t>(N),
+                                                                         per_block_float_zp);
+
+          if (is_supported_native_bq) {
+            // Native BQ requires symmetric quantization; IsHTPSupportedNativeBQ verified all offsets are zero.
+            const std::vector<int32_t> per_block_int32_zp(per_block_float_zp.size(), 0);
+            quantize_param = QnnQuantParamsWrapper::Block(per_block_float_scale,
+                                                          per_block_int32_zp,
+                                                          block_sizes);
+            ORT_CXX_LOG(logger,
+                        ORT_LOGGING_LEVEL_VERBOSE,
+                        ("MatMulNBits weight encoding: native BQ (BLOCK) for " + weight_tensor_name).c_str());
+          } else {
+            quantize_param = QnnQuantParamsWrapper::BwFloatBlock(per_block_float_scale,
+                                                                 per_block_float_zp,
+                                                                 gsl::narrow_cast<uint32_t>(bits),
+                                                                 block_sizes);
+            ORT_CXX_LOG(logger,
+                        ORT_LOGGING_LEVEL_VERBOSE,
+                        ("MatMulNBits weight encoding: BW_FLOAT_BLOCK for " + weight_tensor_name).c_str());
+            if (is_act_16bitquant) {
+              // 2.6 Add Dequantize to UINT16/INT16 → FP16 (only the non-native BQ kernel needs FP16 activation).
+              const std::string fp16_act_name = utils::UniqueNameGenerator().New(input_names[0], "_dq_fp16");
+              RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
+                                                                     input_names[0],
+                                                                     fp16_act_name,
+                                                                     do_op_validation,
+                                                                     "MatMulNBits"));
+              input_names[0] = fp16_act_name;
+            }
+          }
+        }
       }
+      // 2.7 Create and register the weight tensor wrapper.
+      QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
+                                             weight_tensor_type,
+                                             weight_datatype,
+                                             std::move(quantize_param),
+                                             std::move(weight_shape),
+                                             std::move(weight_data));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)),
+                    "Failed to add weight tensor.");
     }
     input_names.push_back(weight_tensor_name);
   }
@@ -561,15 +663,45 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     param_tensor_names.push_back(pad_amount_param_wrapper.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param_wrapper));
 
+    std::vector<uint32_t> dilation = {1, 1};
+    QnnParamWrapper dilation_param_wrapper(node_unit.Index(),
+                                           node_unit.Name(),
+                                           QNN_OP_CONV_2D_PARAM_DILATION,
+                                           {2},
+                                           std::move(dilation));
+    param_tensor_names.push_back(dilation_param_wrapper.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(dilation_param_wrapper));
+
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
+                                           node_unit.Index(),
+                                           node_unit.Name(),
+                                           1,
+                                           QNN_OP_CONV_2D_PARAM_GROUP,
+                                           param_tensor_names));
+
     // Input originally having 3D shape is guaranteed in IsOpSupported.
-    assert(output_info.shape.size() == 3);
+    RETURN_IF_NOT(output_info.shape.size() == 3, "Unexpected MatMulNBits output rank.");
     std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
+
+    // Determine the Conv2D output data type from the registered weight tensor's quant encoding.
+    // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION) and native BQ
+    // (BLOCK) both produce the actual output data type (e.g. uint16/int16 for QDQ models) directly.
+    // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
+    bool is_bw_float_block = false;
+    if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
+      const auto& weight_quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
+      is_bw_float_block = weight_quant_params.encodingDefinition == QNN_DEFINITION_DEFINED &&
+                          weight_quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK;
+    }
+    const Qnn_DataType_t conv2d_output_dtype = is_bw_float_block ? QNN_DATATYPE_FLOAT_16 : output_info.qnn_data_type;
+    QnnQuantParamsWrapper conv2d_output_qparam = is_bw_float_block ? QnnQuantParamsWrapper()
+                                                                   : output_info.quant_param.Copy();
 
     const std::string conv2d_output_name = utils::UniqueNameGenerator().New(output_tensor.name, "_conv2d");
     QnnTensorWrapper conv2d_output_tensor_wrapper(conv2d_output_name,
                                                   QNN_TENSOR_TYPE_NATIVE,
-                                                  QNN_DATATYPE_FLOAT_16,  // HTP Conv2d BQ kernel only supports FP16.
-                                                  output_info.quant_param.Copy(),
+                                                  conv2d_output_dtype,
+                                                  std::move(conv2d_output_qparam),
                                                   std::vector<uint32_t>(conv2d_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv2d_output_tensor_wrapper)),
                   "Failed to add Conv2d output tensor.");
@@ -598,6 +730,20 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                     do_op_validation));
 
       reshape_input_name = cast_output_name;
+    } else if (utils::IsQuant16bit(output_info.qnn_data_type) && is_bw_float_block) {
+      // 2. Add Quantize to FP16 → UINT16/INT16 (only needed when the kernel computed in FP16).
+      const std::string q_suffix = output_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ? "_q_int16" : "_q_uint16";
+      const std::string q_output_name = utils::UniqueNameGenerator().New(output_tensor.name, q_suffix);
+      RETURN_IF_ERROR(bq::AddFp16ToInt16QuantizeOutput(qnn_model_wrapper,
+                                                       conv2d_output_name,
+                                                       q_output_name,
+                                                       QNN_TENSOR_TYPE_NATIVE,
+                                                       output_info.qnn_data_type,
+                                                       output_info.quant_param.Copy(),
+                                                       std::vector<uint32_t>(conv2d_output_shape),
+                                                       do_op_validation));
+
+      reshape_input_name = q_output_name;
     }
 
     // 3. Add post-Reshape to squeeze shape back.

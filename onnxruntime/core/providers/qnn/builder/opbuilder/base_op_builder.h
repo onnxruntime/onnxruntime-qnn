@@ -140,6 +140,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"AveragePool", QNN_OP_POOL_AVG_2D},
         {"BatchNormalization", QNN_OP_BATCHNORM},
         {"Cast", QNN_OP_CAST},
+        {"CastLike", QNN_OP_CAST},
         {"Ceil", QNN_OP_ELEMENT_WISE_CEIL},
         {"Clip", QNN_OP_RELU_MIN_MAX},
         {"Concat", QNN_OP_CONCAT},
@@ -185,6 +186,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Mul", QNN_OP_ELEMENT_WISE_MULTIPLY},
         {"Neg", QNN_OP_ELEMENT_WISE_NEG},
         {"Not", QNN_OP_ELEMENT_WISE_NOT},
+        {"NotEqual", QNN_OP_ELEMENT_WISE_NOT_EQUAL},
         {"OneHot", QNN_OP_ONE_HOT},
         {"Or", QNN_OP_ELEMENT_WISE_OR},
         {"PRelu", QNN_OP_PRELU},
@@ -203,6 +205,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Round", QNN_OP_ELEMENT_WISE_ROUND},
         {"ScatterElements", QNN_OP_SCATTER_ELEMENTS},
         {"ScatterND", QNN_OP_SCATTER_ND},
+        {"Shape", QNN_OP_SHAPE},
         {"Sigmoid", QNN_OP_SIGMOID},
         {"Sign", QNN_OP_ELEMENT_WISE_SIGN},
         {"SimplifiedLayerNormalization", QNN_OP_RMS_NORM},
@@ -242,10 +245,14 @@ class BaseOpBuilder : public IOpBuilder {
     }
   }
 
-  Ort::Status ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                   const OrtNodeUnit& node_unit,
-                                   Qnn_Scalar_t& axis_qnn_scalar,
-                                   int32_t& default_axis_value) const;
+  // Reads the named axis attribute, normalizes negative values against the input rank,
+  // and range-checks. Call this before AddQnnScalar<T> — T and the QNN param name are
+  // the caller's responsibility since they depend on the QNN op definition.
+  Ort::Status GetCanonicalizedAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            const std::string& attr_name,
+                                            int32_t default_axis,
+                                            int32_t& axis_out) const;
 
   size_t GetInputCountQnnRequired(const OrtNodeUnit& node_unit) const {
     auto input_output_cout = GetInputOutputCountQnnRequired(node_unit.OpType());

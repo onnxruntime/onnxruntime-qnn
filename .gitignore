@@ -198,3 +198,5 @@ Package.resolved
 .build/
 .swiftpm/
 repros/
+
+.claude/

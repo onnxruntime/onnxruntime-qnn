@@ -33,8 +33,7 @@ static void RunCumSumOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>("CumSum_node", op_type, {input_def_1}, {input_def_2}, attrs),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis 0

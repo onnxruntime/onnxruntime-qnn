@@ -206,8 +206,7 @@ void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir
   RunQnnModelTest(build_model,
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  fp32_abs_err);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 
   // If the test was skipped (e.g., FP16/FP32 HTP unavailable on this architecture) no JSON
   // graph dump is produced; skip the graph assertions in that case.
@@ -291,8 +290,7 @@ TEST_F(QnnHTPBackendTests, DQMatMulIntegerFusion_NoAZp_RejectsFusion) {
                                                      /*include_b_zp=*/true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (!HasQnnJsonGraph(json_dir)) {
     return;
@@ -318,8 +316,7 @@ TEST_F(QnnHTPBackendTests, DQMatMulIntegerFusion_TwoMatMulIntegersShareDQL) {
   RunQnnModelTest(BuildSharedDqlTwoMatMulIntegersTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (!HasQnnJsonGraph(json_dir)) {
     return;

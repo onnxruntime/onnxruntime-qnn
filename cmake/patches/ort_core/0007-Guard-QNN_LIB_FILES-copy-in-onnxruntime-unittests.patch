@@ -1,0 +1,35 @@
+From: QNN EP team <noreply@qualcomm.com>
+Date: Mon, 18 Aug 2026 00:00:00 +0000
+Subject: [PATCH] cmake: guard QNN_LIB_FILES copy in onnxruntime_unittests.cmake
+
+In static_lib mode (e.g. Android builds) QNN_LIB_FILES is empty because
+the file(GLOB ...) block that populates it is inside an if(MSVC OR Linux)
+condition that is skipped.  The unguarded
+
+  add_custom_command(... cmake -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
+
+emits a cmake -E copy invocation with zero source arguments, which causes
+CMake to print its usage banner and exit non-zero, crashing the build.
+
+Fix: add AND QNN_LIB_FILES to the if(onnxruntime_USE_QNN) guard so the
+copy command is only registered when there are actually files to copy.
+Shared-lib builds are unaffected; QNN_LIB_FILES is still non-empty there.
+
+TODO: re-check this patch on future ort_core upleveling since the target
+line number may drift.
+
+---
+ cmake/onnxruntime_unittests.cmake | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/cmake/onnxruntime_unittests.cmake
++++ b/cmake/onnxruntime_unittests.cmake
+@@ -2081,7 +2081,7 @@
+                 ${JAVA_NATIVE_TEST_DIR}/${CUSTOM_OP_LIBRARY_DST_FILE_NAME})
+
+         # also copy other library dependencies that may be required by tests to native-test
+-        if(onnxruntime_USE_QNN)
++        if(onnxruntime_USE_QNN AND QNN_LIB_FILES)
+           add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
+               COMMAND ${CMAKE_COMMAND} -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
+         endif()

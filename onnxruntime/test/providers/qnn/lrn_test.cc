@@ -83,8 +83,7 @@ static void RunCPULRNOpTest(const TestInputDef<float>& input_def, int64_t size,
   RunQnnModelTest(BuildLRNTestCase(input_def, size, alpha, beta, bias),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs an LRN model on the QNN HTP backend. Checks the graph node assignment, and that inference

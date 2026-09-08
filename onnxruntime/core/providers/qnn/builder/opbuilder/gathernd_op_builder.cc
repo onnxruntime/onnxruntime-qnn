@@ -126,14 +126,10 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   OrtNodeAttrHelper node_helper(node_unit);
   const int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
 
-  Qnn_Scalar_t batch_dims_scalar = QNN_SCALAR_INIT;
-  batch_dims_scalar.dataType = QNN_DATATYPE_UINT_32;
-  batch_dims_scalar.uint32Value = static_cast<uint32_t>(batch_dims);
-
-  QnnParamWrapper batch_dims_param(node_unit.Index(), node_unit.Name(),
-                                   QNN_OP_GATHER_ND_PARAM_BATCH_DIMS, batch_dims_scalar);
-  std::vector<std::string> param_tensor_names = {batch_dims_param.GetParamTensorName()};
-  qnn_model_wrapper.AddParamWrapper(std::move(batch_dims_param));
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         static_cast<uint32_t>(batch_dims),
+                                         QNN_OP_GATHER_ND_PARAM_BATCH_DIMS, param_tensor_names));
 
   // Get tensor wrappers for shape calculation
   const auto& data_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);

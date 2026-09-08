@@ -68,31 +68,54 @@ foreach ($package in $nugetPackages) {
             New-Item -Path $finalExtractDir -ItemType Directory -Force | Out-Null
         }
 
-        # DLL paths to extract
-        $dllPaths = @(
-            @{
-                Source = "runtimes\win-arm64\native\onnxruntime_providers_qnn.dll"
-                Dest = "onnxruntime_providers_qnn.dll"
-            },
-            @{
-                Source = "lib\netstandard2.0\Qualcomm.ML.OnnxRuntime.QNN.dll"
-                Dest = "Qualcomm.ML.OnnxRuntime.QNN.dll"
-            }
+        # The architecture-neutral managed helper assembly is present in every package.
+        $managedDll = @{
+            Source = "lib\netstandard2.0\Qualcomm.ML.OnnxRuntime.QNN.dll"
+            Dest   = "Qualcomm.ML.OnnxRuntime.QNN.dll"
+        }
+
+        # The native provider DLL lives under a per-architecture runtimes folder. A single-arch
+        # package contains exactly one of these (arm64 OR x64). The arm64 and x64 copies share the
+        # same filename but are different binaries, so each is extracted into an arch-named
+        # subfolder to avoid colliding when both packages are staged into the same output dir.
+        $providerDlls = @(
+            "runtimes\win-arm64\native\onnxruntime_providers_qnn.dll",
+            "runtimes\win-x64\native\onnxruntime_providers_qnn.dll"
         )
 
         $allDllsFound = $true
 
-        foreach ($dllInfo in $dllPaths) {
-            $sourceDllPath = Join-Path $tempExtractDir $dllInfo.Source
+        # Managed assembly: required in every package.
+        $managedSource = Join-Path $tempExtractDir $managedDll.Source
+        if (Test-Path -LiteralPath $managedSource) {
+            Copy-Item -LiteralPath $managedSource -Destination (Join-Path $finalExtractDir $managedDll.Dest) -Force
+        }
+        else {
+            Write-Host "  ERROR: DLL not found at $($managedDll.Source)" -ForegroundColor Red
+            $allDllsFound = $false
+        }
+
+        # Native provider assembly: extract whichever architecture(s) this package contains,
+        # each into its own arch-named subfolder. At least one must be present.
+        $providerFound = $false
+        foreach ($providerPath in $providerDlls) {
+            $sourceDllPath = Join-Path $tempExtractDir $providerPath
 
             if (Test-Path -LiteralPath $sourceDllPath) {
-                $targetDllPath = Join-Path $finalExtractDir $dllInfo.Dest
-                Copy-Item -LiteralPath $sourceDllPath -Destination $targetDllPath -Force
+                # e.g. "runtimes\win-arm64\native\..." -> "win-arm64"
+                $arch = Split-Path (Split-Path (Split-Path $providerPath -Parent) -Parent) -Leaf
+                $archDir = Join-Path $finalExtractDir $arch
+                if (-not (Test-Path $archDir)) {
+                    New-Item -Path $archDir -ItemType Directory -Force | Out-Null
+                }
+                Copy-Item -LiteralPath $sourceDllPath -Destination (Join-Path $archDir "onnxruntime_providers_qnn.dll") -Force
+                $providerFound = $true
             }
-            else {
-                Write-Host "  ERROR: DLL not found at $($dllInfo.Source)" -ForegroundColor Red
-                $allDllsFound = $false
-            }
+        }
+
+        if (-not $providerFound) {
+            Write-Host "  ERROR: onnxruntime_providers_qnn.dll not found under runtimes\win-arm64\native or runtimes\win-x64\native" -ForegroundColor Red
+            $allDllsFound = $false
         }
 
         if (-not $allDllsFound) {

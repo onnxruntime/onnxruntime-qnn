@@ -507,11 +507,13 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
                                     std::vector<uint32_t>(matmul_out_shape));
 
     const std::string add_node_name = node_base + "_bias_add";
+
     if (validate) {
       RETURN_IF_ERROR(qmw.ValidateQnnNode(add_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
                                           QNN_OP_ELEMENT_WISE_ADD,
                                           {add_lhs_handle.GetQnnTensor(), bias_tensor.GetQnnTensor()},
-                                          {add_out_tensor.GetQnnTensor()}, {}));
+                                          {add_out_tensor.GetQnnTensor()},
+                                          {}));
     } else {
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias tensor");
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(add_out_tensor)),

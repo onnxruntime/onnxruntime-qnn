@@ -84,7 +84,8 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                   "Failed to add alpha_mul_output tensor.");
 
     // Step 1: Create Mul node for alpha * x
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul"),
+    std::string alpha_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(alpha_mul_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {alpha_tensor_name, input_name},
@@ -111,8 +112,9 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
                 "Failed to add output tensor.");
 
-  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x)
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid"),
+  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x).
+  std::string sigmoid_node_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sigmoid_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_SIGMOID,
                                                 {sigmoid_input_name},
@@ -122,7 +124,8 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                 "Failed to create sigmoid node.");
 
   // Step 3: Create Mul node for x * sigmoid(alpha * x) or x * sigmoid(x)
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul"),
+  std::string final_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(final_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                 {input_name, sigmoid_output_name},

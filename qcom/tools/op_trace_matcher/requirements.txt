@@ -1,0 +1,12 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+# Runtime requirements for source_to_optimized_matcher.py and
+# enrich_profiling_csv.py. For unit tests, additionally `pip install pytest`
+# (or use the repo-wide requirements-dev.txt which already includes all three).
+#
+# Minimum versions: numpy floor matches the onnxruntime-qnn package
+# requirement; onnx 1.13 is the first release with the
+# numpy_helper.to_array / from_array APIs the matcher relies on.
+numpy >= 1.25.2
+onnx >= 1.13.0

@@ -29,7 +29,7 @@ static void RunModTest(const std::vector<TestInputDef<DataType>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<DataType>("Mod_node", "Mod", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //

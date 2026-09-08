@@ -242,8 +242,7 @@ void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir
   RunQnnModelTest(build_model,
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  fp32_abs_err);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 
   // RunQnnModelTest skips silently when the fixture's backend is unavailable (no ::testing::Test
   // GTEST_SKIP propagates back here). Detect that via the absence of any QNN JSON graph dump
@@ -336,9 +335,8 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoAZp_RejectsFusion) {
                                                    /*include_b_zp=*/true),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
                   // Peripheral Cast/Mul on HTP fp16 introduces small rounding vs CPU EP reference.
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (!HasQnnJsonGraph(json_dir)) {
     GTEST_SKIP() << "No QNN JSON graph dumped; HTP backend likely unavailable on this host.";
@@ -366,8 +364,7 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_TwoConvIntegersShareDQL) {
   RunQnnModelTest(BuildSharedDqlTwoConvIntegersTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (!HasQnnJsonGraph(json_dir)) {
     GTEST_SKIP() << "No QNN JSON graph dumped; HTP backend likely unavailable on this host.";
@@ -540,8 +537,7 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_SiblingNotFusible_RejectsAll) {
   RunQnnModelTest(BuildSharedDqlOneSiblingRejectedTestCase(),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/1e-3f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (!HasQnnJsonGraph(json_dir)) {
     GTEST_SKIP() << "No QNN JSON graph dumped; HTP backend likely unavailable on this host.";

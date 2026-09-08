@@ -121,7 +121,7 @@ Central Portal account settings.
 The self-hosted build runners must satisfy:
 
 1. **Qualcomm Root CA in the Java truststore** — `artifactory-qdc-global.qualcomm.com`
-   uses the Qualcomm Root CA G2 (same CA as `artifactory-las.qualcomm.com`).
+   uses the Qualcomm Root CA G2.
    If `mvn deploy:deploy-file` fails with an SSL handshake error, import the CA
    cert (`qcom/scripts/upleveling/certs/artifactory-ca.pem`) into the JDK's
    `cacerts` keystore once on the runner:

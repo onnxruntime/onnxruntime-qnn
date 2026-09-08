@@ -4,6 +4,7 @@
 #include "onnxruntime_c_api.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <gsl/gsl>
 #include <optional>
 #include <string>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -34,7 +36,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType>(op_type + "_node", op_type, input_defs, {}, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 template <typename InputType1, typename InputType2 = int64_t>
@@ -53,7 +55,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Test float DepthToSpace on the QNN CPU backend.
@@ -146,6 +148,60 @@ TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
                  ExpectedEPNodeAssignment::All);
 }
 
+// Variadic (>2 input) float Sum on the QNN CPU backend (non-quantized fold branch).
+TEST_F(QnnCPUBackendTests, VariadicOp_Sum_3Inputs) {
+  RunOpTestOnCPU("Sum",
+                 {TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                  TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                  TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8))},
+                 {},
+                 13,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// 2-input float Sum regression: n==2 shares the same variadic helper path as n>2.
+TEST_F(QnnCPUBackendTests, VariadicOp_Sum_2Inputs) {
+  RunOpTestOnCPU("Sum",
+                 {TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                  TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8))},
+                 {},
+                 13,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Variadic float Sum with mixed-rank broadcasting: {2,3,4},{4},{3,1} -> {2,3,4}.
+TEST_F(QnnCPUBackendTests, VariadicOp_Sum_3Inputs_BroadcastMixedRank) {
+  RunOpTestOnCPU("Sum",
+                 {TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 24)),
+                  TestInputDef<float>({4}, false, GetFloatDataInRange(-10.0f, 10.0f, 4)),
+                  TestInputDef<float>({3, 1}, false, GetFloatDataInRange(-10.0f, 10.0f, 3))},
+                 {},
+                 13,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Variadic int64 Max with an int64 graph output on the QNN CPU backend.
+TEST_F(QnnCPUBackendTests, VariadicOp_Max_3Inputs_Int64Output) {
+  RunOpTestOnCPU<int64_t>("Max",
+                          {TestInputDef<int64_t>({1, 2, 2, 2}, false, {-4, 7, 0, 3, 9, -2, 5, 1}),
+                           TestInputDef<int64_t>({1, 2, 2, 2}, false, {6, -1, 2, 8, -5, 4, 0, 7}),
+                           TestInputDef<int64_t>({1, 2, 2, 2}, false, {1, 3, -8, 2, 0, 6, -3, 9})},
+                          {},
+                          13,
+                          ExpectedEPNodeAssignment::All);
+}
+
+// Variadic int64 Min with an int64 graph output on the QNN CPU backend.
+TEST_F(QnnCPUBackendTests, VariadicOp_Min_3Inputs_Int64Output) {
+  RunOpTestOnCPU<int64_t>("Min",
+                          {TestInputDef<int64_t>({1, 2, 2, 2}, false, {-4, 7, 0, 3, 9, -2, 5, 1}),
+                           TestInputDef<int64_t>({1, 2, 2, 2}, false, {6, -1, 2, 8, -5, 4, 0, 7}),
+                           TestInputDef<int64_t>({1, 2, 2, 2}, false, {1, 3, -8, 2, 0, 6, -3, 9})},
+                          {},
+                          13,
+                          ExpectedEPNodeAssignment::All);
+}
+
 // Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.
 TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
   RunOpTestOnCPU("HardSwish",
@@ -165,8 +221,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
                                          {}, {}),
                   provider_options,
                   14,
-                  ExpectedEPNodeAssignment::All,
-                  0.004f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.004f)});
 }
 
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
@@ -257,8 +312,7 @@ static void RunOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType>(op_type + "_node", op_type, input_defs, {}, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs a non-QDQ model with indices inputs (int64) on HTP and compares output to CPU EP.
@@ -290,8 +344,7 @@ static void RunOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs an FP16 model on the QNN HTP backend and compares QNN EP's accuracy to CPU EP.
@@ -343,6 +396,17 @@ TEST_F(QnnHTPBackendTests, Concat_EmptyInitializer) {
             ExpectedEPNodeAssignment::All);
 }
 
+// Variadic QDQ Sum with mixed-rank broadcasting on the QNN HTP backend: {2,3,4},{4},{3,1} -> {2,3,4}.
+TEST_F(QnnHTPBackendTests, VariadicOp_Sum_3Inputs_BroadcastMixedRank_U8) {
+  RunQDQOpTest<uint8_t>("Sum",
+                        {TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 24)),
+                         TestInputDef<float>({4}, false, GetFloatDataInRange(-10.0f, 10.0f, 4)),
+                         TestInputDef<float>({3, 1}, false, GetFloatDataInRange(-10.0f, 10.0f, 3))},
+                        {},
+                        13,
+                        ExpectedEPNodeAssignment::All);
+}
+
 // Test the accuracy of QDQ Sigmoid.
 TEST_F(QnnHTPBackendTests, UnaryOp_Sigmoid) {
   RunQDQOpTest<uint8_t>("Sigmoid",
@@ -384,6 +448,27 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tan_fp) {
                    true,
                    std::to_string(QNN_SOC_MODEL_SM8350)  // This test fails with QNN_SOC_MODEL_SM8850 due to a known HTP issue
   );
+}
+
+// Check that QNN compiles DQ -> Tan -> Q as a single unit.
+// Use an input of rank 3.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U8) {
+  RunQDQOpTest<uint8_t>("Tan",
+                        {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                        {},
+                        11,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// Tests accuracy of 16-bit QDQ Tan.
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_QDQ_U16) {
+  RunQDQOpTest<uint16_t>("Tan",
+                         {TestInputDef<float>({1, 2, 3}, false, -1.0f, 1.0f)},
+                         {},
+                         11,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,  // Tan op domain
+                         true);        // Use com.microsoft Q/DQ op domains
 }
 
 // disabled for QNN 2.28.0.241029 backendValidateOpConfig failed
@@ -480,6 +565,68 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Returns true if at least one QNN JSON graph file exists in `dump_dir`. Used to skip graph
+// assertions when the test was not executed (e.g., FP32 HTP unavailable on this architecture and
+// no JSON dump is produced).
+static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
+  if (!std::filesystem::exists(dump_dir)) return false;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Builds a QDQ model and asserts the op emits as its dedicated fine-grained QNN op name.
+static void RunDedicatedOpTypeTest(const std::filesystem::path& json_qnn_graph_dir,
+                                   const std::string& op_type,
+                                   const std::string& expected_qnn_op_name) {
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup =
+      gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({1, 2, 2, 2}, /*is_initializer=*/false, -1.0f, 1.0f)};
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, input_defs, {}, {}),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, expected_qnn_op_name, /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/0);
+}
+
+// Relu/Sigmoid/Tanh/Elu each map to their dedicated fine-grained QNN op.
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Relu) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Relu", "Relu", "Relu");
+}
+
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Sigmoid) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Sigmoid", "Sigmoid", "Sigmoid");
+}
+
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Tanh) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Tanh", "Tanh", "Tanh");
+}
+
+TEST_F(QnnHTPBackendTests, DedicatedOpType_Elu) {
+  RunDedicatedOpTypeTest("DedicatedOpType_Elu", "Elu", "Elu");
+}
+
 TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U8) {
   RunQDQOpTest<uint8_t>("Softplus",
                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
@@ -496,6 +643,43 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U16) {
                          ExpectedEPNodeAssignment::All,
                          kOnnxDomain,
                          true);
+}
+
+// Check that QNN fuses DQ -> Softplus -> Q into a single quantized ElementWiseNeuron op,
+// instead of leaving Softplus running as unfused float32 bracketed by its own Quantize/
+// Dequantize pair. With offload_graph_io_quantization=0, the graph's Q/DQ input and output
+// boundary nodes are always present (1 Quantize + 1 Dequantize) even when fused; an extra
+// pair beyond that indicates Softplus itself failed to fuse.
+// Regression test for Softplus being missing from the QDQ-fusion selector's unary_ops
+// allowlist even though the op-builder fully supports quantized Softplus.
+TEST_F(QnnHTPBackendTests, NeuronOpType_Softplus) {
+  const std::filesystem::path json_qnn_graph_dir = "NeuronOpType_Softplus";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup =
+      gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({1, 2, 2, 2}, /*is_initializer=*/false, -1.0f, 1.0f)};
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Softplus_node", "Softplus", input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>("Softplus_node", "Softplus", input_defs, {}, {}),
+                       provider_options,
+                       /*opset_version=*/14,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", /*count=*/1);
 }
 
 // Check that QNN compiles DQ -> HardSwish -> Q as a single unit.
@@ -880,7 +1064,7 @@ TEST_F(QnnHTPBackendTests, QuantAccuracyTest) {
   RunQnnModelTest(builder_func,
                   provider_options,
                   13,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test 8-bit QDQ Add
@@ -945,7 +1129,46 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
 #endif
   provider_options["enable_htp_fp16_precision"] = "1";
 
-  RunQnnModelTest(builder, provider_options, 17, ExpectedEPNodeAssignment::All, 1e-3);
+  RunQnnModelTest(builder,
+                  provider_options,
+                  17,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3)});
+}
+
+// Variadic (>2 input) Sum decomposed into a QNN binary-op chain.
+// QDQ path exercises DQ -> float Add chain -> Q (so partial sums do not clamp).
+
+TEST_F(QnnHTPBackendTests, VariadicOp_Sum_2Inputs) {
+  RunQDQOpTest<uint8_t>("Sum",
+                        {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+                         TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)},
+                        {},
+                        17,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// 3-input 8-bit QDQ Sum.
+TEST_F(QnnHTPBackendTests, VariadicOp_Sum_3Inputs) {
+  RunQDQOpTest<uint8_t>("Sum",
+                        {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+                         TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+                         TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)},
+                        {},
+                        17,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// 3-input 16-bit QDQ Sum (exercises the 16-bit requant path).
+TEST_F(QnnHTPBackendTests, VariadicOp_Sum_3Inputs_U16) {
+  RunQDQOpTest<uint16_t>("Sum",
+                         {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+                          TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+                          TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)},
+                         {},
+                         17,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);  // Use com.microsoft Q/DQ ops (16-bit zero-point needs contrib domain)
 }
 
 // Test 8-bit QDQ Sub
@@ -1150,6 +1373,14 @@ TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FLOAT) {
                    {},  // No attributes
                    13,
                    ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FP16) {
+  RunFP16OpTest("Reciprocal",
+                {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
+                {},  // No attributes
+                13,
+                ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, Reciprocal_QU8) {
@@ -1382,7 +1613,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
                       kOnnxDomain),
                   provider_options,
                   17,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test ScatterElements with default attributes on HTP
@@ -1813,13 +2044,13 @@ TEST_F(QnnHTPBackendTests, DQ_Q_ConvertFusion_SameType) {
   RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint8_t, uint8_t>(input0_def, input1_def, out_qparams_u8),
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   // QNN Convert op converts uint16 to uint16 at the graph output. Slightly different scale values.
   RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint16_t, uint16_t>(input0_def, input1_def, out_qparams_u16),
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU8) {
@@ -1999,8 +2230,9 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
   RunQnnModelTest(model_fn,
                   provider_options,
                   18,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);  // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
+                                       ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
@@ -2068,8 +2300,7 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   14,
-                  ExpectedEPNodeAssignment::All,
-                  1e-5f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   false);
 }

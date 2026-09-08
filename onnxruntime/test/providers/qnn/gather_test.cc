@@ -350,8 +350,7 @@ static void RunOpTest(const std::string& op_type,
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type + "_node", op_type, {input_def_1}, {input_defs_2}, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Non-QDQ model, Gather with static input and dynamic int64 indices
@@ -488,7 +487,7 @@ TEST_F(QnnHTPBackendTests, GatherNdSharedStaticNegIndicesDifferentDataShapes) {
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
-  RunQnnModelTest(build_model, provider_options, 13, ExpectedEPNodeAssignment::All);
+  RunQnnModelTest(build_model, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -388,6 +388,9 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
     case QNN_HTP_DEVICE_ARCH_V75:
       htp_arch_string = "V75";
       break;
+    case QNN_HTP_DEVICE_ARCH_V79:
+      htp_arch_string = "V79";
+      break;
     case QNN_HTP_DEVICE_ARCH_V81:
       htp_arch_string = "V81";
       break;

@@ -66,7 +66,10 @@ namespace test {
   provider_options["soc_model"] = "88";       // TODO: Use QnnTypes.h when it's availible
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(build_test_case, provider_options, opset, expected_ep_assignment, fp32_abs_err);
+  RunQnnModelTest(build_test_case,
+                  provider_options,
+                  opset,
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -246,6 +249,26 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Sigmoid) {
   RunBF16ModelTest(
       BuildBF16SigmoidTestCase(
           TestInputDef<float>(shape, false, GetSequentialFloatData(shape, -2.0f, 0.2f))),
+      shape);
+}
+
+// Test BF16 handling with Reciprocal, which is lowered to ElementWiseDivide against a
+// builder-created constant divisor tensor. Covers that divisor under BF16 mode.
+static GetTestModelFn BuildBF16ReciprocalTestCase(const TestInputDef<float>& input_def) {
+  return [input_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("reciprocal_node", "Reciprocal", {"input"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
+  };
+}
+
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Reciprocal) {
+  std::vector<int64_t> shape = {2, 3, 4};
+  RunBF16ModelTest(
+      BuildBF16ReciprocalTestCase(
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 1.0f, 0.1f))),
       shape);
 }
 

@@ -40,8 +40,7 @@ static void RunLpPoolOpTest(const std::vector<TestInputDef<float>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<float>("LpPool_node", "LpPool", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs a native FP16 LpPool model on the given QNN backend (HTP or GPU).
@@ -64,8 +63,7 @@ static void RunLpPoolFP16Test(const std::vector<TestInputDef<float>>& input_defs
   RunQnnModelTest(BuildOpTestCase<Ort::Float16_t>("LpPool_node", "LpPool", input_fp16_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 //
@@ -350,8 +348,7 @@ static void RunLpPoolHTPBF16Test(const std::vector<TestInputDef<float>>& input_d
   RunQnnModelTest(BuildOpTestCase<float>("LpPool_node", "LpPool", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_BF16_Basic) {

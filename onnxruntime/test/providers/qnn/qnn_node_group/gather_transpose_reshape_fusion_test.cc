@@ -123,8 +123,8 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_RowMajor) {
   RunQnnModelTest(BuildGatherTransposeReshapeTestCase(input_def, indices_shape, indices_data, transpose_perm, final_shape),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);  // fp32_abs_err: HTP uses fixed-point arithmetic, allow small numerical differences
+                  // HTP uses fixed-point arithmetic, allow small numerical differences.
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
@@ -166,8 +166,8 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
   RunQnnModelTest(BuildGatherTransposeReshapeTestCase(input_def, indices_shape, indices_data, transpose_perm, final_shape),
                   provider_options,
                   13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1e-2f);  // fp32_abs_err: HTP uses fixed-point arithmetic, allow small numerical differences
+                  // HTP uses fixed-point arithmetic, allow small numerical differences.
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
@@ -192,7 +192,9 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
 
   RunQnnModelTest(
       BuildGatherTransposeReshapeTestCase(input_def, {6, 8}, indices_data, {0, 1, 2, 4, 3, 5}, {1, 6, 8, 8}),
-      provider_options, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      provider_options,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
@@ -217,7 +219,9 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_MergedBatchDims) {
 
   RunQnnModelTest(
       BuildGatherTransposeReshapeTestCase(input_def, {6, 6}, indices_data, {0, 1, 2, 5, 4, 3}, {24, 36, 16}),
-      provider_options, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      provider_options,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }

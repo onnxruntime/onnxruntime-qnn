@@ -3,7 +3,11 @@
 
 #pragma once
 
+#include <memory>
+#include <vector>
+
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/custom_op/qnn_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 
 namespace onnxruntime {
@@ -45,6 +49,17 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
       _In_ OrtEpFactory* this_ptr,
       _In_ const OrtHardwareDevice* hw,
       _Inout_ OrtDeviceEpIncompatibilityDetails* details) noexcept;
+  static OrtStatus* ORT_API_CALL CreateExternalResourceImporterForDeviceImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _In_ const OrtEpDevice* ep_device,
+      _Out_ OrtExternalResourceImporterImpl** out_importer) noexcept;
+  static OrtStatus* ORT_API_CALL GetNumCustomOpDomainsImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _Out_ size_t* num_domains) noexcept;
+  static OrtStatus* ORT_API_CALL GetCustomOpDomainsImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
+      _In_ size_t num_domains) noexcept;
 
   // const OrtApi& ort_api;
   const std::string ep_name_;              // EP name
@@ -64,6 +79,15 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
+
+  // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
+  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+
+  // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
+  // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
+  // domain.Add(op*) does NOT transfer ownership; op objects must be kept alive here.
+  std::vector<Ort::CustomOpDomain> custom_op_domains_;
+  std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>> custom_op_objects_;
 };
 
 }  // namespace onnxruntime

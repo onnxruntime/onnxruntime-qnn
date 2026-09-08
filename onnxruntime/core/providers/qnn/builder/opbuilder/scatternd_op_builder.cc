@@ -125,22 +125,20 @@ Ort::Status ScatterNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF_NOT(utils::ArrayHasString(kSupportedReductions, reduction),
                 ("ScatterND does not support reduction " + reduction).c_str());
 
-  Qnn_Scalar_t reduction_scalar = QNN_SCALAR_INIT;
-  reduction_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t reduction_value = QNN_OP_SCATTER_ND_REDUCTION_NONE;
   if (reduction == "none") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_NONE;
+    reduction_value = QNN_OP_SCATTER_ND_REDUCTION_NONE;
   } else if (reduction == "add") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_ADD;
+    reduction_value = QNN_OP_SCATTER_ND_REDUCTION_ADD;
   } else if (reduction == "mul") {
-    reduction_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_MUL;
+    reduction_value = QNN_OP_SCATTER_ND_REDUCTION_MUL;
   } else {
     return MAKE_EP_FAIL(("Unexpected ScatterND reduction: " + reduction).c_str());
   }
 
-  QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(),
-                                  QNN_OP_SCATTER_ND_PARAM_REDUCTION, reduction_scalar);
-  std::vector<std::string> param_tensor_names = {reduction_param.GetParamTensorName()};
-  qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), reduction_value,
+                                         QNN_OP_SCATTER_ND_PARAM_REDUCTION, param_tensor_names));
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),

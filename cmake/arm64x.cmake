@@ -1,4 +1,5 @@
-set(arm64ReproDir "${CMAKE_CURRENT_SOURCE_DIR}/repros")
+set(arm64ReproDir "${CMAKE_CURRENT_SOURCE_DIR}/repros" CACHE PATH "Path to the ARM64 repro directory for ARM64X build")
+message(STATUS "Using arm64ReproDir: " ${arm64ReproDir})
 
 function(set_arm64_dependencies n)
 	set(ARM64_LIBS)

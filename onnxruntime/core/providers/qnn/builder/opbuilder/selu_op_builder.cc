@@ -44,7 +44,7 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   // -----------------------------------------------------------------------
-  // Step 1: ElementwiseNeuron (ELU) — applies alpha*exp(x)-alpha for x<=0
+  // Step 1: ELU — applies alpha*exp(x)-alpha for x<=0
   // -----------------------------------------------------------------------
   const std::string elu_output_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_elu_out");
 
@@ -56,29 +56,15 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(elu_output_wrapper)),
                 "Selu: failed to add intermediate ELU output tensor.");
 
-  // operation param: ELU
-  Qnn_Scalar_t elu_op_scalar = QNN_SCALAR_INIT;
-  elu_op_scalar.dataType = QNN_DATATYPE_UINT_32;
-  elu_op_scalar.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_ELU;
-  QnnParamWrapper elu_op_param(node_unit.Index(), node_unit.Name(),
-                               QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, elu_op_scalar);
+  std::vector<std::string> elu_param_names;
 
   // alpha param
-  Qnn_Scalar_t alpha_scalar = QNN_SCALAR_INIT;
-  alpha_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-  alpha_scalar.floatValue = alpha;
-  QnnParamWrapper alpha_param(node_unit.Index(), node_unit.Name(),
-                              QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, alpha_scalar);
-
-  std::vector<std::string> elu_param_names;
-  elu_param_names.push_back(elu_op_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(elu_op_param));
-  elu_param_names.push_back(alpha_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(alpha_param));
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), alpha,
+                                      QNN_OP_ELU_PARAM_ALPHA, elu_param_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_elu"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_NEURON,
+                                                QNN_OP_ELU,
                                                 {input_name},
                                                 {elu_output_name},
                                                 std::move(elu_param_names),
@@ -127,7 +113,8 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
                 "Selu: failed to add output tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_gamma_mul"),
+  std::string gamma_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_gamma_mul");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(gamma_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                 {gamma_tensor_name, elu_output_name},

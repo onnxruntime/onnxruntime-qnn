@@ -164,15 +164,9 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
 
     // Set channel axis parameter
     const uint32_t channel_axis = static_cast<uint32_t>(transpose_head_input_dims_count - 1);
-    Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
-    axis_scalar.dataType = QNN_DATATYPE_UINT_32;
-    axis_scalar.uint32Value = channel_axis;
-    QnnParamWrapper param_wrapper(transpose_tail->Index(),
-                                  transpose_tail->Name(),
-                                  QNN_OP_CHANNEL_SHUFFLE_PARAM_AXIS,
-                                  axis_scalar);
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
-    param_tensor_names.push_back(param_wrapper.GetParamTensorName());
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
+                                           transpose_tail->Name(), channel_axis,
+                                           QNN_OP_CHANNEL_SHUFFLE_PARAM_AXIS, param_tensor_names));
   }
 
   // Extract number of groups from reshape1 output shape
@@ -201,15 +195,10 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                                      reshape1_output_dims_count));
 
     // Set number of groups parameter
-    Qnn_Scalar_t num_groups_scalar = QNN_SCALAR_INIT;
-    num_groups_scalar.dataType = QNN_DATATYPE_UINT_32;
-    num_groups_scalar.uint32Value = static_cast<uint32_t>(reshape1_output_dims[1]);
-    QnnParamWrapper param_wrapper(transpose_tail->Index(),
-                                  transpose_tail->Name(),
-                                  QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS,
-                                  num_groups_scalar);
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add num_groups param");
-    param_tensor_names.push_back(param_wrapper.GetParamTensorName());
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
+                                           transpose_tail->Name(),
+                                           static_cast<uint32_t>(reshape1_output_dims[1]),
+                                           QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS, param_tensor_names));
   }
 
   // Create tensor wrappers for input and output

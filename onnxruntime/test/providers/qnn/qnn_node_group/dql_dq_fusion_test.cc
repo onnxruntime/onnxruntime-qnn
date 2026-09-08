@@ -207,8 +207,7 @@ void RunFusionTest(const FusionTestParams& p) {
   RunQnnModelTest(p.build_model,
                   provider_options,
                   p.opset_version,
-                  p.expected_ep_assignment,
-                  p.fp32_abs_err,
+                  EPVerificationParams{p.expected_ep_assignment, ElementwiseAbsoluteVerifier(p.fp32_abs_err)},
                   p.log_severity,
                   p.verify_outputs);
 }

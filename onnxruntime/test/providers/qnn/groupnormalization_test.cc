@@ -45,8 +45,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Test GroupNormalization operator on CPU backend
@@ -79,8 +78,7 @@ TEST_F(QnnCPUBackendTests, GroupNorm_Float_CPU) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Test GroupNormalization operator with multiple groups
@@ -119,8 +117,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Test GroupNormalization operator with different epsilon value
@@ -155,8 +152,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // Test GroupNormalization operator with 3D input
@@ -192,8 +188,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

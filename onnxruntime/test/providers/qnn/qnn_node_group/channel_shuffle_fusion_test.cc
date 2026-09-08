@@ -112,8 +112,7 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
   RunQnnModelTest(BuildTestCase(),
                   provider_options,
                   /*opset_version=*/10,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
 }
