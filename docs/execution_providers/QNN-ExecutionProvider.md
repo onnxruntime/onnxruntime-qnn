@@ -187,7 +187,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_arch"`|Description|
 |---|---|
-|'0'|Default. No architecture specified. For context binaries prepared offline, this bypasses HTP-architecture model compatibility validation when the binary is loaded. It does not hard fail, but can allow an incompatible binary to load; specify `htp_arch` when known.|
+|'0'|Default. No architecture specified. It is optional if `soc_model` already specified. Nevertheless, providing it along with `soc_model` during offline preparation can enable more accurate context binary compatibility check later inference time. |
 |'68'|HTP v68.|
 |'69'|HTP v69.|
 |'73'|HTP v73.|
