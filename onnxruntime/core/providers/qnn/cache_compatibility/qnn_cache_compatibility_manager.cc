@@ -446,7 +446,7 @@ Ort::Status QnnCacheCompatibilityManager::ValidateCompatibilityInfoV2(const QnnC
       const uint32_t cache_htp_arch = cache_info.htp_archs[idx];
       const uint32_t cache_vtcm_mb = cache_info.vtcm_mbs.size() > 0 ? cache_info.vtcm_mbs[idx] : kVtcmMbUnset;
 
-      if ((cache_htp_arch < kHtpV6xAndV7xBreakageArch && runtime_htp_arch >= kHtpV6xAndV7xBreakageArch) ||
+      if ((cache_htp_arch != 0 && cache_htp_arch < kHtpV6xAndV7xBreakageArch && runtime_htp_arch >= kHtpV6xAndV7xBreakageArch) ||
           cache_htp_arch > runtime_htp_arch ||
           cache_vtcm_mb > runtime_vtcm_mb) {
         cache_compatibility = OrtCompiledModelCompatibility_EP_UNSUPPORTED;
