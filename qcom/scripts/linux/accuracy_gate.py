@@ -42,10 +42,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # gtest full name = "<suite>.<name>", e.g.
-#   QnnUnit_Snapshot_ClipPlainTest.Case/Clip_f32
+#   QnnUnit_Clip_Snapshot_QDQFloatTest.Case/Clip_f32
 # The snapshot->accuracy mapping swaps the tier token in the suite and keeps
-# Case/<name> verbatim (see clip_specs.h: names are aligned by construction).
-_SNAPSHOT_TIER_RE = re.compile(r"_(?:Snapshot|SessionSnapshot)_")
+# everything else verbatim, including the trailing "Test" and any variant
+# suffix (see clip_specs.h: names are aligned by construction). The tier
+# token has no trailing underscore of its own -- suites come in both a bare
+# form ("..._SnapshotTest") and a variant form ("..._Snapshot_QDQFloatTest"),
+# so matching must not require an underscore after the token. SessionSnapshot
+# is listed before Snapshot so the alternation's leftmost-match doesn't stop
+# at the "Snapshot" substring inside "SessionSnapshot".
+_SNAPSHOT_TIER_RE = re.compile(r"_(?:SessionSnapshot|Snapshot)")
 
 # Snapshot status buckets.
 PASSED = "PASSED"
@@ -177,10 +183,11 @@ def parse_accuracy_list(text: str) -> list[tuple[str, str]]:
 def derive_accuracy_suite(snapshot_suite: str) -> str:
     """Map a snapshot suite name to its paired accuracy suite name.
 
-    QnnUnit_Snapshot_ClipPlainTest        -> QnnUnit_Accuracy_ClipPlainTest
-    QnnUnit_SessionSnapshot_ClipQDQFloat.. -> QnnUnit_Accuracy_ClipQDQFloat..
+    QnnUnit_Clip_SnapshotTest              -> QnnUnit_Clip_AccuracyTest
+    QnnUnit_Clip_Snapshot_QDQFloatTest     -> QnnUnit_Clip_Accuracy_QDQFloatTest
+    QnnUnit_Clip_SessionSnapshot_QDQFloat.. -> QnnUnit_Clip_Accuracy_QDQFloat..
     """
-    return _SNAPSHOT_TIER_RE.sub("_Accuracy_", snapshot_suite, count=1)
+    return _SNAPSHOT_TIER_RE.sub("_Accuracy", snapshot_suite, count=1)
 
 
 def load_manifest_versions(golden_root: str | None) -> ToolVersions:
