@@ -164,18 +164,21 @@ void* GenieBackendManager::LoadLib(const char* file_name, int flags, std::string
 }
 
 void GenieBackendManager::ReleaseResources() {
-  if (backend_lib_handle_) {
-    auto result = UnloadLib(backend_lib_handle_);
-    if (!result.IsOK()) {
-      std::ostringstream oss;
-      oss << "Failed to unload backend library: "
-          << result.GetErrorMessage();
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    }
+  backend_setup_completed_ = false;
+}
+
+void GenieBackendManager::UnloadBackendLibraries() {
+  if (!backend_lib_handle_) {
+    return;
   }
 
-  backend_setup_completed_ = false;
-  return;
+  const Ort::Status result = UnloadLib(backend_lib_handle_);
+  if (!result.IsOK()) {
+    std::ostringstream oss;
+    oss << "Failed to unload backend library: " << result.GetErrorMessage();
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+  }
+  backend_lib_handle_ = nullptr;
 }
 
 Ort::Status GenieBackendManager::UnloadLib(void* handle) {
