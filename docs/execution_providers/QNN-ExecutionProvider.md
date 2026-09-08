@@ -42,9 +42,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.5.0         | v2.49.40          | v1.26.0              |
+| v2.6.0         | v2.50.40          | v1.27.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.5.0 was built and tested with ORT 1.26.0 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.6.0 was built and tested with ORT 1.27.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -69,8 +69,9 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.26.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.49.40` |
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.27.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.50.0` |
+  - **Version note:** QNN EP v2.6.0 was built and tested with QAIRT SDK 2.50.0; the public Android Maven runtime artifact is versioned `2.50.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
