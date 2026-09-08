@@ -401,26 +401,26 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 
 `htp_reused_io_limit_mb` tells QNN HTP the maximum I/O your app actually keeps registered at any one time throughout the context lifecycle (init / execute / deinit). QNN HTP uses this value for memory estimation and DSP PD placement decisions when it loads a context binary.
 
-Turned off by default (`0`), the runtime assumes no I/O reuse and estimates the context's memory using the total I/O size of all graphs in the context. If you actually share (reuse) one or more I/O buffers across multiple graphs in a context, or across multiple contexts, that default estimate can overshoot what the context really needs.
+Turned off by default (`0`), the runtime assumes no I/O reuse and estimates the context's memory using the total I/O size of all **QNN graphs** in the context. If you actually share (reuse) one or more I/O buffers across multiple QNN graphs in a context, or across multiple contexts, that default estimate can overshoot what the context really needs.
 
 This overestimation matters because HTP loads each context into one of several process domains (PDs), each with a limited memory budget. An inflated estimate can cause a context to be placed in its own PD instead of sharing one with others (which is slower, since contexts on different PDs pay extra cost to talk to each other) — or it can cause the context to fail to load at all (QNN error 1002, "Failed to find available PD") even though it would actually fit. By explicitly specifying the reused I/O size, you let QNN HTP use a smaller, more accurate estimate instead.
 
 **Choosing a value**: the value represents the maximum I/O your app actually keeps registered at any one time across the lifecycle (init / execute / deinit). It depends entirely on how your app uses the I/O buffers:
 
-- If your app maps only the I/O of the graph it is about to run and unmaps the rest (e.g. graph switching), the peak is `max(each graph's I/O)`.
-- If your app keeps all graphs' I/O mapped at once, the peak is `sum(each graph's I/O)`.
+- If your app maps the I/O of only one QNN graph at a time and unmaps the rest (e.g. graph switching), the peak is `max(each QNN graph's I/O)`.
+- If your app keeps all QNN graphs' I/O mapped at once, the peak is `sum(each concurrently mapped QNN graph's I/O)`.
 
-To find each graph's I/O size, enable VERBOSE session logging and look for the per-graph estimate the HTP backend emits at context load, for example:
+To find each QNN graph's I/O size, enable VERBOSE session logging and look for the per-QNN-graph estimate the HTP backend emits at context load, for example:
 
 ```
 ... estimated PD size ~3491.61MB, including nonSharedWeight 1908408320 B I/O 1662533632 B runlist 59602944 B spillfill 22282240 B
 ```
 
-The `I/O` field is that graph's I/O size. Sum or take the max over the graphs your app uses concurrently, per the rules above.
+The HTP backend emits one such estimate for each QNN graph, so these messages show both the number of QNN graphs in a context and their I/O sizes. The `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
 
 **Per-context vs. group scope** — the same intended peak maps to a *different* value depending on which context-creation path is used, because QNN only sees one context at a time on the default path:
 
-- **Default path (`contextCreateFromBinary`, one config per context):** QNN adds up the per-context limits, so set each context's value to `peak / number_of_contexts`. Example: 4 contexts, each 1 graph of 100 MB, app runs one graph at a time (real peak 100 MB) → set `25` on each context so QNN totals 100 MB.
+- **Default path (`contextCreateFromBinary`, one config per context):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set the per-context values so their sum is the app's actual peak. Example: 4 contexts, each containing 1 QNN graph with 100 MB I/O; if the app maps the I/O for only 1 QNN graph at a time (real peak 100 MB), set `25` on each context so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
 - **Group path (async list API, active when `htp_share_resource_optimization` is enabled):** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
 
 **Warning**: this value is a *hint* for memory estimation, not an enforced limit. QNN does not stop you from using more I/O at runtime than you configured, but exceeding it may cause undefined behavior (e.g. a `memRegister` failure due to running out of space). Set it to a value your actual runtime I/O will not exceed. When using this option purely to work around a context load failure (rather than from a known buffer budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
