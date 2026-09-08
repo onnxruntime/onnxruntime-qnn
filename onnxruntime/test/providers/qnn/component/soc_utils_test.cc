@@ -45,6 +45,35 @@ TEST(QnnUnit_SocUtilsTest, MapSocModelFromSocName_UnknownReturns0) {
   EXPECT_EQ(qnn::soc::MapSocModelFromSocName("SM8250"), 0u);  // not in Qnn_SocModel_t
 }
 
+TEST(QnnUnit_SocUtilsTest, MapSocModelFromSocId_KnownIdsAndAliases) {
+  struct Case {
+    int id;
+    uint32_t model;
+  };
+  for (const auto& test : {Case{415, 30}, {439, 30}, {435, 37}, {536, 43}, {519, 43}, {538, 60}, {555, 60}, {709, 60}, {710, 60}, {618, 69}, {639, 69}, {662, 88}, {698, 88}, {693, 94}}) {
+    SCOPED_TRACE(test.id);
+    EXPECT_EQ(qnn::soc::MapSocModelFromSocId(test.id), test.model);
+  }
+}
+
+TEST(QnnUnit_SocUtilsTest, MapSocModelFromSocId_UnknownDoesNotBecomeAnArchitecture) {
+  for (int id : {0, -1, 60, 73, 999999}) {
+    SCOPED_TRACE(id);
+    EXPECT_EQ(qnn::soc::MapSocModelFromSocId(id), 0u);
+  }
+  // SoC identity remains distinct even when two targets share an HTP architecture.
+  EXPECT_EQ(qnn::soc::MapSocModelFromSocId(538), 60u);
+  EXPECT_EQ(qnn::soc::MapSocModelFromSocId(536), 43u);
+  EXPECT_EQ(qnn::soc::MapHtpArchFromSocModel(60), 73u);
+  EXPECT_EQ(qnn::soc::MapHtpArchFromSocModel(43), 73u);
+}
+
+TEST(QnnUnit_SocUtilsTest, Sc8440xpNameAndArchitecture) {
+  EXPECT_EQ(qnn::soc::MapSocModelFromSocName("SC8440XP"), 94u);
+  EXPECT_EQ(qnn::soc::MapSocModelFromSocName("sc8440xp"), 94u);
+  EXPECT_EQ(qnn::soc::MapHtpArchFromSocModel(94), 81u);
+}
+
 // Enumerate all SoC in table.
 TEST(QnnUnit_SocUtilsTest, MapHtpArchFromSocModel_KnownSoc) {
   EXPECT_EQ(qnn::soc::MapHtpArchFromSocModel(30), 68u);

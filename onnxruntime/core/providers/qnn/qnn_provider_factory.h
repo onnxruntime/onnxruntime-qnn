@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -21,8 +22,13 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
   }
+  void RegisterQnnBackendManager(const std::shared_ptr<qnn::QnnBackendManager>& manager);
+  void RegisterGenieBackendManager(const std::shared_ptr<qnn::GenieBackendManager>& manager);
+  void UnloadBackendLibraries();
 
  private:
+  void RegisterBackendLibraryLifetime(std::shared_ptr<void> lifetime);
+
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
   static const char* ORT_API_CALL GetVendorImpl(const OrtEpFactory* this_ptr) noexcept;
   static uint32_t ORT_API_CALL GetVendorIdImpl(const OrtEpFactory* this_ptr) noexcept;
@@ -82,6 +88,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+  std::mutex backend_libraries_mutex_;
+  std::vector<std::shared_ptr<void>> backend_library_lifetimes_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // Retain synthesized devices for every successful discovery call. OrtEpDevice
