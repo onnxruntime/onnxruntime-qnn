@@ -348,12 +348,12 @@ static bool ParseBoolOption(const OrtApi& ort_api,
 }
 
 template <typename T>
-static void ParseIntOption(const OrtApi& ort_api,
-                           const OrtSessionOptions& session_options,
-                           const std::string& key,
-                           T default_value,
-                           T& out,
-                           const Ort::Logger& logger) {
+static void ParseIntegerOption(const OrtApi& ort_api,
+                               const OrtSessionOptions& session_options,
+                               const std::string& key,
+                               T default_value,
+                               T& out,
+                               const Ort::Logger& logger) {
   out = default_value;
   std::string value_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
@@ -1382,8 +1382,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // Caps the reused IO buffer size at context load. See docs; 0 = SDK default.
   static constexpr const char* kHtpReusedIoLimitMb = "htp_reused_io_limit_mb";
   uint64_t reused_io_limit_mb = 0;
-  ParseIntOption(ort_api, session_options_, FormatEPConfigKey(kHtpReusedIoLimitMb),
-                 uint64_t{0}, reused_io_limit_mb, logger_);
+  ParseIntegerOption(ort_api, session_options_, FormatEPConfigKey(kHtpReusedIoLimitMb),
+                     uint64_t{0}, reused_io_limit_mb, logger_);
 #ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
   if (reused_io_limit_mb > 0) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
