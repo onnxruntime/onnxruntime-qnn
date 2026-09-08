@@ -8,7 +8,7 @@
 //     qnn_context_priority, htp_graph_finalization_optimization_mode, htp_arch, vtcm_mb,
 //     soc_model, device_id, file-mapped weights, share-resource-optimization, embed_mode,
 //     disable_cpu_ep_fallback / offload_graph_io_quantization conflict, fp16/bf16 validation,
-//     enable_htp_monolithic_lstm, json dump path warning, ep_input_graph dump,
+//     enable_htp_monolithic_lstm, enable_htp_matmul_lut, json dump path warning, ep_input_graph dump,
 //     ir DLC dump warnings, rpc_control_latency.
 //   - Constructor early throws: prepare_only without context_cache, bf16 without soc_model,
 //     bf16 with soc_model<88, fp16 without soc_model (Linux x86_64), backend_type +
@@ -682,6 +682,23 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmInvalid_LogsVe
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                "Invalid value for ep.qnnexecutionprovider.enable_htp_monolithic_lstm");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutTrue_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutInvalid_LogsVerbose) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "maybe";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.enable_htp_matmul_lut");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeInvalidValue_Succeeds) {
