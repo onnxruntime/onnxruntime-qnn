@@ -6,18 +6,18 @@ All file paths are relative to the repo root.
 
 ## 0. Decide What You Actually Need to Build (do this first)
 
-- **Check for an equivalent QNN op and reuse the existing builder.** Look in the `GetQnnOpType` map ([base_op_builder.h:131-232](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.h#L131-L232)) — it's the single record of ONNX↔QNN equivalences (e.g. `SimplifiedLayerNormalization`→`QNN_OP_RMS_NORM`, `LeakyRelu`→`QNN_OP_PRELU`, `Upsample`→`QNN_OP_RESIZE`).
+- **Check for an equivalent QNN op and reuse the existing builder.** Look in the `GetQnnOpType` map ([base_op_builder.h](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.h)) — it's the single record of ONNX↔QNN equivalences (e.g. `SimplifiedLayerNormalization`→`QNN_OP_RMS_NORM`, `LeakyRelu`→`QNN_OP_PRELU`, `Upsample`→`QNN_OP_RESIZE`).
 - Decision order: **reuse an existing builder → if new, do a 1:1 translation → decompose into multiple QNN nodes if no single equivalent exists → open the QDQ unit only when quant handling demands it.**
 - If it's a clean 1:1 op with no attributes, don't write a class at all — register it with `CreateSimpleOpBuilder`.
 - **One ONNX node → one-or-more QNN nodes is an op builder (this doc). Multiple ONNX nodes → one QNN op is a *fusion*** ([qnn_node_group_fusion_guidelines.md](qnn_node_group_fusion_guidelines.md)). Decomposition (§8) stays in op-builder territory — it is the op-builder fan-*out*, the mirror image of a fusion's fan-*in*.
 
 ## 0.5. What a Builder Operates On — `OrtNodeUnit`
 
-- Every builder operates on an **`OrtNodeUnit`**, which is **either a single ONNX node or a fused QDQ group** (`Type::SingleNode | QDQGroup`, [ort_api.h:263-266](../onnxruntime/core/providers/qnn/ort_api.h#L263-L266)).
-- `IsOpSupported` is invoked **once per NodeUnit that is not claimed by a fusion**, via `QnnNodeUnitWrapper::IsSupported` ([qnn_node_group.cc:49-58](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc#L49-L58)) — the single group type that delegates to op builders. A NodeUnit absorbed into an `IQnnNodeGroup` fusion bypasses op builders entirely (see [qnn_node_group_fusion_guidelines.md](qnn_node_group_fusion_guidelines.md) §4).
-- The real build is symmetric: in Phase 2 / Compile, `QnnNodeUnitWrapper::AddToModelBuilder` calls your `AddToModelBuilder(..., do_op_validation=false)` ([qnn_node_group.cc:61-66](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc#L61-L66)).
-- Primary accessors: `OpType()`, `Name()`, `Domain()`, `SinceVersion()`, `Index()`, `GetNode()` ([ort_api.h:277-284](../onnxruntime/core/providers/qnn/ort_api.h#L277-L284)).
-- `node_unit.Inputs()` / `Outputs()` return `OrtNodeUnitIODef`s whose `quant_param` **already carries scale/zero-point/axis merged from the surrounding DQ/Q nodes** — you normally don't touch raw quant nodes. Reach into them only via `GetDQNodes()` / `GetQNodes()` ([ort_api.h:286-287](../onnxruntime/core/providers/qnn/ort_api.h#L286-L287)).
+- Every builder operates on an **`OrtNodeUnit`**, which is **either a single ONNX node or a fused QDQ group** (`Type::SingleNode | QDQGroup`, [ort_api.h](../onnxruntime/core/providers/qnn/ort_api.h)).
+- `IsOpSupported` is invoked **once per NodeUnit that is not claimed by a fusion**, via `QnnNodeUnitWrapper::IsSupported` ([qnn_node_group.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc)) — the single group type that delegates to op builders. A NodeUnit absorbed into an `IQnnNodeGroup` fusion bypasses op builders entirely (see [qnn_node_group_fusion_guidelines.md](qnn_node_group_fusion_guidelines.md) §4).
+- The real build is symmetric: in Phase 2 / Compile, `QnnNodeUnitWrapper::AddToModelBuilder` calls your `AddToModelBuilder(..., do_op_validation=false)` ([qnn_node_group.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc)).
+- Primary accessors: `OpType()`, `Name()`, `Domain()`, `SinceVersion()`, `Index()`, `GetNode()` ([ort_api.h](../onnxruntime/core/providers/qnn/ort_api.h)).
+- `node_unit.Inputs()` / `Outputs()` return `OrtNodeUnitIODef`s whose `quant_param` **already carries scale/zero-point/axis merged from the surrounding DQ/Q nodes** — you normally don't touch raw quant nodes. Reach into them only via `GetDQNodes()` / `GetQNodes()` ([ort_api.h](../onnxruntime/core/providers/qnn/ort_api.h)).
 
 ## 1. File & Setup
 
@@ -30,7 +30,7 @@ All file paths are relative to the repo root.
 - Inherit from `BaseOpBuilder`; pass a unique builder-type string to the constructor.
 - Add `ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(MyOpBuilder)` and mark overrides `ORT_MUST_USE_RESULT`.
 - **Never override `AddToModelBuilder` — it is `final`.** Override only the hooks below.
-- **Builders are stateless singletons** — one instance is shared across every op type it's registered for and across all graphs/threads (`GetOpBuilder` returns from a function-local `static`, [op_builder_factory.cc:135](../onnxruntime/core/providers/qnn/builder/op_builder_factory.cc#L135); one `SimpleOpBuilder` serves ~49 op types). **Never store per-node state in members** — all hooks are `const`.
+- **Builders are stateless singletons** — one instance is shared across every op type it's registered for and across all graphs/threads (`GetOpBuilder` returns from a function-local `static`, [op_builder_factory.cc](../onnxruntime/core/providers/qnn/builder/op_builder_factory.cc); one `SimpleOpBuilder` serves ~49 op types). **Never store per-node state in members** — all hooks are `const`.
 
 ## 3. Which Hooks to Override
 
@@ -43,9 +43,9 @@ All file paths are relative to the repo root.
 
 ## 4. Reusing a Builder for an Equivalent Op
 
-- Register the new ONNX op type to the **same** `CreateXxx` function — the factory dedupes by builder-type string, so all calls collapse to one shared instance ([op_builder_factory.h:32-48](../onnxruntime/core/providers/qnn/builder/op_builder_factory.h#L32-L48)).
+- Register the new ONNX op type to the **same** `CreateXxx` function — the factory dedupes by builder-type string, so all calls collapse to one shared instance ([op_builder_factory.h](../onnxruntime/core/providers/qnn/builder/op_builder_factory.h)).
 - Add a `GetQnnOpType` map entry for the new op type.
-- Keep the builder op-type-agnostic: emit `GetQnnOpType(node_unit.OpType())` and branch only where behavior genuinely differs — prefer branching on **output/input count** over op type where possible (e.g. [rmsnormalization_op_builder.cc:42-46](../onnxruntime/core/providers/qnn/builder/opbuilder/rmsnormalization_op_builder.cc#L42-L46)).
+- Keep the builder op-type-agnostic: emit `GetQnnOpType(node_unit.OpType())` and branch only where behavior genuinely differs — prefer branching on **output/input count** over op type where possible (e.g. [rmsnormalization_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/rmsnormalization_op_builder.cc)).
 - Precedents: Conv/ConvTranspose, Gather/GatherElements, Reshape/Flatten/Squeeze/Unsqueeze, ~50 ops on `SimpleOpBuilder`.
 
 ## 5. Factory Registration (all required — easy to miss)
@@ -53,8 +53,8 @@ All file paths are relative to the repo root.
 - Declare `CreateMyOpBuilder` in `op_builder_factory.h` (keep alphabetical).
 - Call it in the `OpBuilderRegistrations` constructor in `op_builder_factory.cc` (keep alphabetical).
 - Define the function in your `.cc`: `op_registrations.AddOpBuilder(op_type, std::make_unique<MyOpBuilder>())`.
-- **Add the ONNX→QNN mapping to `GetQnnOpType`** — if your builder (or the base `ProcessAttributesAndOutputs`) calls `GetQnnOpType(node_unit.OpType())`, a missing entry **throws** (`ORT_CXX_API_THROW`, [base_op_builder.h:228-230](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.h#L228-L230)) — it does not fall back. Builders that *decompose* and pass explicit QNN op-type strings to `CreateQnnNode` (e.g. LayerNorm, Einsum, Mean) don't call it and need no map entry.
-- If QNN needs a fixed input/output count where ONNX is variadic, add it to `GetInputOutputCountQnnRequired` ([base_op_builder.h:263-268](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.h#L263-L268)). This is the mechanism that **drops extra ONNX outputs** (MaxPool indices, LayerNorm mean/var) and trailing optional inputs: base `ProcessInputs`/`ProcessOutputs` only iterate `GetInput/OutputCountQnnRequired(node_unit)` ([base_op_builder.cc:134,273](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L134)). A `0` entry means "use the node's actual count".
+- **Add the ONNX→QNN mapping to `GetQnnOpType`** — if your builder (or the base `ProcessAttributesAndOutputs`) calls `GetQnnOpType(node_unit.OpType())`, a missing entry **throws** (`ORT_CXX_API_THROW`, [base_op_builder.h](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.h)) — it does not fall back. Builders that *decompose* and pass explicit QNN op-type strings to `CreateQnnNode` (e.g. LayerNorm, Einsum, Mean) don't call it and need no map entry.
+- If QNN needs a fixed input/output count where ONNX is variadic, add it to `GetInputOutputCountQnnRequired` ([base_op_builder.h](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.h)). This is the mechanism that **drops extra ONNX outputs** (MaxPool indices, LayerNorm mean/var) and trailing optional inputs: base `ProcessInputs`/`ProcessOutputs` only iterate `GetInput/OutputCountQnnRequired(node_unit)` ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)). A `0` entry means "use the node's actual count".
 
 ## 6. IsOpSupported & Graceful Fallback
 
@@ -67,19 +67,19 @@ All file paths are relative to the repo root.
 
 - An ONNX input that QNN expects as a **param** (e.g. Tile `repeats`, Reshape `shape`) must be *skipped* in `ProcessInputs` and turned into a `QnnParamWrapper` in `ProcessAttributesAndOutputs` — otherwise QNN gets a spurious extra graph input.
 - Unpack constant inputs with `GetConstantTensor` + `UnpackInitializerData`.
-- **Optional / missing inputs:** an absent IODef has an empty `name` and `Exists()` returns false ([ort_api.h:257](../onnxruntime/core/providers/qnn/ort_api.h#L257)). Always check `inputs[i].Exists()` before processing an optional input (e.g. RMSNorm scale, [rmsnormalization_op_builder.cc:50](../onnxruntime/core/providers/qnn/builder/opbuilder/rmsnormalization_op_builder.cc#L50)). The base pipeline already skips empty names in `ProcessDataTypes` and `ProcessInt64Tensors`.
-- **int64 is mostly handled for you.** `AddToModelBuilder` runs `ProcessInt64Tensors`, which auto-inserts an int64→int32 `Cast` for every int64 *dynamic input tensor* ([base_op_builder.cc:50,200-236](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L200-L236)); `ProcessOutputs` auto-casts int64/uint64 *graph outputs* to int32/uint32 ([base_op_builder.cc:288-296](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L288-L296)). You only hand-downcast with `SafeInt<...>` when pulling **initializer bytes into a QNN param tensor** (e.g. Tile `repeats`→`multiples`, [tile_op_builder.cc:67-74](../onnxruntime/core/providers/qnn/builder/opbuilder/tile_op_builder.cc#L67-L74)).
+- **Optional / missing inputs:** an absent IODef has an empty `name` and `Exists()` returns false ([ort_api.h](../onnxruntime/core/providers/qnn/ort_api.h)). Always check `inputs[i].Exists()` before processing an optional input (e.g. RMSNorm scale, [rmsnormalization_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/rmsnormalization_op_builder.cc)). The base pipeline already skips empty names in `ProcessDataTypes` and `ProcessInt64Tensors`.
+- **int64 is mostly handled for you.** `AddToModelBuilder` runs `ProcessInt64Tensors`, which auto-inserts an int64→int32 `Cast` for every int64 *dynamic input tensor* ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)); `ProcessOutputs` auto-casts int64/uint64 *graph outputs* to int32/uint32 ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)). You only hand-downcast with `SafeInt<...>` when pulling **initializer bytes into a QNN param tensor** (e.g. Tile `repeats`→`multiples`, [tile_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/tile_op_builder.cc)).
 - For each param: build the `QnnParamWrapper`, `push_back(GetParamTensorName())`, then `AddParamWrapper`.
 - Set the `Qnn_Scalar_t` `dataType` and its matching union field together — a mismatch compiles but corrupts the value.
-- **Don't hand-roll outputs** — call the base `ProcessOutputs(...)`. It handles graph-output detection, int64/uint64→int32/uint32 cast insertion, the qparam-override callback, and node emission. Note: base `ProcessAttributesAndOutputs` **early-returns OK if `input_names` is empty** ([base_op_builder.cc:243-245](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L243-L245)) — a node that processes zero inputs silently emits no QNN node.
+- **Don't hand-roll outputs** — call the base `ProcessOutputs(...)`. It handles graph-output detection, int64/uint64→int32/uint32 cast insertion, the qparam-override callback, and node emission. Note: base `ProcessAttributesAndOutputs` **early-returns OK if `input_names` is empty** ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)) — a node that processes zero inputs silently emits no QNN node.
 
 ## 8. Decomposition — One ONNX Op → Multiple QNN Nodes
 
-- **When needed:** QNN has no single equivalent op, or its equivalent has shape/axis/dtype constraints the ONNX op doesn't (e.g. `LayerNormalization` → LayerNorm → Mul → Add when scale/bias must be externalized: [layernormalization_op_builder.cc:354-704](../onnxruntime/core/providers/qnn/builder/opbuilder/layernormalization_op_builder.cc#L354-L704)). Note: "decomposition" here is the op-builder fan-*out* (1 ONNX op → many QNN nodes); the fusion doc uses "decomposition" for the opposite — the multi-node ONNX *pattern* a fusion collapses back into one QNN op. Don't confuse the two.
+- **When needed:** QNN has no single equivalent op, or its equivalent has shape/axis/dtype constraints the ONNX op doesn't (e.g. `LayerNormalization` → LayerNorm → Mul → Add when scale/bias must be externalized: [layernormalization_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/layernormalization_op_builder.cc)). Note: "decomposition" here is the op-builder fan-*out* (1 ONNX op → many QNN nodes); the fusion doc uses "decomposition" for the opposite — the multi-node ONNX *pattern* a fusion collapses back into one QNN op. Don't confuse the two.
 - Name intermediates with `utils::UniqueNameGenerator().New(node_unit, "_suffix")` so they never collide.
 - Register each intermediate as a `QNN_TENSOR_TYPE_NATIVE` tensor (`QnnTensorWrapper` + `AddTensorWrapper`) **before** the node that produces it; only the final tensor gets a graph-output type.
 - Chain `CreateQnnNode` calls by threading a `current` cursor from each node's output into the next node's input; pass the same `do_op_validation` flag to every call.
-- For pure layout/shape ops use the convenience wrappers `AddTransposeNode` / `AddReshapeNode` (e.g. Softmax transpose-wrapping for non-last-axis: [softmax_op_builder.cc:118-142](../onnxruntime/core/providers/qnn/builder/opbuilder/softmax_op_builder.cc#L118-L142)); use `CreateQnnNode` directly for everything else.
+- For pure layout/shape ops use the convenience wrappers `AddTransposeNode` / `AddReshapeNode` (e.g. Softmax transpose-wrapping for non-last-axis: [softmax_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/softmax_op_builder.cc)); use `CreateQnnNode` directly for everything else.
 - **Caveat:** inserted Reshape/Transpose on per-channel-quantized *dynamic* tensors is rejected — honor this when decomposing quantized graphs.
 
 ## 9. Attributes
@@ -97,23 +97,23 @@ All file paths are relative to the repo root.
 
 ## 10.5. The `do_op_validation` Pass
 
-- These two executions map to the EP's two phases: `do_op_validation=true` runs during **Phase 1 / GetCapability** (via `QnnNodeUnitWrapper::IsSupported` → `IsOpSupported`), and `do_op_validation=false` runs during **Phase 2 / Compile** (via `QnnNodeUnitWrapper::AddToModelBuilder`, [qnn_node_group.cc:61-66](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc#L61-L66)). This is the same Phase 1 / Phase 2 lifecycle the fusion doc describes ([qnn_node_group_fusion_guidelines.md](qnn_node_group_fusion_guidelines.md) §1).
-- `IsOpSupported` calls `AddToModelBuilder(..., do_op_validation=true)` ([base_op_builder.cc:32](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L32)) — **the same build path runs**, but `CreateQnnNode` calls QNN's *validation* API instead of materializing the node.
-- **Your hooks run in BOTH passes** (support-check and real build). Guard one-time / irreversible work with `if (do_op_validation)` (e.g. Tile's constant-input check, [tile_op_builder.cc:45-48](../onnxruntime/core/providers/qnn/builder/opbuilder/tile_op_builder.cc#L45-L48)).
-- The int64 *output* cast is intentionally suppressed during validation (`... && !do_op_validation`, [base_op_builder.cc:314](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L314)).
+- These two executions map to the EP's two phases: `do_op_validation=true` runs during **Phase 1 / GetCapability** (via `QnnNodeUnitWrapper::IsSupported` → `IsOpSupported`), and `do_op_validation=false` runs during **Phase 2 / Compile** (via `QnnNodeUnitWrapper::AddToModelBuilder`, [qnn_node_group.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc)).
+- `IsOpSupported` calls `AddToModelBuilder(..., do_op_validation=true)` ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)) — **the same build path runs**, but `CreateQnnNode` calls QNN's *validation* API instead of materializing the node.
+- **Your hooks run in BOTH passes** (support-check and real build). Guard one-time / irreversible work with `if (do_op_validation)` (e.g. Tile's constant-input check, [tile_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/tile_op_builder.cc)).
+- The int64 *output* cast is intentionally suppressed during validation (`... && !do_op_validation`, [base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)).
 - When decomposing, **thread the same `do_op_validation`** into every `CreateQnnNode` / `AddTransposeNode` call.
 
 ## 11. Quantization / QDQ (HTP)
 
 - HTP = quantized (u8/i8/u16/i16/sfixed32); CPU = float-only; GPU = fp16/fp32. Query via `GetQnnBackendType()` + `IsNpuBackend`/`IsCpuBackend`/`IsGpuBackend`.
-- `IsOpSupported` runs `ProcessDataTypes` **first** ([base_op_builder.cc:31,56-91](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L56-L91)) — it collects each IODef's `qnn_data_type` (skipping optional IODefs) and dispatches by backend to `CheckCpu/Htp/GpuDataTypes`. You override those to plug in an allow-list; you don't call the driver yourself.
+- `IsOpSupported` runs `ProcessDataTypes` **first** ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)) — it collects each IODef's `qnn_data_type` (skipping optional IODefs) and dispatches by backend to `CheckCpu/Htp/GpuDataTypes`. You override those to plug in an allow-list; you don't call the driver yourself.
 - Enforce per-backend datatype combos by overriding `CheckHtpDataTypes` (etc.).
-- **Bias synthesis:** quantized Conv/Gemm/MatMul without a bias input can synthesize an all-zero `SFIXED_POINT_32` bias via `AddZeroBiasInput` ([base_op_builder.cc:142-198](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L142-L198)) — bias scale = product of input scales, per-channel if input[1] is per-channel. Constraint: input[0] must be per-tensor, input[1] per-tensor or per-channel.
-- For movement/elementwise ops, force output qparams equal to input via `OverrideOutputQuantParam` + `SetOutputQParamEqualToInputIfNearlyEqual` so HTP can fuse (omitting it is correct but slower). Note: base only calls `OverrideOutputQuantParam` when the output is actually quantized (`if (output_info.quant_param.IsQuantized())`, [base_op_builder.cc:280-283](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L280-L283)) — it won't fire on float outputs.
+- **Bias synthesis:** quantized Conv/Gemm/MatMul without a bias input can synthesize an all-zero `SFIXED_POINT_32` bias via `AddZeroBiasInput` ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)) — bias scale = product of input scales, per-channel if input[1] is per-channel. Constraint: input[0] must be per-tensor, input[1] per-tensor or per-channel.
+- For movement/elementwise ops, force output qparams equal to input via `OverrideOutputQuantParam` + `SetOutputQParamEqualToInputIfNearlyEqual` so HTP can fuse (omitting it is correct but slower). Note: base only calls `OverrideOutputQuantParam` when the output is actually quantized (`if (output_info.quant_param.IsQuantized())`, [base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc)) — it won't fire on float outputs.
 - **Keep the QDQ NodeUnit fused by default** — `node_unit.Inputs()/Outputs()` already carry the surrounding DQ/Q quant params; use those.
 - **"Open" the unit via `node_unit.GetDQNodes()` / `GetQNodes()` only when you need:**
-  - constness of a quantized param behind a DQ (e.g. `DQ(const_initializer)`: [batchnormalization_op_builder.cc:457-462](../onnxruntime/core/providers/qnn/builder/opbuilder/batchnormalization_op_builder.cc#L457-L462));
-  - standalone Q/DQ as conversion ops — reject per-channel standalone Q/DQ unless the input is constant ([simple_op_builder.cc:88-117](../onnxruntime/core/providers/qnn/builder/opbuilder/simple_op_builder.cc#L88-L117));
+  - constness of a quantized param behind a DQ (e.g. `DQ(const_initializer)`: [batchnormalization_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/batchnormalization_op_builder.cc));
+  - standalone Q/DQ as conversion ops — reject per-channel standalone Q/DQ unless the input is constant ([simple_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/simple_op_builder.cc));
   - constant-folding a standalone (`SingleNode`) Q/DQ on a constant input into a STATIC tensor;
   - per-channel / LPBQ weight-encoding decisions in Conv/MatMul/Gemm.
 
@@ -128,19 +128,19 @@ The sections above cover the "simple op" path. Conv, MatMulNBits, RNNs, and any 
 
 ### The base-class graph-output Cast contract (you depend on this even if you don't write it)
 
-When a **graph output**'s QNN dtype is narrower than the ONNX dtype — int64→int32, or anything your `GetSupportedOutputDataType` override changes — the base `ProcessOutputs` automatically appends a trailing `QNN_OP_CAST` to restore the ONNX-visible dtype ([base_op_builder.cc:285-357](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc#L285-L357), collected in `cast_node_info_vec`). *Internal* tensors keep the narrowed type. Consequences:
+When a **graph output**'s QNN dtype is narrower than the ONNX dtype — int64→int32, or anything your `GetSupportedOutputDataType` override changes — the base `ProcessOutputs` automatically appends a trailing `QNN_OP_CAST` to restore the ONNX-visible dtype ([base_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/base_op_builder.cc), collected in `cast_node_info_vec`). *Internal* tensors keep the narrowed type. Consequences:
 - Override `GetSupportedOutputDataType` to narrow a dtype and you get the restoring cast for free — **only for graph outputs**.
 - This is suppressed during the validation pass (`&& !do_op_validation`).
 - If you hand-roll outputs (decomposition), you must replicate this cast yourself for narrowed graph outputs (see TopK/NonZero for the pattern).
 
 ### "The QNN validator lies" — reject in `IsOpSupported` to keep CPU fallback working
 
-The QNN op-config validation API sometimes **accepts** a node that later fails at `graphFinalize`. If you let such a node be claimed during partitioning, the whole partition's Compile aborts (no fallback at that stage). The fix is to **preemptively reject the unsupported case in `IsOpSupported`** so it cleanly falls back to CPU. Canonical example with the full explanation in-comment: [isinf_op_builder.cc:39-47](../onnxruntime/core/providers/qnn/builder/opbuilder/isinf_op_builder.cc#L39-L47) ("validator accepts the node... graphFinalize then fails with error 1002"). The same defensive rejection recurs in nonzero, gemm, matmul, scatternd, rotary, and stft builders. **Rule of thumb:** if you know a config the backend can't actually finalize, reject it up front rather than trusting the validator.
+The QNN op-config validation API sometimes **accepts** a node that later fails at `graphFinalize`. If you let such a node be claimed during partitioning, the whole partition's Compile aborts (no fallback at that stage). The fix is to **preemptively reject the unsupported case in `IsOpSupported`** so it cleanly falls back to CPU. Canonical example with the full explanation in-comment: [isinf_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/isinf_op_builder.cc) ("validator accepts the node... graphFinalize then fails with error 1002"). The same defensive rejection recurs in nonzero, gemm, matmul, scatternd, rotary, and stft builders. **Rule of thumb:** if you know a config the backend can't actually finalize, reject it up front rather than trusting the validator.
 
 ### Negative / int64 indices silently fall back to CPU — normalize them
 
-QNN drops a node to CPU on a single negative static index. For index ops (Gather/GatherND/ScatterND), host-normalize negative/int64 ONNX indices to non-negative INT32 with the shared helper `NormalizeIndicesBytes` / `AddNormalizedIndicesTensor` ([normalize_indices_utils.h:30,37](../onnxruntime/core/providers/qnn/builder/opbuilder/normalize_indices_utils.h#L30-L37)) — it uses an int64 accumulator to avoid int32 wraparound and inserts a runtime Cast for *dynamic* int64 indices.
-- **Footgun:** Gather uses a **deterministic** rename for the rewritten indices ([gather_op_builder.cc:73-179](../onnxruntime/core/providers/qnn/builder/opbuilder/gather_op_builder.cc#L73-L179)), **not** `UniqueNameGenerator` — the unique generator is stateful/global and would emit a different name on the second (Compile) pass, duplicating the tensor. Use `UniqueNameGenerator` only when the tensor is created unconditionally on every pass.
+QNN drops a node to CPU on a single negative static index. For index ops (Gather/GatherND/ScatterND), host-normalize negative/int64 ONNX indices to non-negative INT32 with the shared helper `NormalizeIndicesBytes` / `AddNormalizedIndicesTensor` ([normalize_indices_utils.h](../onnxruntime/core/providers/qnn/builder/opbuilder/normalize_indices_utils.h)) — it uses an int64 accumulator to avoid int32 wraparound and inserts a runtime Cast for *dynamic* int64 indices.
+- **Footgun:** Gather uses a **deterministic** rename for the rewritten indices ([gather_op_builder.cc](../onnxruntime/core/providers/qnn/builder/opbuilder/gather_op_builder.cc)), **not** `UniqueNameGenerator` — the unique generator is stateful/global and would emit a different name on the second (Compile) pass, duplicating the tensor. Use `UniqueNameGenerator` only when the tensor is created unconditionally on every pass.
 
 ### Quantization beyond the basics
 
@@ -155,8 +155,8 @@ The basic doc covers `AddZeroBiasInput` and output-qparam override. Quantized **
 
 ### High-value shared helpers the basics don't mention
 
-- **`QnnModelWrapper::GetTensorInfo(name, TensorInfo&)`** → `TensorInfo{shape, qnn_data_type, quant_param, is_initializer, initializer_tensor}` ([qnn_model_wrapper.h:29-35](../onnxruntime/core/providers/qnn/builder/qnn_model_wrapper.h#L29-L35)) — the one-stop "open a tensor and inspect everything" call every advanced builder uses.
-- **Folded-constant registry** — `IsFoldedConstant` / `IsEffectivelyConstantInput` / `MarkTensorAsFoldedConstant` ([qnn_model_wrapper.h:209-219](../onnxruntime/core/providers/qnn/builder/qnn_model_wrapper.h#L209-L219)) lets a chain of folded Q/DQ keep folding.
+- **`QnnModelWrapper::GetTensorInfo(name, TensorInfo&)`** → `TensorInfo{shape, qnn_data_type, quant_param, is_initializer, initializer_tensor}` ([qnn_model_wrapper.h](../onnxruntime/core/providers/qnn/builder/qnn_model_wrapper.h)) — the one-stop "open a tensor and inspect everything" call every advanced builder uses.
+- **Folded-constant registry** — `IsFoldedConstant` / `IsEffectivelyConstantInput` / `MarkTensorAsFoldedConstant` ([qnn_model_wrapper.h](../onnxruntime/core/providers/qnn/builder/qnn_model_wrapper.h)) lets a chain of folded Q/DQ keep folding.
 - **Graph-building helpers on `QnnModelWrapper`**: `AddReshapeNode`, `AddTransposeNode`, `AddNchwToHwcnTranspose`, `AddCastNode`, `AddNoopReshapeNode`; plus `GetQnnTensorWrapper` / `IsQnnTensorWrapperExist` to read back a wrapper's dtype and decide whether a runtime Cast is needed.
 - **`UniqueNameGenerator`** (`utils::`) — `New(node_unit, "_suffix")`; **stateful/global** (see the Gather footgun above).
 - **`ReinterpretAsSpan<U,T>`** — sanctioned typed view over initializer bytes.
@@ -202,7 +202,3 @@ The basic doc covers `AddZeroBiasInput` and output-qparam override. Quantized **
 - `layernormalization_op_builder.cc` / `softmax_op_builder.cc` — decomposition into multiple QNN nodes.
 - `conv_op_builder.cc` / `pool_op_builder.cc` — layout transforms + per-channel quant.
 - `batchnormalization_op_builder.cc` — per-backend datatype allow-lists + `GetDQNodes()` reach-through.
-
-## Related Tooling
-
-- `/qnn_ep_op_builder_codegen <manifest>` — scaffold a builder from a YAML manifest, or `--from-onnx <OpName>` to generate a draft manifest first.
