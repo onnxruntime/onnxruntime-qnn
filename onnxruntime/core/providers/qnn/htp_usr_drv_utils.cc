@@ -370,7 +370,11 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
   // absence does not indicate HNRD path will be adopted. Furthermore, non-QCOM devices do not support HNRD and thus no
   // need to check for it. Due to the difficulty of determining whether QCOM devices here, exploit whether HNRD library
   // exists at the expected path to indicate if we need to take HNRD into consideration.
-  if (!std::filesystem::exists(GetHtpUsrDrvPath())) {
+  try {
+    if (!std::filesystem::exists(GetHtpUsrDrvPath())) {
+      return Ort::Status();
+    }
+  } catch (std::filesystem::filesystem_error) {
     return Ort::Status();
   }
 
@@ -410,10 +414,16 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
   const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
 #endif
 
-  if (!std::filesystem::exists(backend_lib_dir_path / prepare_lib_path) ||
-      !std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
-      !std::filesystem::exists(backend_lib_dir_path / skel_lib_path)) {
-    enabled = true;
+  // Don't necessarily need the try/catch here because the one above is sufficient
+  // for the Chromium sandbox, but doesn't hurt to have
+  try {
+    if (!std::filesystem::exists(backend_lib_dir_path / prepare_lib_path) ||
+        !std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
+        !std::filesystem::exists(backend_lib_dir_path / skel_lib_path)) {
+      enabled = true;
+    }
+  } catch (std::filesystem::filesystem_error) {
+    return Ort::Status();
   }
 
   return Ort::Status();

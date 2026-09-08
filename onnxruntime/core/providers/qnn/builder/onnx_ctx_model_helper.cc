@@ -34,7 +34,12 @@ bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api, const s
       OrtNodeAttrHelper node_helper(*node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
       std::string ep_context_type_of_node = qnn::utils::GetLowercaseString(node_helper.Get(EP_CONTEXT_TYPE, EP_CONTEXT_TYPE_BIN));
-      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qairtexport") && ep_context_type == ep_context_type_of_node) {
+      if ((cache_source == "qnnexecutionprovider" ||
+           cache_source == "qnnexecutionprovider.virtual" ||
+           cache_source == "qnn" ||
+           cache_source == "qnn.virtual" ||
+           cache_source == "qairtexport") &&
+          ep_context_type == ep_context_type_of_node) {
         return true;
       }
     }

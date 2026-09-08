@@ -14,7 +14,10 @@ namespace onnxruntime {
 
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
-  QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
+  QnnEpFactory(const char* ep_name,
+               ApiPtrs ort_api_in,
+               bool allow_virtual_devices,
+               std::optional<uint32_t> synthesized_gpu_device_id);
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
@@ -69,9 +72,11 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
 
-  // CPU allocator so we can control the arena behavior. optional as ORT always provides a CPU allocator if needed.
-  using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
-  MemoryInfoUniquePtr host_accessible_memory_info_;
+  // Whether the ORT env allows the factory to create virtual devices
+  bool allow_virtual_devices_;
+
+  // Hardware device id used when created the factory must create an OrtHardwareDevice for an undetected GPU device
+  const std::optional<uint32_t> synthesized_gpu_device_id_;
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
@@ -79,6 +84,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
+
+  HardwareDeviceUniquePtr virtual_gpu_hw_device_;
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
