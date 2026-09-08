@@ -104,6 +104,15 @@ def test_derive_from_session_snapshot():
     assert gate.derive_accuracy_suite(SESS_QDQF) == QDQF
 
 
+def test_derive_from_bare_snapshot_suite():
+    # Op-first naming with no variant suffix has no underscore between the
+    # tier token and "Test" (e.g. QnnUnit_Clip_SnapshotTest). Regression test
+    # for a bug where the tier regex required underscores on both sides and
+    # silently left bare suites unmapped (-> R_UNMAPPED false-positive).
+    assert gate.derive_accuracy_suite("QnnUnit_Clip_SnapshotTest") == "QnnUnit_Clip_AccuracyTest"
+    assert gate.derive_accuracy_suite("QnnUnit_Clip_SessionSnapshotTest") == "QnnUnit_Clip_AccuracyTest"
+
+
 # ===========================================================================
 # parse_accuracy_list
 # ===========================================================================
