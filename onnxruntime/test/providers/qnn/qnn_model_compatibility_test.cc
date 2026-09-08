@@ -630,7 +630,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_V2_ApiValidate_CbHnrdRtHn
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbHtpArchLessThan73_RtHtpArchAtLeast73) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbUnspecifiedHtpArch_RtHtpArchAtLeast73) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   if (QnnHTPBackendTests::GetPlatformAttributes().htp_arch < 73) {
     GTEST_SKIP() << "Skip as this testcase requires runtime HTP arch >= 73.";
@@ -639,6 +639,19 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbHtpArchLessThan73
   CompatibilityTestInfoV2 test_info;
   test_info.FillPlatformInfo();
   test_info.htp_archs[0] = 0;
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_PREFER_RECOMPILATION);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbHtpArchLessThan73_RtHtpArchAtLeast73) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  if (QnnHTPBackendTests::GetPlatformAttributes().htp_arch < 73) {
+    GTEST_SKIP() << "Skip as this testcase requires runtime HTP arch >= 73.";
+  }
+
+  CompatibilityTestInfoV2 test_info;
+  test_info.FillPlatformInfo();
+  test_info.htp_archs[0] = 72;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
