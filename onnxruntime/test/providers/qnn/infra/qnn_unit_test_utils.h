@@ -6,7 +6,7 @@
 // Requires QNN_EP_INTERNAL_SYMBOL_ACCESS (set by cmake when the test binary is
 // link-time bound to the SHARED QNN EP library — currently ENABLE_COVERAGE=1
 // on Linux x86_64). The macro is a build-system gate, not a production-source
-// guard: when it is off, this header and all unit/ test bodies compile to empty
+// guard: when it is off, this header and all tier test bodies compile to empty
 // translation units, so non-coverage builds see no undefined references.
 //
 // Class-specific fixtures (e.g. constructing a QnnModelWrapper with a fake
@@ -78,94 +78,6 @@ struct StubApiEnv {
   StubApiEnv() = default;
   StubApiEnv(const StubApiEnv&) = delete;
   StubApiEnv& operator=(const StubApiEnv&) = delete;
-};
-
-// OrtGlobalApiOverride
-//
-// RAII guard that replaces the global Ort::GetApi() with a caller-supplied
-// OrtApi for the duration of the scope, then restores the original on
-// destruction.
-//
-// Why this is needed: Ort::ConstNode / Ort::ConstValueInfo / Ort::ConstGraph
-// wrappers call OrtApi function pointers via the global Ort::GetApi(), not
-// through api_ptrs_. Tests that pass fake OrtNode*/OrtGraph* pointers to EP
-// code must override the global so that wrapper calls route through stubs
-// rather than the real ORT runtime (which dereferences fake pointers and
-// SIGSEGVs). Process-wide global; gtest runs tests sequentially so this is
-// safe, but do not use two overrides simultaneously in the same thread.
-//
-// Implementation note: uses Ort::detail::Global::Api(), which is declared in
-// the public onnxruntime_cxx_api.h header (not a private "core/" include).
-// Ort::InitApi() — the intended public setter — is only available when
-// ORT_API_MANUAL_INIT is defined; ort_api.h suppresses that macro in
-// unit-test builds so all TUs agree on static initialisation. This helper
-// is test-only (gated by QNN_EP_INTERNAL_SYMBOL_ACCESS) and must be
-// re-verified if ORT uplevels and changes the detail::Global layout.
-class OrtGlobalApiOverride {
- public:
-  explicit OrtGlobalApiOverride(const OrtApi* new_api) {
-    original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    Ort::detail::Global::Api(new_api);
-  }
-  ~OrtGlobalApiOverride() { Ort::detail::Global::Api(original_); }
-
-  OrtGlobalApiOverride(const OrtGlobalApiOverride&) = delete;
-  OrtGlobalApiOverride& operator=(const OrtGlobalApiOverride&) = delete;
-  OrtGlobalApiOverride(OrtGlobalApiOverride&&) = delete;
-  OrtGlobalApiOverride& operator=(OrtGlobalApiOverride&&) = delete;
-
- private:
-  const OrtApi* original_ = nullptr;
-};
-
-// Reusable OrtApi stub tables for function-level unit tests.
-//
-// Holds the three stub structs (OrtApi / OrtEpApi / OrtModelEditorApi) that any
-// code interacting with ORT through ApiPtrs needs. Tests assign individual
-// function-pointer members directly (e.g. ctx.stub_ort_api.GetTensorData = ...).
-//
-// Initializer-query stubs are installed in the constructor so that paths like
-// QnnModelWrapper::IsConstantInput() safely return false on graphs with no
-// initializers — the default fixture for almost every test. Tests that need
-// non-zero initializers replace these two stubs before constructing the wrapper.
-//
-// MakeApiPtrs() returns an ApiPtrs view over the three stub tables AND verifies
-// that the initializer-query stubs are still installed (a test that wholesale
-// resets stub_ort_api must re-add them, otherwise QnnModelWrapper SIGSEGVs at
-// the first initializer query). Throwing std::logic_error fails the test rather
-// than the process; assert() would be stripped by NDEBUG (CMake RelWithDebInfo,
-// the coverage build's config).
-struct OrtApiStubContext {
-  OrtApi stub_ort_api{};
-  OrtEpApi stub_ep_api{};
-  OrtModelEditorApi stub_editor_api{};
-
-  OrtApiStubContext() {
-    stub_ort_api.Graph_GetNumInitializers = [](const OrtGraph*, size_t* num) noexcept -> OrtStatus* {
-      *num = 0;
-      return nullptr;
-    };
-    stub_ort_api.Graph_GetInitializers = [](const OrtGraph*, const OrtValueInfo**, size_t count) noexcept -> OrtStatus* {
-      // Pairs with Graph_GetNumInitializers above which always reports 0. Tests
-      // that need non-zero initializers must replace this stub before constructing
-      // a wrapper.
-      // Note: ORT_ENFORCE / assert are not used here because this lambda is noexcept —
-      // throwing or calling abort() from a noexcept function terminates the process
-      // rather than failing the test case. The invariant is enforced by MakeApiPtrs().
-      (void)count;
-      return nullptr;
-    };
-  }
-
-  ApiPtrs MakeApiPtrs() const {
-    if (stub_ort_api.Graph_GetNumInitializers == nullptr ||
-        stub_ort_api.Graph_GetInitializers == nullptr) {
-      throw std::logic_error(
-          "Graph_GetNumInitializers / Graph_GetInitializers stubs missing "
-          "— re-add them after resetting stub_ort_api");
-    }
-    return ApiPtrs{stub_ort_api, stub_ep_api, stub_editor_api};
-  }
 };
 
 // ---------------------------------------------------------------------------
@@ -244,6 +156,73 @@ class StubBackendManager {
 
  private:
   std::shared_ptr<qnn::QnnBackendManager> manager_;
+};
+
+}  // namespace test
+}  // namespace onnxruntime
+
+// Component-tier helpers split out into focused headers. Included AFTER
+// MakeNullLogger so backend_contexts.h can use it in member initializers.
+// Declared above so backend_contexts.h can build a StubBackendManager.
+// Existing test sources that pull only qnn_unit_test_utils.h keep access to
+// MakeMockIODef / MakeMockNodeUnit / MockInitRegistry / OpBuilderTestContext
+// without extra explicit includes. The snapshot harness (snapshot.h) is NOT
+// pulled here — snapshot-tier TUs include it directly.
+#include "test/providers/qnn/infra/backend_contexts.h"
+#include "test/providers/qnn/infra/mock_init_registry.h"
+#include "test/providers/qnn/infra/mock_node_unit.h"
+
+namespace onnxruntime {
+namespace test {
+
+// Reusable OrtApi stub tables for function-level unit tests.
+//
+// Holds the three stub structs (OrtApi / OrtEpApi / OrtModelEditorApi) that any
+// code interacting with ORT through ApiPtrs needs. Tests assign individual
+// function-pointer members directly (e.g. ctx.stub_ort_api.GetTensorData = ...).
+//
+// Initializer-query stubs are installed in the constructor so that paths like
+// QnnModelWrapper::IsConstantInput() safely return false on graphs with no
+// initializers — the default fixture for almost every test. Tests that need
+// non-zero initializers replace these two stubs before constructing the wrapper.
+//
+// MakeApiPtrs() returns an ApiPtrs view over the three stub tables AND verifies
+// that the initializer-query stubs are still installed (a test that wholesale
+// resets stub_ort_api must re-add them, otherwise QnnModelWrapper SIGSEGVs at
+// the first initializer query). Throwing std::logic_error fails the test rather
+// than the process; assert() would be stripped by NDEBUG (CMake RelWithDebInfo,
+// the coverage build's config).
+struct OrtApiStubContext {
+  OrtApi stub_ort_api{};
+  OrtEpApi stub_ep_api{};
+  OrtModelEditorApi stub_editor_api{};
+
+  OrtApiStubContext() {
+    stub_ort_api.Graph_GetNumInitializers = [](const OrtGraph*, size_t* num) noexcept -> OrtStatus* {
+      *num = 0;
+      return nullptr;
+    };
+    stub_ort_api.Graph_GetInitializers = [](const OrtGraph*, const OrtValueInfo**, size_t count) noexcept -> OrtStatus* {
+      // Pairs with Graph_GetNumInitializers above which always reports 0. Tests
+      // that need non-zero initializers must replace this stub before constructing
+      // a wrapper.
+      // Note: ORT_ENFORCE / assert are not used here because this lambda is noexcept —
+      // throwing or calling abort() from a noexcept function terminates the process
+      // rather than failing the test case. The invariant is enforced by MakeApiPtrs().
+      (void)count;
+      return nullptr;
+    };
+  }
+
+  ApiPtrs MakeApiPtrs() const {
+    if (stub_ort_api.Graph_GetNumInitializers == nullptr ||
+        stub_ort_api.Graph_GetInitializers == nullptr) {
+      throw std::logic_error(
+          "Graph_GetNumInitializers / Graph_GetInitializers stubs missing "
+          "— re-add them after resetting stub_ort_api");
+    }
+    return ApiPtrs{stub_ort_api, stub_ep_api, stub_editor_api};
+  }
 };
 
 // Context for tests that need a real QNN HTP backend (e.g., ValidateQnnNode).
