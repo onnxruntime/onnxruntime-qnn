@@ -416,7 +416,13 @@ To find each QNN graph's I/O size, enable VERBOSE session logging and look for t
 ... estimated PD size ~3491.61MB, including nonSharedWeight 1908408320 B I/O 1662533632 B runlist 59602944 B spillfill 22282240 B
 ```
 
-The HTP backend emits one such estimate for each QNN graph, so these messages show both the number of QNN graphs in a context and their I/O sizes. The `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
+When loading a context binary, QNN EP also emits the total number of QNN graphs in that context at VERBOSE level:
+
+```
+... Graph count from QNN context: 4
+```
+
+The per-QNN-graph estimates show the I/O sizes; the `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
 
 **Per-context vs. group scope** — the same intended peak maps to a *different* value depending on which context-creation path is used, because QNN only sees one context at a time on the default path:
 
