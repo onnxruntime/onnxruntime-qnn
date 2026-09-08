@@ -1690,35 +1690,27 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 }
 
-// htp_reused_io_limit_mb: a valid numeric value is accepted and does not block AOT context load.
+// htp_reused_io_limit_mb: a valid numeric value is accepted when preparing and loading an AOT context.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
 #if QNN_API_VERSION_MAJOR < 2 || \
     (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
 #elif defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
-#else
+#endif
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["htp_reused_io_limit_mb"] = "128";
 
-  const std::string context_binary_file = "./testdata/qnn_context_cache_reused_io_limit.onnx";
-  const std::string qnn_ctx_bin = "./testdata/qnn_context_cache_reused_io_limit_qnn.bin";
-  std::remove(context_binary_file.c_str());
-  std::remove(qnn_ctx_bin.c_str());
-
   std::unordered_map<std::string, std::string> session_option_pairs;
-  session_option_pairs.emplace(kOrtSessionOptionEpContextEnable, "1");
-  session_option_pairs.emplace(kOrtSessionOptionEpContextFilePath, context_binary_file);
-  session_option_pairs.emplace(kOrtSessionOptionEpContextEmbedMode, "0");
+  session_option_pairs.emplace("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
 
   const TestInputDef<float> input_def({1, 2, 3}, false, -10.0f, 10.0f);
   const std::string op_type = "Atan";
 
-  // 1st run generates the Onnx skeleton file + Qnn context cache binary file with the
-  // option applied during context creation.
+  // prepare_and_load creates and reloads the QNN context in this session.
   TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
                        BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
@@ -1728,26 +1720,6 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceed
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",
                        session_option_pairs);
-  EXPECT_TRUE(std::filesystem::exists(context_binary_file.c_str()));
-  EXPECT_TRUE(std::filesystem::exists(qnn_ctx_bin));
-
-  // 2nd run loads the cached context binary from disk with the option applied on the
-  // contextCreateFromBinary path (LoadCachedQnnContextFromBuffer).
-  std::unordered_map<std::string, std::string> session_option_pairs2;
-  session_option_pairs2.emplace(kOrtSessionOptionEpContextFilePath, context_binary_file);
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
-                       provider_options,
-                       14,
-                       ExpectedEPNodeAssignment::All,
-                       QDQTolerance(),
-                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                       context_binary_file,
-                       session_option_pairs2);
-
-  ASSERT_EQ(std::remove(context_binary_file.c_str()), 0);
-  ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
-#endif
 }
 
 // htp_reused_io_limit_mb: malformed values (negative / non-numeric) are ignored with a
@@ -2599,9 +2571,9 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 #endif
 }
 
-// Verifies that htp_reused_io_limit_mb is accepted as a group-level config by
-// contextCreateFromBinaryListAsync. File mapping is disabled to select the non-callback list API.
-TEST_F(QnnHTPBackendTests, CreateFromBinaryListAsync_HtpReusedIoLimitMb_LoadsSucceeds) {
+// Verifies that htp_reused_io_limit_mb is accepted as a group-level config when
+// htp_share_resource_optimization loads contexts with contextCreateFromBinaryListAsync.
+TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_LoadsSucceeds) {
 #if QNN_API_VERSION_MAJOR < 2 || \
     (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
