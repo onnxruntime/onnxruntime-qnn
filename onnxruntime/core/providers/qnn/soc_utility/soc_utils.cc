@@ -19,6 +19,8 @@
 #include <sys/system_properties.h>
 #endif
 
+#include "QnnTypes.h"
+
 #include "core/providers/qnn/soc_utility/soc_table.h"
 
 namespace onnxruntime {
@@ -123,10 +125,34 @@ typedef struct _PPTT {
 #define MAX_FADT_PPTT_SIZE 65536
 #define LEVEL_ID(LV1, LV2) ((LV1 << 32) | (LV2))
 
-// Note that the table is intentionally kept compact as Makena is the only expected usage.
-// (level1_ID | level2_ID), SOC_ID
 static std::unordered_map<uint64_t, int> pptt_mappings = {
-    {LEVEL_ID(113ULL, 449ULL), 435},  // Makena
+    // 8380 variants
+    {LEVEL_ID(136ULL, 555ULL), 538},
+    {LEVEL_ID(136ULL, 615ULL), 538},
+    {LEVEL_ID(136ULL, 616ULL), 538},
+    {LEVEL_ID(136ULL, 709ULL), 538},
+    {LEVEL_ID(136ULL, 710ULL), 538},
+    {LEVEL_ID(154ULL, 635ULL), 538},
+    {LEVEL_ID(154ULL, 711ULL), 538},
+
+    // 8480 variants
+    {LEVEL_ID(161ULL, 662ULL), 662},
+    {LEVEL_ID(161ULL, 698ULL), 662},
+    {LEVEL_ID(161ULL, 699ULL), 662},
+
+    // 8440 variants
+    {LEVEL_ID(168ULL, 693ULL), 693},
+    {LEVEL_ID(168ULL, 728ULL), 693},
+    {LEVEL_ID(168ULL, 729ULL), 693},
+
+    {LEVEL_ID(113ULL, 449ULL), 435},  // SC8280X
+    {LEVEL_ID(118ULL, 487ULL), 475},  // SC7280
+    {LEVEL_ID(118ULL, 488ULL), 475},  // SC7295
+    {LEVEL_ID(118ULL, 546ULL), 475},  // SC7280P
+    {LEVEL_ID(118ULL, 553ULL), 475},  // SC8270
+    {LEVEL_ID(118ULL, 563ULL), 475},  // SC8270P
+    {LEVEL_ID(118ULL, 497ULL), 497},  // QCM6490
+    {LEVEL_ID(118ULL, 498ULL), 498}   // QCS6490
 };
 
 int getSocId() {
@@ -242,6 +268,17 @@ uint32_t MapHtpArchFromSocModel(uint32_t soc_model) {
     }
   }
   return 0;
+}
+
+uint32_t MapSocModelFromSocId(int soc_id) {
+  for (const SocInfo& soc_info : kSocInfos) {
+    for (int known_soc_id : soc_info.soc_ids) {
+      if (known_soc_id == soc_id) {
+        return soc_info.soc_model;
+      }
+    }
+  }
+  return QNN_SOC_MODEL_UNKNOWN;
 }
 
 }  // namespace soc

@@ -21,6 +21,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
   }
+  void RegisterQnnBackendManager(const std::shared_ptr<qnn::QnnBackendManager>& manager);
+  void RegisterGenieBackendManager(const std::shared_ptr<qnn::GenieBackendManager>& manager);
+  void UnloadBackendLibraries();
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
@@ -82,6 +85,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+  std::vector<std::shared_ptr<qnn::QnnBackendManager>> qnn_backend_managers_;
+  std::vector<std::shared_ptr<qnn::GenieBackendManager>> genie_backend_managers_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // Synthesized NPU hardware device when ORT Core doesn't enumerate one.
@@ -92,6 +97,14 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // domain (always registered) and any domains built from ORT_QNN_CUSTOM_OP_DOMAINS.
   // The domains and the op objects below must outlive any session that uses this factory
   // (factory is a per-library singleton); domain.Add(op*) does NOT transfer ownership.
+  HardwareDeviceUniquePtr virtual_gpu_hw_device_;
+
+  // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
+  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+
+  // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
+  // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
+  // domain.Add(op*) does NOT transfer ownership; op objects must be kept alive here.
   std::vector<Ort::CustomOpDomain> custom_op_domains_;
   // Placeholder ops built from ORT_QNN_CUSTOM_OP_DOMAINS (env-var UDO ops).
   std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>> custom_op_objects_;

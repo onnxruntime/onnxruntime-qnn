@@ -16,13 +16,17 @@ int GetSocId();
 // Returns true on Linux arm64 if /dev/fastrpc-cdsp* is present. Always false elsewhere.
 bool HasFastRpcCdspDevice();
 
-// Resolves a SoC model name (e.g. "SM8750", case-insensitive) to the corresponding
+// Resolves an SoC model name (e.g. "SM8750", case-insensitive) to the corresponding
 // Qnn_SocModel_t integer value. Returns 0 (QNN_SOC_MODEL_UNKNOWN) if not found.
 uint32_t MapSocModelFromSocName(std::string_view soc_name);
 
-// Resolves a SoC model to the corresponding QnnHtpDevice_Arch_t integer value.
+// Resolves an SoC model to the corresponding QnnHtpDevice_Arch_t integer value.
 // Returns 0 (QNN_HTP_DEVICE_ARCH_NONE) if not found.
 uint32_t MapHtpArchFromSocModel(uint32_t soc_model);
+
+// Resolves an SoC id to the corresponding Qnn_SocModel_t integer value.
+// Returns 0 (QNN_SOC_MODEL_UNKNOWN) if not found.
+uint32_t MapSocModelFromSocId(int soc_id);
 
 }  // namespace soc
 }  // namespace qnn
