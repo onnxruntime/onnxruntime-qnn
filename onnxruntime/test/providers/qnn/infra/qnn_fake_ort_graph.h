@@ -43,6 +43,9 @@ namespace test {
 // FakeOrtValue is declared here so FakeValueInfo can hold a pointer to it.
 // Full definition follows after FakeValueInfo.
 struct FakeOrtValue;
+// FakeNode is declared here so FakeValueInfo can name its producer node
+// (used by ValueInfo_GetValueProducer for QDQ node-group reconstruction).
+struct FakeNode;
 
 // ---------------------------------------------------------------------------
 // FakeValueInfo
@@ -60,6 +63,16 @@ struct FakeValueInfo {
   // Non-owning pointer to a FakeOrtValue for constant initializers.
   // Null for non-initializer value infos. Used by ValueInfo_GetInitializerValue.
   FakeOrtValue* initializer_value = nullptr;
+  // Non-owning pointer to the node that produces this value. Null for graph
+  // inputs / initializers. Used by ValueInfo_GetValueProducer when the EP
+  // reconstructs a QDQ node group (e.g. a Clip min/max fed by a DQ node).
+  const FakeNode* producer = nullptr;
+  // Non-owning pointers to the nodes that consume this value. Empty for graph
+  // outputs / unconsumed values. Used by ValueInfo_GetValueNumConsumers /
+  // ValueInfo_GetValueConsumers when the EP reconstructs a QDQ node group
+  // (e.g. a Clip output feeding a Q node). GetQDQIODefs treats "exactly one
+  // consumer that is a Q node" as a quantized output.
+  std::vector<const FakeNode*> consumers;
 
   const OrtValueInfo* AsValueInfo() const {
     return reinterpret_cast<const OrtValueInfo*>(this);
@@ -173,6 +186,11 @@ struct FakeNode {
   std::vector<FakeValueInfo*> inputs;
   std::vector<FakeValueInfo*> outputs;
   std::unordered_map<std::string, FakeOpAttr*> attrs;
+  // Stable node id returned by Node_GetId. The EP threads this through
+  // UniqueNameGenerator / QnnParamWrapper, so it lands in QNN tensor names and
+  // snapshot goldens — keep it deterministic (default 0) rather than deriving
+  // it from the (address-dependent) node pointer.
+  size_t id = 0;
 
   const OrtNode* AsNode() const {
     return reinterpret_cast<const OrtNode*>(this);
@@ -340,8 +358,8 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
 
   // ---- OrtNode ----
   api.Node_GetId = [](const OrtNode* n, size_t* id) noexcept -> OrtStatus* {
-    // Pointer address is unique per FakeNode — sufficient for "node id" semantics.
-    *id = reinterpret_cast<size_t>(n);
+    // Deterministic per-FakeNode id (default 0) — feeds QNN tensor names / goldens.
+    *id = reinterpret_cast<const FakeNode*>(n)->id;
     return nullptr;
   };
   api.Node_GetName = [](const OrtNode* n, const char** out) noexcept -> OrtStatus* {
@@ -447,18 +465,27 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   };
 
   // ---- ValueInfo producer/consumer queries ----
-  // Return nullptr/empty by default. Tests that need a real producer can
-  // override this stub after calling InstallFakeGraphApiStubs.
-  api.ValueInfo_GetValueProducer = [](const OrtValueInfo*, const OrtNode** producer,
+  // Producer: read FakeValueInfo::producer (null for graph inputs/initializers).
+  // Needed by GetQDQIODefs to walk from a target-node input back to its DQ node.
+  api.ValueInfo_GetValueProducer = [](const OrtValueInfo* vi, const OrtNode** producer,
                                       size_t* output_index) noexcept -> OrtStatus* {
-    if (producer) *producer = nullptr;
+    const auto* fvi = reinterpret_cast<const FakeValueInfo*>(vi);
+    if (producer) *producer = fvi->producer ? fvi->producer->AsNode() : nullptr;
     if (output_index) *output_index = 0;
     return nullptr;
   };
-  api.ValueInfo_GetValueConsumers = [](const OrtValueInfo*, const OrtNode** consumers,
+  // Consumer count: read FakeValueInfo::consumers. Default (empty) → 0, which
+  // GetQDQIODefs treats as "not a quantized output" and falls back to a regular
+  // output def. A value feeding exactly one Q node reports 1 consumer.
+  api.ValueInfo_GetValueNumConsumers = [](const OrtValueInfo* vi, size_t* count) noexcept -> OrtStatus* {
+    *count = reinterpret_cast<const FakeValueInfo*>(vi)->consumers.size();
+    return nullptr;
+  };
+  api.ValueInfo_GetValueConsumers = [](const OrtValueInfo* vi, const OrtNode** consumers,
                                        int64_t* indices, size_t count) noexcept -> OrtStatus* {
+    const auto& c = reinterpret_cast<const FakeValueInfo*>(vi)->consumers;
     for (size_t i = 0; i < count; ++i) {
-      consumers[i] = nullptr;
+      consumers[i] = (i < c.size() && c[i]) ? c[i]->AsNode() : nullptr;
       if (indices) indices[i] = 0;
     }
     return nullptr;
@@ -509,6 +536,51 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
     return nullptr;
   };
 }
+
+// ---------------------------------------------------------------------------
+// OrtGlobalApiOverride
+//
+// RAII guard that replaces the global Ort::GetApi() with a caller-supplied
+// OrtApi for the duration of the scope, then restores the original on
+// destruction.
+//
+// Why this is needed: Ort::ConstNode / Ort::ConstValueInfo / Ort::ConstGraph
+// wrappers call OrtApi function pointers via the global Ort::GetApi(), not
+// through api_ptrs_. Tests that pass fake OrtNode*/OrtGraph* pointers to EP
+// code must override the global so that wrapper calls route through the fake-
+// graph stubs rather than the real ORT runtime (which dereferences fake
+// pointers and SIGSEGVs). Process-wide global; gtest runs tests sequentially
+// so this is safe, but do not use two overrides simultaneously in the same
+// thread.
+//
+// Lives here (alongside the fake-graph stubs it enables) so that mock_node_unit.h
+// can build a NodeUnit holder that keeps the global routed to fake-graph stubs
+// for the lifetime of OrtNodeUnit accessor calls (OpType/Name/Index deref
+// target_node_ via the global Ort::GetApi()).
+//
+// Implementation note: uses Ort::detail::Global::Api(), which is declared in
+// the public onnxruntime_cxx_api.h header (not a private "core/" include).
+// Ort::InitApi() — the intended public setter — is only available when
+// ORT_API_MANUAL_INIT is defined; ort_api.h suppresses that macro in
+// unit-test builds so all TUs agree on static initialisation. This helper
+// is test-only (gated by QNN_EP_INTERNAL_SYMBOL_ACCESS) and must be
+// re-verified if ORT uplevels and changes the detail::Global layout.
+class OrtGlobalApiOverride {
+ public:
+  explicit OrtGlobalApiOverride(const OrtApi* new_api) {
+    original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    Ort::detail::Global::Api(new_api);
+  }
+  ~OrtGlobalApiOverride() { Ort::detail::Global::Api(original_); }
+
+  OrtGlobalApiOverride(const OrtGlobalApiOverride&) = delete;
+  OrtGlobalApiOverride& operator=(const OrtGlobalApiOverride&) = delete;
+  OrtGlobalApiOverride(OrtGlobalApiOverride&&) = delete;
+  OrtGlobalApiOverride& operator=(OrtGlobalApiOverride&&) = delete;
+
+ private:
+  const OrtApi* original_ = nullptr;
+};
 
 }  // namespace test
 }  // namespace onnxruntime
