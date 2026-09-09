@@ -992,11 +992,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
   htp_graph_configs_.enable_htp_matmul_lut = ParseBoolOption(ort_api,
                                                              session_options_,
                                                              FormatEPConfigKey("enable_htp_matmul_lut"),
                                                              true,
                                                              logger_);
+#endif
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
@@ -1838,8 +1840,7 @@ void QnnEp::InitQnnHtpGraphConfigs(
 #endif
     }
 
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-    ((QNN_SDK_VERSION_MAJOR > 2) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
     if (configs.enable_htp_matmul_lut) {
       gsl::not_null<QnnHtpGraph_CustomConfig_t*> matmul_lut_config = configs_builder.PushCustomConfig();
       matmul_lut_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG;

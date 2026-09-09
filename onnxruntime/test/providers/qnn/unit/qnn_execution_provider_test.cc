@@ -684,6 +684,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmInvalid_LogsVe
                "Invalid value for ep.qnnexecutionprovider.enable_htp_monolithic_lstm");
 }
 
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutTrue_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("enable_htp_matmul_lut")] = "1";
@@ -700,6 +701,28 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutInvalid_LogsVerbose
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                "Invalid value for ep.qnnexecutionprovider.enable_htp_matmul_lut");
 }
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutFalse_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "0";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+#else
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutUnsupported_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutUnsupportedInvalidValue_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "maybe";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+#endif
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeInvalidValue_Succeeds) {
   EpStubContext ctx;
