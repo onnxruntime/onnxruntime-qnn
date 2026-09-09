@@ -179,8 +179,7 @@ struct QnnRealHtpBackendManagerContext {
 
   bool IsValid() const { return initialized_; }
 
-  QnnRealHtpBackendManagerContext(const QnnRealHtpBackendManagerContext&) = delete;
-  QnnRealHtpBackendManagerContext& operator=(const QnnRealHtpBackendManagerContext&) = delete;
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnRealHtpBackendManagerContext);
 
  private:
   bool initialized_ = false;
