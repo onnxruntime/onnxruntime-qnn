@@ -573,10 +573,7 @@ class OrtGlobalApiOverride {
   }
   ~OrtGlobalApiOverride() { Ort::detail::Global::Api(original_); }
 
-  OrtGlobalApiOverride(const OrtGlobalApiOverride&) = delete;
-  OrtGlobalApiOverride& operator=(const OrtGlobalApiOverride&) = delete;
-  OrtGlobalApiOverride(OrtGlobalApiOverride&&) = delete;
-  OrtGlobalApiOverride& operator=(OrtGlobalApiOverride&&) = delete;
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OrtGlobalApiOverride);
 
  private:
   const OrtApi* original_ = nullptr;
