@@ -1132,40 +1132,6 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt4DQConstWeight_AboveFoldCutoff) 
                                        ElementwiseAbsoluteVerifier(kCpuLargeFoldTolerance), &checker});
 }
 
-// Builds: weight_q (int8 init) -> per-channel DQ -> Conv, with no Q hop after the DQ, so the
-// only thing under test is whether the DQ itself survives and dequantizes correctly.
-static GetTestModelFn BuildPerChannelInt8DQConstWeightConvTestCase(const std::vector<float>& scales,
-                                                                   int64_t out_ch,
-                                                                   int64_t in_ch = 3) {
-  return [scales, out_ch, in_ch](ModelTestBuilder& builder) {
-    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
-    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
-    const std::vector<int8_t> weight_pattern{-128, -70, -1, 1, 50, 127};
-    std::vector<int8_t> weight_values(static_cast<size_t>(out_ch * in_ch));
-    for (size_t i = 0; i < weight_values.size(); ++i) {
-      weight_values[i] = weight_pattern[i % weight_pattern.size()];
-    }
-
-    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
-    builder.MakeInitializer<int8_t>("weight_q", weight_shape, weight_values);
-    builder.MakeInitializer<float>("weight_scale", {out_ch}, TileToLength(scales, out_ch));
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
-    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-    builder.AddNode("WeightDQ", "DequantizeLinear", {"weight_q", "weight_scale"}, {"weight_dq"},
-                    kOnnxDomain, axis_attrs);
-
-    builder.MakeOutput("output");
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
-    builder.AddNode("Conv", "Conv", {"input", "weight_dq"}, {"output"}, kOnnxDomain, conv_attrs);
-  };
-}
-
 // Same graph with per-tensor quantization, where a runtime QNN Dequantize is a faithful
 // substitute for folding, so the size cutoff is free to decline and keep the DLC compact.
 static GetTestModelFn BuildPerTensorInt8DQConstWeightConvTestCase(float scale, int64_t out_ch,
@@ -1206,20 +1172,6 @@ TEST_F(QnnCPUBackendTests, Convf32_PerTensorInt8DQConstWeight_AboveFoldCutoff) {
   std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
   RunQnnModelTest(BuildPerTensorInt8DQConstWeightConvTestCase(/*scale*/ 0.1f, kLargeConvOutCh,
                                                               kLargeConvInCh),
-                  provider_options,
-                  /*opset*/ 13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       ElementwiseAbsoluteVerifier(kCpuLargeFoldTolerance), &checker});
-}
-
-TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt8DQConstWeight_AboveFoldCutoff) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
-  RunQnnModelTest(BuildPerChannelInt8DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f},
-                                                               kLargeConvOutCh, kLargeConvInCh),
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,

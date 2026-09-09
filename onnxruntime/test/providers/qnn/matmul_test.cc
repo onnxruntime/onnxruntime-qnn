@@ -912,7 +912,8 @@ static std::function<void(const Ort::Session&)> PinQnnNodesOnQnn(int expect_dq, 
 // Builds: w_q0 (int8 init) -> DQ0 -> Q1 -> DQ1 -> MatMul. Qwen-class weight chain:
 // per-channel INT8 quantized along the output dim (axis=1 on [K,N]), with a real
 // requant hop (s0 != s1). G1 uses Qwen3-0.6B q/k/v/o-proj exact dims (1024x1024 =
-// 1M elems, past the 1 MiB fold budget); G2 sits just past the cutoff boundary.
+// 1M elems, past the 1 MiB fold budget). The cutoff boundary itself is pinned
+// exactly by the ShouldSkipConstantDQFold unit tests.
 static GetTestModelFn BuildPerChannelQDQChainMatMulTestCase(int64_t K, int64_t N) {
   return [K, N](ModelTestBuilder& builder) {
     builder.MakeInput<float>("input", {1, K}, -0.1f, 0.1f);
@@ -949,20 +950,6 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
 
   std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 2, /*expect_q*/ 1);
   RunQnnModelTest(BuildPerChannelQDQChainMatMulTestCase(/*K*/ 1024, /*N*/ 1024),
-                  provider_options,
-                  /*opset*/ 13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
-}
-
-TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_CutoffBoundary_MustFold) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  // 1024x257 = 263,168 elems: just past the 1 MiB (262,144-elem) fold budget.
-  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 2, /*expect_q*/ 1);
-  RunQnnModelTest(BuildPerChannelQDQChainMatMulTestCase(/*K*/ 1024, /*N*/ 257),
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
