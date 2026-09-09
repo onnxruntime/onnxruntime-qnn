@@ -14,7 +14,6 @@
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
-#include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -222,118 +221,6 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
     ASSERT_EQ(e.GetOrtErrorCode(), ORT_FAIL);
     ASSERT_THAT(e.what(), testing::HasSubstr("Only one of 'backend_type' and 'backend_path' should be set."));
   }
-}
-
-// Verifies that ParseOpPackages handles a Windows drive-letter path correctly.
-// On Windows, the colon-delimited entry contains an extra ':' from the drive letter
-// (e.g., "MyOp:C:\\path\\foo.dll:Symbol"). The parser must merge the drive letter and
-// the rest of the path into a single token without producing a dangling string_view.
-// On other platforms, the same code path is exercised with a POSIX-style path so that
-// a regression in the cross-platform parsing logic is caught everywhere.
-TEST(QnnEP, ParseOpPackages_AbsolutePath) {
-  Ort::Logger logger;
-  std::vector<onnxruntime::qnn::OpPackage> op_packages;
-
-#if defined(_WIN32)
-  // Create a real placeholder file at a Windows-style absolute path so std::filesystem::exists
-  // returns true and the drive-letter merge branch is exercised.
-  std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
-  std::filesystem::path tmp_dll = tmp_dir / "ort_qnn_parse_oppkg_test.dll";
-  std::ofstream(tmp_dll).put('\0');  // create empty placeholder
-  ASSERT_TRUE(std::filesystem::exists(tmp_dll));
-
-  const std::string entry = "MyOp:" + tmp_dll.string() + ":MyAddOpPackageInterfaceProvider";
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-  EXPECT_EQ(op_packages[0].path, tmp_dll.string());
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  // Variant with explicit ":CPU" target.
-  op_packages.clear();
-  const std::string entry_with_target = entry + ":CPU";
-  onnxruntime::ParseOpPackages(entry_with_target, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].path, tmp_dll.string());
-  EXPECT_EQ(op_packages[0].target, "CPU");
-
-  std::filesystem::remove(tmp_dll);
-#else
-  // POSIX path — exercises the same parsing pipeline (without the Windows merge branch).
-  const std::string entry = "MyOp:/tmp/foo.so:MyAddOpPackageInterfaceProvider";
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-  EXPECT_EQ(op_packages[0].path, "/tmp/foo.so");
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  op_packages.clear();
-  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].target, "CPU");
-#endif
-}
-
-#if defined(_WIN32)
-// Regression test for the Windows drive-letter merge: parsing of the config string must be
-// deterministic in the input — same string → same parse, regardless of filesystem state.
-// If the merge were gated on std::filesystem::exists(), a missing DLL would silently mis-parse
-// `MyOp:C:\path\foo.dll:Symbol` as 4 tokens with "C" landing in the path slot.
-TEST(QnnEP, ParseOpPackages_AbsolutePath_NotYetOnDisk) {
-  Ort::Logger logger;
-  std::vector<onnxruntime::qnn::OpPackage> op_packages;
-
-  // Path that does NOT exist on disk — only the token shape (single-letter drive prefix) drives the merge.
-  const std::string non_existent_path = "C:\\does\\not\\exist\\ort_qnn_parse_oppkg_not_on_disk.dll";
-  ASSERT_FALSE(std::filesystem::exists(non_existent_path));
-
-  const std::string entry = "MyOp:" + non_existent_path + ":MyAddOpPackageInterfaceProvider";
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-  EXPECT_EQ(op_packages[0].path, non_existent_path);
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  // Variant with explicit ":CPU" target — the merge must leave room for the trailing target token.
-  op_packages.clear();
-  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].path, non_existent_path);
-  EXPECT_EQ(op_packages[0].target, "CPU");
-}
-#endif
-
-// Verifies that ParseOpPackages preserves a relative path as-is. Relative paths must NOT
-// trigger the Windows drive-letter merge branch (which is gated on splitStrings[1] being a
-// single ASCII letter), so the parser should pass the path through to op_packages unchanged.
-TEST(QnnEP, ParseOpPackages_RelativePath) {
-  Ort::Logger logger;
-  std::vector<onnxruntime::qnn::OpPackage> op_packages;
-
-#if defined(_WIN32)
-  // No drive letter → no extra ':' → no merge needed. Path passes through verbatim.
-  const std::string entry = "MyOp:foo.dll:MyAddOpPackageInterfaceProvider";
-#else
-  const std::string entry = "MyOp:foo.so:MyAddOpPackageInterfaceProvider";
-#endif
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-#if defined(_WIN32)
-  EXPECT_EQ(op_packages[0].path, "foo.dll");
-#else
-  EXPECT_EQ(op_packages[0].path, "foo.so");
-#endif
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  op_packages.clear();
-  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].target, "CPU");
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

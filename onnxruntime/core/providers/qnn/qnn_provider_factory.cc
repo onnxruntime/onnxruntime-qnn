@@ -20,6 +20,7 @@
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
+#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "qnn_ep_min_ort_api_version.h"
 
 #ifdef _WIN32
@@ -90,6 +91,15 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   IsStreamAware = IsStreamAwareImpl;
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
+  GetNumCustomOpDomains = GetNumCustomOpDomainsImpl;
+  GetCustomOpDomains = GetCustomOpDomainsImpl;
+
+  // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
+  // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
+  // so we parse once here at factory construction and cache the result for all sessions.
+  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
+  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
+  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
 
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
@@ -549,6 +559,30 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
 #endif
 }
 
+OrtStatus* ORT_API_CALL QnnEpFactory::GetNumCustomOpDomainsImpl(
+    _In_ OrtEpFactory* this_ptr,
+    _Out_ size_t* num_domains) noexcept {
+  const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
+  *num_domains = factory->custom_op_domains_.size();
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
+    _In_ OrtEpFactory* this_ptr,
+    _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
+    _In_ size_t num_domains) noexcept {
+  const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
+  if (num_domains > factory->custom_op_domains_.size()) {
+    return factory->ort_api.CreateStatus(
+        ORT_INVALID_ARGUMENT,
+        "GetCustomOpDomains: num_domains exceeds the value returned by GetNumCustomOpDomains");
+  }
+  for (size_t i = 0; i < num_domains; ++i) {
+    domains[i] = factory->custom_op_domains_[i];
+  }
+  return nullptr;
+}
+
 }  // namespace onnxruntime
 
 extern "C" {
@@ -633,6 +667,10 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return ort_api->CreateStatus(ORT_FAIL, "Failed to get Model Editor API.");
   }
 
+  // Set default logger before factory construction so that the factory ctor can read it
+  // via OrtLoggingManager::GetDefaultLoggerPtr() without needing a separate parameter.
+  onnxruntime::OrtLoggingManager::SetDefaultLogger(default_logger);
+
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactory> factory;
   try {
@@ -648,9 +686,6 @@ OrtStatus* CreateEpFactories(const char* registration_name,
 
   factories[0] = factory.release();
   *num_factories = 1;
-
-  // Set default logger for later use.
-  onnxruntime::OrtLoggingManager::SetDefaultLogger(default_logger);
 
   return nullptr;
 }
