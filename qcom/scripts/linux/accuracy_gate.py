@@ -217,7 +217,12 @@ def load_manifest_versions(golden_root: str | None) -> ToolVersions:
 def detect_qairt_version() -> str | None:
     """Current QAIRT version. Env override first (CI/tests inject it); else fall
     back to the QAIRT SDK's sdk.yaml. Returns None if undeterminable -- callers
-    treat None like no-manifest (safe: full accuracy run)."""
+    treat None like no-manifest (safe: full accuracy run).
+
+    NOTE: the real shared version-getter is PR2/PR3's resolve_tool_versions.sh
+    (resolve_qairt_version); until this rebases onto it, this mirrors its
+    env-first + sdk.yaml fallback independently so both sides agree on the
+    resolved string."""
     env = os.environ.get("QNN_UT_QAIRT_VERSION")
     if env:
         return env.strip()
@@ -246,9 +251,10 @@ def detect_ort_version() -> str | None:
     else read the ORT prebuilt's VERSION_NUMBER. Returns None if undeterminable
     -- treated like a version-mismatch (safe: full accuracy run).
 
-    NOTE: the real shared version-getter is PR2's qnn_ut_version.sh; until it
-    lands, this mirrors detect_qairt_version's env-first + loose-file fallback so
-    both sides can be sourced identically later."""
+    NOTE: the real shared version-getter is PR2/PR3's resolve_tool_versions.sh
+    (resolve_ort_version); until this rebases onto it, this mirrors
+    detect_qairt_version's env-first + loose-file fallback so both sides can
+    be sourced identically later."""
     env = os.environ.get("QNN_UT_ORT_VERSION")
     if env:
         return env.strip()
