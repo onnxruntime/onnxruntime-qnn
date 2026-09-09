@@ -21,7 +21,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
-- [Compiled Model Encryption](#compiled-model-encryption)
+- [Compiled Model Encryption (ORT API v28+)](#compiled-model-encryption-ort-api-v28)
 - [QNN EP Framework Op Tracing](#qnn-ep-framework-op-tracing)
 - [QNN EP Input Graph Dump](#qnn-ep-input-graph-dump)
 - [QNN EP Profiling](#qnn-ep-profiling)
@@ -1194,7 +1194,7 @@ g_ort->AddSessionConfigEntry(session_options, kOrtSessionOptionEpContextEmbedMod
 options.add_session_config_entry("ep.context_embed_mode", "1")
 ```
 
-## Compiled Model Encryption
+## Compiled Model Encryption (ORT API v28+)
 
 By default the QNN context binary is written to / read from disk in plaintext (as an external
 file when `ep.context_embed_mode` is `"0"`, or embedded in the EPContext model when `"1"`). ORT
@@ -1225,6 +1225,7 @@ constexpr uint8_t g_key = 0x5A;  // must match the key ReadCb uses below
 OrtStatus* WriteCb(void* state, const char* name, const void* buffer, size_t n) noexcept {
   // >>> Replace this block with your own encryption. <<<
   std::ofstream out(name, std::ios::binary);
+  if (!out.is_open()) return Ort::GetApi().CreateStatus(ORT_FAIL, "open failed");
   for (size_t i = 0; i < n; ++i) {
     out.put(static_cast<const uint8_t*>(buffer)[i] ^ g_key);
   }
@@ -1233,8 +1234,13 @@ OrtStatus* WriteCb(void* state, const char* name, const void* buffer, size_t n) 
 
 Ort::ModelCompilationOptions compile_options(env, session_options);
 compile_options.SetEpContextEmbedMode(false);
-Ort::Experimental::Get_OrtCompileApi_ModelCompilationOptions_SetEpContextDataWriteFunc_SinceV28_Fn(
-    &Ort::GetApi())(compile_options, WriteCb, /*state=*/nullptr);
+auto write_fn = Ort::Experimental::Get_OrtCompileApi_ModelCompilationOptions_SetEpContextDataWriteFunc_SinceV28_Fn(
+    &Ort::GetApi());
+if (write_fn == nullptr) {
+  // ORT core predates API v28; this feature is unavailable.
+  return;
+}
+Ort::ThrowOnError(write_fn(compile_options, WriteCb, /*state=*/nullptr));
 Ort::CompileModel(env, compile_options);
 ```
 
@@ -1244,6 +1250,8 @@ Replace the body of `ReadCb` with the matching decryption for whatever cipher `W
 
 ```cpp
 // C++
+constexpr uint8_t g_key = 0x5A;  // must match the key WriteCb used above
+
 OrtStatus* ReadCb(void* state, const char* name, OrtAllocator* allocator,
                   void** buffer, size_t* size) noexcept {
   // >>> Replace this block with your own decryption. <<<
@@ -1267,10 +1275,15 @@ OrtStatus* ReadCb(void* state, const char* name, OrtAllocator* allocator,
   return nullptr;
 }
 
-Ort::SessionOptions session_options;
-Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
-    &Ort::GetApi())(session_options, ReadCb, /*state=*/nullptr);
-Ort::Session session(env, ctx_model_path, session_options);
+Ort::SessionOptions inference_session_options;
+auto read_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
+    &Ort::GetApi());
+if (read_fn == nullptr) {
+  // ORT core predates API v28; this feature is unavailable.
+  return;
+}
+Ort::ThrowOnError(read_fn(inference_session_options, ReadCb, /*state=*/nullptr));
+Ort::Session session(env, ctx_model_path, inference_session_options);
 ```
 
 If no callback is registered, the EP uses the legacy plaintext behavior.
