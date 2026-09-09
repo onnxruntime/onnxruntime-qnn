@@ -212,7 +212,7 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
  * FullyConnected (input_1's shape is [n, k]) is used instead of MatMul without extra Transpose Op when:
  * 1. input_1 is a rank 2 initializer.
  * 2. input_1 is a rank 1 tensor.
- * 3. input_1 is a static [1, ..., 1, k, n] weight and input_0 has rank > 2.
+ * 3. input_1 is a static [1, ..., 1, k, n] weight and input_0 has rank >= 2.
  * For LPBQ-quantized weights on NPU backends, Conv2D with 1x1 filters is used instead of MatMul.
  */
 class MatMulOpBuilder : public BaseOpBuilder {
@@ -790,8 +790,11 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // A block-quantized weight is always emitted as a QNN MatMul (see ProcessInputsForBQMatMul), even
   // when CheckInputs would otherwise route a rank-2 initializer weight to FullyConnected. Force the
   // MatMul path here so the output handling matches how the inputs were built.
-  if (IsBQWeight(qnn_model_wrapper, inputs[1])) {
+  // Mirror the ProcessInputs predicate exactly; clear the squeeze flag as well so no downstream
+  // logic can observe a stale squeeze=true with use_fully_connected=false.
+  if (IsBQWeight(qnn_model_wrapper, inputs[1]) && !input_info_1.quant_param.IsLPBQ()) {
     use_fully_connected = false;
+    squeeze_static_weight_to_2d = false;
   }
 
   bool reshape_input_0 = input_info_0.shape.size() == 1;
