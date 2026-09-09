@@ -1722,14 +1722,14 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceed
                        session_option_pairs);
 }
 
-// htp_reused_io_limit_mb: malformed values (negative / non-numeric) are ignored with a
-// warning rather than failing session creation.
+// htp_reused_io_limit_mb: malformed values (negative / non-numeric / non-integer) are logged as
+// errors and ignored rather than failing session creation.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbMalformed_LoadsSucceeds) {
 #if defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
 #else
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  for (const char* bad_value : {"-1", "10abc"}) {
+  for (const char* bad_value : {"-1", "1.1", "10abc"}) {
     ProviderOptions provider_options;
     provider_options["backend_type"] = "htp";
     provider_options["offload_graph_io_quantization"] = "0";

@@ -426,7 +426,9 @@ The per-QNN-graph estimates show the I/O sizes; the `I/O` field is that QNN grap
 
 **Per-context vs. group scope** — choose the value based on whether `htp_share_resource_optimization` is enabled:
 
-- **Default (`htp_share_resource_optimization` disabled):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set the per-context values so their sum is the app's actual peak. Example: 4 contexts, each containing 1 QNN graph with 100 MB I/O; if the app maps the I/O for only 1 QNN graph at a time across all 4 contexts (real peak 100 MB), set `25` on each context so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
+For example, consider 4 contexts, each containing 1 QNN graph with 100 MB I/O. If the app maps the I/O for only 1 QNN graph at a time across all 4 contexts, its actual peak is 100 MB.
+
+- **Default (`htp_share_resource_optimization` disabled):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set `25` on each context in the example above so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
 
 - **`htp_share_resource_optimization=1`:** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
 

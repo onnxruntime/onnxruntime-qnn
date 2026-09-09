@@ -366,7 +366,7 @@ static void ParseIntegerOption(const OrtApi& ort_api,
   const char* end = begin + value_str.size();
   auto [ptr, ec] = std::from_chars(begin, end, out);
   if (ec != std::errc{} || ptr != end) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 ("Ignoring malformed " + key + ": " + value_str).c_str());
     out = default_value;
   }
