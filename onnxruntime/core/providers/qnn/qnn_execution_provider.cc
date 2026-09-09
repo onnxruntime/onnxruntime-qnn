@@ -1384,15 +1384,34 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                    "",
                                    num_threads_str);
     if (!num_threads_str.empty()) {
-      htp_graph_splitting_num_prepare_threads_ = static_cast<uint32_t>(std::stoul(num_threads_str));
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("htp_graph_splitting_num_prepare_threads: " + num_threads_str).c_str());
+      bool parse_ok = false;
+      try {
+        unsigned long parsed = std::stoul(num_threads_str);
+        if (parsed > static_cast<unsigned long>(UINT32_MAX)) {
+          ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                      ("htp_graph_splitting_num_prepare_threads value '" + num_threads_str +
+                       "' exceeds UINT32_MAX. Using UINT32_MAX (auto-select).")
+                          .c_str());
+        } else {
+          htp_graph_splitting_num_prepare_threads_ = static_cast<uint32_t>(parsed);
+          parse_ok = true;
+        }
+      } catch (const std::exception& e) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                    ("htp_graph_splitting_num_prepare_threads: invalid value '" + num_threads_str +
+                     "' (" + e.what() + "). Using UINT32_MAX (auto-select).")
+                        .c_str());
+      }
+      if (parse_ok) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                    ("htp_graph_splitting_num_prepare_threads: " + num_threads_str).c_str());
 #ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
-                  "QAIRT SDK < 2.51. The option will be ignored.");
-      htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                    "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
+                    "QAIRT SDK < 2.51. The option will be ignored.");
+        htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
 #endif
+      }
     }
   }
 

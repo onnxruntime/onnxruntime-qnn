@@ -2217,6 +2217,12 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
+    if (htp_share_resource_optimization_ == 1 && enable_htp_graph_splitting) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      "enable_htp_graph_splitting is not compatible with htp_share_resource_optimization=1 "
+                      "(VTCM sharing path uses QnnContext_createFromBinaryListAsync which does not accept "
+                      "graph-splitting configs). Graph splitting will be ignored for this session.");
+    }
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                                io_dispatch)
