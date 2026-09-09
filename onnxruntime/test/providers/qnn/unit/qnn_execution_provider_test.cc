@@ -684,6 +684,72 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmInvalid_LogsVe
                "Invalid value for ep.qnnexecutionprovider.enable_htp_monolithic_lstm");
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GpuPrecisionModeValidValues_Succeed) {
+  // 0=FP32, 1=FP16, 2=HYBRID, 3=USER_PROVIDED (default).
+  for (const char* mode : {"0", "1", "2", "3"}) {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("gpu_precision_mode")] = mode;
+    auto factory = MakeFactory(ctx);
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); }) << "gpu_precision_mode=" << mode;
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 std::string("User specified gpu_precision_mode: ") + mode);
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GpuPrecisionModeInvalid_LogsError) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("gpu_precision_mode")] = "4";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Invalid value for gpu_precision_mode: 4");
+}
+
+// The gpu_precision_mode string values are a public contract mapped onto
+// QnnGpu_Precision_t. Pin the mapping so an SDK enum renumbering shows up as a
+// local test failure rather than a silent behaviour change on device.
+TEST_F(QnnUnit_ExecutionProviderTest, GpuPrecisionEnumValues_MatchDocumentedOrder) {
+  EXPECT_EQ(QNN_GPU_PRECISION_FP32, static_cast<QnnGpu_Precision_t>(0));
+  EXPECT_EQ(QNN_GPU_PRECISION_FP16, static_cast<QnnGpu_Precision_t>(1));
+  EXPECT_EQ(QNN_GPU_PRECISION_HYBRID, static_cast<QnnGpu_Precision_t>(2));
+  EXPECT_EQ(QNN_GPU_PRECISION_USER_PROVIDED, static_cast<QnnGpu_Precision_t>(3));
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableGpuFlagsValidValues_Succeed) {
+  for (const char* key : {"disable_gpu_memory_optimizations",
+                          "disable_gpu_node_optimizations",
+                          "disable_gpu_queue_recording"}) {
+    for (const char* value : {"0", "1"}) {
+      EpStubContext ctx;
+      ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+      ctx.session_config[EPKey(key)] = value;
+      auto factory = MakeFactory(ctx);
+      EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); }) << key << "=" << value;
+      // ParseBoolOption echoes the parsed result, which also pins the documented
+      // polarity: "1" disables the optimization, "0" (default) leaves it enabled.
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                   "User specified " + EPKey(key) + ": " + value);
+    }
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableGpuFlagsInvalid_LogVerbose) {
+  // Parsed by ParseBoolOption, which logs VERBOSE and keeps the default
+  // (false → optimizations enabled) for unrecognised values.
+  for (const char* key : {"disable_gpu_memory_optimizations",
+                          "disable_gpu_node_optimizations",
+                          "disable_gpu_queue_recording"}) {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey(key)] = "true";
+    auto factory = MakeFactory(ctx);
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); }) << key;
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE, "Invalid value for " + EPKey(key));
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE, "User specified " + EPKey(key) + ": 0");
+  }
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeInvalidValue_Succeeds) {
   EpStubContext ctx;
   ctx.session_config["ep.context_embed_mode"] = "2";
