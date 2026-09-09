@@ -3302,8 +3302,8 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 // On SDK 2.48 the Graph Splittling config block is compiled out; the test still passes because
 // QnnContext_create succeeds without option 22.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+#if !(defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+      (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49)))
   GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #else
   ProviderOptions provider_options;
@@ -3381,6 +3381,73 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
   EXPECT_TRUE(std::filesystem::exists(ctx_path));
 
   CleanUpCtxFile(ctx_path);
+}
+
+// Test 3: Graph Splitting with explicit num_prepare_threads — end-to-end execution (compile + Run).
+// Verifies that the new htp_graph_splitting_num_prepare_threads option is accepted, the context
+// binary is produced, and that a subsequent inference Run() completes without error.
+// Requires QAIRT SDK 2.51+ for the num_prepare_threads config entry; on older SDK builds the
+// option is consumed by ORT_UNUSED_PARAMETER and the test still passes as the session simply
+// ignores the thread-count config.
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_ExecutionSucceeds) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+      (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49)))
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#else
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_graph_splitting_num_threads_exec_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetGraphSplittingOptions(so, ctx_path);
+  so.AddConfigEntry("ep.qnnexecutionprovider.htp_graph_splitting_num_prepare_threads", "2");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  auto& session = scoped.session();
+  ASSERT_TRUE(std::filesystem::exists(ctx_path));
+
+  // Run inference to verify end-to-end execution succeeds with the option set.
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
+  auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
+
+  std::vector<int64_t> input_dim{200, 200};
+  std::vector<float> input_data(200 * 200, 0.0f);
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                input_dim.data(), input_dim.size()));
+  const char* input_names[] = {input_name_ptr.get()};
+  const char* output_names[] = {output_name_ptr.get()};
+
+  EXPECT_NO_THROW(session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1));
+
+  CleanUpCtxFile(ctx_path);
+#endif
 }
 
 // ==============================================================================

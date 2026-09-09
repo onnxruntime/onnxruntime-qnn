@@ -833,6 +833,42 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_PublishesHtpArch
   EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
 }
 
+// Smoke-tests that SetupBackend accepts enable_htp_graph_splitting=true and
+// the new htp_graph_splitting_num_prepare_threads parameter without crashing or
+// returning an unexpected error code.
+// On SDK < 2.49 (QNN_HTP_GRAPH_SPLITTING_AVAILABLE not defined), the
+// enable_htp_graph_splitting parameter is consumed by ORT_UNUSED_PARAMETER in
+// CreateContext and has no effect; the test still compiles and passes as a
+// pure crash/link check.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingEnabled_CompletesGracefully) {
+  StubApiEnv env;
+  auto manager = MakeHTPManager(env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
+                                      qnn::EpContextIoDispatch(nullptr),
+                                      false /*extended_udma*/, false /*prepare_only*/,
+                                      true /*enable_htp_graph_splitting*/);
+  // Success or a structured QNN error are both acceptable on headless hosts;
+  // a crash or CHECK failure is not.
+  (void)status;
+}
+
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThreadCount_CompletesGracefully) {
+  StubApiEnv env;
+  auto manager = MakeHTPManager(env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
+                                      qnn::EpContextIoDispatch(nullptr),
+                                      false /*extended_udma*/, false /*prepare_only*/,
+                                      true /*enable_htp_graph_splitting*/,
+                                      4 /*htp_graph_splitting_num_prepare_threads*/);
+  (void)status;
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

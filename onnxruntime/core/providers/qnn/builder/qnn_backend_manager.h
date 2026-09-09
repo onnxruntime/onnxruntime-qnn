@@ -266,7 +266,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
-      bool enable_htp_graph_splitting = false);
+      bool enable_htp_graph_splitting = false,
+      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -276,7 +277,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,
-                                    bool enable_htp_graph_splitting = false);
+                                    bool enable_htp_graph_splitting = false,
+                                    uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   void ReleaseDeviceAndContext();
 
@@ -527,7 +529,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
                             bool enable_htp_ref_weight_sharing,
-                            bool enable_htp_graph_splitting = false);
+                            bool enable_htp_graph_splitting = false,
+                            uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
