@@ -114,6 +114,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Test Wheel
         shell: powershell
@@ -149,6 +151,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -179,6 +183,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Backward Compatibility Test
         shell: powershell
@@ -243,6 +249,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Smoke Test Zip
         shell: powershell
@@ -281,6 +289,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Smoke Test TGZ
         shell: bash
@@ -344,6 +354,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Test NuGet Package
         shell: powershell

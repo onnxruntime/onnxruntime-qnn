@@ -23,9 +23,11 @@ $OutputEncoding           = [System.Text.Encoding]::UTF8
 
 function Normalize-Version([string]$Version) {
     # Reduce to major.minor.patch — handles four-part FileVersion ("2.5.0.0"),
-    # pre-release suffixes ("2.5.0.rc3"), and plain three-part ("2.5.0").
+    # pre-release suffixes ("2.5.0.rc3", "2.5.0rc3", "2.5.0rc"), and plain
+    # three-part ("2.5.0"). Strip any non-numeric suffix from the patch segment.
     $parts = $Version.Split('.')
-    return "$($parts[0]).$($parts[1]).$($parts[2])"
+    $patch = $parts[2] -replace '[^0-9].*', ''
+    return "$($parts[0]).$($parts[1]).$patch"
 }
 
 function Test-QnnDll {
