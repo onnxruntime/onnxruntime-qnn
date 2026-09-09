@@ -1838,6 +1838,8 @@ void QnnEp::InitQnnHtpGraphConfigs(
 #endif
     }
 
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    ((QNN_SDK_VERSION_MAJOR > 2) || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
     if (configs.enable_htp_matmul_lut) {
       gsl::not_null<QnnHtpGraph_CustomConfig_t*> matmul_lut_config = configs_builder.PushCustomConfig();
       matmul_lut_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG;
@@ -1849,6 +1851,7 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_config->customConfig = matmul_lut_config;
     }
+#endif
   }
 }
 
