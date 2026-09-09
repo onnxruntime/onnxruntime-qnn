@@ -424,10 +424,11 @@ When loading a context binary, QNN EP also emits the total number of QNN graphs 
 
 The per-QNN-graph estimates show the I/O sizes; the `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
 
-**Per-context vs. group scope** — the same intended peak maps to a *different* value depending on which context-creation path is used, because QNN only sees one context at a time on the default path:
+**Per-context vs. group scope** — choose the value based on whether `htp_share_resource_optimization` is enabled:
 
-- **Default path (`contextCreateFromBinary`, one config per context):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set the per-context values so their sum is the app's actual peak. Example: 4 contexts, each containing 1 QNN graph with 100 MB I/O; if the app maps the I/O for only 1 QNN graph at a time (real peak 100 MB), set `25` on each context so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
-- **Group path (async list API, active when `htp_share_resource_optimization` is enabled):** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
+- **Default (`htp_share_resource_optimization` disabled):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set the per-context values so their sum is the app's actual peak. Example: 4 contexts, each containing 1 QNN graph with 100 MB I/O; if the app maps the I/O for only 1 QNN graph at a time across all 4 contexts (real peak 100 MB), set `25` on each context so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
+
+- **`htp_share_resource_optimization=1`:** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
 
 **Warning**: this value is a *hint* for memory estimation, not an enforced limit. QNN does not stop you from using more I/O at runtime than you configured, but exceeding it may cause undefined behavior (e.g. a `memRegister` failure due to running out of space). Set it to a value your actual runtime I/O will not exceed. When using this option purely to work around a context load failure (rather than from a known buffer budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
 
