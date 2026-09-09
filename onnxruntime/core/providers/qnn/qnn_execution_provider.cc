@@ -995,7 +995,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   htp_graph_configs_.enable_htp_matmul_lut = ParseBoolOption(ort_api,
                                                              session_options_,
                                                              FormatEPConfigKey("enable_htp_matmul_lut"),
-                                                             false,
+                                                             true,
                                                              logger_);
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
