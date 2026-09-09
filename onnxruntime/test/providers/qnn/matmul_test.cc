@@ -5,6 +5,8 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <string>
 #include <unordered_map>
 
@@ -889,6 +891,112 @@ TEST_F(QnnGPUBackendTests, MatMulOp_rank1) {
 }
 
 #endif  // defined(_M_ARM64) GPU tests
+
+// Same node-pinning helper as the conv cutoff tests: a wrongly-declined fold fails
+// here (fallback to CPU) instead of hiding behind output comparison.
+static std::function<void(const Ort::Session&)> PinQnnNodesOnQnn(int expect_dq, int expect_q) {
+  return [expect_dq, expect_q](const Ort::Session& session) {
+    std::map<std::string, int> counts;
+    for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+      for (const auto& node : subgraph.GetNodes()) {
+        EXPECT_EQ(subgraph.GetEpName(), kQnnExecutionProvider) << node.GetOperatorType();
+        counts[node.GetOperatorType()]++;
+      }
+    }
+    EXPECT_EQ(counts["DequantizeLinear"], expect_dq);
+    EXPECT_EQ(counts["QuantizeLinear"], expect_q);
+    EXPECT_EQ(counts["MatMul"], 1);
+  };
+}
+
+// Builds: w_q0 (int8 init) -> DQ0 -> Q1 -> DQ1 -> MatMul. Qwen-class weight chain:
+// per-channel INT8 quantized along the output dim (axis=1 on [K,N]), with a real
+// requant hop (s0 != s1). G1 uses Qwen3-0.6B q/k/v/o-proj exact dims (1024x1024 =
+// 1M elems, past the 1 MiB fold budget); G2 sits just past the cutoff boundary.
+static GetTestModelFn BuildPerChannelQDQChainMatMulTestCase(int64_t K, int64_t N) {
+  return [K, N](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {1, K}, -0.1f, 0.1f);
+    std::vector<int8_t> w(static_cast<size_t>(K * N));
+    for (size_t i = 0; i < w.size(); ++i) {
+      w[i] = static_cast<int8_t>(static_cast<int>((i * 37) % 256) - 128);
+    }
+    builder.MakeInitializer<int8_t>("w_q0", {K, N}, w);
+    std::vector<float> s0(static_cast<size_t>(N), 0.02f), s1(static_cast<size_t>(N), 0.05f);
+    std::vector<int8_t> z0(static_cast<size_t>(N), 0), z1(static_cast<size_t>(N), -2);
+    builder.MakeInitializer<float>("s0", {N}, s0);
+    builder.MakeInitializer<int8_t>("z0", {N}, z0);
+    builder.MakeInitializer<float>("s1", {N}, s1);
+    builder.MakeInitializer<int8_t>("z1", {N}, z1);
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", int64_t{1}));
+    builder.AddNode("DQ0", "DequantizeLinear", {"w_q0", "s0", "z0"}, {"w_dq0"}, kOnnxDomain,
+                    axis_attrs);
+    builder.AddNode("Q1", "QuantizeLinear", {"w_dq0", "s1", "z1"}, {"w_q1"}, kOnnxDomain, axis_attrs);
+    builder.AddNode("DQ1", "DequantizeLinear", {"w_q1", "s1", "z1"}, {"w_dq"}, kOnnxDomain,
+                    axis_attrs);
+    builder.MakeOutput("output");
+    builder.AddNode("MatMul", "MatMul", {"input", "w_dq"}, {"output"}, kOnnxDomain);
+  };
+}
+
+// No HTP mirrors: the fold policy is backend-agnostic (pinned here on CPU) and HTP
+// numerics of folded weights are covered by the small HTP tests; mirroring
+// >256K-elem fp16 reductions would demand theater-grade tolerances.
+TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 2, /*expect_q*/ 1);
+  RunQnnModelTest(BuildPerChannelQDQChainMatMulTestCase(/*K*/ 1024, /*N*/ 1024),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
+}
+
+TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_CutoffBoundary_MustFold) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // 1024x257 = 263,168 elems: just past the 1 MiB (262,144-elem) fold budget.
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 2, /*expect_q*/ 1);
+  RunQnnModelTest(BuildPerChannelQDQChainMatMulTestCase(/*K*/ 1024, /*N*/ 257),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
+}
+
+// Builds: w_q (uint8 init) -> DQ -> MatMul. psx0-class single per-tensor weight at
+// the issue's own example dims (1536x6144 = 9.4M elems = 36 MiB FP32): must decline
+// the fold, keep the runtime Dequantize on QNN, and match numerics.
+TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQ_PsxDims_MustSkipFold) {
+  auto build = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {1, 1536}, -0.1f, 0.1f);
+    std::vector<uint8_t> w(static_cast<size_t>(1536 * 6144));
+    for (size_t i = 0; i < w.size(); ++i) {
+      w[i] = static_cast<uint8_t>((i * 53) % 256);
+    }
+    builder.MakeInitializer<uint8_t>("w_q", {1536, 6144}, w);
+    builder.MakeInitializer<float>("s", {}, {0.05f});
+    builder.MakeInitializer<uint8_t>("zp", {}, {uint8_t{0}});
+    builder.AddNode("DQ", "DequantizeLinear", {"w_q", "s", "zp"}, {"w_dq"});
+    builder.MakeOutput("output");
+    builder.AddNode("MatMul", "MatMul", {"input", "w_dq"}, {"output"}, kOnnxDomain);
+  };
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
+  RunQnnModelTest(build,
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
+}
 
 }  // namespace test
 }  // namespace onnxruntime

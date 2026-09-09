@@ -427,6 +427,12 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     if (fold_status.IsOK()) {
       return Ort::Status();
     }
+    // Declines (e.g. an oversize per-tensor DQ left as a runtime op) are otherwise
+    // silent; log which node fell through and why.
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("QNN EP declined constant folding for node '" + node_unit.Name() +
+                 "': " + fold_status.GetErrorMessage())
+                    .c_str());
   }
 
   std::vector<std::string> param_tensor_names;

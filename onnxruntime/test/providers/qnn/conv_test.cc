@@ -4,6 +4,8 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -949,6 +951,17 @@ TEST_F(QnnCPUBackendTests, ConvTranspose1Df32_DynamicWeights_DefaultBias) {
                 ExpectedEPNodeAssignment::All);
 }
 
+// Repeats `values` until it holds `length` entries, so a per-channel test case can be scaled up
+// to an arbitrary output-channel count without restating the quantization parameters.
+template <typename T>
+static std::vector<T> TileToLength(const std::vector<T>& values, int64_t length) {
+  std::vector<T> tiled(static_cast<size_t>(length));
+  for (size_t i = 0; i < tiled.size(); ++i) {
+    tiled[i] = values[i % values.size()];
+  }
+  return tiled;
+}
+
 // Builds: weight_q0 (int8 init) -> DQ -> Q -> DQ -> Conv.
 // Used to regression-test chained folding; differing scale0/scale1 exercises real requant
 // on the intermediate STATIC tensor rather than a byte round-trip.
@@ -956,20 +969,24 @@ static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
     const std::vector<float>& scale0,
     const std::vector<int8_t>& zp0,
     const std::vector<float>& scale1,
-    const std::vector<int8_t>& zp1) {
-  return [scale0, zp0, scale1, zp1](ModelTestBuilder& builder) {
-    constexpr int64_t out_ch = 2;
-    constexpr int64_t in_ch = 3;
+    const std::vector<int8_t>& zp1,
+    int64_t out_ch = 2,
+    int64_t in_ch = 3) {
+  return [scale0, zp0, scale1, zp1, out_ch, in_ch](ModelTestBuilder& builder) {
     const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
     const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
 
     builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
 
-    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
-    builder.MakeInitializer<float>("scale0", {out_ch}, scale0);
-    builder.MakeInitializer<int8_t>("zp0", {out_ch}, zp0);
-    builder.MakeInitializer<float>("scale1", {out_ch}, scale1);
-    builder.MakeInitializer<int8_t>("zp1", {out_ch}, zp1);
+    std::vector<int8_t> weight_values(static_cast<size_t>(out_ch * in_ch));
+    for (size_t i = 0; i < weight_values.size(); ++i) {
+      weight_values[i] = static_cast<int8_t>((i % 6) + 1);
+    }
+    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, weight_values);
+    builder.MakeInitializer<float>("scale0", {out_ch}, TileToLength(scale0, out_ch));
+    builder.MakeInitializer<int8_t>("zp0", {out_ch}, TileToLength(zp0, out_ch));
+    builder.MakeInitializer<float>("scale1", {out_ch}, TileToLength(scale1, out_ch));
+    builder.MakeInitializer<int8_t>("zp1", {out_ch}, TileToLength(zp1, out_ch));
 
     std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
     axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
@@ -1022,13 +1039,17 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Reg
 // Builds: weight_q (int4 init) -> per-channel DQ -> Conv. QNN cannot represent a standalone
 // per-channel DQ, so it is folded to an fp32 static by decoding the initializer's bytes as int8.
 // Weights span the negative INT4 range, which a sign-handling regression would decode as q + 16.
-static GetTestModelFn BuildPerChannelInt4DQConstWeightConvTestCase(const std::vector<float>& scales) {
-  return [scales](ModelTestBuilder& builder) {
-    constexpr int64_t out_ch = 2;
-    constexpr int64_t in_ch = 3;
+static GetTestModelFn BuildPerChannelInt4DQConstWeightConvTestCase(const std::vector<float>& scales,
+                                                                   int64_t out_ch = 2,
+                                                                   int64_t in_ch = 3) {
+  return [scales, out_ch, in_ch](ModelTestBuilder& builder) {
     const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
     const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
-    const std::vector<int8_t> weight_values{-8, -7, -1, 1, 5, 7};
+    const std::vector<int8_t> weight_pattern{-8, -7, -1, 1, 5, 7};
+    std::vector<int8_t> weight_values(static_cast<size_t>(out_ch * in_ch));
+    for (size_t i = 0; i < weight_values.size(); ++i) {
+      weight_values[i] = weight_pattern[i % weight_pattern.size()];
+    }
 
     builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
 
@@ -1037,7 +1058,7 @@ static GetTestModelFn BuildPerChannelInt4DQConstWeightConvTestCase(const std::ve
       weight_data[i >> 1].SetElem(i & 1, weight_values[i]);
     }
     builder.MakeInitializer<Int4x2>("weight_q", weight_shape, weight_data);
-    builder.MakeInitializer<float>("weight_scale", {out_ch}, scales);
+    builder.MakeInitializer<float>("weight_scale", {out_ch}, TileToLength(scales, out_ch));
 
     std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
     axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
@@ -1064,6 +1085,161 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt4DQConstWeight_SignRegression) {
                   provider_options,
                   /*opset*/ 21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+}
+
+// Pins the folding decision per node: every DQ/Q/Conv in these graphs must stay
+// QNN-assigned. A wrongly-declined fold fails here (fallback to CPU) instead of
+// hiding behind output comparison. Large per-channel weights must fold (QNN has no
+// standalone per-channel Dequantize); large per-tensor weights must decline the
+// FP32 fold yet keep their runtime Dequantize on QNN.
+static std::function<void(const Ort::Session&)> PinQnnNodesOnQnn(int expect_dq, int expect_q) {
+  return [expect_dq, expect_q](const Ort::Session& session) {
+    std::map<std::string, int> counts;
+    for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+      for (const auto& node : subgraph.GetNodes()) {
+        EXPECT_EQ(subgraph.GetEpName(), kQnnExecutionProvider) << node.GetOperatorType();
+        counts[node.GetOperatorType()]++;
+      }
+    }
+    EXPECT_EQ(counts["DequantizeLinear"], expect_dq);
+    EXPECT_EQ(counts["QuantizeLinear"], expect_q);
+    EXPECT_EQ(counts["Conv"], 1);
+  };
+}
+
+// Large-weight shapes stay realistic: 512x2048 1x1 is a ResNet-bottleneck-class
+// projection (1,048,576 elems = 4 MiB FP32, past the 1 MiB fold budget), unlike a
+// channel-inflated toy that no real model contains.
+constexpr int64_t kLargeConvOutCh = 512;
+constexpr int64_t kLargeConvInCh = 2048;
+
+// Tolerances for >256K-elem reductions over unit-range inputs: plain accumulation
+// noise already approaches 1e-3 on CPU, while a sign/magnitude mis-fold misses by
+// orders of magnitude, so these gates stay tight enough to catch real bugs.
+constexpr float kCpuLargeFoldTolerance = 1e-2f;
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt4DQConstWeight_AboveFoldCutoff) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
+  RunQnnModelTest(BuildPerChannelInt4DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f},
+                                                               kLargeConvOutCh, kLargeConvInCh),
+                  provider_options,
+                  /*opset*/ 21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(kCpuLargeFoldTolerance), &checker});
+}
+
+// Builds: weight_q (int8 init) -> per-channel DQ -> Conv, with no Q hop after the DQ, so the
+// only thing under test is whether the DQ itself survives and dequantizes correctly.
+static GetTestModelFn BuildPerChannelInt8DQConstWeightConvTestCase(const std::vector<float>& scales,
+                                                                   int64_t out_ch,
+                                                                   int64_t in_ch = 3) {
+  return [scales, out_ch, in_ch](ModelTestBuilder& builder) {
+    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
+    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
+    const std::vector<int8_t> weight_pattern{-128, -70, -1, 1, 50, 127};
+    std::vector<int8_t> weight_values(static_cast<size_t>(out_ch * in_ch));
+    for (size_t i = 0; i < weight_values.size(); ++i) {
+      weight_values[i] = weight_pattern[i % weight_pattern.size()];
+    }
+
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
+    builder.MakeInitializer<int8_t>("weight_q", weight_shape, weight_values);
+    builder.MakeInitializer<float>("weight_scale", {out_ch}, TileToLength(scales, out_ch));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+    builder.AddNode("WeightDQ", "DequantizeLinear", {"weight_q", "weight_scale"}, {"weight_dq"},
+                    kOnnxDomain, axis_attrs);
+
+    builder.MakeOutput("output");
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+    builder.AddNode("Conv", "Conv", {"input", "weight_dq"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
+// Same graph with per-tensor quantization, where a runtime QNN Dequantize is a faithful
+// substitute for folding, so the size cutoff is free to decline and keep the DLC compact.
+static GetTestModelFn BuildPerTensorInt8DQConstWeightConvTestCase(float scale, int64_t out_ch,
+                                                                  int64_t in_ch = 3) {
+  return [scale, out_ch, in_ch](ModelTestBuilder& builder) {
+    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
+    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
+    const std::vector<int8_t> weight_pattern{-128, -70, -1, 1, 50, 127};
+    std::vector<int8_t> weight_values(static_cast<size_t>(out_ch * in_ch));
+    for (size_t i = 0; i < weight_values.size(); ++i) {
+      weight_values[i] = weight_pattern[i % weight_pattern.size()];
+    }
+
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
+    builder.MakeInitializer<int8_t>("weight_q", weight_shape, weight_values);
+    builder.MakeInitializer<float>("weight_scale", {}, {scale});
+    builder.MakeInitializer<int8_t>("weight_zp", {}, {0});
+
+    builder.AddNode("WeightDQ", "DequantizeLinear", {"weight_q", "weight_scale", "weight_zp"},
+                    {"weight_dq"});
+
+    builder.MakeOutput("output");
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+    builder.AddNode("Conv", "Conv", {"input", "weight_dq"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerTensorInt8DQConstWeight_AboveFoldCutoff) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
+  RunQnnModelTest(BuildPerTensorInt8DQConstWeightConvTestCase(/*scale*/ 0.1f, kLargeConvOutCh,
+                                                              kLargeConvInCh),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(kCpuLargeFoldTolerance), &checker});
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt8DQConstWeight_AboveFoldCutoff) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
+  RunQnnModelTest(BuildPerChannelInt8DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f},
+                                                               kLargeConvOutCh, kLargeConvInCh),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(kCpuLargeFoldTolerance), &checker});
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_AboveFoldCutoff) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 2, /*expect_q*/ 1);
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3},
+                      kLargeConvOutCh, kLargeConvInCh),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(kCpuLargeFoldTolerance), &checker});
 }
 
 // Tests for reuse_sparse_indices parameter (always false, verifies the parameter is accepted by QNN without errors).
@@ -1280,6 +1456,27 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelInt4DQConstWeight_SignRegression) {
                   provider_options,
                   /*opset*/ 21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// Only the skip path is mirrored on HTP: it is the new behavior, and HTP validation of a
+// runtime Dequantize is the one thing CPU tests cannot cover. Per-channel large weights must
+// fold by policy (backend-agnostic, pinned on CPU above); mirroring them on HTP would demand
+// fp16-theater tolerances for >256K-elem fp16 reductions, so precision stays on the small
+// HTP tests. Gross tolerance still catches fallback and sign-scale corruption (shift ~70+).
+constexpr float kHtpSkipPathTolerance = 2.0f;
+
+TEST_F(QnnHTPBackendTests, Convf32_PerTensorInt8DQConstWeight_AboveFoldCutoff) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::function<void(const Ort::Session&)> checker = PinQnnNodesOnQnn(/*expect_dq*/ 1, /*expect_q*/ 0);
+  RunQnnModelTest(BuildPerTensorInt8DQConstWeightConvTestCase(/*scale*/ 0.1f, kLargeConvOutCh,
+                                                              kLargeConvInCh),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(kHtpSkipPathTolerance), &checker});
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.

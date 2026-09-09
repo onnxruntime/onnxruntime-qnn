@@ -120,6 +120,20 @@ TEST(QnnUnit_QdqConstantFoldingTest, ConstantBytes_UnknownTensor_Fails) {
   EXPECT_FALSE(qnn::GetEffectivelyConstantTensorBytes(*fx.wrapper, "missing", bytes).IsOK());
 }
 
+// Decision table for ShouldSkipConstantDQFold: fold unless large AND faithfully
+// substitutable (per-channel / sub-byte inputs never reach the predicate -- they
+// always fold via CanSubstituteRuntimeDequantize, pinned by the e2e tests).
+TEST(QnnUnit_QdqConstantFoldingTest, SkipPredicate_SmallFolds) {
+  EXPECT_FALSE(qnn::ShouldSkipConstantDQFold(6));           // bias-sized tensors fold
+  EXPECT_FALSE(qnn::ShouldSkipConstantDQFold(256 * 1024));  // exactly at budget: fold
+}
+
+TEST(QnnUnit_QdqConstantFoldingTest, SkipPredicate_LargeSkips) {
+  EXPECT_TRUE(qnn::ShouldSkipConstantDQFold(256 * 1024 + 1));  // just past budget
+  EXPECT_TRUE(qnn::ShouldSkipConstantDQFold(1024 * 1024));     // Qwen q-proj
+  EXPECT_TRUE(qnn::ShouldSkipConstantDQFold(1536 * 6144));     // psx0 FC dims
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
