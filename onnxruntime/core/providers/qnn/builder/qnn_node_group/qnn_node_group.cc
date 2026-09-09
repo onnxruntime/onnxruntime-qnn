@@ -30,6 +30,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/swin_attention_projection_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
@@ -98,7 +99,8 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"ConvInteger", {DQConvIntegerFusion::TryFusion}},
     {"Gather", {GatherTransposeReshapeFusion::TryFusion}},
     {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
-    {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},
+    {"MatMul", {SwinAttentionProjectionFusion::TryFusion,
+                LowPowerBlockQuantizedMatMulFusion::TryFusion}},
     {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusionGroup::TryFusion4, ReshapeGemmFusionGroup::TryFusion3, ReshapeGemmFusionGroup::TryFusion2}},
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
