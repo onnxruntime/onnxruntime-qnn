@@ -1140,6 +1140,8 @@ static void RunLargePerTensorDQConvTest(const std::string& backend, float fp32_a
     return;
   }
   AssertOpInQnnGraph(graph_dir, "Dequantize", 1);
+  // The point of the decline: the 4 MiB FP32 blob is absent from the DLC.
+  AssertFp32StaticBytesBelow(graph_dir, /*max_bytes*/ 4096);
 }
 
 TEST_F(QnnCPUBackendTests, Convf32_PerTensorInt8DQConstWeight_AboveFoldCutoff) {

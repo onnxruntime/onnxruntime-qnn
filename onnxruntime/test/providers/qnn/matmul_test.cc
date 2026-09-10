@@ -957,6 +957,8 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
   // 224 leaked v_proj weight inputs appeared.
   AssertOpInQnnGraph(graph_dir, "Dequantize", 0);
   AssertOpInQnnGraph(graph_dir, "Quantize", 0);
+  // The cost side of the per-channel exemption: the 4 MiB FP32 weight is in the DLC.
+  AssertFp32StaticBytesAbove(graph_dir, /*min_bytes*/ 1024 * 1024);
 }
 
 }  // namespace test
