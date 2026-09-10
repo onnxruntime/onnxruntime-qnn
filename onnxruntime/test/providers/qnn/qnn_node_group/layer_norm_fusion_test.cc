@@ -62,6 +62,75 @@ GetTestModelFn BuildLayerNormFusionTestCase(
   };
 }
 
+// Builds the pattern with a dynamic (non-constant) epsilon input.
+GetTestModelFn BuildLayerNormDynamicEps(
+    const TestInputDef<float>& input_def,
+    const std::vector<int64_t>& axes) {
+  return [=](ModelTestBuilder& builder) -> void {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    const int64_t C = input_def.GetShape().back();
+    builder.MakeInitializer<float>("gamma", {C}, std::vector<float>(static_cast<size_t>(C), 1.0f));
+    builder.MakeInitializer<float>("beta", {C}, std::vector<float>(static_cast<size_t>(C), 0.0f));
+    builder.MakeScalarInitializer<float>("pow_exp", 2.0f);
+    // epsilon is a dynamic graph input, not a constant initializer — fusion must reject.
+    builder.MakeInput<float>("eps", {}, std::vector<float>{1e-5f});
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> rm_attrs;
+    rm_attrs.push_back(test::MakeAttribute("axes", axes));
+    rm_attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(1)));
+
+    builder.AddNode("rm1", "ReduceMean", {"input"}, {"rm1_out"}, "", rm_attrs);
+    builder.AddNode("sub", "Sub", {"input", "rm1_out"}, {"sub_out"});
+    builder.AddNode("pow", "Pow", {"sub_out", "pow_exp"}, {"pow_out"});
+    builder.AddNode("rm2", "ReduceMean", {"pow_out"}, {"rm2_out"}, "", rm_attrs);
+    builder.AddNode("add_eps", "Add", {"rm2_out", "eps"}, {"add_eps_out"});
+    builder.AddNode("sqrt", "Sqrt", {"add_eps_out"}, {"sqrt_out"});
+    builder.AddNode("div", "Div", {"sub_out", "sqrt_out"}, {"div_out"});
+    builder.AddNode("mul_gamma", "Mul", {"div_out", "gamma"}, {"mul_out"});
+
+    builder.MakeOutput("output");
+    builder.AddNode("add_beta", "Add", {"mul_out", "beta"}, {"output"});
+  };
+}
+
+// Builds the pattern with non-contiguous axes (e.g. axes={0,2} on a 4D tensor).
+GetTestModelFn BuildLayerNormNonContiguousAxes(
+    const TestInputDef<float>& input_def,
+    const std::vector<int64_t>& axes) {
+  return [=](ModelTestBuilder& builder) -> void {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // gamma/beta shape must cover all normalized dims; use a 1D size equal to product of those dims.
+    const auto& shape = input_def.GetShape();
+    int64_t scale_size = 1;
+    for (int64_t ax : axes) {
+      const int64_t pos_ax = ax < 0 ? ax + static_cast<int64_t>(shape.size()) : ax;
+      scale_size *= shape[static_cast<size_t>(pos_ax)];
+    }
+    builder.MakeInitializer<float>("gamma", {scale_size}, std::vector<float>(static_cast<size_t>(scale_size), 1.0f));
+    builder.MakeInitializer<float>("beta", {scale_size}, std::vector<float>(static_cast<size_t>(scale_size), 0.0f));
+    builder.MakeScalarInitializer<float>("pow_exp", 2.0f);
+    builder.MakeScalarInitializer<float>("eps", 1e-5f);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> rm_attrs;
+    rm_attrs.push_back(test::MakeAttribute("axes", axes));
+    rm_attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(1)));
+
+    builder.AddNode("rm1", "ReduceMean", {"input"}, {"rm1_out"}, "", rm_attrs);
+    builder.AddNode("sub", "Sub", {"input", "rm1_out"}, {"sub_out"});
+    builder.AddNode("pow", "Pow", {"sub_out", "pow_exp"}, {"pow_out"});
+    builder.AddNode("rm2", "ReduceMean", {"pow_out"}, {"rm2_out"}, "", rm_attrs);
+    builder.AddNode("add_eps", "Add", {"rm2_out", "eps"}, {"add_eps_out"});
+    builder.AddNode("sqrt", "Sqrt", {"add_eps_out"}, {"sqrt_out"});
+    builder.AddNode("div", "Div", {"sub_out", "sqrt_out"}, {"div_out"});
+    builder.AddNode("mul_gamma", "Mul", {"div_out", "gamma"}, {"mul_out"});
+
+    builder.MakeOutput("output");
+    builder.AddNode("add_beta", "Add", {"mul_out", "beta"}, {"output"});
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -201,6 +270,52 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
           {-1}, 1e-5f,
           {1, 64, 1}, std::vector<float>(64, 1.0f),
           {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
+}
+
+// Epsilon is a dynamic graph input, not a constant — fusion must be skipped.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_DynamicEpsilon) {
+  const std::filesystem::path json_dir = "LayerNormFusion_Skip_DynamicEpsilon";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions opts = GetProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  RunQnnModelTest(
+      BuildLayerNormDynamicEps(
+          TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
+          {-1}),
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
+}
+
+// axes={0, 2} on a 4D tensor — non-contiguous, fusion must be skipped.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_NonContiguousAxes) {
+  const std::filesystem::path json_dir = "LayerNormFusion_Skip_NonContiguousAxes";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions opts = GetProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  RunQnnModelTest(
+      BuildLayerNormNonContiguousAxes(
+          TestInputDef<float>({2, 4, 8, 16}, false, -2.0f, 2.0f),
+          {0, 2}),
       opts,
       13,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
