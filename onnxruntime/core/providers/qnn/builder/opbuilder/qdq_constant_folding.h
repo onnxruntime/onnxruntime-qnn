@@ -22,11 +22,16 @@ bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper,
 // this size the DLC cost outweighs the saved runtime op.
 inline constexpr size_t kQdqFoldMaxFp32Bytes = 1024 * 1024;  // 1 MiB
 
-// True when a constant-DQ fold must be skipped in favor of a runtime QNN
-// Dequantize: the folded FP32 blob exceeds the DLC budget. Callers must first
-// establish via CanSubstituteRuntimeDequantize that a runtime Dequantize is a
-// faithful substitute (per-channel and sub-byte inputs always fold).
-// Pure function of its inputs: covered by unit tests.
+// True when the constant DQ on `input_def` may be left as a runtime QNN Dequantize instead
+// of being folded, i.e. when the runtime op is a faithful substitute for the folded constant.
+// False for per-channel and INT4/INT2 inputs, which must always fold; see the definition for
+// why. Gates ShouldSkipConstantDQFold, so a "must fold" input ignores the size budget.
+Ort::Status CanSubstituteRuntimeDequantize(const QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnitIODef& input_def,
+                                           /*out*/ bool& can_substitute) ORT_MUST_USE_RESULT;
+
+// True when a foldable constant DQ exceeds the DLC budget and is better left as a runtime
+// QNN Dequantize. Only meaningful for inputs CanSubstituteRuntimeDequantize() admits.
 bool ShouldSkipConstantDQFold(size_t num_elems);
 
 // Fold the Q/DQ statically and register its output as a STATIC tensor. Caller
