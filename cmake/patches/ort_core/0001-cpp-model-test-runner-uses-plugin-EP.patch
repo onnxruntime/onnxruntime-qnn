@@ -1,7 +1,7 @@
-From ba481c50d6c31281c92714dc7d9d68f565706d74 Mon Sep 17 00:00:00 2001
+From 48f0a653136ed80f2b18ba44c4d7465bec4dd4c1 Mon Sep 17 00:00:00 2001
 From: Badri Narayanan <mbadnara@qti.qualcomm.com>
 Date: Tue, 21 Jul 2026 11:32:21 -0700
-Subject: [PATCH 1/4] cpp model test runner uses plugin EP
+Subject: [PATCH 1/7] cpp model test runner uses plugin EP
 
 ---
  cmake/CMakeLists.txt                          |   5 +
@@ -14,11 +14,11 @@ Subject: [PATCH 1/4] cpp model test runner uses plugin EP
  onnxruntime/test/onnx/testcase_driver.cc      |   6 +-
  onnxruntime/test/onnx/testcase_request.cc     |  17 +-
  onnxruntime/test/onnx/utils/macros.h          |  18 +
- .../utils}/strings_helper.cc                  | 121 ++-
- .../{perftest => onnx/utils}/strings_helper.h |  21 +-
+ onnxruntime/test/onnx/utils/strings_helper.cc | 189 ++++
+ onnxruntime/test/onnx/utils/strings_helper.h  |  40 +
  onnxruntime/test/onnx/utils/utils.cc          |  93 ++
  onnxruntime/test/onnx/utils/utils.h           |  24 +
- .../test/perftest/command_args_parser.cc      |  16 +-
+ .../test/perftest/command_args_parser.cc      |  15 +-
  onnxruntime/test/perftest/common_utils.cc     |  83 +-
  onnxruntime/test/perftest/main.cc             |   9 +-
  onnxruntime/test/perftest/ort_test_session.cc |  16 +-
@@ -26,13 +26,13 @@ Subject: [PATCH 1/4] cpp model test runner uses plugin EP
  .../internal_api}/compare_ortvalue.cc         |   0
  .../values/public_api/compare_ortvalue.cc     | 849 ++++++++++++++++++
  .../util/values/public_api/compare_ortvalue.h |  35 +
- 22 files changed, 2496 insertions(+), 180 deletions(-)
+ 22 files changed, 2635 insertions(+), 127 deletions(-)
  create mode 100644 onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
  create mode 100644 onnxruntime/test/onnx/plugin_ep/command_args_parser.h
  create mode 100644 onnxruntime/test/onnx/plugin_ep/main.cc
  create mode 100644 onnxruntime/test/onnx/utils/macros.h
- rename onnxruntime/test/{perftest => onnx/utils}/strings_helper.cc (83%)
- rename onnxruntime/test/{perftest => onnx/utils}/strings_helper.h (81%)
+ create mode 100644 onnxruntime/test/onnx/utils/strings_helper.cc
+ create mode 100644 onnxruntime/test/onnx/utils/strings_helper.h
  create mode 100644 onnxruntime/test/onnx/utils/utils.cc
  create mode 100644 onnxruntime/test/onnx/utils/utils.h
  rename onnxruntime/test/util/{ => values/internal_api}/compare_ortvalue.cc (100%)
@@ -40,10 +40,10 @@ Subject: [PATCH 1/4] cpp model test runner uses plugin EP
  create mode 100644 onnxruntime/test/util/values/public_api/compare_ortvalue.h
 
 diff --git a/cmake/CMakeLists.txt b/cmake/CMakeLists.txt
-index f1126c2dc..2c477a8b0 100644
+index a4bdacd..9c5263c 100644
 --- a/cmake/CMakeLists.txt
 +++ b/cmake/CMakeLists.txt
-@@ -1115,6 +1115,11 @@ function(onnxruntime_set_compile_flags target_name)
+@@ -1158,6 +1158,11 @@ function(onnxruntime_set_compile_flags target_name)
        # Suppress a "conversion_function_not_usable" warning in gsl/span
        target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe \"--diag_suppress=conversion_function_not_usable\">")
      endif()
@@ -56,7 +56,7 @@ index f1126c2dc..2c477a8b0 100644
        foreach(CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORY ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
          target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CXX,C>:/external:I${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORY}>")
 diff --git a/cmake/onnxruntime_unittests.cmake b/cmake/onnxruntime_unittests.cmake
-index 4b1ef26fc..0108b08ad 100644
+index e500645..8d09dfc 100644
 --- a/cmake/onnxruntime_unittests.cmake
 +++ b/cmake/onnxruntime_unittests.cmake
 @@ -364,6 +364,14 @@ file(GLOB onnxruntime_test_utils_src CONFIGURE_DEPENDS
@@ -74,7 +74,7 @@ index 4b1ef26fc..0108b08ad 100644
  file(GLOB onnxruntime_test_common_src CONFIGURE_DEPENDS
    "${TEST_SRC_DIR}/common/*.cc"
    "${TEST_SRC_DIR}/common/*.h"
-@@ -641,6 +649,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
+@@ -648,6 +656,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
  
  set(onnxruntime_test_common_libs
    onnxruntime_unittest_utils
@@ -82,7 +82,7 @@ index 4b1ef26fc..0108b08ad 100644
    onnxruntime_common
  )
  
-@@ -867,6 +876,21 @@ target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/i
+@@ -883,6 +892,21 @@ endif()
  set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
  source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
  
@@ -104,7 +104,7 @@ index 4b1ef26fc..0108b08ad 100644
  # onnxruntime_unittest_utils
  # This is static library containing utilities that are specifically for unit tests.
  # Unlike onnxruntime_test_utils, the source files here may have dependencies on internal onnxruntime code.
-@@ -923,9 +947,11 @@ if(NOT IOS)
+@@ -939,9 +963,11 @@ if(NOT IOS)
      set(onnx_test_runner_src_dir ${TEST_SRC_DIR}/onnx)
      file(GLOB onnx_test_runner_common_srcs CONFIGURE_DEPENDS
          ${onnx_test_runner_src_dir}/*.h
@@ -118,7 +118,7 @@ index 4b1ef26fc..0108b08ad 100644
  
      # if training is disabled, endian_utils are still used in tests
      if (NOT onnxruntime_ENABLE_TRAINING)
-@@ -985,7 +1011,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
+@@ -1009,7 +1035,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS AND NOT onnxruntime_BUILD_CUDA_EP_
    onnxruntime_add_include_to_target(onnxruntime_providers_cuda_ut GTest::gtest GTest::gmock)
    add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils)
    target_include_directories(onnxruntime_providers_cuda_ut PRIVATE ${ONNXRUNTIME_ROOT}/core/mickey)
@@ -127,7 +127,7 @@ index 4b1ef26fc..0108b08ad 100644
    # Link architecture-specific OBJECT libraries (same as onnxruntime_providers_cuda).
    if(TARGET onnxruntime_providers_cuda_sm90_tma)
      target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE onnxruntime_providers_cuda_sm90_tma)
-@@ -1341,6 +1367,7 @@ endif()
+@@ -1493,6 +1519,7 @@ endif()
  
  set(onnx_test_libs
    onnxruntime_test_utils
@@ -135,7 +135,7 @@ index 4b1ef26fc..0108b08ad 100644
    ${ONNXRUNTIME_TEST_LIBS}
    onnx_test_data_proto
    ${onnxruntime_EXTERNAL_LIBRARIES})
-@@ -1374,6 +1401,60 @@ if (NOT IOS)
+@@ -1526,6 +1553,60 @@ if (NOT IOS)
              RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
  endif()
  
@@ -197,12 +197,12 @@ index 4b1ef26fc..0108b08ad 100644
    if(onnxruntime_BUILD_BENCHMARKS)
      SET(BENCHMARK_DIR ${TEST_SRC_DIR}/onnx/microbenchmark)
 diff --git a/onnxruntime/test/onnx/TestCase.cc b/onnxruntime/test/onnx/TestCase.cc
-index 2640e0731..87a94f59c 100644
+index 86eb962..96b19bc 100644
 --- a/onnxruntime/test/onnx/TestCase.cc
 +++ b/onnxruntime/test/onnx/TestCase.cc
-@@ -1522,6 +1522,26 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
-     broken_tests->insert({"dft_rfft", "unknown version"});
-     broken_tests->insert({"dft_rfft_opset19", "unknown version"});
+@@ -1588,6 +1588,26 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
+     // the CPU-materialized node runner (onnx#7959) exposes the same marginal FFT precision failure
+     // that onnx_backend_test_series_filters.jsonc already excludes globally.
      broken_tests->insert({"bitcast_bool_to_uint8", "ORT BitCast kernel does not register bool type"});
 +    // TODO: [AISW-167042] [ORT ABI] Model test failures on ABI path
 +    broken_tests->insert({"affine_grid_2d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});
@@ -228,7 +228,7 @@ index 2640e0731..87a94f59c 100644
  
  #ifdef DISABLE_CONTRIB_OPS
 diff --git a/onnxruntime/test/onnx/dataitem_request.cc b/onnxruntime/test/onnx/dataitem_request.cc
-index e391f8847..769e97206 100644
+index e391f88..769e972 100644
 --- a/onnxruntime/test/onnx/dataitem_request.cc
 +++ b/onnxruntime/test/onnx/dataitem_request.cc
 @@ -6,6 +6,7 @@
@@ -295,7 +295,7 @@ index e391f8847..769e97206 100644
        break;
 diff --git a/onnxruntime/test/onnx/plugin_ep/command_args_parser.cc b/onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
 new file mode 100644
-index 000000000..aa8102cdf
+index 0000000..aa8102c
 --- /dev/null
 +++ b/onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
 @@ -0,0 +1,370 @@
@@ -671,7 +671,7 @@ index 000000000..aa8102cdf
 +}  // namespace onnxruntime
 diff --git a/onnxruntime/test/onnx/plugin_ep/command_args_parser.h b/onnxruntime/test/onnx/plugin_ep/command_args_parser.h
 new file mode 100644
-index 000000000..60dfaba95
+index 0000000..60dfaba
 --- /dev/null
 +++ b/onnxruntime/test/onnx/plugin_ep/command_args_parser.h
 @@ -0,0 +1,68 @@
@@ -745,7 +745,7 @@ index 000000000..60dfaba95
 +}  // namespace onnxruntime
 diff --git a/onnxruntime/test/onnx/plugin_ep/main.cc b/onnxruntime/test/onnx/plugin_ep/main.cc
 new file mode 100644
-index 000000000..4727e5659
+index 0000000..4727e56
 --- /dev/null
 +++ b/onnxruntime/test/onnx/plugin_ep/main.cc
 @@ -0,0 +1,795 @@
@@ -1545,7 +1545,7 @@ index 000000000..4727e5659
 +  return retval;
 +}
 diff --git a/onnxruntime/test/onnx/testcase_driver.cc b/onnxruntime/test/onnx/testcase_driver.cc
-index 0e14a0dcb..06b2872cc 100644
+index 0e14a0d..06b2872 100644
 --- a/onnxruntime/test/onnx/testcase_driver.cc
 +++ b/onnxruntime/test/onnx/testcase_driver.cc
 @@ -5,8 +5,10 @@
@@ -1578,7 +1578,7 @@ index 0e14a0dcb..06b2872cc 100644
  
  void TestCaseDriver::OnTestCaseComplete(size_t test_case_id, std::shared_ptr<TestCaseResult> result) {
 diff --git a/onnxruntime/test/onnx/testcase_request.cc b/onnxruntime/test/onnx/testcase_request.cc
-index 95c7c8905..3814be063 100644
+index 95c7c89..3814be0 100644
 --- a/onnxruntime/test/onnx/testcase_request.cc
 +++ b/onnxruntime/test/onnx/testcase_request.cc
 @@ -4,10 +4,12 @@
@@ -1637,7 +1637,7 @@ index 95c7c8905..3814be063 100644
          // nothing to do
 diff --git a/onnxruntime/test/onnx/utils/macros.h b/onnxruntime/test/onnx/utils/macros.h
 new file mode 100644
-index 000000000..002a50385
+index 0000000..002a503
 --- /dev/null
 +++ b/onnxruntime/test/onnx/utils/macros.h
 @@ -0,0 +1,18 @@
@@ -1659,69 +1659,78 @@ index 000000000..002a50385
 +#define TEST_LOG_INFO(...) LOGS_DEFAULT(INFO) << __VA_ARGS__
 +#define TEST_LOG_VERBOSE(...) LOGS_DEFAULT(VERBOSE) << __VA_ARGS__
 +#endif
-diff --git a/onnxruntime/test/perftest/strings_helper.cc b/onnxruntime/test/onnx/utils/strings_helper.cc
-similarity index 83%
-rename from onnxruntime/test/perftest/strings_helper.cc
-rename to onnxruntime/test/onnx/utils/strings_helper.cc
-index d9fd2a2a5..951f13889 100644
---- a/onnxruntime/test/perftest/strings_helper.cc
+diff --git a/onnxruntime/test/onnx/utils/strings_helper.cc b/onnxruntime/test/onnx/utils/strings_helper.cc
+new file mode 100644
+index 0000000..d882e31
+--- /dev/null
 +++ b/onnxruntime/test/onnx/utils/strings_helper.cc
-@@ -12,49 +12,8 @@
- #include "core/common/string_utils.h"
- 
- namespace onnxruntime {
--namespace perftest {
--
--void ParseSessionConfigs(const std::string& configs_string,
--                         std::unordered_map<std::string, std::string>& session_configs,
--                         const std::unordered_set<std::string>& available_keys) {
--  std::istringstream ss(configs_string);
--  std::string token;
--
--  while (ss >> token) {
--    if (token == "") {
--      continue;
--    }
--
--    std::string_view token_sv(token);
--
--    auto pos = token_sv.find("|");
--    if (pos == std::string_view::npos || pos == 0 || pos == token_sv.length()) {
--      ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.\n");
--    }
--
--    std::string key(token_sv.substr(0, pos));
--    std::string value(token_sv.substr(pos + 1));
--
--    if (available_keys.empty() == false && available_keys.count(key) == 0) {
--      // Error: unknown option: {key}
--      std::string available_keys_str;
--      for (const auto& av_key : available_keys) {
--        available_keys_str += av_key;
--        available_keys_str += ", ";
--      }
--      ORT_THROW("[ERROR] wrong key type entered : `", key,
--                "`. The following runtime key options are available: [", available_keys_str, "]");
--    }
--
--    auto it = session_configs.find(key);
--    if (it != session_configs.end()) {
--      // Error: specified duplicate session configuration entry: {key}
--      ORT_THROW("Specified duplicate session configuration entry: ", key);
--    }
--
--    session_configs.insert(std::make_pair(std::move(key), std::move(value)));
--  }
--}
+@@ -0,0 +1,189 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Copyright (c) 2023 NVIDIA Corporation.
++// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
++// Licensed under the MIT License.
++
++#include <charconv>
++#include <iostream>
++#include <sstream>
++#include <system_error>
++
++#include "strings_helper.h"
++#include "core/common/common.h"
++#include "core/common/parse_string.h"
++#include "core/common/string_utils.h"
++
++namespace onnxruntime {
 +namespace test {
 +namespace utils {
- 
- bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map) {
-   std::stringstream ss(input);
-@@ -103,13 +62,55 @@ bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, st
-   return true;
- }
- 
++
++bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map) {
++  std::stringstream ss(input);
++  std::string free_dim_str;
++
++  while (std::getline(ss, free_dim_str, ' ')) {
++    if (!free_dim_str.empty()) {
++      size_t delimiter_location = free_dim_str.find(":");
++      if (delimiter_location >= free_dim_str.size() - 1) {
++        return false;
++      }
++      std::string dim_identifier = free_dim_str.substr(0, delimiter_location);
++      std::string override_val_str = free_dim_str.substr(delimiter_location + 1, std::string::npos);
++      ORT_TRY {
++        int64_t override_val = std::stoll(override_val_str.c_str());
++        if (override_val <= 0) {
++          return false;
++        }
++        free_dim_override_map[dim_identifier] = override_val;
++      }
++      ORT_CATCH(const std::exception& ex) {
++        ORT_HANDLE_EXCEPTION([&]() {
++          std::cerr << "Error parsing free dimension override value: " << override_val_str.c_str() << ", " << ex.what() << std::endl;
++        });
++        return false;
++      }
++    }
++  }
++
++  return true;
++}
++
++bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, std::string& option, std::map<std::string, int64_t>& free_dim_override_map) {
++  for (int i = 1; i < argc; ++i) {
++    auto utf8_arg = argv[i];
++    if (utf8_arg == ("-" + option) || utf8_arg == ("--" + option)) {
++      auto value_idx = i + 1;
++      if (value_idx >= argc || argv[value_idx][0] == '-') {
++        std::cerr << utf8_arg << " should be followed by a key-value pair." << std::endl;
++        return false;
++      }
++
++      if (!ParseDimensionOverride(argv[value_idx], free_dim_override_map)) return false;
++    }
++  }
++  return true;
++}
++
 +void ParseSessionConfigs(const std::string& configs_string,
 +                         std::unordered_map<std::string, std::string>& session_configs,
 +                         const std::unordered_set<std::string>& available_keys) {
@@ -1764,23 +1773,57 @@ index d9fd2a2a5..951f13889 100644
 +  }
 +}
 +
- void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result) {
--  auto tokens = utils::SplitString(input, ";", true);
++void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result) {
 +  auto tokens = onnxruntime::utils::SplitString(input, ";", true);
- 
-   for (const auto& token : tokens) {
-     result.emplace_back();  // Adds a new empty map
-     if (!token.empty()) {
--      ParseSessionConfigs(std::string(token), result.back());  // only parse non-empty
++
++  for (const auto& token : tokens) {
++    result.emplace_back();  // Adds a new empty map
++    if (!token.empty()) {
 +      test::utils::ParseSessionConfigs(std::string(token), result.back());  // only parse non-empty
-     }
-     // if token is empty, we still get an empty map in `result`
-   }
-@@ -154,5 +155,33 @@ void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std:
-     }
-   }
- }
--}  // namespace perftest
++    }
++    // if token is empty, we still get an empty map in `result`
++  }
++}
++
++void ParseEpList(const std::string& input, std::vector<std::string>& result) {
++  std::stringstream ss(input);
++  std::string token;
++
++  while (std::getline(ss, token, ';')) {
++    if (!token.empty()) {
++      result.push_back(token);
++    }
++  }
++}
++
++void ParseEpDeviceIndexList(const std::string& input, std::vector<int>& result) {
++  std::stringstream ss(input);
++  std::string item;
++
++  while (std::getline(ss, item, ';')) {
++    if (!item.empty()) {
++      int value = ParseStringWithClassicLocale<int>(item);
++      result.push_back(value);
++    }
++  }
++}
++
++void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std::pair<std::string, std::string>>& result) {
++  std::stringstream ss(input);
++  std::string token;
++
++  while (std::getline(ss, token, ' ')) {
++    if (!token.empty()) {
++      size_t delimiter_location = token.find("|");
++      if (delimiter_location == std::string::npos || delimiter_location == 0 || delimiter_location == token.size() - 1) {
++        ORT_THROW("Use a '|' to separate the key and value for the device filter you are trying to use.\n");
++      }
++      std::string key = token.substr(0, delimiter_location);
++      std::string value = token.substr(delimiter_location + 1);
++      result.emplace_back(std::make_pair(std::move(key), std::move(value)));
++    }
++  }
++}
 +
 +std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]) {
 +  std::vector<std::string> utf8_args;
@@ -1810,51 +1853,45 @@ index d9fd2a2a5..951f13889 100644
 +
 +}  // namespace utils
 +}  // namespace test
- }  // namespace onnxruntime
-diff --git a/onnxruntime/test/perftest/strings_helper.h b/onnxruntime/test/onnx/utils/strings_helper.h
-similarity index 81%
-rename from onnxruntime/test/perftest/strings_helper.h
-rename to onnxruntime/test/onnx/utils/strings_helper.h
-index d6c6f6112..eea7474f2 100644
---- a/onnxruntime/test/perftest/strings_helper.h
++}  // namespace onnxruntime
+diff --git a/onnxruntime/test/onnx/utils/strings_helper.h b/onnxruntime/test/onnx/utils/strings_helper.h
+new file mode 100644
+index 0000000..690a379
+--- /dev/null
 +++ b/onnxruntime/test/onnx/utils/strings_helper.h
-@@ -2,6 +2,8 @@
- // Copyright (c) 2023 NVIDIA Corporation.
- // SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
- // Licensed under the MIT License.
+@@ -0,0 +1,40 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Copyright (c) 2023 NVIDIA Corporation.
++// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
++// Licensed under the MIT License.
 +#pragma once
 +#include "core/session/onnxruntime_cxx_api.h"
- #include <string_view>
- #include <map>
- #include <unordered_map>
-@@ -9,16 +11,17 @@
- #include <vector>
- 
- namespace onnxruntime {
--namespace perftest {
--
--void ParseSessionConfigs(const std::string& configs_string,
--                         std::unordered_map<std::string, std::string>& session_configs,
--                         const std::unordered_set<std::string>& available_keys = {});
++#include <map>
++#include <string>
++#include <string_view>
++#include <unordered_map>
++#include <unordered_set>
++#include <vector>
++
++namespace onnxruntime {
 +namespace test {
 +namespace utils {
- 
- bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map);
- 
- bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, std::string& option, std::map<std::string, int64_t>& free_dim_override_map);
- 
++
++bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map);
++
++bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, std::string& option, std::map<std::string, int64_t>& free_dim_override_map);
++
 +void ParseSessionConfigs(const std::string& configs_string,
 +                         std::unordered_map<std::string, std::string>& session_configs,
 +                         const std::unordered_set<std::string>& available_keys = {});
 +
- void ParseEpList(const std::string& input, std::vector<std::string>& result);
- 
- void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result);
-@@ -26,5 +29,11 @@ void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std
- void ParseEpDeviceIndexList(const std::string& input, std::vector<int>& result);
- 
- void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std::pair<std::string, std::string>>& result);
--}  // namespace perftest
++void ParseEpList(const std::string& input, std::vector<std::string>& result);
++
++void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result);
++
++void ParseEpDeviceIndexList(const std::string& input, std::vector<int>& result);
++
++void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std::pair<std::string, std::string>>& result);
 +
 +std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]);
 +
@@ -1862,10 +1899,10 @@ index d6c6f6112..eea7474f2 100644
 +
 +}  // namespace utils
 +}  // namespace test
- }  // namespace onnxruntime
++}  // namespace onnxruntime
 diff --git a/onnxruntime/test/onnx/utils/utils.cc b/onnxruntime/test/onnx/utils/utils.cc
 new file mode 100644
-index 000000000..67d317f6d
+index 0000000..67d317f
 --- /dev/null
 +++ b/onnxruntime/test/onnx/utils/utils.cc
 @@ -0,0 +1,93 @@
@@ -1964,7 +2001,7 @@ index 000000000..67d317f6d
 +}  // namespace onnxruntime
 diff --git a/onnxruntime/test/onnx/utils/utils.h b/onnxruntime/test/onnx/utils/utils.h
 new file mode 100644
-index 000000000..864294515
+index 0000000..8642945
 --- /dev/null
 +++ b/onnxruntime/test/onnx/utils/utils.h
 @@ -0,0 +1,24 @@
@@ -1993,19 +2030,18 @@ index 000000000..864294515
 +}  // namespace test
 +}  // namespace onnxruntime
 diff --git a/onnxruntime/test/perftest/command_args_parser.cc b/onnxruntime/test/perftest/command_args_parser.cc
-index 3f878ac79..102b82cb1 100644
+index c869814..4828271 100644
 --- a/onnxruntime/test/perftest/command_args_parser.cc
 +++ b/onnxruntime/test/perftest/command_args_parser.cc
-@@ -19,7 +19,7 @@
- #include <core/session/onnxruntime_run_options_config_keys.h>
+@@ -20,6 +20,7 @@
  
  #include "test_configuration.h"
--#include "strings_helper.h"
+ #include "strings_helper.h"
 +#include "test/onnx/utils/strings_helper.h"
  
  #ifdef _MSC_VER
  #pragma warning(push)
-@@ -243,8 +243,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -252,8 +253,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
    absl::SetFlagsUsageConfig(config);
    absl::SetProgramUsageMessage(CustomUsageMessage());
  
@@ -2016,7 +2052,7 @@ index 3f878ac79..102b82cb1 100644
    auto positional = absl::ParseCommandLine(static_cast<int>(utf8_argv.size()), utf8_argv.data());
  
    // -f
-@@ -255,7 +255,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -264,7 +265,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
        // To preserve the previous usage of '-f', where users may specify it multiple times to override different dimension names,
        // we need to manually parse argv.
        std::string option = "f";
@@ -2025,7 +2061,7 @@ index 3f878ac79..102b82cb1 100644
          return false;
        }
      }
-@@ -267,7 +267,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -276,7 +277,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      if (!dim_override_str.empty()) {
        // Same reason as '-f' above to manully parse argv.
        std::string option = "F";
@@ -2034,7 +2070,7 @@ index 3f878ac79..102b82cb1 100644
          return false;
        }
      }
-@@ -505,7 +505,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -524,7 +525,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      const auto& session_configs = absl::GetFlag(FLAGS_C);
      if (!session_configs.empty()) {
        ORT_TRY {
@@ -2043,7 +2079,7 @@ index 3f878ac79..102b82cb1 100644
        }
        ORT_CATCH(const std::exception& ex) {
          ORT_HANDLE_EXCEPTION([&]() {
-@@ -563,7 +563,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -582,7 +583,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
    // --plugin_eps
    {
      const auto& plugin_eps = absl::GetFlag(FLAGS_plugin_eps);
@@ -2052,7 +2088,7 @@ index 3f878ac79..102b82cb1 100644
    }
  
    // --plugin_ep_options
-@@ -589,7 +589,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -608,7 +609,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      const auto& filter_ep_devices = absl::GetFlag(FLAGS_filter_ep_devices);
      if (!filter_ep_devices.empty()) {
        ORT_TRY {
@@ -2062,7 +2098,7 @@ index 3f878ac79..102b82cb1 100644
        ORT_CATCH(const std::exception& ex) {
          ORT_HANDLE_EXCEPTION([&]() {
 diff --git a/onnxruntime/test/perftest/common_utils.cc b/onnxruntime/test/perftest/common_utils.cc
-index e0ade6be3..c81e013e8 100644
+index e0ade6b..c81e013 100644
 --- a/onnxruntime/test/perftest/common_utils.cc
 +++ b/onnxruntime/test/perftest/common_utils.cc
 @@ -2,7 +2,7 @@
@@ -2177,7 +2213,7 @@ index e0ade6be3..c81e013e8 100644
    // If user only provide the EPs' provider option lists for the first several EPs,
    // add empty provider option lists for the rest EPs.
 diff --git a/onnxruntime/test/perftest/main.cc b/onnxruntime/test/perftest/main.cc
-index 2c7764507..e67d7c546 100644
+index b3f07bf..79e1a01 100644
 --- a/onnxruntime/test/perftest/main.cc
 +++ b/onnxruntime/test/perftest/main.cc
 @@ -9,8 +9,9 @@
@@ -2188,10 +2224,10 @@ index 2c7764507..e67d7c546 100644
 +#include "test/onnx/utils/strings_helper.h"
  #include "utils.h"
 -#include "strings_helper.h"
+ #include "test/util/include/telemetry_test_environment.h"
  #include <google/protobuf/stubs/common.h>
  
- using namespace onnxruntime;
-@@ -51,7 +52,7 @@ int real_main(int argc, char* argv[]) {
+@@ -52,7 +53,7 @@ int real_main(int argc, char* argv[]) {
    }
  
    if (!test_config.plugin_ep_names_and_libs.empty()) {
@@ -2200,7 +2236,7 @@ index 2c7764507..e67d7c546 100644
    }
  
    // Unregister all registered plugin EP libraries before program exits.
-@@ -61,12 +62,12 @@ int real_main(int argc, char* argv[]) {
+@@ -62,12 +63,12 @@ int real_main(int argc, char* argv[]) {
    // See "ep_device.ep_factory->ReleaseAllocator" in Environment::CreateSharedAllocatorImpl.
    auto unregister_plugin_eps_at_scope_exit = gsl::finally([&]() {
      if (!test_config.registered_plugin_eps.empty()) {
@@ -2216,7 +2252,7 @@ index 2c7764507..e67d7c546 100644
        fprintf(stdout, "No plugin execution provider libraries are registered. Please specify them using \"--plugin_ep_libs\"; otherwise, only CPU may be available.\n");
      }
 diff --git a/onnxruntime/test/perftest/ort_test_session.cc b/onnxruntime/test/perftest/ort_test_session.cc
-index 679be75fa..f67d92233 100644
+index ae9ed2a..cf30d4a 100644
 --- a/onnxruntime/test/perftest/ort_test_session.cc
 +++ b/onnxruntime/test/perftest/ort_test_session.cc
 @@ -21,8 +21,8 @@
@@ -2229,7 +2265,7 @@ index 679be75fa..f67d92233 100644
  
  #ifdef USE_OPENVINO
  #include "nlohmann/json.hpp"
-@@ -271,13 +271,13 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+@@ -278,13 +278,13 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
  #else
      std::string option_string = performance_test_config.run_config.ep_runtime_config_string;
  #endif
@@ -2249,7 +2285,7 @@ index 679be75fa..f67d92233 100644
  
      for (const auto& provider_option : provider_options) {
        const std::string& key = provider_option.first;
-@@ -448,7 +448,7 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
+@@ -455,7 +455,7 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
                                                                     kCoremlProviderOption_ProfileComputePlan,
                                                                     kCoremlProviderOption_AllowLowPrecisionAccumulationOnGPU,
                                                                     kCoremlProviderOption_ModelCacheDirectory};
@@ -2259,7 +2295,7 @@ index 679be75fa..f67d92233 100644
      std::unordered_map<std::string, std::string> available_options = {
          {"CPUAndNeuralEngine", "1"},
 diff --git a/onnxruntime/test/perftest/utils.h b/onnxruntime/test/perftest/utils.h
-index 442c62342..c01d8d740 100644
+index 442c623..c01d8d7 100644
 --- a/onnxruntime/test/perftest/utils.h
 +++ b/onnxruntime/test/perftest/utils.h
 @@ -23,16 +23,6 @@ class ICPUUsage {
@@ -2285,7 +2321,7 @@ rename from onnxruntime/test/util/compare_ortvalue.cc
 rename to onnxruntime/test/util/values/internal_api/compare_ortvalue.cc
 diff --git a/onnxruntime/test/util/values/public_api/compare_ortvalue.cc b/onnxruntime/test/util/values/public_api/compare_ortvalue.cc
 new file mode 100644
-index 000000000..dbd87da16
+index 0000000..dbd87da
 --- /dev/null
 +++ b/onnxruntime/test/util/values/public_api/compare_ortvalue.cc
 @@ -0,0 +1,849 @@
@@ -3140,7 +3176,7 @@ index 000000000..dbd87da16
 +}  // namespace onnxruntime
 diff --git a/onnxruntime/test/util/values/public_api/compare_ortvalue.h b/onnxruntime/test/util/values/public_api/compare_ortvalue.h
 new file mode 100644
-index 000000000..c85630b5b
+index 0000000..c85630b
 --- /dev/null
 +++ b/onnxruntime/test/util/values/public_api/compare_ortvalue.h
 @@ -0,0 +1,35 @@

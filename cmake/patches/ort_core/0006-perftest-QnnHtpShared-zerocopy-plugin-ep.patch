@@ -1,6 +1,8 @@
+From 5cafdc533d432b7b4c5345ac9cd9beabcf413d7d Mon Sep 17 00:00:00 2001
 From: QNN EP team <noreply@qualcomm.com>
-Date: Mon, 21 Jul 2026 00:00:00 +0000
-Subject: [PATCH] perftest: enable QnnHtpShared zero-copy input on plugin-EP path
+Date: Tue, 21 Jul 2026 00:00:00 +0000
+Subject: [PATCH 6/7] perftest: enable QnnHtpShared zero-copy input on
+ plugin-EP path
 
 When onnxruntime_perf_test registers the QNN EP via --plugin_eps, provider_name_
 is not kQnnExecutionProvider, so the "-i" QNN option-parsing branch (which sets
@@ -25,21 +27,24 @@ Fix:
    values, and string tensors are left unchanged.
 
 TODO: re-check this patch on future ort core upleveling since the target file may change.
-
 ---
+ onnxruntime/test/perftest/ort_test_session.cc | 60 +++++++++++++++++++
+ onnxruntime/test/perftest/ort_test_session.h  | 13 ++++
+ 2 files changed, 73 insertions(+)
+
 diff --git a/onnxruntime/test/perftest/ort_test_session.cc b/onnxruntime/test/perftest/ort_test_session.cc
-index f67d922..0acdaaf 100644
+index cf30d4a..ec82627 100644
 --- a/onnxruntime/test/perftest/ort_test_session.cc
 +++ b/onnxruntime/test/perftest/ort_test_session.cc
 @@ -5,6 +5,7 @@
-
+ 
  #include "ort_test_session.h"
  #include <algorithm>
 +#include <cstring>
  #include <limits>
  #include <fstream>
  #include <set>
-@@ -110,6 +111,26 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+@@ -117,6 +118,26 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
          device_memory_name_.empty()) {
        device_memory_name_ = CUDA;
      }
@@ -64,9 +69,9 @@ index f67d922..0acdaaf 100644
 +      }
 +    }
    }
-
+ 
    provider_name_ = performance_test_config.machine_config.provider_type_name;
-@@ -979,6 +994,10 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
+@@ -986,6 +1007,10 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
      Ort::MemoryInfo memory_info(nullptr);  // Default initialize, will be overwritten
      if (device_memory_name_ == CUDA) {
        memory_info = Ort::MemoryInfo(device_memory_name_.data(), OrtArenaAllocator, 0, OrtMemTypeDefault);
@@ -77,10 +82,10 @@ index f67d922..0acdaaf 100644
      } else {
        memory_info = Ort::MemoryInfo(device_memory_name_.data(), OrtArenaAllocator, 0, OrtMemTypeCPUOutput);
      }
-@@ -1083,6 +1102,41 @@ static void InitializeTensorWithSeed(int32_t seed, Ort::Value& tensor) {
- #undef CASE_FOR_TYPE
+@@ -1122,6 +1147,41 @@ void OnnxRuntimeTestSession::CreateAndStoreGeneratedInput(size_t test_data_id, s
+ #endif
  }
-
+ 
 +Ort::Value OnnxRuntimeTestSession::CopyToSharedAllocator(Ort::Value&& src) {
 +  // Only plain tensors can be re-wrapped; sequence/optional/map values fall through
 +  // unchanged (perf_test's shared-memory target models are tensor-only).
@@ -117,15 +122,15 @@ index f67d922..0acdaaf 100644
 +}
 +
  bool OnnxRuntimeTestSession::PopulateGeneratedInputTestData(int32_t seed) {
-   Ort::AllocatorWithDefaultOptions default_allocator;
-   // iterate over all input nodes
+   for (size_t i = 0; i < static_cast<size_t>(input_length_); i++) {
+     Ort::TypeInfo type_info = session_.GetInputTypeInfo(i);
 diff --git a/onnxruntime/test/perftest/ort_test_session.h b/onnxruntime/test/perftest/ort_test_session.h
-index 0a2c683..d1032d7 100644
+index 422e76b..33c75fe 100644
 --- a/onnxruntime/test/perftest/ort_test_session.h
 +++ b/onnxruntime/test/perftest/ort_test_session.h
-@@ -20,6 +20,14 @@ class OnnxRuntimeTestSession : public TestSession {
+@@ -21,6 +21,14 @@ class OnnxRuntimeTestSession : public TestSession {
                           const TestModelInfo& m);
-
+ 
    void PreLoadTestData(size_t test_data_id, size_t input_id, Ort::Value&& value) override {
 +    // Real .pb test data is loaded onto plain CPU memory by the shared TestCase
 +    // infrastructure, which is unaware of this session's allocator. When the
@@ -138,10 +143,10 @@ index 0a2c683..d1032d7 100644
      if (test_inputs_.size() < test_data_id + 1) {
        test_inputs_.resize(test_data_id + 1);
      }
-@@ -39,6 +47,11 @@ class OnnxRuntimeTestSession : public TestSession {
-   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxRuntimeTestSession);
-
-  private:
+@@ -51,6 +59,11 @@ class OnnxRuntimeTestSession : public TestSession {
+                                     const std::vector<int64_t>& dims,
+                                     ONNXTensorElementDataType element_type, int32_t seed);
+ 
 +  // Returns a tensor backed by the QnnHtpShared (RPCMEM) allocator. If `src` is already
 +  // on a HOST_ACCESSIBLE allocator (or is not a plain tensor), it is returned unchanged;
 +  // otherwise its bytes are copied into a freshly allocated shared-memory tensor.
@@ -150,6 +155,6 @@ index 0a2c683..d1032d7 100644
    Ort::Session session_{nullptr};
    std::mt19937 rand_engine_;
    std::uniform_int_distribution<int> dist_;
+-- 
+2.53.0.windows.1
 
---
-2.50.0
