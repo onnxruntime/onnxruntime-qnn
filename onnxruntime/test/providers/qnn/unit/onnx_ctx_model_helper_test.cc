@@ -652,7 +652,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetMainContextNode_TwoGraphsSecondIsMain_Re
 // end-to-end EP-context integration suite rather than this component test.
 // =============================================================================
 
-TEST(QnnUnit_OnnxCtxModelHelperTest, DISABLED_GetEpContextFromMainNode_WrongOpType_ReturnsError) {
+TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_ReturnsError) {
   // op_type != EPCONTEXT_OP → error before any attr or path access.
   CtxHelperTestContext ctx;
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
