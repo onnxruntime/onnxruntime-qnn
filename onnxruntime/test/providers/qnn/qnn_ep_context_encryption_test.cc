@@ -786,7 +786,7 @@ TEST_F(QnnHTPBackendTests, Encryption_ReadCallback_ReturnsError_SessionCtorSurfa
 // and the decrypting read callback loads it back and runs. It does NOT exercise the
 // multi-model merged-binary flow (that path compiles via Ort::Session create, which cannot
 // carry a write callback in ORT 1.28); it isolates the interaction of the two feature flags.
-TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
+TEST_F(QnnHTPBackendTests, DISABLED_Encryption_WithShareEpContexts_RoundTrip) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload

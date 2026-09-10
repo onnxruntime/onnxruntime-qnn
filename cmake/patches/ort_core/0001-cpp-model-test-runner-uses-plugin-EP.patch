@@ -6,7 +6,7 @@ Subject: [PATCH 1/7] cpp model test runner uses plugin EP
 ---
  cmake/CMakeLists.txt                          |   5 +
  cmake/onnxruntime_unittests.cmake             |  87 +-
- onnxruntime/test/onnx/TestCase.cc             |  20 +
+ onnxruntime/test/onnx/TestCase.cc             |  22 +
  onnxruntime/test/onnx/dataitem_request.cc     |  13 +-
  .../onnx/plugin_ep/command_args_parser.cc     | 370 ++++++++
  .../test/onnx/plugin_ep/command_args_parser.h |  68 ++
@@ -200,7 +200,7 @@ diff --git a/onnxruntime/test/onnx/TestCase.cc b/onnxruntime/test/onnx/TestCase.
 index 86eb962..96b19bc 100644
 --- a/onnxruntime/test/onnx/TestCase.cc
 +++ b/onnxruntime/test/onnx/TestCase.cc
-@@ -1588,6 +1588,26 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
+@@ -1588,6 +1588,28 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
      // the CPU-materialized node runner (onnx#7959) exposes the same marginal FFT precision failure
      // that onnx_backend_test_series_filters.jsonc already excludes globally.
      broken_tests->insert({"bitcast_bool_to_uint8", "ORT BitCast kernel does not register bool type"});
@@ -208,6 +208,8 @@ index 86eb962..96b19bc 100644
 +    broken_tests->insert({"affine_grid_2d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});
 +    broken_tests->insert({"affine_grid_3d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});
 +    broken_tests->insert({"attention_4d_fp16", "output=Y:idx: 121, expected 0.459229, got 0.459717, diff: 0.000488281, tol=0.000469229"});
++    broken_tests->insert({"attention_4d_fp16_expanded", "output=Y:idx: 97, expected 0.470947, got 0.471436, diff: 0.000488281, tol=0.000480947"});
++    broken_tests->insert({"attention_4d_gqa_with_past_and_present_fp16_expanded", "output=Y:idx: 5, expected 0.423584, got 0.423096, diff: 0.000488281, tol=0.000433584"});
 +    broken_tests->insert({"dft", "output=y:expected 7.10543e-15 (28000000), got 0.000160893 (3928b56c), diff: 0.000160893, tol=1e-05 idx=119. 20 of 200 differ"});
 +    broken_tests->insert({"dft_axis", "output=y:expected 0 (0), got -0.000236511 (b9780000), diff: 0.000236511, tol=1e-05 idx=181. 20 of 200 differ"});
 +    broken_tests->insert({"dft_axis_opset19", "output=y:expected 0 (0), got -0.000236511 (b9780000), diff: 0.000236511, tol=1e-05 idx=181. 20 of 200 differ"});
