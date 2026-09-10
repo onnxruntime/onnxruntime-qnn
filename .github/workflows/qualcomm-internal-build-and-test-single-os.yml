@@ -395,6 +395,8 @@ jobs:
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
         if: ${{ inputs.has_code_changes }}
+        env:
+          ORT_JSON_DUMP_ARTIFACT_DIR: ${{ github.workspace }}/build/json_graph_dumps
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
@@ -403,3 +405,11 @@ jobs:
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
+
+      - name: Upload JSON Graph Dumps
+        uses: actions/upload-artifact@v7
+        if: ${{ always() && inputs.has_code_changes }}
+        with:
+          name: json-graph-dumps-${{inputs.target_os}}-${{inputs.target_arch}}
+          retention-days: 3
+          path: ${{ github.workspace }}/build/json_graph_dumps/
