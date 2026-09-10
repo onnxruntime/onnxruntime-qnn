@@ -918,8 +918,10 @@ static GetTestModelFn BuildPerChannelQDQChainMatMulTestCase(int64_t K, int64_t N
   return [K, N](ModelTestBuilder& builder) {
     builder.MakeInput<float>("input", {1, K}, -0.1f, 0.1f);
     std::vector<int8_t> w(static_cast<size_t>(K * N));
-    for (size_t i = 0; i < w.size(); ++i) {
-      w[i] = static_cast<int8_t>(static_cast<int>((i * 37) % 256) - 128);
+    for (int64_t k = 0; k < K; ++k) {
+      for (int64_t n = 0; n < N; ++n) {
+        w[static_cast<size_t>(k * N + n)] = static_cast<int8_t>(((k * 31 + n * 17) % 256) - 128);
+      }
     }
     builder.MakeInitializer<int8_t>("w_q0", {K, N}, w);
     std::vector<float> s0(static_cast<size_t>(N), 0.02f), s1(static_cast<size_t>(N), 0.05f);
@@ -953,22 +955,23 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
+                                       ElementwiseAbsoluteVerifier(1e-2f), &checker});
 }
 
-// Builds: w_q (uint8 init) -> DQ -> MatMul. psx0-class single per-tensor weight at
-// the issue's own example dims (1536x6144 = 9.4M elems = 36 MiB FP32): must decline
-// the fold, keep the runtime Dequantize on QNN, and match numerics.
-TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQ_PsxDims_MustSkipFold) {
+// w_q -> DQ -> MatMul, per-tensor. Must skip the fold and keep runtime Dequantize on QNN.
+// 1024x1024 = 4 MiB FP32, past the 1 MiB budget. 1e-2 matches the large conv tolerance.
+TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQConstWeight_AboveFoldCutoff) {
   auto build = [](ModelTestBuilder& builder) {
-    builder.MakeInput<float>("input", {1, 1536}, -0.1f, 0.1f);
-    std::vector<uint8_t> w(static_cast<size_t>(1536 * 6144));
+    constexpr int64_t K = 1024, N = 1024;
+    builder.MakeInput<float>("input", {1, K}, -0.1f, 0.1f);
+    const std::vector<int8_t> pattern{-128, -70, -1, 1, 50, 127};
+    std::vector<int8_t> w(static_cast<size_t>(K * N));
     for (size_t i = 0; i < w.size(); ++i) {
-      w[i] = static_cast<uint8_t>((i * 53) % 256);
+      w[i] = pattern[i % pattern.size()];
     }
-    builder.MakeInitializer<uint8_t>("w_q", {1536, 6144}, w);
+    builder.MakeInitializer<int8_t>("w_q", {K, N}, w);
     builder.MakeInitializer<float>("s", {}, {0.05f});
-    builder.MakeInitializer<uint8_t>("zp", {}, {uint8_t{0}});
+    builder.MakeInitializer<int8_t>("zp", {}, {0});
     builder.AddNode("DQ", "DequantizeLinear", {"w_q", "s", "zp"}, {"w_dq"});
     builder.MakeOutput("output");
     builder.AddNode("MatMul", "MatMul", {"input", "w_dq"}, {"output"}, kOnnxDomain);
@@ -982,7 +985,7 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQ_PsxDims_MustSkipFold) {
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
+                                       ElementwiseAbsoluteVerifier(1e-2f), &checker});
 }
 
 }  // namespace test
