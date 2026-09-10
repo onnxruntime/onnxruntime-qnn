@@ -47,6 +47,7 @@ from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_6
 from ep_build.tasks.python import (
     CreateOrtVenvTask,
     CreateQdcVenvTask,
+    OrtWheelGenieModelTestTask,
     OrtWheelGpuModelTestTask,
     OrtWheelSmokeTestTask,
     RunLinterTask,
@@ -1284,6 +1285,22 @@ class TaskLibrary:
             return plan.add_step(
                 OrtWheelGpuModelTestTask(
                     "Running GPU model tests on ARM64",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                )
+            )
+
+    if is_host_windows():
+
+        @task
+        @depends(["build_ort_windows_arm64"])
+        def test_ort_windows_arm64_pygenie(self, plan: Plan) -> str:
+            assert self.__target_py_version is not None
+            return plan.add_step(
+                OrtWheelGenieModelTestTask(
+                    "Running Genie model tests on ARM64",
                     self.__venv_path,
                     "arm64",
                     self.__config,

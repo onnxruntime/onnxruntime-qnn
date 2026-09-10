@@ -26,6 +26,10 @@ def get_onnx_models_root(package_manager_venv: Path | None) -> Path:
     return get_package_content_dir(package_manager_venv, "onnx_models")
 
 
+def get_genai_models_root(package_manager_venv: Path | None) -> Path:
+    return get_package_content_dir(package_manager_venv, "genai_models")
+
+
 def get_qualcomm_device_cloud_sdk_root(package_manager_venv: Path | None) -> Path:
     return get_package_content_dir(package_manager_venv, "qualcomm_device_cloud_sdk")
 
