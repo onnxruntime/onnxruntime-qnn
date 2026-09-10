@@ -214,6 +214,7 @@ bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
 #else
   return false;
 #endif
+}
 
 Ort::Status RegisterWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
                                           const std::string& weight_name,
