@@ -960,15 +960,17 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
 
 // w_q -> DQ -> MatMul, per-tensor. Must skip the fold and keep runtime Dequantize on QNN.
 // 1024x1024 = 4 MiB FP32, past the 1 MiB budget.
-// Runtime-DQ GEMV (K=1024) diverges from the ORT CPU reference across BLAS builds:
-// Windows x86_64/arm64 CI shows diff 0.017 (elem 0) / 0.020 (elem 1) vs 1e-2 while
-// Linux passes. 5e-2 covers that cross-platform GEMM noise and still catches real
-// fold bugs (sign/magnitude corruption misses by orders of magnitude).
-constexpr float kMatMulSkipTolerance = 5e-2f;
+// One-hot input isolates DQ correctness from GEMM accumulation noise: random
+// dense input over K=1024 diverged across BLAS builds (Windows CI: 0.017 on elem 0/1
+// at 1e-2, then 0.052 on elem 2 at 5e-2, while Linux passed). With input[0]=1 the
+// output is a direct gather of one dequantized row, so 1e-4 is tight yet stable and
+// still catches sign/magnitude fold bugs by orders of magnitude.
 TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQConstWeight_AboveFoldCutoff) {
   auto build = [](ModelTestBuilder& builder) {
     constexpr int64_t K = 1024, N = 1024;
-    builder.MakeInput<float>("input", {1, K}, -0.1f, 0.1f);
+    std::vector<float> input_data(static_cast<size_t>(K), 0.0f);
+    input_data[0] = 1.0f;
+    builder.MakeInput<float>("input", {1, K}, input_data);
     const std::vector<int8_t> pattern{-128, -70, -1, 1, 50, 127};
     std::vector<int8_t> w(static_cast<size_t>(K * N));
     for (size_t i = 0; i < w.size(); ++i) {
@@ -990,7 +992,7 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQConstWeight_AboveFoldCutoff) {
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       ElementwiseAbsoluteVerifier(kMatMulSkipTolerance), &checker});
+                                       ElementwiseAbsoluteVerifier(1e-4f), &checker});
 }
 
 }  // namespace test
