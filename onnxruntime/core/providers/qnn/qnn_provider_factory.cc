@@ -19,6 +19,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/soc_utils.h"
 #include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "qnn_ep_min_ort_api_version.h"
@@ -94,7 +95,20 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   GetNumCustomOpDomains = GetNumCustomOpDomainsImpl;
   GetCustomOpDomains = GetCustomOpDomainsImpl;
 
-  // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
+  // Register schema-only placeholder ops for the qti_aisw block ops so models that use them pass
+  // ORT model validation (Graph::Resolve) when this EP is appended. QNN fuses/compiles the nodes;
+  // the placeholder kernels are never executed for QNN-assigned nodes. Registered unconditionally
+  // (not gated on any env var) since these ops ship with the EP.
+  {
+    Ort::CustomOpDomain qti_aisw_domain{kQtiAiswDomain};
+    for (const char* op_name : qnn::kQtiAiswBlockOpNames) {
+      qti_aisw_op_objects_.push_back(std::make_unique<qnn::QtiAiswPlaceholderOp>(op_name));
+      qti_aisw_domain.Add(qti_aisw_op_objects_.back().get());
+    }
+    custom_op_domains_.push_back(std::move(qti_aisw_domain));
+  }
+
+  // Build additional custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var (env-var UDO ops).
   // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
   // so we parse once here at factory construction and cache the result for all sessions.
   // SetDefaultLogger is called before factory construction in CreateEpFactories, so

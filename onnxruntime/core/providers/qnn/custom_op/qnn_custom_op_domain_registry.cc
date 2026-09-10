@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "core/providers/qnn/custom_op/qnn_custom_op_domain_parser.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"  // kQtiAiswDomain
 
 namespace onnxruntime {
 
@@ -43,6 +44,16 @@ void BuildCustomOpDomainsFromEnv(const Ort::Logger& logger,
   std::vector<CustomOpDomainSpec> specs;
   ParseCustomOpDomains(custom_op_domains_spec, specs, logger);
   for (const auto& spec : specs) {
+    // qti_aisw is reserved for the EP's built-in block ops (registered unconditionally by the
+    // factory). Skip it here so we don't register the domain twice, which trips ORT's
+    // "Domain already set in registry".
+    if (spec.domain == kQtiAiswDomain) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  "ORT_QNN_CUSTOM_OP_DOMAINS: ignoring reserved domain 'qti_aisw' "
+                  "(built-in block ops are always registered).");
+      continue;
+    }
+
     // Ort::CustomOpDomain copies the domain name string internally (via CreateCustomOpDomain),
     // and QnnUdoPlaceholderOp stores op_type by value (std::move), so spec may safely go out
     // of scope after this loop iteration.

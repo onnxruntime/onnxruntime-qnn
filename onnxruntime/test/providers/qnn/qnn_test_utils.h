@@ -41,6 +41,7 @@ namespace test {
 constexpr const char* kOnnxDomain = "";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
+constexpr const char* kQtiAiswDomain = "qti_aisw";
 
 #define QNN_TEST_UNUSED_PARAMETER(x) (void)(x)
 
@@ -896,6 +897,27 @@ void InferenceModel(const std::string& model_data,
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                     std::function<void(const Ort::Session&)>* graph_checker = nullptr,
                     Ort::CustomOpDomain* custom_op_domain = nullptr);
+
+// Creates a session with the QNN EP for the given serialized model and verifies node-to-EP
+// assignment, WITHOUT running inference. Use for the qti_aisw block ops (Buffer / StatefulLstm /
+// StatefulGru), which have no CPU kernel (so there is no meaningful reference to compare against)
+// and whose graphs compile on the QNN HTP backend but require real NPU hardware to finalize/run.
+// The QNN EP factory supplies the qti_aisw placeholder schema, so the model loads even though
+// these ops have no registered ONNX schema.
+void VerifyQnnEpModelAssignment(const std::string& model_data,
+                                const char* log_id,
+                                const ProviderOptions& provider_options,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
+
+// Runs a stateful QNN model in one session with reset=true, false, true. The reset input must be
+// a BOOL scalar model input. The model must have an output that is sensitive to retained state:
+// the first and third results must match, while the second must differ.
+void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
+                                    const char* log_id,
+                                    const ProviderOptions& provider_options,
+                                    int opset,
+                                    const char* reset_input_name);
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies

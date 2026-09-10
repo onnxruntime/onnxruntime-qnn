@@ -456,6 +456,90 @@ void InferenceModel(const std::string& model_data,
   RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
+void VerifyQnnEpModelAssignment(const std::string& model_data,
+                                const char* log_id,
+                                const ProviderOptions& provider_options,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                OrtLoggingLevel log_severity) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::string registration_name = "QNNExecutionProvider";
+  Ort::SessionOptions session_options;
+
+  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+
+  session_options.SetLogId(log_id);
+  session_options.SetLogSeverityLevel(log_severity);
+  if (QNNTestEnvironment::GetInstance().verbose()) {
+    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+  }
+
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+
+  // Create the session (loads + compiles the model) and verify EP node assignment. Inference is
+  // intentionally not run: these tests assert node-to-EP assignment only. The qti_aisw block ops
+  // have no CPU kernel, so there is no meaningful CPU reference to compare against.
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, expected_ep_assignment));
+}
+
+void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
+                                    const char* log_id,
+                                    const ProviderOptions& provider_options,
+                                    int opset,
+                                    const char* reset_input_name) {
+  ModelTestBuilder helper;
+  build_test_case(helper);
+  for (const auto& [domain, version] : std::unordered_map<std::string, int>{{"", opset}, {kMSDomain, 1}, {kQtiAiswDomain, 1}}) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::string registration_name = "QNNExecutionProvider";
+  Ort::SessionOptions session_options;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  session_options.SetLogId(log_id);
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, ExpectedEPNodeAssignment::All));
+
+  auto reset_it = helper.feeds_.find(reset_input_name);
+  ASSERT_NE(reset_it, helper.feeds_.end()) << "Missing reset input: " << reset_input_name;
+  ASSERT_EQ(reset_it->second.GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  ASSERT_EQ(reset_it->second.GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(), 0U);
+  bool* reset = reset_it->second.GetTensorMutableData<bool>();
+
+  const auto run_and_copy_outputs = [&]() {
+    std::vector<Ort::Value> outputs;
+    RunWithEP(scoped.session(), Ort::RunOptions{nullptr}, helper.feeds_, outputs);
+    std::vector<std::vector<uint8_t>> output_bytes;
+    output_bytes.reserve(outputs.size());
+    for (const auto& output : outputs) {
+      const auto* data = static_cast<const uint8_t*>(output.GetTensorRawData());
+      output_bytes.emplace_back(data, data + output.GetTensorSizeInBytes());
+    }
+    return output_bytes;
+  };
+
+  *reset = true;
+  const auto reset_first = run_and_copy_outputs();
+  *reset = false;
+  const auto state_retained = run_and_copy_outputs();
+  *reset = true;
+  const auto reset_again = run_and_copy_outputs();
+
+  EXPECT_EQ(reset_first, reset_again) << "reset=true must restore the initial state in the same session.";
+  EXPECT_NE(reset_first, state_retained) << "reset=false must retain state from the preceding run.";
+}
+
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
                                  const std::string& name,
                                  const TestInputDef<float>& bias_def,
