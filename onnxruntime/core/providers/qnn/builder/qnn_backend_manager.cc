@@ -578,16 +578,8 @@ Ort::Status QnnBackendManager::InitializeQnnValidatorLog() {
 QnnLog_Level_t QnnBackendManager::MapOrtSeverityToQNNLogLevel(OrtLoggingLevel ort_log_level) {
   // Map ORT log severity to Qnn log level
   switch (ort_log_level) {
-    case ORT_LOGGING_LEVEL_VERBOSE: {
-      switch ((GetQnnBackendType())) {
-        case QnnBackendType::GPU:
-          // Currently GPU needs this log level to work.
-          // This switch will be removed once this is resolved.
-          return QNN_LOG_LEVEL_DEBUG;
-        default:
-          return QNN_LOG_LEVEL_VERBOSE;
-      }
-    }
+    case ORT_LOGGING_LEVEL_VERBOSE:
+      return QNN_LOG_LEVEL_VERBOSE;
     case ORT_LOGGING_LEVEL_INFO:
       return QNN_LOG_LEVEL_INFO;
     case ORT_LOGGING_LEVEL_WARNING:
