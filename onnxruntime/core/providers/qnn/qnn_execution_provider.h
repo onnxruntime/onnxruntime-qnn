@@ -65,9 +65,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL GetCapabilityImpl(OrtEp* this_ptr,
                                                    const OrtGraph* graph,
                                                    OrtEpGraphSupportInfo* graph_support_info) noexcept;
-  static OrtStatus* ORT_API_CALL GetGenieCapability(OrtEp* this_ptr,
-                                                    const OrtGraph* graph,
-                                                    OrtEpGraphSupportInfo* graph_support_info);
   static OrtStatus* ORT_API_CALL CompileImpl(_In_ OrtEp* this_ptr,
                                              _In_ const OrtGraph** graphs,
                                              _In_ const OrtNode** fused_nodes,
@@ -97,6 +94,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                        _In_ size_t num_options) noexcept;
   static const char* ORT_API_CALL GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                         _In_ const OrtGraph* graph) noexcept;
+
+  OrtStatus* GetGenieCapability(const OrtGraph* graph,
+                                OrtEpGraphSupportInfo* graph_support_info);
 
   OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
                                    const OrtNode** fused_nodes,
