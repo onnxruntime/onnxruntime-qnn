@@ -64,10 +64,12 @@ std::unique_ptr<IQnnNodeGroup> HardSigmoidMulFusion::TryFusion(
   }
 
   // Input to HardSigmoid must also be the other input to the Mul.
+  // The Mul has two inputs: the HardSigmoid output and the original (root) input.
+  // Accept either ordering, i.e. Mul(root, hs_out) or Mul(hs_out, root).
   auto& hs_input_name = hardsigmoid_node_unit.Inputs()[0].name;
 
   const bool same_root_input = mul_node_unit->Inputs()[0].name == hs_input_name ||
-                               mul_node_unit->Inputs()[0].name == hs_input_name;
+                               mul_node_unit->Inputs()[1].name == hs_input_name;
 
   if (!same_root_input) {
     return nullptr;
