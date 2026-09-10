@@ -935,10 +935,25 @@ static GetTestModelFn BuildPerChannelQDQChainMatMulTestCase(int64_t K, int64_t N
 // weights are already covered by the small HTP folding tests.
 TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
   namespace fs = std::filesystem;
-  const fs::path graph_dir = fs::temp_directory_path() / "MatMulQwenQProjMustFold";
-  fs::remove_all(graph_dir);
-  ASSERT_TRUE(fs::create_directories(graph_dir));
-  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+  // Use error_code overloads: throwing filesystem calls would terminate the whole
+  // test binary (no *.results.xml, CI exit code 1) instead of failing one test.
+  std::error_code ec;
+  fs::path graph_dir;
+  try {
+    graph_dir = fs::temp_directory_path(ec) / "MatMulQwenQProjMustFold";
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to resolve temp directory: " << ex.what();
+    return;
+  }
+  ASSERT_FALSE(ec) << "Failed to resolve temp directory: " << ec.message();
+  fs::remove_all(graph_dir, ec);
+  ASSERT_FALSE(ec) << "Failed to clean QNN graph dir " << graph_dir << ": " << ec.message();
+  ASSERT_TRUE(fs::create_directories(graph_dir, ec) && !ec)
+      << "Failed to create QNN graph dir " << graph_dir << ": " << ec.message();
+  auto cleanup = gsl::finally([&graph_dir]() {
+    std::error_code cleanup_ec;
+    fs::remove_all(graph_dir, cleanup_ec);
+  });
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
@@ -951,6 +966,9 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
                                        ElementwiseAbsoluteVerifier(1e-4f)});
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
 
   // Every hop folded: the QNN graph is MatMul alone, with the weight as a STATIC tensor. A
   // surviving Quantize/Dequantize would mean the chain stopped folding, which is how #339's

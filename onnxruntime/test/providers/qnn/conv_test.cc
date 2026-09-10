@@ -1119,10 +1119,25 @@ static GetTestModelFn BuildPerTensorInt8DQConstWeightConvTestCase(float scale, i
 // FP32 static or stayed a runtime op.
 static void RunLargePerTensorDQConvTest(const std::string& backend, float fp32_abs_err) {
   namespace fs = std::filesystem;
-  const fs::path graph_dir = fs::temp_directory_path() / ("ConvLargePerTensorDQ_" + backend);
-  fs::remove_all(graph_dir);
-  ASSERT_TRUE(fs::create_directories(graph_dir));
-  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+  // Use error_code overloads throughout: throwing filesystem calls would terminate
+  // the whole test binary (no *.results.xml, CI exit code 1) instead of failing one test.
+  std::error_code ec;
+  fs::path graph_dir;
+  try {
+    graph_dir = fs::temp_directory_path(ec) / ("ConvLargePerTensorDQ_" + backend);
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to resolve temp directory: " << ex.what();
+    return;
+  }
+  ASSERT_FALSE(ec) << "Failed to resolve temp directory: " << ec.message();
+  fs::remove_all(graph_dir, ec);
+  ASSERT_FALSE(ec) << "Failed to clean QNN graph dir " << graph_dir << ": " << ec.message();
+  ASSERT_TRUE(fs::create_directories(graph_dir, ec) && !ec)
+      << "Failed to create QNN graph dir " << graph_dir << ": " << ec.message();
+  auto cleanup = gsl::finally([&graph_dir]() {
+    std::error_code cleanup_ec;
+    fs::remove_all(graph_dir, cleanup_ec);
+  });
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend;
