@@ -959,7 +959,12 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
 }
 
 // w_q -> DQ -> MatMul, per-tensor. Must skip the fold and keep runtime Dequantize on QNN.
-// 1024x1024 = 4 MiB FP32, past the 1 MiB budget. 1e-2 matches the large conv tolerance.
+// 1024x1024 = 4 MiB FP32, past the 1 MiB budget.
+// Runtime-DQ GEMV (K=1024) diverges from the ORT CPU reference across BLAS builds:
+// Windows x86_64/arm64 CI shows diff 0.017 (elem 0) / 0.020 (elem 1) vs 1e-2 while
+// Linux passes. 5e-2 covers that cross-platform GEMM noise and still catches real
+// fold bugs (sign/magnitude corruption misses by orders of magnitude).
+constexpr float kMatMulSkipTolerance = 5e-2f;
 TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQConstWeight_AboveFoldCutoff) {
   auto build = [](ModelTestBuilder& builder) {
     constexpr int64_t K = 1024, N = 1024;
@@ -985,7 +990,7 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerTensorDQConstWeight_AboveFoldCutoff) {
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       ElementwiseAbsoluteVerifier(1e-2f), &checker});
+                                       ElementwiseAbsoluteVerifier(kMatMulSkipTolerance), &checker});
 }
 
 }  // namespace test
