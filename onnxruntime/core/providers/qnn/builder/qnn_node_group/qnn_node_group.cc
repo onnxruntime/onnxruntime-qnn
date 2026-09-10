@@ -63,6 +63,42 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
     // pins this op type to a different backend, decline before reaching the op builder.
     RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
 
+    // QNN tensor creation rejects zero-extent dims (error 7004 observed when a downstream op
+    // consumed an empty tensor). Decline any NodeUnit with a statically-known empty input or
+    // output so capability and compile agree and ORT falls back to CPU.
+    for (const auto& input : node_unit_->Inputs()) {
+      if (!input.Exists()) {
+        continue;
+      }
+      std::vector<uint32_t> shape;
+      if (!QnnModelWrapper::GetOnnxShape(input.shape, shape)) {
+        continue;
+      }
+      for (uint32_t dim : shape) {
+        if (dim == 0) {
+          return MAKE_EP_FAIL(("QNN EP does not support empty tensors (node `" + node_unit_->Name() +
+                               "` input `" + input.name + "` has a zero-extent dim).")
+                                  .c_str());
+        }
+      }
+    }
+    for (const auto& output : node_unit_->Outputs()) {
+      if (!output.Exists()) {
+        continue;
+      }
+      std::vector<uint32_t> shape;
+      if (!QnnModelWrapper::GetOnnxShape(output.shape, shape)) {
+        continue;
+      }
+      for (uint32_t dim : shape) {
+        if (dim == 0) {
+          return MAKE_EP_FAIL(("QNN EP does not support empty tensors (node `" + node_unit_->Name() +
+                               "` output `" + output.name + "` has a zero-extent dim).")
+                                  .c_str());
+        }
+      }
+    }
+
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
 
