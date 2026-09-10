@@ -3,8 +3,11 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
+#include <limits>
 #include <string>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -12,6 +15,30 @@
 
 namespace onnxruntime {
 namespace test {
+
+// Empty Slice output ([1,64,128] -> [1,0,128]) holds no elements, so the EP folds it to a
+// STATIC tensor instead of submitting StridedSlice (rejected by HTP with error 3110).
+// See https://github.com/qcom-ai-hub/tetracode/issues/20854.
+static GetTestModelFn BuildEmptySliceModelFn() {
+  return [](ModelTestBuilder& builder) {    builder.MakeInput<float>("input0", {1, 64, 128}, 0.0f, 1.0f);
+    builder.Make1DInitializer<int64_t>("starts", {64});
+    builder.Make1DInitializer<int64_t>("ends", {std::numeric_limits<int64_t>::max()});
+    builder.Make1DInitializer<int64_t>("axes", {1});
+    builder.AddNode("Slice", "Slice", {"input0", "starts", "ends", "axes"}, {"slice_out"});
+    builder.MakeOutput("Y");
+    builder.AddNode("Relu", "Relu", {"slice_out"}, {"Y"});
+  };
+}
+
+TEST_F(QnnCPUBackendTests, SliceEmptyOutputFoldsToStatic) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildEmptySliceModelFn(),
+                  provider_options,
+                  13,  // opset
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
 
 // Test for "index-out-of-bounds" bug that occurred when a Slice operator
 // shared one of its initializer inputs with another op that was processed by QNN EP first.
@@ -246,6 +273,28 @@ TEST_F(QnnHTPBackendTests, SliceBoolOnHTP) {
                             TestInputDef<int64_t>({2}, true, {0, 1}),  // axes
                             TestInputDef<int64_t>({2}, true, {1, 1}),  // steps
                             ExpectedEPNodeAssignment::All);
+}
+
+// Empty Slice output stays resident: no StridedSlice op reaches the HTP graph.
+TEST_F(QnnHTPBackendTests, SliceEmptyOutputFoldsToStatic) {
+  const std::filesystem::path json_qnn_graph_dir = "SliceEmptyOutputFoldsToStatic";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildEmptySliceModelFn(),
+                  provider_options,
+                  13,  // opset
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "StridedSlice", 0);
+
+  std::filesystem::remove_all(json_qnn_graph_dir);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

@@ -305,6 +305,51 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   PrepareForComputeMetadata compute_metadata(input_dimensions);
   RETURN_IF_ERROR(PrepareForComputeHelper(raw_starts, raw_ends, raw_axes, raw_steps, compute_metadata));
 
+  // HTP rejects StridedSlice with an empty output (QNN error 3110), but a static Slice
+  // whose computed output has a zero extent (e.g. [1,64,128] -> [1,0,128]) holds no
+  // elements: its value is fully determined by the shape. Fold it to a STATIC tensor so
+  // the empty edge stays resident instead of killing the compile. This runs identically
+  // in the validation and compile passes so capability and compile agree. Intermediate
+  // tensors only: a graph output still needs a producing op for IO registration.
+  bool has_empty_output_dim = false;
+  for (const int64_t dim : compute_metadata.output_dims_) {
+    if (dim == 0) {
+      has_empty_output_dim = true;
+      break;
+    }
+  }
+  const auto& slice_output = node_unit.Outputs()[0];
+  if (has_empty_output_dim && !qnn_model_wrapper.IsGraphOutput(slice_output.name)) {
+    // Guard re-entry across the two GetCapability passes sharing one wrapper.
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(slice_output.name)) {
+      TensorInfo output_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(slice_output, output_info));
+      std::vector<uint32_t> empty_shape;
+      empty_shape.reserve(compute_metadata.output_dims_.size());
+      for (const int64_t dim : compute_metadata.output_dims_) {
+        empty_shape.push_back(static_cast<uint32_t>(dim));
+      }
+      QnnTensorWrapper static_wrapper(slice_output.name,
+                                      QNN_TENSOR_TYPE_STATIC,
+                                      output_info.qnn_data_type,
+                                      output_info.quant_param.Copy(),
+                                      std::move(empty_shape),
+                                      std::vector<uint8_t>{});
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(static_wrapper)),
+                    "Failed to add folded empty Slice output tensor.");
+    }
+    qnn_model_wrapper.MarkTensorAsFoldedConstant(slice_output.name);
+    return Ort::Status();
+  }
+  if (has_empty_output_dim) {
+    // Graph-output empty Slice: the producing op cannot be elided (see above), and HTP
+    // cannot execute StridedSlice with a zero extent, so decline with a precise diagnostic
+    // instead of the backend's opaque 3110.
+    return MAKE_EP_FAIL(("Slice with empty output is not supported on HTP (output: " +
+                         slice_output.name + ").")
+                            .c_str());
+  }
+
   const size_t input_rank = input_dimensions.size();
   std::vector<uint32_t> ranges_dims{static_cast<uint32_t>(input_rank), 3};
   std::vector<uint32_t> ranges_data;
