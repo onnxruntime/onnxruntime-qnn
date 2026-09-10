@@ -30,7 +30,9 @@ set(LINUX_TOOLCHAIN_PLATFORM "armv8a-oe-linux")
 
 set(LINUX_TOOLCHAIN_SYSROOT "${LINUX_TOOLCHAIN_ROOT}/sysroots/${LINUX_TOOLCHAIN_PLATFORM}")
 
-if(APPLE)
+if(DEFINED ENV{ORT_LLVM_ROOT})
+  set(LLVM_ROOT "$ENV{ORT_LLVM_ROOT}")
+elseif(APPLE)
   set(LLVM_ROOT "/opt/homebrew/Cellar/llvm@16/16.0.6_1/bin")
 else()
   set(LLVM_ROOT "/usr/lib/llvm-16/bin")
