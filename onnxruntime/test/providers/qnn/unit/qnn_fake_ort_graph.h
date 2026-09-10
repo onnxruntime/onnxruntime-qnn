@@ -61,6 +61,15 @@ struct FakeValueInfo {
   // Null for non-initializer value infos. Used by ValueInfo_GetInitializerValue.
   FakeOrtValue* initializer_value = nullptr;
 
+  // Graph-role classification flags read by the ValueInfo_Is* stubs. All
+  // default false, so existing aggregate initializations that omit them keep
+  // reporting "intermediate / not-classified" (every ValueInfo_Is* returns
+  // false), which is the correct answer for a plain internal tensor.
+  bool is_constant_initializer = false;
+  bool is_required_graph_input = false;
+  bool is_optional_graph_input = false;
+  bool is_graph_output = false;
+
   const OrtValueInfo* AsValueInfo() const {
     return reinterpret_cast<const OrtValueInfo*>(this);
   }
@@ -206,6 +215,7 @@ struct FakeGraph {
 // Stub coverage (sufficient for SetGraphInputOutputInfo / ComposeGraph /
 // LogTensorDetails / SetupTensors paths):
 //   - GetValueInfoName, GetValueInfoTypeInfo
+//   - ValueInfo_Is{ConstantInitializer,RequiredGraphInput,OptionalGraphInput,GraphOutput}
 //   - CastTypeInfoToTensorInfo, GetTensorElementType
 //   - GetDimensionsCount, GetDimensions, GetSymbolicDimensions
 //   - TensorTypeAndShape_HasShape
@@ -286,6 +296,26 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   };
   api.TensorTypeAndShape_HasShape = [](const OrtTensorTypeAndShapeInfo*) noexcept -> bool {
     return true;
+  };
+
+  // ---- OrtValueInfo graph-role predicates ----
+  // Decode the classification flags on FakeValueInfo. Default-false flags mean
+  // an unclassified fake tensor reports as an intermediate value (all false).
+  api.ValueInfo_IsConstantInitializer = [](const OrtValueInfo* vi, bool* out) noexcept -> OrtStatus* {
+    *out = reinterpret_cast<const FakeValueInfo*>(vi)->is_constant_initializer;
+    return nullptr;
+  };
+  api.ValueInfo_IsRequiredGraphInput = [](const OrtValueInfo* vi, bool* out) noexcept -> OrtStatus* {
+    *out = reinterpret_cast<const FakeValueInfo*>(vi)->is_required_graph_input;
+    return nullptr;
+  };
+  api.ValueInfo_IsOptionalGraphInput = [](const OrtValueInfo* vi, bool* out) noexcept -> OrtStatus* {
+    *out = reinterpret_cast<const FakeValueInfo*>(vi)->is_optional_graph_input;
+    return nullptr;
+  };
+  api.ValueInfo_IsGraphOutput = [](const OrtValueInfo* vi, bool* out) noexcept -> OrtStatus* {
+    *out = reinterpret_cast<const FakeValueInfo*>(vi)->is_graph_output;
+    return nullptr;
   };
 
   // ---- OrtGraph ----
