@@ -345,7 +345,7 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
     // Graph-output empty Slice: the producing op cannot be elided (see above), and HTP
     // cannot execute StridedSlice with a zero extent, so decline with a precise diagnostic
     // instead of the backend's opaque 3110.
-    return MAKE_EP_FAIL(("Slice with empty output is not supported on HTP (output: " +
+    return MAKE_EP_FAIL(("Slice with empty output is not supported (output: " +
                          slice_output.name + ").")
                             .c_str());
   }
@@ -384,7 +384,6 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
 
   // StridedSlice on HTP BE doesn't support BOOL output either. Run the op in UINT8 (done via the
   // BOOL -> UINT8 input cast in ProcessInputs) and Cast the output back to BOOL.
-  const auto& slice_output = node_unit.Outputs()[0];
   const auto& output_name = slice_output.name;
   std::vector<uint32_t> output_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(slice_output.shape, output_shape), "Cannot get shape");

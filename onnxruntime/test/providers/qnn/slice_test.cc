@@ -20,7 +20,8 @@ namespace test {
 // STATIC tensor instead of submitting StridedSlice (rejected by HTP with error 3110).
 // See https://github.com/qcom-ai-hub/tetracode/issues/20854.
 static GetTestModelFn BuildEmptySliceModelFn() {
-  return [](ModelTestBuilder& builder) {    builder.MakeInput<float>("input0", {1, 64, 128}, 0.0f, 1.0f);
+  return [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input0", {1, 64, 128}, 0.0f, 1.0f);
     builder.Make1DInitializer<int64_t>("starts", {64});
     builder.Make1DInitializer<int64_t>("ends", {std::numeric_limits<int64_t>::max()});
     builder.Make1DInitializer<int64_t>("axes", {1});
@@ -280,6 +281,7 @@ TEST_F(QnnHTPBackendTests, SliceEmptyOutputFoldsToStatic) {
   const std::filesystem::path json_qnn_graph_dir = "SliceEmptyOutputFoldsToStatic";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -293,8 +295,6 @@ TEST_F(QnnHTPBackendTests, SliceEmptyOutputFoldsToStatic) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "StridedSlice", 0);
-
-  std::filesystem::remove_all(json_qnn_graph_dir);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
