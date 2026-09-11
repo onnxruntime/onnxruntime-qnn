@@ -42,6 +42,16 @@ class QnnBackendManager;
 class GenieBackendManager;
 }  // namespace qnn
 
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+// Forward declarations for white-box unit tests that call GetPerThreadHtpPowerConfigs directly.
+// GTest generates one class per TEST_F as FixtureName_TestName_Test; the TestBody() that
+// holds the private call lives there, not in the fixture itself.
+namespace test {
+class QnnUnit_ExecutionProviderTest_GetPerThreadHtpPowerConfigs_BurstSessionMode_DoesNotSetDefaultPerfMode_Test;
+class QnnUnit_ExecutionProviderTest_GetPerThreadHtpPowerConfigs_SustainedSessionMode_SetsDefaultPerfMode_Test;
+}  // namespace test
+#endif
+
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
   QnnEp(QnnEpFactory& factory,
@@ -59,6 +69,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   friend struct GenieNodeComputeInfo;
   friend class QnnEpFactory;
+#if QNN_EP_INTERNAL_SYMBOL_ACCESS
+  friend class test::QnnUnit_ExecutionProviderTest_GetPerThreadHtpPowerConfigs_BurstSessionMode_DoesNotSetDefaultPerfMode_Test;
+  friend class test::QnnUnit_ExecutionProviderTest_GetPerThreadHtpPowerConfigs_SustainedSessionMode_SetsDefaultPerfMode_Test;
+#endif
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -202,8 +216,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
     const QnnEp& ep_;
   };
 
-  // Retrieves per-thread HTP power configurations from run options
-  void GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
+  // Retrieves per-thread HTP power configurations from run options.
+  // Returns true if any config field was populated (i.e. AddPerThreadHtpPowerConfigMapping should be called).
+  bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
 
   void CreateHtpPowerConfigId() const;
