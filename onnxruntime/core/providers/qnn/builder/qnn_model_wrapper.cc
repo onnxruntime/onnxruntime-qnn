@@ -9,7 +9,6 @@
 #include <numeric>
 #include <utility>
 #include <vector>
-
 #include "QnnInterface.h"
 
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
@@ -211,6 +210,11 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
                                                   std::vector<Qnn_Tensor_t>& qnn_tensors,
                                                   bool do_op_validation) {
   for (const auto& tensor_name : tensor_names) {
+    if (tensor_name.empty()) {
+      qnn_tensors.push_back(QNN_TENSOR_INIT);
+      continue;
+    }
+
     auto it = model_tensors_map_.find(tensor_name);
     if (it == model_tensors_map_.end()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Input name not exist: " + tensor_name).c_str());
@@ -542,7 +546,6 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
         !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
       return false;
     }
-
     QnnOpConfigWrapper op_config_wrapper(qnn_node_name,
                                          package_name,
                                          qnn_node_type,
@@ -551,14 +554,8 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
                                          std::move(params));
 
     using namespace onnxruntime::qnn::utils;
-
-    std::ostringstream oss;
-    oss << op_config_wrapper;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
-
     std::string error_msg;
     Ort::Status validation_status = ValidateQnnNode(op_config_wrapper, error_msg);
-
     if (!validation_status.IsOK()) {
       // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
       // specific validation error (instead of "failed to add node").
@@ -756,7 +753,6 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     if (!CreateQnnParamTensors(op_property.GetNodeName(), op_property.GetParamTensorNames(), params)) {
       return false;
     }
-
     QnnOpConfigWrapper op_config_wrapper(op_property.GetNodeName(),
                                          op_property.GetPackageName(),
                                          op_property.GetNodeType(),
@@ -765,11 +761,7 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
                                          std::move(params));
 
     using namespace onnxruntime::qnn::utils;
-
-    std::ostringstream oss;
-    oss << op_config_wrapper;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
-
+    //
     std::string error_msg;
     bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_backend_manager_.GetQnnInterface(), graph_, error_msg);
     if (!rt) {
