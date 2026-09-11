@@ -340,7 +340,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   if (QNNTestEnvironment::GetInstance().verbose()) {
     session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
   }
-
   TryEnableQNNSaver(provider_options);
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
