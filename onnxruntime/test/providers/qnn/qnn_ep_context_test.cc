@@ -2207,8 +2207,7 @@ static void GetModelInputNames(const std::string& model_path,
 // 3. Start 2 ort session from the dumped context model,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
-// TODO: Flaky test on ORT Core 1.29.0 Uplevel
-TEST_F(QnnHTPBackendTests, DISABLED_QnnContextShareAcrossSessions) {
+TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
@@ -2506,6 +2505,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
   // Test CreateFromBinaryListAsync path
   so2.SetLogId("so2");
   so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+  so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
 #ifdef _WIN32

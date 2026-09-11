@@ -450,7 +450,8 @@ TEST_F(QnnHTPBackendTests, Encryption_NewReadWriteCallback_RoundTrip) {
 }
 
 // Baseline: htp_share_resource_optimization=1 WITHOUT encryption; hangs here → pre-existing QAIRT issue, unrelated to this PR.
-TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
+// TODO: Option "htp_share_resource_optimization" usage here is incorrect.
+TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -532,7 +533,8 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
 
 // 2-session shared-context E2E. Session 1 heap-leaked (workaround for a pre-existing
 // QAIRT 2.45 teardown hang, see Encryption_VtcmSharing_Baseline_NoCallback).
-TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
+// TODO: Option "htp_share_resource_optimization" usage here is incorrect.
+TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_MultiSession_EndToEnd) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -786,7 +788,7 @@ TEST_F(QnnHTPBackendTests, Encryption_ReadCallback_ReturnsError_SessionCtorSurfa
 // and the decrypting read callback loads it back and runs. It does NOT exercise the
 // multi-model merged-binary flow (that path compiles via Ort::Session create, which cannot
 // carry a write callback in ORT 1.28); it isolates the interaction of the two feature flags.
-TEST_F(QnnHTPBackendTests, DISABLED_Encryption_WithShareEpContexts_RoundTrip) {
+TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
