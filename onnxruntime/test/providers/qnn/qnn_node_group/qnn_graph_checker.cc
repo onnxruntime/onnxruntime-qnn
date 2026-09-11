@@ -99,6 +99,47 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
       << " occurrence(s), found " << actual_count << " in " << json_path;
 }
 
+void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
+                                 uint32_t expected_data_type) {
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("nodes") && root["graph"]["nodes"].is_object() &&
+              root["graph"].contains("tensors") && root["graph"]["tensors"].is_object())
+      << "JSON missing 'graph.nodes' or 'graph.tensors' object in: " << json_path;
+
+  const auto& nodes = root["graph"]["nodes"];
+  const auto& tensors = root["graph"]["tensors"];
+  const nlohmann::json* convert = nullptr;
+  try {
+    for (const auto& [node_name, node] : nodes.items()) {
+      if (node.is_object() && node.contains("type") && node["type"].is_string() &&
+          node["type"].get<std::string>() == "Convert") {
+        ASSERT_EQ(convert, nullptr) << "Expected one Convert node, found more than one";
+        convert = &node;
+      }
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to iterate QNN graph nodes in " << json_path << ": " << ex.what();
+  }
+
+  ASSERT_NE(convert, nullptr) << "No Convert node found in " << json_path;
+  ASSERT_TRUE(convert->contains("output_names") && (*convert)["output_names"].is_array() &&
+              (*convert)["output_names"].size() == 1 && (*convert)["output_names"][0].is_string())
+      << "Convert node has invalid output_names in " << json_path;
+  const std::string output_name = (*convert)["output_names"][0].get<std::string>();
+  ASSERT_TRUE(tensors.contains(output_name)) << "Convert output tensor not found: " << output_name;
+  ASSERT_TRUE(tensors[output_name].is_object() && tensors[output_name].contains("data_type"));
+  ASSERT_TRUE(tensors[output_name]["data_type"].is_number_unsigned());
+  EXPECT_EQ(tensors[output_name]["data_type"].get<uint32_t>(), expected_data_type)
+      << "Unexpected Convert output datatype in " << json_path;
+}
+
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name) {
   std::filesystem::path json_path;
