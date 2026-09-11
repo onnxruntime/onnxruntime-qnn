@@ -28,8 +28,8 @@ struct QnnTensorInfo {
 
 // Configuration for QnnModel::ComposeGraph and QnnModel::SetGraphInputOutputInfo.
 struct QnnModelContext {
-  const OrtGraph& ort_graph;
-  const OrtNode& fused_node;
+  const OrtGraph* ort_graph;
+  const OrtNode* fused_node;
   const Ort::Logger& logger;
 
   // Names in ONNX declaration order, absent when loading from cached context.
@@ -60,7 +60,11 @@ class QnnModel {
   ~QnnModel() = default;
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModel);
 
-  Ort::Status ComposeGraph(const QnnModelContext& context);
+  Ort::Status ComposeGraph(const QnnModelContext& context,
+                           bool cache_graph_wrappers = false,
+                           QnnGraphWrapper* qnn_graph_wrapper = nullptr);
+
+  Ort::Status ComposeGraphFromGraphWrapper(const QnnModelContext& context, const QnnGraphWrapper& qnn_graph_wrapper);
 
   Ort::Status FinalizeGraphs(const Ort::Logger& logger);
 
@@ -108,15 +112,15 @@ class QnnModel {
   Ort::Status DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_GraphInfo_t& qnn_sys_ctx_graph_info,
                                                  const Qnn_ContextHandle_t& context);
 
-  bool IsConstantInitializer(const OrtGraph& ort_graph,
+  bool IsConstantInitializer(const OrtGraph* ort_graph,
                              const std::string& tensor_name) const {
     size_t num_initializers = 0;
-    OrtStatus* status = api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph, &num_initializers);
+    OrtStatus* status = api_ptrs_.ort_api.Graph_GetNumInitializers(ort_graph, &num_initializers);
     if (status != nullptr) {
       return false;  // Return false on error
     }
     std::vector<const OrtValueInfo*> initializers(num_initializers);
-    status = api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph, initializers.data(), initializers.size());
+    status = api_ptrs_.ort_api.Graph_GetInitializers(ort_graph, initializers.data(), initializers.size());
     if (status != nullptr) {
       api_ptrs_.ort_api.ReleaseStatus(status);
       return false;
@@ -214,6 +218,11 @@ class QnnModel {
     }
     return it->second.index_;
   }
+
+ private:
+  Ort::Status ComposeQnnGraph(const QnnModelContext& context,
+                              QnnModelWrapper& qnn_model_wrapper,
+                              const std::string& graph_name);
 
  private:
   std::unique_ptr<GraphInfo> graph_info_;

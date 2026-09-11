@@ -157,7 +157,7 @@ class QnnUnit_NodeGroupFusionValidationTest : public QnnUnit_NodeGroupTest,
       node_units_.push_back(std::make_unique<OrtNodeUnit>(node.AsNode(), ctx_.stub_ort_api));
       node_unit_map_.emplace(node.AsNode(), node_units_.back().get());
     }
-    wrapper_ = std::make_unique<qnn::QnnModelWrapper>(*graph_.AsGraph(), ctx_.MakeApiPtrs(), logger_,
+    wrapper_ = std::make_unique<qnn::QnnModelWrapper>(graph_.AsGraph(), ctx_.MakeApiPtrs(), logger_,
                                                       *backend_->Get(), inputs_, outputs_, settings_);
     ASSERT_TRUE(wrapper_->AddTensorWrapper(qnn::QnnTensorWrapper(
         "preexisting", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,

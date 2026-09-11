@@ -10,7 +10,6 @@
 
 #include <gsl/gsl>
 
-#include "HTP/QnnHtpDeviceConfigShared.h"
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
@@ -97,12 +96,14 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
 // Determine whether given BQ parameters are natively supported by HTP. If true, activation data type can be kept in
 // fixed point; otherwise, insert Dequantize and Quantize nodes around to make activation in FP16.
 // Note: HTP native BQ requires HTP arch >= 81.
-bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
+bool IsHTPSupportedNativeBQ(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
                             Qnn_DataType_t act_data_type,
                             uint32_t bitwidth,
                             uint32_t block_size,
                             uint32_t output_channel,
-                            gsl::span<const float> offsets);
+                            gsl::span<const float> offsets,
+                            bool record_decision);
 
 // Validate LPBQ's per-block int scale is within expected range (i.e., 1-16) which originates from AIMET algorithm.
 bool IsValidLPBQPerBlockIntScale(gsl::span<const uint8_t> per_block_int_scale);
