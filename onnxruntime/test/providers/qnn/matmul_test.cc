@@ -658,6 +658,49 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ) {
   RunQDQPerChannelMatMulOpTest<uint16_t, int8_t, uint16_t>({2, 3, 3}, {3}, -1, QDQTolerance(0.0041f));
 }
 
+// Diagnostic for PR #587: keep main's QNN MatMul lowering and re-run the original
+// per-axis batched-weight failure shape against the current default QAIRT SDK.
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_StaticLeadingUnitDimsPerChannelInt16Weight_Qairt250Baseline) {
+  const std::filesystem::path json_qnn_graph_dir =
+      "MatMulOp_QDQ_StaticLeadingUnitDimsPerChannelInt16Weight_Qairt250Baseline";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const std::vector<int64_t> shape_input = {1, 6, 3, 3};
+  const std::vector<int64_t> shape_weight = {1, 1, 3, 420};
+  TestInputDef<float> input_def(
+      shape_input, false,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_input.begin(), shape_input.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+  TestInputDef<float> weight_def(
+      shape_weight, true,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_weight.begin(), shape_weight.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+
+  TestQDQModelAccuracy(BuildMatMulOpTestCase(input_def, weight_def),
+                       BuildQDQPerChannelMatMulTestCase<uint16_t, int16_t, uint16_t>(
+                           input_def, weight_def, /*weight_quant_axis=*/3, /*use_contrib_qdq=*/false),
+                       provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) return;
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "MatMul", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", /*count=*/0);
+}
+
 // Tests MatMul with two uint16 (quantized) inputs that are both dynamic.
 // This exercises a logic in QNN EP that inserts a QNN Convert op before input[1] to convert asymmetric uint16 into
 // symmetric one.
