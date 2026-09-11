@@ -54,17 +54,13 @@ Ort::Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     QnnTensorWrapper add_tensor(add_output, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
                                 QnnQuantParamsWrapper(), std::move(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_tensor)), "Failed to add Add tensor wrapper.");
-    std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-    std::vector<std::string> add_param_names;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), add_node_name,
-                                           static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_ADD),
-                                           QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, add_param_names));
+    std::string add_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_BINARY,
+                                                  QNN_OP_ELEMENT_WISE_ADD,
                                                   {sum_output, input_names[i]},
                                                   {add_output},
-                                                  std::move(add_param_names),
+                                                  {},
                                                   do_op_validation),
                   "Create Qnn Node for Add Op Failed");
 
@@ -96,17 +92,13 @@ Ort::Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor wrapper.");
   std::vector<std::string> div_inputs = {sum_output, divisor_name};
-  std::string div_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_BINARY);
-  std::vector<std::string> div_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), div_node_name,
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
-                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
+  std::string div_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_DIVIDE);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                QNN_OP_ELEMENT_WISE_DIVIDE,
                                                 {sum_output, divisor_name},
                                                 {output_name},
-                                                std::move(div_param_names),
+                                                {},
                                                 do_op_validation),
                 "Failed to create Mean_Div node.");
 

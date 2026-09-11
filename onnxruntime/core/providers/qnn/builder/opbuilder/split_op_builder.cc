@@ -69,12 +69,11 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger,
                                                         bool do_op_validation) const {
   std::vector<std::string> param_tensor_names;
-  int32_t axis_value = 0;
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPLIT_PARAM_AXIS, axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+  int32_t axis_normalized = 0;
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis_normalized));
+  uint32_t axis_value = static_cast<uint32_t>(axis_normalized);
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         axis_value, QNN_OP_SPLIT_PARAM_AXIS, param_tensor_names));
 
   std::vector<uint32_t> split_index;
   if (node_unit.Inputs().size() > 1) {
@@ -112,7 +111,7 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
     // Get the length according to axis and split it equally
     std::vector<uint32_t> input_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
-    RETURN_IF_NOT(static_cast<int32_t>(input_shape.size()) > axis_value, "axis not valid!");
+    RETURN_IF_NOT(axis_value < static_cast<uint32_t>(input_shape.size()), "axis not valid!");
     RETURN_IF_NOT(input_shape.at(axis_value) > 0, "Shape value not valid!");
 
     // ONNX spec states that if not evenly divisible by `num_outputs`, the last chunk is smaller.

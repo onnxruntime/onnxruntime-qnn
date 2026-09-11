@@ -498,18 +498,19 @@ else()
     message(FATAL_ERROR "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
   endif()
 
-  onnxruntime_fetchcontent_declare(
-    ort_core
-    URL ${DEP_URL_ort_core}
-    URL_HASH SHA1=${DEP_SHA1_ort_core}
-    PATCH_COMMAND
-      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0001-cpp-model-test-runner-uses-plugin-EP.patch &&
-      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Add-Roialign-Op-to-HTP.patch &&
-      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
-      ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0004-Update-argument-for-monolithic-lstm.patch
-    EXCLUDE_FROM_ALL)
-  FetchContent_Populate(ort_core)
-endif()
+onnxruntime_fetchcontent_declare(
+  ort_core
+  URL ${DEP_URL_ort_core}
+  URL_HASH SHA1=${DEP_SHA1_ort_core}
+  PATCH_COMMAND
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0001-cpp-model-test-runner-uses-plugin-EP.patch &&
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Add-Roialign-Op-to-HTP.patch &&
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0004-Update-argument-for-monolithic-lstm.patch &&
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0005-Suppress-C4875-for-MSVC-14.51.patch &&
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0006-perftest-QnnHtpShared-zerocopy-plugin-ep.patch # TODO: review on ORT core uplevel — see patch header
+  EXCLUDE_FROM_ALL)
+FetchContent_Populate(ort_core)
 
 if(WIN32)
   if(onnxruntime_USE_VCPKG)

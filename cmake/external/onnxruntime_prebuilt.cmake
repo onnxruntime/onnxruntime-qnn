@@ -5,8 +5,8 @@ include(ExternalProject)
 
 set(ORT_SOURCE_DIR "${ort_core_SOURCE_DIR}")
 set(ORT_BUILD_DIR "${ort_core_BINARY_DIR}")
-message(STATUS "ORT_SOURCE_DIR: " ${ORT_SOURCE_DIR})
-message(STATUS "ORT_BUILD_DIR: " ${ORT_BUILD_DIR})
+message(STATUS "ORT_SOURCE_DIR: ${ORT_SOURCE_DIR}")
+message(STATUS "ORT_BUILD_DIR: ${ORT_BUILD_DIR}")
 
 # Determine the correct path for the test executable based on generator type
 # Single-config generators (like Ninja) don't have config subdirectories
@@ -23,7 +23,13 @@ endif()
 if(onnxruntime_ORT_HOME)
     message(STATUS "Use prebuilt from MS only at ${onnxruntime_ORT_HOME}. ORT Core will NOT be built from source")
     set(ORT_BUILD_COMMAND ${CMAKE_COMMAND} -E echo "Skipping ORT_BUILD_COMMAND")
-    set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_LIBRARY_ARCHITECTURE AND
+       EXISTS "${onnxruntime_ORT_HOME}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
+        set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
+    else()
+        set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib")
+    endif()
+    message(STATUS "ORT_PREBUILT_SOURCE: ${ORT_PREBUILT_SOURCE}")
     set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include")
     # In prebuilt mode the ort_core source is not fetched, so ort_core_SOURCE_DIR/ort_core_BINARY_DIR
     # (and thus ORT_SOURCE_DIR/ORT_BUILD_DIR set above) are empty. ExternalProject_Add below still
@@ -32,6 +38,14 @@ if(onnxruntime_ORT_HOME)
     set(ORT_SOURCE_DIR "${CMAKE_BINARY_DIR}/ort_core_prebuilt_stub")
     set(ORT_BUILD_DIR "${CMAKE_BINARY_DIR}/ort_core_prebuilt_stub")
     file(MAKE_DIRECTORY "${ORT_SOURCE_DIR}")
+    # Debian/Ubuntu system packages install ORT headers flat under include/onnxruntime/
+    # (e.g. include/onnxruntime/onnxruntime_cxx_api.h). Source files use bare
+    # "core/session/..." includes, so the include root must be include/onnxruntime/ rather
+    # than include/. QLI 2.0 and NuGet prebuilts have no such subdirectory; EXISTS is false.
+    if(EXISTS "${onnxruntime_ORT_HOME}/include/onnxruntime/onnxruntime_cxx_api.h")
+        set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include/onnxruntime")
+    endif()
+    message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: ${ONNXRUNTIME_APPLICATION_INCLUDES}")
 else()
     # Use Python to run build.py
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -76,6 +90,12 @@ else()
         --qnn_home "${onnxruntime_QNN_HOME}"
         --no_kleidiai
     )
+    # ort_core is fetched as a URL archive (zip), not a git clone, so there is no
+    # .git directory. Without this flag, build.py unconditionally runs
+    # "git submodule sync --recursive" and crashes with "fatal: not a git repository".
+    # NOTE: if ort_core is ever switched to GIT_REPOSITORY/GIT_TAG, remove this flag
+    # so that submodule sync runs correctly.
+    list(APPEND ORT_BUILD_COMMAND --skip_submodule_sync)
     if(onnxruntime_BUILD_CACHE)
         list(APPEND ORT_BUILD_COMMAND "--use_cache")
     endif()
@@ -217,7 +237,8 @@ ExternalProject_Add(
     SOURCE_DIR ${ORT_SOURCE_DIR}
     BINARY_DIR ${ORT_BUILD_DIR}
     DOWNLOAD_COMMAND ""
-    PATCH_COMMAND ""
+    PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
+                  -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0007-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
     BUILD_ALWAYS ON

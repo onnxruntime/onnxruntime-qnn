@@ -283,7 +283,9 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   auto block_size = helper.Get("block_size", static_cast<int64_t>(0));
 
   size_t output_channel_axis = 0;  // Current LowPowerBlockQuantize() support output_channel_axis at index=0;
-  weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, output_channel_axis, block_size, is_int4_type);
+  weight_qparams = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_float_scale, per_block_int_scale,
+                                                            weight_offset, output_channel_axis,
+                                                            /*block_scale_bitwidth*/ is_int4_type ? 4 : 8);
 
   Qnn_DataType_t weight_data_type = is_int4_type ? QNN_DATATYPE_SFIXED_POINT_4 : QNN_DATATYPE_SFIXED_POINT_8;
   QnnTensorWrapper weight_tensor;
@@ -365,7 +367,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint8_t> bias_quant_data(bias_elements * qnn::utils::GetElementSizeByType(bias_data_type));
 
     RETURN_IF_ERROR(qnn::utils::QuantizeData(bias_float_data, bias_shape, bias_scales, bias_offsets, bias_quant_data, bias_data_type, /*axis*/ 0));
-    QnnQuantParamsWrapper bias_qparams(bias_scales, bias_offsets, /*axis*/ 0, /*is_int4*/ 0);
+    QnnQuantParamsWrapper bias_qparams = QnnQuantParamsWrapper::PerChannel(bias_scales, bias_offsets, /*axis*/ 0);
 
     bias_tensor = QnnTensorWrapper(bias_tensor_name, bias_tensor_type, bias_data_type,
                                    std::move(bias_qparams), std::move(bias_shape),

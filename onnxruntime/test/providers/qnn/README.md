@@ -3,6 +3,29 @@
 1. The `onnxruntime/test/providers/qnn` directory contains integration tests for the Qualcomm Neural Network (QNN) execution provider.
 2. Most testcases run an ONNX model through the QNN-EP, then verifies the inference result against the one on CPU-EP
 
+## Directory structure
+
+```
+test/providers/qnn/
+├── *.cc              # Op-level accuracy tests (QnnHTPBackendTests, QnnCPUBackendTests, …)
+├── unit/             # Function-level unit tests — coverage build only; some tests use
+│                     #   libQnnHtp.so for op validation (no graph execution or session)
+└── integration/      # Targeted pipeline integration tests — require a real backend and
+                      #   a full session (GetCapability + Compile + Execute); exercise
+                      #   specific EP internal code paths rather than op accuracy
+```
+
+**During the transition period**, new tests should follow this rule:
+
+| Test type | Where to add |
+|---|---|
+| Op-level correctness / inference accuracy vs CPU EP | Here (`qnn/` root) |
+| Targets a specific EP internal code path with a minimal inline model | `integration/` |
+| Pure function logic or op validation only (no session/inference) | `unit/` |
+
+The long-term plan is to migrate op-level tests from this directory into `integration/`
+as well. (Aspirational; no fixed timeline.) Until then, both locations coexist.
+
 ## Building the Tests
 The tests are built as part of the regular ONNX Runtime build. After a successful build you will have an executable named
 - onnxruntime_provider_test.exe   (Windows)

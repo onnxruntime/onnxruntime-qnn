@@ -237,7 +237,7 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                                     cast_output_name,
                                                     QNN_TENSOR_TYPE_NATIVE,
                                                     QNN_DATATYPE_UFIXED_POINT_8,
-                                                    QnnQuantParamsWrapper(1.0f, 0),
+                                                    QnnQuantParamsWrapper::PerTensor(1.0f, 0),
                                                     std::vector<uint32_t>(input0_info.shape),
                                                     do_op_validation));
     }
@@ -259,16 +259,19 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
                                 node_unit.Inputs()[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
 
-  // Create QNN 'axis' parameter.
+  // Create QNN 'axis' parameter. dtype differs by op: Gather->INT_32, GatherElements->UINT_32.
+  // axis_value is kept in scope as uint32_t for the GatherElements output shape computation below.
   std::vector<std::string> param_tensor_names;
-  int32_t axis_value = 0;
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-  RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(),
-                             (is_gather_elems ? QNN_OP_GATHER_ELEMENTS_PARAM_AXIS : QNN_OP_GATHER_PARAM_AXIS),
-                             axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+  int32_t axis_normalized = 0;
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", 0, axis_normalized));
+  const uint32_t axis_value = static_cast<uint32_t>(axis_normalized);
+  if (is_gather_elems) {
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           axis_value, QNN_OP_GATHER_ELEMENTS_PARAM_AXIS, param_tensor_names));
+  } else {
+    RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                          axis_normalized, QNN_OP_GATHER_PARAM_AXIS, param_tensor_names));
+  }
 
   if (is_gather_elems) {
     if (!needs_bool_cast) {
@@ -287,7 +290,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 
     const std::string gather_output_name = utils::UniqueNameGenerator().New(output_name, "_u8_to_bool_in");
-    QnnQuantParamsWrapper gather_quant_params(1.0f, 0);
+    QnnQuantParamsWrapper gather_quant_params = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
     QnnTensorWrapper gather_output_wrapper(gather_output_name,
                                            QNN_TENSOR_TYPE_NATIVE,
                                            QNN_DATATYPE_UFIXED_POINT_8,
@@ -427,7 +430,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   QnnQuantParamsWrapper gather_quant_params = quantize_param.Copy();
   if (cast_plan.needs_bool_cast) {
     gather_qnn_data_type = QNN_DATATYPE_UFIXED_POINT_8;
-    gather_quant_params = QnnQuantParamsWrapper(1.0f, 0);
+    gather_quant_params = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
   }
 
   Qnn_TensorType_t tensor_type = (!reshape_required && is_graph_output && !cast_plan.needs_bool_cast && !cast_plan.needs_int64_cast)

@@ -7,6 +7,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -405,7 +406,7 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
                                             scale,
                                             zero_point,
                                             symmetric));
-      quant_param = QnnQuantParamsWrapper(scale, zero_point);
+      quant_param = QnnQuantParamsWrapper::PerTensor(scale, zero_point);
       for (size_t i = 0; i < double_tensor.size(); ++i) {
         int quant_value_int = 0;
         RETURN_IF_ERROR(utils::Quantize(double_tensor[i], scale, zero_point, info.qnn_data_type, quant_value_int));
@@ -447,17 +448,24 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
 namespace {
 
 // Helper to check if a BatchNorm param is constant - either direct initializer or through a DQ node.
+//
+// node_unit.GetDQNodes() is only populated for a QDQGroup-type NodeUnit. When the surrounding QDQ
+// selector rejects the group (e.g. BatchNormalizationNodeGroupSelector requires the quantized input
+// and output element types to match; mixed-bitwidth BN like u8-in/u16-out does not), BatchNorm becomes
+// a SingleNode-type NodeUnit with an empty GetDQNodes(). In that case the param's standalone DQ node
+// is visited (and constant-folded via TryFoldConstantQDQ) as its own NodeUnit before BN, in topological
+// order, so IsEffectivelyConstantInput (which also checks IsFoldedConstant) still recognizes it.
 bool IsParamConstant(const QnnModelWrapper& qnn_model_wrapper,
                      const OrtNodeUnit& node_unit,
                      const std::string& name) {
-  if (qnn_model_wrapper.IsConstantInput(name)) {
+  if (qnn_model_wrapper.IsEffectivelyConstantInput(name)) {
     return true;
   }
-  // Check if param comes through a DQ node with constant input
+  // Check if param comes through a DQ node with constant input (QDQGroup NodeUnit case).
   for (const OrtNode* dq_node : node_unit.GetDQNodes()) {
     const Ort::ConstNode const_dq_node(dq_node);
     if (const_dq_node.GetOutputs()[0].GetName() == name) {
-      return qnn_model_wrapper.IsConstantInput(const_dq_node.GetInputs()[0].GetName());
+      return qnn_model_wrapper.IsEffectivelyConstantInput(const_dq_node.GetInputs()[0].GetName());
     }
   }
   return false;
@@ -595,8 +603,15 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
   // QNN only accept 3 input. We need to first combine mean and variance into scale and bias.
   //
   {
-    const std::string& scale_name = inputs[1].name;
-    const std::string& bias_name = inputs[2].name;
+    // The fused scale/bias QNN tensors are specific to each bn node: PreprocessScale/PreprocessBias fold in
+    // this BN's mean/variance. Naming them after the source ONNX initializer (inputs[1]/inputs[2])
+    // causes a collision when two BN nodes share an initializer (e.g. AIMET-quantized models that
+    // share a saturated int32 bias init): the second node finds the name already registered, skips
+    // recompute, and silently reuses the first node's fused params. Use a per-node-unique name so
+    // each BN gets its own fused scale/bias
+    const std::string node_prefix = std::to_string(node_unit.Index()) + "_" + node_unit.Name();
+    const std::string scale_name = node_prefix + "_bn_fused_scale";
+    const std::string bias_name = node_prefix + "_bn_fused_bias";
     TensorInfo scale_info = {};
     TensorInfo bias_info = {};
     TensorInfo mean_info = {};
@@ -621,14 +636,17 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                (bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
                                 bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_16);
 
+    // A param may be a real ONNX initializer (initializer_tensor set) or a standalone DQ-of-constant
+    // already folded to a STATIC tensor by TryFoldConstantQDQ (initializer_tensor is null in that
+    // case; see IsParamConstant above) -- read bytes from whichever the param actually is.
     std::vector<uint8_t> scale_unpacked_tensor;
     std::vector<uint8_t> bias_unpacked_tensor;
     std::vector<uint8_t> mean_unpacked_tensor;
     std::vector<uint8_t> var_unpacked_tensor;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_info.initializer_tensor, scale_unpacked_tensor));
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, bias_unpacked_tensor));
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(mean_info.initializer_tensor, mean_unpacked_tensor));
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(var_info.initializer_tensor, var_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[1].name, scale_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[2].name, bias_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[3].name, mean_unpacked_tensor));
+    RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, inputs[4].name, var_unpacked_tensor));
 
     std::vector<double> scale_double_tensor;
     std::vector<double> bias_double_tensor;
@@ -675,7 +693,7 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                    bias_info.qnn_data_type,
                                    scale_rmin < 0.0);
     if (is_quantized_op && bias_is_float) {
-      bias_info.quant_param = QnnQuantParamsWrapper(1.0f, 0);  // Placeholder, computed in Postprocess
+      bias_info.quant_param = QnnQuantParamsWrapper::PerTensor(1.0f, 0);  // Placeholder, computed in Postprocess
     }
 
     // use_float_params stores the fused weight/bias as F32.
@@ -695,8 +713,8 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                     scale_raw_tensor));
       }
 
-      Qnn_TensorType_t scale_tensor_type = qnn_model_wrapper.GetTensorType(scale_name);
-      QnnTensorWrapper input_tensorwrapper(scale_name, scale_tensor_type, scale_info.qnn_data_type,
+      // Fused scale carries raw initializer data → always STATIC
+      QnnTensorWrapper input_tensorwrapper(scale_name, QNN_TENSOR_TYPE_STATIC, scale_info.qnn_data_type,
                                            std::move(scale_quant_param), std::move(scale_info.shape),
                                            std::move(scale_raw_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
@@ -718,8 +736,8 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                     bias_quant_param,
                                     bias_raw_tensor));
       }
-      Qnn_TensorType_t bias_tensor_type = qnn_model_wrapper.GetTensorType(bias_name);
-      QnnTensorWrapper input_tensorwrapper(bias_name, bias_tensor_type, bias_info.qnn_data_type,
+      // Fused bias carries raw initializer data → always STATIC
+      QnnTensorWrapper input_tensorwrapper(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
                                            std::move(bias_quant_param), std::move(bias_info.shape),
                                            std::move(bias_raw_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");

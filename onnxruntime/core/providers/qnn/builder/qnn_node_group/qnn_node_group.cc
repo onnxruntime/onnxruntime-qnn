@@ -20,18 +20,22 @@
 #include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/l2_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
@@ -54,6 +58,10 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
                                           "` are not supported by QNN EP." + op_type + " node `" +
                                           node_unit_->Name() + "` will not be assigned to QNN EP.")
                                              .c_str());
+
+    // op_affinity gate, generic across all op types (not just GroupQueryAttention): if the config
+    // pins this op type to a different backend, decline before reaching the op builder.
+    RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
 
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
@@ -98,9 +106,11 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
+    {"Tanh", {TanhGeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusion}},
+    {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
-    {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
+    {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
@@ -142,6 +152,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Erf" &&
+      starting_node_unit.OpType() != "Tanh" &&
       starting_node_unit.OpType() != "Reshape") {
     return nullptr;
   }
@@ -209,6 +220,21 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
     std::unique_ptr<IQnnNodeGroup> fused_node_group = TryQnnFusions(qnn_model_wrapper, *node_unit,
                                                                     node_to_node_unit, node_unit_to_qnn_node_group,
                                                                     logger);
+
+    // op_affinity: a fusion must not smuggle an affinity-pinned-away op onto QNN as part of a
+    // larger accepted group. Discard the fusion if any member's op type is rejected for this
+    // session's backend.
+    // TODO: discarding the whole fusion falls each member NodeUnit back to being wrapped
+    // individually; it does not try to re-fuse the remaining members into a smaller group.
+    if (fused_node_group != nullptr) {
+      const OpAffinityMap& affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
+      for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {
+        if (!affinity.Evaluate(member->OpType(), qnn_model_wrapper.GetQnnBackendType()).IsOK()) {
+          fused_node_group = nullptr;
+          break;
+        }
+      }
+    }
 
     if (fused_node_group) {
       const size_t index = qnn_node_groups.size();

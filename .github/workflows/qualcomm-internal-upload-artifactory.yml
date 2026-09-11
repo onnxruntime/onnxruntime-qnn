@@ -77,7 +77,7 @@ jobs:
     runs-on: ["self-hosted", "Linux", "X64"]
     steps:
       - name: Verify admin permission
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             try {
@@ -120,7 +120,6 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
           TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
-          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
         run: |
           source uplevel_venv/bin/activate
           python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
@@ -148,7 +147,6 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
           TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
-          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
@@ -189,7 +187,6 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
-          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           source uplevel_venv/bin/activate

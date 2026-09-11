@@ -119,6 +119,18 @@ bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape
   return total_input == total_output;
 }
 
+// Returns true if the input Reshape's output has more than one consumer.
+// If a graph-level CSE pass merges two Reshape nodes into one, claiming the
+// shared Reshape would remove it from the graph and break the other consumers.
+// TODO: Revisit — in principle each consumer could be fused independently by
+// duplicating the Reshape; for now we conservatively skip to keep correctness.
+static bool InputReshapeIsShared(const OrtNodeUnit* input_reshape) {
+  if (input_reshape == nullptr) return false;
+  const Ort::ConstNode reshape_node(&input_reshape->GetNode());
+  auto reshape_outputs = reshape_node.GetOutputs();
+  return !reshape_outputs.empty() && reshape_outputs[0].GetConsumers().size() > 1;
+}
+
 // Get the input Reshape node unit that feeds into the Gemm node
 const OrtNodeUnit* GetInputReshapeNodeUnit(
     const QnnModelWrapper& qnn_model_wrapper,
@@ -412,6 +424,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     return nullptr;
   }
 
+  if (InputReshapeIsShared(input_reshape)) {
+    return nullptr;
+  }
+
   // Get weight's input channel (K dimension)
   const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
   int64_t weight_k = GetWeightInputChannel(qnn_model_wrapper, weight_input);
@@ -444,6 +460,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
   const OrtNodeUnit* input_reshape = GetInputReshapeNodeUnit(
       qnn_model_wrapper, gemm_node_unit, node_to_node_unit, node_unit_to_qnn_node_group);
   if (!input_reshape) {
+    return nullptr;
+  }
+
+  if (InputReshapeIsShared(input_reshape)) {
     return nullptr;
   }
 
@@ -486,6 +506,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
   const OrtNodeUnit* input_reshape = GetInputReshapeNodeUnit(
       qnn_model_wrapper, gemm_node_unit, node_to_node_unit, node_unit_to_qnn_node_group);
   if (!input_reshape) {
+    return nullptr;
+  }
+
+  if (InputReshapeIsShared(input_reshape)) {
     return nullptr;
   }
 

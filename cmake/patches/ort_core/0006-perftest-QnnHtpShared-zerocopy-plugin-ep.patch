@@ -1,0 +1,155 @@
+From: QNN EP team <noreply@qualcomm.com>
+Date: Mon, 21 Jul 2026 00:00:00 +0000
+Subject: [PATCH] perftest: enable QnnHtpShared zero-copy input on plugin-EP path
+
+When onnxruntime_perf_test registers the QNN EP via --plugin_eps, provider_name_
+is not kQnnExecutionProvider, so the "-i" QNN option-parsing branch (which sets
+device_memory_name_ = "QnnHtpShared" on enable_htp_shared_memory_allocator|1) is
+skipped. device_memory_name_ stays empty, the shared-memory allocator block is
+never entered, and every model input is CPU-backed -> per-frame copy (no zero-copy).
+
+Fix:
+1. In the plugin-EP branch, parse the EP runtime config string with the existing
+   test::utils::ParseSessionConfigs helper and check for
+   enable_htp_shared_memory_allocator == "1", then set
+   device_memory_name_ = "QnnHtpShared".
+2. In the allocator block, build the QnnHtpShared OrtMemoryInfo with the
+   OrtDeviceAllocator type (matching how the QNN EP registers the shared
+   allocator) so inputs take the zero-copy memHandle path.
+3. Real .pb test data is loaded onto plain CPU memory by the shared TestCase
+   infrastructure, bypassing this session's allocator, so generated (-I) inputs
+   were the only ones reaching zero-copy. Intercept in PreLoadTestData (the common
+   sink for all input paths) and, when the QnnHtpShared allocator is active, re-wrap
+   CPU-backed input tensors onto it via CopyToSharedAllocator so real-data runs also
+   take the memHandle path. Tensors already on a HOST_ACCESSIBLE allocator, non-tensor
+   values, and string tensors are left unchanged.
+
+TODO: re-check this patch on future ort core upleveling since the target file may change.
+
+---
+diff --git a/onnxruntime/test/perftest/ort_test_session.cc b/onnxruntime/test/perftest/ort_test_session.cc
+index f67d922..0acdaaf 100644
+--- a/onnxruntime/test/perftest/ort_test_session.cc
++++ b/onnxruntime/test/perftest/ort_test_session.cc
+@@ -5,6 +5,7 @@
+
+ #include "ort_test_session.h"
+ #include <algorithm>
++#include <cstring>
+ #include <limits>
+ #include <fstream>
+ #include <set>
+@@ -110,6 +111,26 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+         device_memory_name_.empty()) {
+       device_memory_name_ = CUDA;
+     }
++
++    // In plugin-EP mode provider_name_ is not kQnnExecutionProvider, so the QNN
++    // "-i" option-parsing branch below is skipped. Parse the EP runtime config
++    // string here so inputs go through the QnnHtpShared (RPCMEM) allocator for
++    // zero-copy. Note: enable_htp_shared_memory_allocator is a QNN-EP-specific
++    // option; no other plugin EP uses this key, so matching on it is sufficient
++    // to identify the QNN EP.
++    if (device_memory_name_.empty()) {
++#ifdef _MSC_VER
++      const std::string qnn_opt_string = ToUTF8String(performance_test_config.run_config.ep_runtime_config_string);
++#else
++      const std::string qnn_opt_string = performance_test_config.run_config.ep_runtime_config_string;
++#endif
++      std::unordered_map<std::string, std::string> qnn_plugin_options;
++      test::utils::ParseSessionConfigs(qnn_opt_string, qnn_plugin_options);
++      auto it = qnn_plugin_options.find("enable_htp_shared_memory_allocator");
++      if (it != qnn_plugin_options.end() && it->second == "1") {
++        device_memory_name_ = "QnnHtpShared";
++      }
++    }
+   }
+
+   provider_name_ = performance_test_config.machine_config.provider_type_name;
+@@ -979,6 +994,10 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
+     Ort::MemoryInfo memory_info(nullptr);  // Default initialize, will be overwritten
+     if (device_memory_name_ == CUDA) {
+       memory_info = Ort::MemoryInfo(device_memory_name_.data(), OrtArenaAllocator, 0, OrtMemTypeDefault);
++    } else if (device_memory_name_ == "QnnHtpShared") {
++      // HOST_ACCESSIBLE (RPCMEM) allocator: OrtDeviceAllocator matches how the QNN EP
++      // registers the shared allocator, so inputs take the zero-copy memHandle path.
++      memory_info = Ort::MemoryInfo(device_memory_name_.data(), OrtDeviceAllocator, 0, OrtMemTypeCPUOutput);
+     } else {
+       memory_info = Ort::MemoryInfo(device_memory_name_.data(), OrtArenaAllocator, 0, OrtMemTypeCPUOutput);
+     }
+@@ -1083,6 +1102,41 @@ static void InitializeTensorWithSeed(int32_t seed, Ort::Value& tensor) {
+ #undef CASE_FOR_TYPE
+ }
+
++Ort::Value OnnxRuntimeTestSession::CopyToSharedAllocator(Ort::Value&& src) {
++  // Only plain tensors can be re-wrapped; sequence/optional/map values fall through
++  // unchanged (perf_test's shared-memory target models are tensor-only).
++  if (!src.IsTensor()) {
++    return std::move(src);
++  }
++
++  // If the tensor is already on a HOST_ACCESSIBLE allocator (e.g. a generated input
++  // built from allocator_), leave it as-is to avoid a needless extra copy.
++  if (src.GetTensorMemoryInfo().GetDeviceMemoryType() == OrtDeviceMemoryType_HOST_ACCESSIBLE) {
++    return std::move(src);
++  }
++
++  const auto type_and_shape = src.GetTensorTypeAndShapeInfo();
++  const ONNXTensorElementDataType elem_type = type_and_shape.GetElementType();
++  // String tensors do not have a contiguous raw buffer to memcpy; leave them on CPU.
++  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING) {
++    return std::move(src);
++  }
++
++  const std::vector<int64_t> shape = type_and_shape.GetShape();
++  const size_t num_bytes = src.GetTensorSizeInBytes();
++  const void* src_data = src.GetTensorRawData();
++
++  // Allocate a tensor from the shared allocator (allocator_ resolves to QnnHtpShared);
++  // the returned Ort::Value owns the shared-memory backing, so no extra bookkeeping is
++  // needed for lifetime. Copy the source bytes over so semantics are identical to the
++  // original CPU tensor, but the memory now takes the zero-copy memHandle path.
++  Ort::Value shared = Ort::Value::CreateTensor(allocator_, shape.data(), shape.size(), elem_type);
++  if (num_bytes > 0) {
++    memcpy(shared.GetTensorMutableRawData(), src_data, num_bytes);
++  }
++  return shared;
++}
++
+ bool OnnxRuntimeTestSession::PopulateGeneratedInputTestData(int32_t seed) {
+   Ort::AllocatorWithDefaultOptions default_allocator;
+   // iterate over all input nodes
+diff --git a/onnxruntime/test/perftest/ort_test_session.h b/onnxruntime/test/perftest/ort_test_session.h
+index 0a2c683..d1032d7 100644
+--- a/onnxruntime/test/perftest/ort_test_session.h
++++ b/onnxruntime/test/perftest/ort_test_session.h
+@@ -20,6 +20,14 @@ class OnnxRuntimeTestSession : public TestSession {
+                          const TestModelInfo& m);
+
+   void PreLoadTestData(size_t test_data_id, size_t input_id, Ort::Value&& value) override {
++    // Real .pb test data is loaded onto plain CPU memory by the shared TestCase
++    // infrastructure, which is unaware of this session's allocator. When the
++    // QnnHtpShared allocator is in use, re-wrap CPU-backed input tensors onto it so
++    // they take the zero-copy memHandle path. Inputs already allocated from allocator_
++    // (e.g. generated inputs) are left untouched by CopyToSharedAllocator.
++    if (device_memory_name_ == "QnnHtpShared") {
++      value = CopyToSharedAllocator(std::move(value));
++    }
+     if (test_inputs_.size() < test_data_id + 1) {
+       test_inputs_.resize(test_data_id + 1);
+     }
+@@ -39,6 +47,11 @@ class OnnxRuntimeTestSession : public TestSession {
+   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxRuntimeTestSession);
+
+  private:
++  // Returns a tensor backed by the QnnHtpShared (RPCMEM) allocator. If `src` is already
++  // on a HOST_ACCESSIBLE allocator (or is not a plain tensor), it is returned unchanged;
++  // otherwise its bytes are copied into a freshly allocated shared-memory tensor.
++  Ort::Value CopyToSharedAllocator(Ort::Value&& src);
++
+   Ort::Session session_{nullptr};
+   std::mt19937 rand_engine_;
+   std::uniform_int_distribution<int> dist_;
+
+--
+2.50.0

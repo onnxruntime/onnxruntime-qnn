@@ -158,6 +158,24 @@ python qcom/build_and_test.py lint_and_fix
 ./onnxruntime_provider_test --gtest_filter=Qnn*
 ```
 
+## Minimum ORT API Version
+
+The EP declares the minimum ORT API version it requires at build time. CMake runs
+`qcom/scripts/all/compute_min_ort_api_version.py` to scan `\since` annotations in
+ORT headers and API call sites in EP source, then writes a generated header
+(`qnn_ep_min_ort_api_version.h`) with a `QNN_EP_MIN_ORT_API_VERSION` macro.
+
+A checked-in baseline (`qcom/MIN_ORT_API_VERSION.txt`) makes floor bumps visible
+in PR diffs. The `MIN-ORT-API-VERSION` lint gate fires when the computed floor
+drifts from the baseline. To update after intentionally using a newer ORT API:
+
+```bash
+python qcom/scripts/all/compute_min_ort_api_version.py \
+    --update-baseline --baseline qcom/MIN_ORT_API_VERSION.txt
+```
+
+Commit the updated baseline in the same PR so the bump is reviewable.
+
 ## Contributing
 
 When contributing to the QNN Execution Provider:

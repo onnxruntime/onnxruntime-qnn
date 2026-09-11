@@ -78,21 +78,63 @@ function Exit-PyVenv() {
     $env:Path = $PathNoVenv
 }
 
-function Get-InstalledVsGenerator() {
+# Enumerate installed Visual Studio roots, newest first. Single source of truth for the
+# supported VS versions and editions consumed by Get-InstalledVsGenerator and Get-VcRedistDir.
+# Each result carries the install Dir token, the CMake Generator name, and the install Root path.
+function Get-VsInstallRoots() {
     $VsInstalls = @(
         @{ Dir = "18"; Generator = "Visual Studio 18 2026" },
         @{ Dir = "2022"; Generator = "Visual Studio 17 2022" }
     )
-    $Editions = @("Enterprise", "Professional", "Community", "Preview")
+    $Editions = @("Enterprise", "Professional", "Community", "Preview", "BuildTools")
+    $Roots = @()
     foreach ($vs in $VsInstalls) {
         foreach ($edition in $Editions) {
-            $DevShell = "$env:ProgramW6432\Microsoft Visual Studio\$($vs.Dir)\$edition\Common7\Tools\Launch-VsDevShell.ps1"
-            if (Test-Path $DevShell) {
-                return [PSCustomObject]@{ Generator = $vs.Generator; DevShell = $DevShell }
+            $Root = "$env:ProgramW6432\Microsoft Visual Studio\$($vs.Dir)\$edition"
+            if (Test-Path $Root) {
+                $Roots += [PSCustomObject]@{ Dir = $vs.Dir; Generator = $vs.Generator; Root = $Root }
             }
         }
     }
+    return $Roots
+}
+
+function Get-InstalledVsGenerator() {
+    foreach ($vs in (Get-VsInstallRoots)) {
+        $DevShell = "$($vs.Root)\Common7\Tools\Launch-VsDevShell.ps1"
+        if (Test-Path $DevShell) {
+            return [PSCustomObject]@{ Generator = $vs.Generator; DevShell = $DevShell }
+        }
+    }
     throw "No supported Visual Studio installation found (2026 or 2022)."
+}
+
+# Locate the MSVC redistributable directory (VCToolsRedistDir). archive_tests.py uses this
+# to bundle msvcp140*.dll and vcruntime140*.dll into the Windows test archive so QA machines
+# don't need vc_redist preinstalled to run tests that load onnxruntime.dll.
+function Get-VcRedistDir() {
+    # Trailing backslashes must be stripped: Launch-VsDevShell.ps1 sets $env:VCToolsRedistDir
+    # with a trailing '\'. When the value is then passed through to python.exe as a quoted
+    # argument, Windows' CRT argv parser interprets the final '\"' as an escaped quote (per
+    # CommandLineToArgvW rules), embedding a stray '"' into the value. The downstream Path
+    # join then yields ...\14.42.34433"\x64 and the arch dir lookup fails.
+    if ($env:VCToolsRedistDir -and (Test-Path $env:VCToolsRedistDir)) {
+        return (Resolve-Path $env:VCToolsRedistDir).Path.TrimEnd('\')
+    }
+
+    # Fall back to the VS install's pinned redist version for cross-compile builds (VS
+    # generator) that never ran Launch-VsDevShell.ps1 in this session.
+    foreach ($vs in (Get-VsInstallRoots)) {
+        $VersionFile = "$($vs.Root)\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt"
+        if (Test-Path $VersionFile) {
+            $Version = (Get-Content $VersionFile -Raw).Trim()
+            $RedistDir = "$($vs.Root)\VC\Redist\MSVC\$Version"
+            if (Test-Path $RedistDir) {
+                return (Resolve-Path $RedistDir).Path.TrimEnd('\')
+            }
+        }
+    }
+    throw "Could not locate VC redist directory (VCToolsRedistDir unset and no VS install found)."
 }
 
 function Get-DefaultCMakeGenerator() {

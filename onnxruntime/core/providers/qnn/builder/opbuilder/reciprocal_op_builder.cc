@@ -71,10 +71,17 @@ Ort::Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     size_t element_size = qnn::utils::GetElementSizeByType(divisor_qnn_data_type);
     divisor_data.resize(element_size);
     std::memcpy(divisor_data.data(), &quantized_divisor_value, element_size);
+  } else if (divisor_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
+    Ort::Float16_t one(1.0f);
+    divisor_data.resize(sizeof(Ort::Float16_t));
+    std::memcpy(divisor_data.data(), &one.val, sizeof(Ort::Float16_t));
+  } else if (divisor_qnn_data_type == QNN_DATATYPE_BFLOAT_16) {
+    Ort::BFloat16_t one(1.0f);
+    divisor_data.resize(sizeof(Ort::BFloat16_t));
+    std::memcpy(divisor_data.data(), &one.val, sizeof(Ort::BFloat16_t));
   } else {
-    // Create a float divisor tensor
-    divisor_data.resize(sizeof(float));
     float one = 1.0f;
+    divisor_data.resize(sizeof(float));
     std::memcpy(divisor_data.data(), &one, sizeof(float));
   }
 
@@ -95,12 +102,9 @@ Ort::Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
   std::string div_node_name = utils::UniqueNameGenerator().New(node_unit);
   std::vector<std::string> div_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), div_node_name,
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_DIVIDE),
-                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, div_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(div_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                QNN_OP_ELEMENT_WISE_DIVIDE,
                                                 {divisor_name, input_names[0]},
                                                 {output_name},
                                                 std::move(div_param_names),

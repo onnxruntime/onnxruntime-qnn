@@ -105,8 +105,7 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildTransposeTestCase<DataType>(input_def, attrs),
                   provider_options,
                   13,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Check that QNN compiles DQ -> Transpose -> Q as a single unit.

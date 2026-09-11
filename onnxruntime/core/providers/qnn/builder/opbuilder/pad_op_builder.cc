@@ -171,6 +171,12 @@ Ort::Status ProcessConstantValue(QnnModelWrapper& qnn_model_wrapper,
         constant_value_qnn_scalar.int64Value = int64_span.data()[0];
         break;
       }
+      case QNN_DATATYPE_FLOAT_16: {
+        const Ort::Float16_t fp16_value = *reinterpret_cast<const Ort::Float16_t*>(unpacked_tensor.data());
+        constant_value_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
+        constant_value_qnn_scalar.floatValue = fp16_value.ToFloat();
+        break;
+      }
       case QNN_DATATYPE_FLOAT_32: {
         auto float_span = ReinterpretAsSpan<const float>(gsl::make_span(unpacked_tensor));
         constant_value_qnn_scalar.floatValue = float_span.data()[0];
@@ -275,20 +281,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                                         node_helper.GetFloat("value").value(),
                                         QNN_OP_PAD_PARAM_PAD_CONSTANT_VALUE, param_tensor_names));
   } else if ((opset_version >= 11 || domain == kMSDomain) && inputs.size() > 2 && inputs[2].Exists()) {
-    TensorInfo input_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], input_info));
-    // Pad doesn't support QNN_DATATYPE_FLOAT_16 pad_constant_value.
-    if (input_info.qnn_data_type != QNN_DATATYPE_FLOAT_16) {
-      // Process optional input constant_value
-      RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
-    } else {
-      // Qualcomm backends don't support QNN_DATATYPE_FLOAT_16 pad_constant_value. Will use default 0.
-      // Fail validation when a fp16 pad_constant_value is not 0.
-      std::vector<uint8_t> unpacked_pad_constant_tensor;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_pad_constant_tensor));
-      Ort::Float16_t fp16_value = *reinterpret_cast<const Ort::Float16_t*>(unpacked_pad_constant_tensor.data());
-      RETURN_IF_NOT(0 == static_cast<float>(fp16_value), "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
-    }
+    // Process optional input constant_value. FP16 values are converted to FP32 inside ProcessConstantValue.
+    RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
   }
 
   if (!has_negative) {

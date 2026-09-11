@@ -44,7 +44,7 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   // -----------------------------------------------------------------------
-  // Step 1: ElementwiseNeuron (ELU) — applies alpha*exp(x)-alpha for x<=0
+  // Step 1: ELU — applies alpha*exp(x)-alpha for x<=0
   // -----------------------------------------------------------------------
   const std::string elu_output_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_elu_out");
 
@@ -58,18 +58,13 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   std::vector<std::string> elu_param_names;
 
-  // operation param: ELU
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_NEURON_OPERATION_ELU),
-                                         QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, elu_param_names));
-
   // alpha param
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), alpha,
-                                      QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA, elu_param_names));
+                                      QNN_OP_ELU_PARAM_ALPHA, elu_param_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_elu"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_NEURON,
+                                                QNN_OP_ELU,
                                                 {input_name},
                                                 {elu_output_name},
                                                 std::move(elu_param_names),
@@ -119,16 +114,12 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                 "Selu: failed to add output tensor.");
 
   std::string gamma_mul_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_gamma_mul");
-  std::vector<std::string> gamma_mul_param_names;
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), gamma_mul_name,
-                                         static_cast<uint32_t>(QNN_OP_ELEMENT_WISE_BINARY_OPERATION_MULTIPLY),
-                                         QNN_OP_ELEMENT_WISE_BINARY_PARAM_OPERATION, gamma_mul_param_names));
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(gamma_mul_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_BINARY,
+                                                QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                 {gamma_tensor_name, elu_output_name},
                                                 {output_name},
-                                                std::move(gamma_mul_param_names),
+                                                {},
                                                 do_op_validation),
                 "Selu: failed to create Multiply node.");
 

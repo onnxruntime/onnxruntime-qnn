@@ -146,7 +146,7 @@ jobs:
       target_py_vsn: ${{ inputs.target_py_vsn }}
       upload_test_archive: true
       upload_wheel: true
-      test_wheel: false  # Fails because the HTP is not discovered
+      test_wheel: false
       run_tests: true
       build_test_same_runner: false
       test_runner_arch: arm64

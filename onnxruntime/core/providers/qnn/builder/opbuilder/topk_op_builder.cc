@@ -193,7 +193,8 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                 GetQnnOpType(node_unit.OpType()),
                                                 std::move(input_names),
                                                 std::vector<std::string>(transpose_input_names),
-                                                std::move(param_tensor_names)),
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
                 "Failed to add node.");
 
   // Add Transpose nodes for each output to permute back.

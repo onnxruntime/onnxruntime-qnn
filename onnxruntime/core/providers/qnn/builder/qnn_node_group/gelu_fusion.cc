@@ -290,6 +290,55 @@ bool TryMatchErfMulPattern(
   return true;
 }
 
+bool TryMatchErfAddPattern4(
+    const OrtNodeUnit* div_node_unit,
+    const OrtNodeUnit& erf_node_unit,
+    const OrtNodeUnit* add_node_unit,
+    const OrtNodeUnit* mul_after_add_node_unit,
+    const GeluPatternMatchContext& ctx,
+    GeluPatternMatchResult& result) {
+  // ErfAdd Pattern 4:
+  //               +--------------------------------------------+
+  //               |                                            |
+  //               |                                            v
+  //            [root] --> Div/Mul --> Erf  --> Add --> Mul --> Mul ==>
+  //                    (sqrt(2) or 1/sqrt(2))  (1)    (0.5)
+  //
+  // Same node sequence as Pattern 2, but the 0.5 scale is applied on the FIRST Mul after Add
+  // and the ROOT skip connection is on the FINAL (second) Mul. Therefore:
+  //  - the first Mul after Add must NOT consume root (it multiplies by constant 0.5), and
+  //  - its only child Mul is the final output node and must consume root.
+  if (HasInputWithEquivalentName(*mul_after_add_node_unit, ctx.root_input_name)) {
+    return false;
+  }
+
+  const auto& mul_outputs = mul_after_add_node_unit->Outputs();
+  if (mul_outputs.empty()) {
+    return false;
+  }
+
+  const OrtNodeUnit* final_mul_node_unit = GetOnlyChildOfOutput(ctx.qnn_model_wrapper,
+                                                                *mul_after_add_node_unit,
+                                                                mul_outputs[0],
+                                                                ctx.node_to_node_unit,
+                                                                ctx.node_unit_to_qnn_node_group);
+  if (WarnAndFailOnStandaloneQdq(final_mul_node_unit, erf_node_unit, ctx.logger, "GetOnlyChildOfOutput")) {
+    return false;
+  }
+
+  if (final_mul_node_unit == nullptr || final_mul_node_unit->OpType() != "Mul") {
+    return false;
+  }
+
+  if (!HasInputWithEquivalentName(*final_mul_node_unit, ctx.root_input_name)) {
+    return false;
+  }
+
+  result.node_units = {div_node_unit, &erf_node_unit, add_node_unit, mul_after_add_node_unit, final_mul_node_unit};
+  result.final_mul_node_unit = final_mul_node_unit;
+  return true;
+}
+
 bool TryMatchErfAddPatterns(const OrtNodeUnit* div_node_unit,
                             const OrtNodeUnit& erf_node_unit,
                             const OrtNodeUnit* add_node_unit,
@@ -303,6 +352,12 @@ bool TryMatchErfAddPatterns(const OrtNodeUnit* div_node_unit,
                                 ctx,
                                 result) ||
          TryMatchErfAddPattern2(div_node_unit,
+                                erf_node_unit,
+                                add_node_unit,
+                                mul_after_add_node_unit,
+                                ctx,
+                                result) ||
+         TryMatchErfAddPattern4(div_node_unit,
                                 erf_node_unit,
                                 add_node_unit,
                                 mul_after_add_node_unit,

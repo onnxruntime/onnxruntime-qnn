@@ -30,6 +30,12 @@
   endif()
   message(STATUS "QNN SDK version ${QNN_SDK_VERSION}")
 
+  if(QNN_SDK_VERSION)
+    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _ "${QNN_SDK_VERSION}")
+    set(QNN_SDK_VERSION_MAJOR "${CMAKE_MATCH_1}")
+    set(QNN_SDK_VERSION_MINOR "${CMAKE_MATCH_2}")
+  endif()
+
   source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_ep_srcs})
 
   set(onnxruntime_providers_qnn_all_srcs ${onnxruntime_providers_qnn_ep_srcs})
@@ -53,7 +59,45 @@
 
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
 
+  if(WIN32)
+    # Required for D3D12CreateDevice (DX12 shared memory allocator for QNN GPU backend)
+    target_link_libraries(onnxruntime_providers_qnn PRIVATE d3d12.lib dxgi.lib)
+  endif()
+
   add_dependencies(onnxruntime_providers_qnn ort_core_target)
+
+  # ----------------------------------------------------------------------------
+  # Generated header: QNN_EP_MIN_ORT_API_VERSION
+  # The Python script computes the floor from \since annotations in the ORT
+  # headers + the API call sites in QNN EP source. CMake regenerates the
+  # header on every build; the script short-circuits writes when the value is
+  # unchanged. ort_core_target dependency ensures the ORT headers are unpacked
+  # before the script runs.
+  # ----------------------------------------------------------------------------
+  if(NOT Python3_EXECUTABLE)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  endif()
+  if(onnxruntime_ORT_HOME)
+    set(QNN_EP_MIN_API_ORT_HEADERS "${onnxruntime_ORT_HOME}/include")
+  else()
+    set(QNN_EP_MIN_API_ORT_HEADERS "${ORT_SOURCE_DIR}/include")
+  endif()
+  set(QNN_EP_MIN_API_HEADER ${CMAKE_CURRENT_BINARY_DIR}/qnn_ep_min_ort_api_version.h)
+  set(QNN_EP_MIN_API_SCRIPT ${REPO_ROOT}/qcom/scripts/all/compute_min_ort_api_version.py)
+  add_custom_command(
+    OUTPUT ${QNN_EP_MIN_API_HEADER}
+    COMMAND ${Python3_EXECUTABLE} ${QNN_EP_MIN_API_SCRIPT}
+            --ep-source-root ${ONNXRUNTIME_ROOT}/core/providers/qnn
+            --ort-header-root ${QNN_EP_MIN_API_ORT_HEADERS}
+            --write-header ${QNN_EP_MIN_API_HEADER}
+    DEPENDS ort_core_target
+    COMMENT "Computing QNN EP minimum ORT API version"
+    VERBATIM
+  )
+  add_custom_target(qnn_ep_min_api_version_header_gen ALL
+    DEPENDS ${QNN_EP_MIN_API_HEADER}
+  )
+  add_dependencies(onnxruntime_providers_qnn qnn_ep_min_api_version_header_gen)
 
   message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: " ${ONNXRUNTIME_APPLICATION_INCLUDES})
   target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
@@ -71,6 +115,12 @@
 
     target_compile_definitions(onnxruntime_providers_qnn PRIVATE FILE_DESC=\"${QNN_DLL_FILE_DESCRIPTION}\")
     target_compile_definitions(onnxruntime_providers_qnn PRIVATE FILE_NAME=\"onnxruntime_providers_qnn.dll\")
+  endif()
+
+  if(QNN_SDK_VERSION_MAJOR AND QNN_SDK_VERSION_MINOR)
+    target_compile_definitions(onnxruntime_providers_qnn PRIVATE
+      QNN_SDK_VERSION_MAJOR=${QNN_SDK_VERSION_MAJOR}
+      QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR})
   endif()
 
   # Set linker flags for function(s) exported by EP DLL
@@ -187,6 +237,58 @@
         $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
     COMMENT "Copying version, license, README, and release notes files"
   )
+
+  # Bundle libDlModelToolsPy (used by deploy_multi_soc_ep_context.py) from the
+  # QAIRT SDK's dlc_utils into the wheel. The dlc_utils platform sub-directory
+  # name differs from QNN_ARCH_ABI, so map it explicitly (see the SDK's
+  # lib/python/qti/aisw/dlc_utils/__init__.py for the canonical mapping).
+  set(QNN_DLC_UTILS_SUBDIR "")
+  if (QNN_ARCH_ABI STREQUAL "x86_64-linux-clang")
+    set(QNN_DLC_UTILS_SUBDIR "linux-x86_64")
+  elseif (QNN_ARCH_ABI STREQUAL "aarch64-oe-linux-gcc11.2")
+    set(QNN_DLC_UTILS_SUBDIR "linux-aarch64-oe-gcc11.2")
+  elseif (QNN_ARCH_ABI STREQUAL "x86_64-windows-msvc")
+    set(QNN_DLC_UTILS_SUBDIR "windows-x86_64")
+  elseif (QNN_ARCH_ABI STREQUAL "arm64x-windows-msvc")
+    set(QNN_DLC_UTILS_SUBDIR "windows-arm64ec")
+  endif()
+
+  if (NOT QNN_DLC_UTILS_SUBDIR)
+    message(WARNING "dlc_utils sub-directory not found for QNN_ARCH_ABI=${QNN_ARCH_ABI}; "
+                    "libDlModelToolsPy will not be bundled and deploy_multi_soc_ep_context will be unusable")
+  elseif (NOT (Python_VERSION_MAJOR EQUAL 3 AND Python_VERSION_MINOR EQUAL 12))
+    # QAIRT SDK ships libDlModelToolsPy in limited Python version. Considering
+    # QNN-EP's supported Python version, only bundle it in Python 3.12 wheel.
+    message(STATUS "libDlModelToolsPy is only bundled for the Python 3.12 wheel; "
+                   "skipping for Python ${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}")
+  elseif (EXISTS "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}")
+    file(GLOB QNN_DLMODELTOOLS_LIBS LIST_DIRECTORIES false
+         "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}/libDlModelToolsPy312.so"
+         "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}/libDlModelToolsPy312.pyd")
+    if (NOT QNN_DLMODELTOOLS_LIBS)
+      message(WARNING "libDlModelToolsPy312 not found under "
+                      "${onnxruntime_QNN_HOME}/lib/python/qti/aisw/dlc_utils/${QNN_DLC_UTILS_SUBDIR}; "
+                      "deploy_multi_soc_ep_context.py will not be bundled and will be unusable")
+    else()
+      foreach(QNN_DLMODELTOOLS_LIB ${QNN_DLMODELTOOLS_LIBS})
+        add_custom_command(
+          TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QNN_DLMODELTOOLS_LIB}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
+          COMMENT "Copying ${QNN_DLMODELTOOLS_LIB} to onnxruntime_qnn for Python Wheel"
+        )
+      endforeach()
+      # Only package the deploy tool alongside its libDlModelToolsPy312 dependency,
+      # so the extension (3.12) and the script always ship together.
+      add_custom_command(
+        TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${ONNXRUNTIME_ROOT}/python/multi_soc/deploy_multi_soc_ep_context.py
+            $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
+        COMMENT "Copying deploy_multi_soc_ep_context.py to onnxruntime_qnn for Python Wheel"
+      )
+    endif()
+  endif()
+
   # Create document destination directory first to ensure it exists
   add_custom_command(
     TARGET ${onnxruntime_providers_qnn_target} POST_BUILD

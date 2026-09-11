@@ -84,8 +84,13 @@ class SimpleTest {
                     OrtProvider.QNN -> {
                         val qnnEpName = getQnnPluginEpName()
                         val qnnDevices = env.epDevices.filter { it.epName == qnnEpName }
+                        val isQualcomm = Build.SOC_MANUFACTURER.equals("QTI", ignoreCase = true)
                         if (qnnDevices.isEmpty()) {
-                            Log.println(Log.INFO, TAG, "NO QNN EP available, skip the test")
+                            Assert.assertFalse(
+                                "QNN EP advertised no devices on a Qualcomm device (ro.soc.manufacturer=${Build.SOC_MANUFACTURER})",
+                                isQualcomm
+                            )
+                            Log.println(Log.INFO, TAG, "NO QNN EP available, skip the test (ro.soc.manufacturer=${Build.SOC_MANUFACTURER} is not QTI)")
                             return
                         }
                         val providerOptions = Collections.singletonMap("backend_type", "htp")
