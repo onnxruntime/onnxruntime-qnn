@@ -473,9 +473,12 @@ Multi-SoC mode is enabled automatically when `soc_model` and/or `htp_arch` is gi
 
 Constraints:
 
-- Supported only on **x86_64** hosts (offline preparation). On-device preparation will soon be supported in later QAIRT version.
+- Supported only on **x86_64** hosts (offline preparation). On-device multi-SoC preparation can only be used with `enable_htp_cross_device_prepare` set.
 - Requires the EP context cache to be enabled (`ep.context_enable=1`). `enable_htp_prepare_only` is turned on automatically (preparation only, no inference).
-- Not supported together with shared EP contexts (`share_ep_contexts` / `stop_share_ep_contexts`).
+- Supported with shared EP contexts (`share_ep_contexts` / `stop_share_ep_contexts`) but with few limitations.
+  - Options `soc_model` and `htp_arch` must be identical, including their orders, across all shared sessions.
+  - If there is HTP arch-dependent op translation (e.g., 4-bit BQ is respectively translated to float BQ on v73 and native BQ on v81), minimum specified HTP arch will be adopted (e.g., 4-bit BQ is all translated to float BQ despite on v73 or v81). An explicit warning message will be logged for clarity in this case.
+  - Only options listed above that can be respectively set for each target SoC are as well allowed to respectively set for each session. Otherwise, options set at the last session (i.e., `stop_share_ep_contexts=1`) are adopted.
 
 **Example (Python):**
 ```python

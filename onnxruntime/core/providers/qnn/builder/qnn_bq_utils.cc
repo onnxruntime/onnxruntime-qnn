@@ -169,22 +169,29 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
                                            std::move(output_shape), do_op_validation);
 }
 
-bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
+bool IsHTPSupportedNativeBQ(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
                             Qnn_DataType_t act_data_type,
                             uint32_t bitwidth,
                             uint32_t block_size,
                             uint32_t output_channel,
-                            gsl::span<const float> offsets) {
+                            gsl::span<const float> offsets,
+                            bool record_decision) {
   // HTP native BQ constraints (subject to change):
-  // - min HTP arch: 81
+  // - SDK: QAIRT 2.51
   // - activation data type: QNN_DATATYPE_UFIXED_POINT_16
   // - weight bitwidth: 4 bit
   // - symmetric quantization: offset=0
   // - block size: 32, 64, 128
   // - output channel: multiplier of 32
+  // - min HTP arch: 81
 
-  // HTP arch.
-  if (htp_arch < kHtpNativeBQMinArch) {
+#ifdef QNN_HTP_NATIVE_BQ_AVAILABLE
+  constexpr bool sdk_supported = true;
+#else
+  constexpr bool sdk_supported = false;
+#endif  // QNN_HTP_NATIVE_BQ_AVAILABLE
+  if (!sdk_supported) {
     return false;
   }
 
@@ -215,11 +222,21 @@ bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
     return false;
   }
 
-#ifdef QNN_HTP_NATIVE_BQ_AVAILABLE
+  // Until now, HTP arch is the last factor affecting whether native BQ is supported.
+  if (record_decision) {
+    qnn_model_wrapper.RecordHtpArchTranslationDependency({node_unit.Name(),
+                                                          node_unit.OpType(),
+                                                          "native BQ",
+                                                          kHtpNativeBQMinArch});
+  }
+
+  // HTP arch.
+  QnnHtpDevice_Arch_t htp_arch = qnn_model_wrapper.GetHtpArch();
+  if (htp_arch < kHtpNativeBQMinArch) {
+    return false;
+  }
+
   return true;
-#else
-  return false;
-#endif
 }
 
 Ort::Status RegisterLPBQWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
