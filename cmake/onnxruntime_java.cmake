@@ -92,11 +92,16 @@ if (ANDROID)
           ${ANDROID_QNN_EP_OUTPUT_DIR}/outputs/aar/onnxruntime-android-qnn.aar
           ${ANDROID_TEST_PACKAGE_LIB_DIR}/onnxruntime-android-qnn.aar)
 
-      # Copy sigmoid.ort from ort_core source tree into the test assets directory
-      add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          ${ort_core_SOURCE_DIR}/java/src/test/android/app/src/androidTest/assets/sigmoid.ort
-          ${ANDROID_TEST_ASSETS_DIR}/sigmoid.ort)
+      # Copy sigmoid.ort from ort_core source tree into the test assets directory.
+      # The ort_core source is not fetched in prebuilt mode (onnxruntime_ORT_HOME set), so skip it.
+      if(NOT onnxruntime_ORT_HOME)
+        add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${ort_core_SOURCE_DIR}/java/src/test/android/app/src/androidTest/assets/sigmoid.ort
+            ${ANDROID_TEST_ASSETS_DIR}/sigmoid.ort)
+      else()
+        message(STATUS "onnxruntime_ORT_HOME is set; skipping sigmoid.ort copy from ort_core source.")
+      endif()
 
       add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E echo "Building Android test APK..."
