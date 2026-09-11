@@ -673,6 +673,9 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_StaticLeadingUnitDimsPerChannelInt16Weig
 #if defined(_WIN32)
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
   provider_options["enable_htp_fp16_precision"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
