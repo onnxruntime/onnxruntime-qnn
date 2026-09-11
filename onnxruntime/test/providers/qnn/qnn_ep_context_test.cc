@@ -2207,7 +2207,7 @@ static void GetModelInputNames(const std::string& model_path,
 // 3. Start 2 ort session from the dumped context model,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
-// TODO: Flaky test on ORT Core 1.29.0 Uplevel 
+// TODO: Flaky test on ORT Core 1.29.0 Uplevel
 TEST_F(QnnHTPBackendTests, DISABLED_QnnContextShareAcrossSessions) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
