@@ -172,6 +172,7 @@ jobs:
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
+          create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
