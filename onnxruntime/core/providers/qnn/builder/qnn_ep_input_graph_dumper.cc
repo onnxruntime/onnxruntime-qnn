@@ -171,6 +171,29 @@ nlohmann::json CollectNodeTensorNames(const std::vector<Ort::ConstValueInfo>& va
 
 }  // namespace
 
+CanonicalNodeNameMap BuildCanonicalNodeNameMap(const OrtGraph* graph) {
+  CanonicalNodeNameMap canonical_names;
+  std::unordered_set<std::string> seen_node_names;
+
+  const std::vector<Ort::ConstNode> nodes = Ort::ConstGraph{graph}.GetNodes();
+  canonical_names.reserve(nodes.size());
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    const Ort::ConstNode& node = nodes[i];
+    const OrtNode* raw_node = node;
+    std::string node_name = std::string(node.GetName());
+    if (node_name.empty()) {
+      node_name = "unnamed_" + std::string(node.GetOperatorType()) + "_" + std::to_string(i);
+    }
+    if (!seen_node_names.insert(node_name).second) {
+      node_name += "__dup" + std::to_string(i);
+      seen_node_names.insert(node_name);
+    }
+    canonical_names.emplace(raw_node, std::move(node_name));
+  }
+
+  return canonical_names;
+}
+
 bool DumpQnnEpInputGraphToJson(const OrtGraph* graph,
                                const std::filesystem::path& output_path,
                                const Ort::Logger& logger) {
@@ -197,12 +220,10 @@ bool DumpQnnEpInputGraphToJson(const OrtGraph* graph,
   // and platforms (downstream diff/hash tools will not see hash-iteration
   // noise).
   std::set<std::string> seen_op_types;
-  // Tracks node names already used as JSON object keys so a collision does
-  // not silently overwrite an earlier node.
-  std::unordered_set<std::string> seen_node_names;
   size_t type_info_failures = 0;
 
   Ort::ConstGraph ort_graph{graph};
+  const CanonicalNodeNameMap canonical_node_names = BuildCanonicalNodeNameMap(graph);
 
   // Nodes: one entry per ONNX node, keyed by node name (fall back to a
   // synthesized `unnamed_{op_type}_{index}` form when unnamed so the JSON
@@ -210,21 +231,10 @@ bool DumpQnnEpInputGraphToJson(const OrtGraph* graph,
   std::vector<Ort::ConstNode> nodes = ort_graph.GetNodes();
   for (size_t i = 0; i < nodes.size(); ++i) {
     const Ort::ConstNode& node = nodes[i];
+    const OrtNode* raw_node = node;
 
     std::string op_type = std::string(node.GetOperatorType());
-    std::string node_name = std::string(node.GetName());
-    if (node_name.empty()) {
-      // Synthesize a name for an unnamed node.
-      node_name = "unnamed_" + op_type + "_" + std::to_string(i);
-    }
-    // Disambiguate a name that has already been emitted (ONNX does not
-    // guarantee unique node names; the synthesized fallback above can also
-    // collide with an explicit name). Suffix with `__dup{i}` using the node's
-    // position index, matching the offline matcher's convention.
-    if (!seen_node_names.insert(node_name).second) {
-      node_name = node_name + "__dup" + std::to_string(i);
-      seen_node_names.insert(node_name);
-    }
+    const std::string& node_name = canonical_node_names.at(raw_node);
 
     // `package` distinguishes contrib / internal-domain ops (e.g.
     // `com.microsoft`, `com.ms.internal.nhwc` introduced by ORT's layout
