@@ -1,17 +1,16 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
-#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
+#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5_to_rank4.h"
 
 #include <gsl/gsl>
-#include <optional>
-#include <utility>
-#include <string>
 #include <array>
 #include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
-#include <sstream>
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -20,42 +19,37 @@
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/common/inlined_containers.h"
+#include "core/providers/qnn/common/qnn_safeint.h"
 
 namespace onnxruntime {
 namespace qnn {
 namespace {
 
-constexpr size_t kRank6 = 6;
 constexpr size_t kRank5 = 5;
+constexpr size_t kRank4 = 4;
 constexpr const char* kOpTypeReshape = "Reshape";
 constexpr const char* kOpTypeTranspose = "Transpose";
 constexpr const char* kAttrTransposePerm = "perm";
-constexpr std::array<int64_t, 6> kPermS2dDcr = {0, 3, 5, 1, 2, 4};
-constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
 
-/// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
-std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
+std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank5ToRank4Pattern(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit* reshape1,
     const MapNodeToNodeUnit& node_to_node_unit,
     const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
     [[maybe_unused]] const Ort::Logger& logger) {
-  // Validate first Reshape in pattern - allow both SingleNode and QDQGroup
   if (reshape1->OpType() != kOpTypeReshape) {
     return std::nullopt;
   }
 
-  // Get Transpose child (middle node in pattern) - allow both SingleNode and QDQGroup
   const OrtNodeUnit* transpose = GetChildNodeUnitAllowQdq(
       qnn_model_wrapper, *reshape1, kOpTypeTranspose, node_to_node_unit, node_unit_to_qnn_node_group);
   if (transpose == nullptr) {
     return std::nullopt;
   }
 
-  // Get second Reshape child (last node in pattern) - allow both SingleNode and QDQGroup
   const OrtNodeUnit* reshape2 = GetChildNodeUnitAllowQdq(
       qnn_model_wrapper, *transpose, kOpTypeReshape, node_to_node_unit, node_unit_to_qnn_node_group);
   if (reshape2 == nullptr) {
@@ -65,7 +59,31 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
   return std::array<const OrtNodeUnit*, 3>{reshape1, transpose, reshape2};
 }
 
-/// @brief Validate the pattern conditions and find the unit dimension index
+std::optional<size_t> FindAdjacentMergeIndex(const std::vector<int64_t>& perm_rank5) {
+  for (size_t p = 0; p + 1 < perm_rank5.size(); ++p) {
+    if (perm_rank5[p + 1] == perm_rank5[p] + 1) {
+      return p;
+    }
+  }
+  return std::nullopt;
+}
+
+// A valid rank-5 perm is a permutation of [0,5). ORT validation should reject anything else,
+// but check explicitly so a malformed perm can never produce an out-of-range merge index.
+bool IsValidRank5Perm(const std::vector<int64_t>& perm) {
+  if (perm.size() != kRank5) {
+    return false;
+  }
+  bool seen[kRank5] = {};
+  for (int64_t v : perm) {
+    if (v < 0 || v >= static_cast<int64_t>(kRank5) || seen[static_cast<size_t>(v)]) {
+      return false;
+    }
+    seen[static_cast<size_t>(v)] = true;
+  }
+  return true;
+}
+
 std::optional<size_t> ValidatePatternConditions(
     const OrtNodeUnit* reshape1,
     const OrtNodeUnit* transpose,
@@ -73,6 +91,12 @@ std::optional<size_t> ValidatePatternConditions(
     const QnnModelWrapper& qnn_model_wrapper,
     [[maybe_unused]] const Ort::Logger& logger) {
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+
+  if (reshape1->Inputs().size() < 2 || reshape2->Inputs().size() < 2 ||
+      transpose->Inputs().empty() ||
+      reshape1->Outputs().empty() || transpose->Outputs().empty() || reshape2->Outputs().empty()) {
+    return std::nullopt;
+  }
 
   // Check if reshape shape inputs are constants
   const OrtNodeUnitIODef& reshape1_input_1 = reshape1->Inputs()[1];
@@ -107,6 +131,11 @@ std::optional<size_t> ValidatePatternConditions(
   std::vector<const OrtValueInfo*> reshape2_outputs(num_reshape2_outputs);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&reshape2->GetNode(), reshape2_outputs.data(), reshape2_outputs.size()), ort_api, std::nullopt);
 
+  if (reshape1_inputs.empty() || reshape1_outputs.empty() ||
+      transpose_outputs.empty() || reshape2_outputs.empty()) {
+    return std::nullopt;
+  }
+
   auto t0_shape = GetTensorShape(ort_api, reshape1_inputs[0]);
   auto t1_shape = GetTensorShape(ort_api, reshape1_outputs[0]);
   auto t2_shape = GetTensorShape(ort_api, transpose_outputs[0]);
@@ -117,61 +146,76 @@ std::optional<size_t> ValidatePatternConditions(
     return std::nullopt;
   }
 
-  // Condition 1: Rank(t1) == Rank(t2) == 6
-  if (t1_shape->size() != kRank6 || t2_shape->size() != kRank6) {
+  // Condition 1: Rank(t1) == Rank(t2) == 5
+  if (t1_shape->size() != kRank5 || t2_shape->size() != kRank5) {
     return std::nullopt;
   }
 
-  const auto& t1_dims = *t1_shape;
-  const auto& t2_dims = *t2_shape;
-
-  if (t1_dims.empty() || t2_dims.empty()) {
+  // Condition 2: Transpose perm must be a valid rank-5 permutation.
+  OrtNodeAttrHelper transpose_helper(*transpose);
+  std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
+  if (!IsValidRank5Perm(perm)) {
     return std::nullopt;
   }
 
-  // Condition 2: Find a dimension with value 1 that exists at the same index in both t1 and t2
-  std::optional<size_t> unit_dim_index;
-  for (size_t i = 0; i < kRank6; ++i) {
-    if (t1_dims[i] == 1 && t2_dims[i] == 1) {
-      unit_dim_index = i;
-      break;
+  // Condition 3: There must be an adjacent pair (p, p+1) in the rank-5 perm whose values are
+  // consecutive (perm[p+1] == perm[p] + 1), so the two input dims they reference can be merged.
+  std::optional<size_t> merge_perm_index = FindAdjacentMergeIndex(perm);
+  if (!merge_perm_index.has_value()) {
+    return std::nullopt;
+  }
+
+  // Condition 4: Rebuilt intermediates must stay internal. GetChildNodeUnitAllowQdq already rejects
+  // graph-output intermediates, but guard explicitly so a future helper change cannot silently
+  // rewrite a 5D graph output as 4D.
+  if (qnn_model_wrapper.IsGraphOutput(reshape1->Outputs()[0].name) ||
+      qnn_model_wrapper.IsGraphOutput(transpose->Outputs()[0].name)) {
+    return std::nullopt;
+  }
+
+  // Condition 5: Reject per-axis / per-channel / blockwise QDQ on any rebuilt tensor.
+  // Rank collapse would require remapping (or invalidating) the quantization axis: if the axis
+  // sits after the merged dims it must shift down, and if it is one of the merged dims the
+  // per-channel encoding may be unrepresentable on the rank-4 tensor. Per-tensor (and unquantized)
+  // tensors carry no axis, so they are always safe.
+  const OrtNodeUnitIODef& reshape1_input_def = reshape1->Inputs()[0];
+  const OrtNodeUnitIODef& reshape1_output_def = reshape1->Outputs()[0];
+  const OrtNodeUnitIODef& transpose_output_def = transpose->Outputs()[0];
+  const OrtNodeUnitIODef& reshape2_output_def = reshape2->Outputs()[0];
+  for (const OrtNodeUnitIODef* def : {&reshape1_input_def, &reshape1_output_def,
+                                      &transpose_output_def, &reshape2_output_def}) {
+    TensorInfo info = {};
+    if (!qnn_model_wrapper.GetTensorInfo(*def, info).IsOK()) {
+      return std::nullopt;
+    }
+    if (info.quant_param.IsPerChannel() || info.quant_param.IsLPBQ() ||
+        info.quant_param.IsBlockQuantized()) {
+      return std::nullopt;
     }
   }
 
-  if (!unit_dim_index.has_value()) {
-    return std::nullopt;
-  }
-
-  // Condition 3: Transpose must leave the unit dimension in place
-  OrtNodeAttrHelper transpose_helper(*transpose);
-  std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
-  if (perm.size() != kRank6) {
-    return std::nullopt;
-  }
-
-  // Keep SpaceToDepth RTR decomposition exclusively handled by SpaceToDepthFusion.
-  if (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
-      std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin())) {
-    return std::nullopt;
-  }
-
-  if (perm[unit_dim_index.value()] != static_cast<int64_t>(unit_dim_index.value())) {
-    return std::nullopt;
-  }
-
-  return unit_dim_index;
+  return merge_perm_index.value();
 }
 
-/// @brief Create or validate the QNN nodes with rank-5 tensors
+/// @brief Create or validate the QNN nodes with rank-4 tensors
 Ort::Status CreateOrValidateOnQnn(
     QnnModelWrapper& qnn_model_wrapper,
     gsl::span<const OrtNodeUnit* const> node_units,
-    size_t unit_dim_index,
+    size_t merge_perm_index,
     bool validate,
     const Ort::Logger& logger) {
+  if (node_units.size() != 3 || node_units[0] == nullptr ||
+      node_units[1] == nullptr || node_units[2] == nullptr) {
+    return Ort::Status("Invalid Rank5ToRank4 pattern", OrtErrorCode::ORT_FAIL);
+  }
   const OrtNodeUnit* reshape1 = node_units[0];
   const OrtNodeUnit* transpose = node_units[1];
   const OrtNodeUnit* reshape2 = node_units[2];
+
+  if (reshape1->Inputs().empty() || reshape1->Outputs().empty() ||
+      transpose->Outputs().empty() || reshape2->Outputs().empty()) {
+    return Ort::Status("Invalid Rank5ToRank4 pattern", OrtErrorCode::ORT_FAIL);
+  }
 
   // Get input and output definitions
   const OrtNodeUnitIODef& reshape1_input = reshape1->Inputs()[0];
@@ -179,52 +223,89 @@ Ort::Status CreateOrValidateOnQnn(
   const OrtNodeUnitIODef& transpose_output = transpose->Outputs()[0];
   const OrtNodeUnitIODef& reshape2_output = reshape2->Outputs()[0];
 
-  // Get original shapes
-  std::vector<uint32_t> t1_dims;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(reshape1_output.shape, t1_dims),
+  // Intermediates must stay internal: rewriting a 5D graph output as 4D corrupts the contract.
+  if (qnn_model_wrapper.IsGraphOutput(reshape1_output.name) ||
+      qnn_model_wrapper.IsGraphOutput(transpose_output.name)) {
+    return Ort::Status("Rank5ToRank4 intermediates must not be graph outputs", OrtErrorCode::ORT_FAIL);
+  }
+
+  // Get original rank-5 shapes
+  std::vector<uint32_t> t1_rank5_dims;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(reshape1_output.shape, t1_rank5_dims),
                 ("Cannot get shape for " + reshape1_output.name).c_str());
 
-  std::vector<uint32_t> t2_dims;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(transpose_output.shape, t2_dims),
+  std::vector<uint32_t> t2_rank5_dims;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(transpose_output.shape, t2_rank5_dims),
                 ("Cannot get shape for " + transpose_output.name).c_str());
 
-  // Create rank-5 shape for t1 (remove unit dimension at unit_dim_index)
-  std::vector<uint32_t> t1_rank5_dims;
-  t1_rank5_dims.reserve(kRank5);
-  for (size_t i = 0; i < t1_dims.size(); ++i) {
-    if (i != unit_dim_index) {
-      t1_rank5_dims.push_back(static_cast<uint32_t>(t1_dims[i]));
-    }
+  if (t1_rank5_dims.size() != kRank5 || t2_rank5_dims.size() != kRank5) {
+    return Ort::Status("Expected rank-5 intermediate shapes", OrtErrorCode::ORT_FAIL);
   }
 
-  // Create rank-5 shape for t2 (remove unit dimension at unit_dim_index)
-  std::vector<uint32_t> t2_rank5_dims;
-  t2_rank5_dims.reserve(kRank5);
-  for (size_t i = 0; i < t2_dims.size(); ++i) {
-    if (i != unit_dim_index) {
-      t2_rank5_dims.push_back(static_cast<uint32_t>(t2_dims[i]));
-    }
-  }
-
-  // Get transpose permutation and adjust for rank-5
+  // Get the rank-5 perm.
   OrtNodeAttrHelper transpose_helper(*transpose);
-  std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
-  if (perm.size() != kRank6) {
-    return Ort::Status("Expected rank-6 permutation", OrtErrorCode::ORT_FAIL);
+  std::vector<int64_t> perm_rank5 = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
+  if (!IsValidRank5Perm(perm_rank5) || merge_perm_index + 1 >= kRank5) {
+    return Ort::Status("Invalid rank-5 perm or merge index", OrtErrorCode::ORT_FAIL);
   }
 
-  // Remove unit dimension and adjust indices
-  std::vector<uint32_t> perm_rank5;
-  perm_rank5.reserve(kRank5);
-  for (size_t i = 0; i < perm.size(); ++i) {
-    if (i != unit_dim_index) {
-      int64_t perm_val = perm[i];
-      // Adjust index: if perm_val > unit_dim_index, subtract 1
-      if (perm_val > static_cast<int64_t>(unit_dim_index)) {
-        perm_val--;
+  // Step 1: merge dims at input indices perm_rank5[merge_perm_index] and perm_rank5[merge_perm_index+1]
+  // (which are consecutive input indices because perm[p+1] == perm[p] + 1).
+  const int64_t merge_input_idx_a = perm_rank5[merge_perm_index];
+  const int64_t merge_input_idx_b = perm_rank5[merge_perm_index + 1];
+  if (merge_input_idx_b != merge_input_idx_a + 1 ||
+      merge_input_idx_a < 0 || merge_input_idx_b >= static_cast<int64_t>(kRank5)) {
+    return Ort::Status("Invalid rank-5 merge indices", OrtErrorCode::ORT_FAIL);
+  }
+
+  // Build the rank-4 t1 shape by merging t1_rank5[merge_input_idx_a] and t1_rank5[merge_input_idx_b].
+  std::vector<uint32_t> t1_rank4_dims;
+  t1_rank4_dims.reserve(kRank4);
+  for (size_t i = 0; i < t1_rank5_dims.size(); ++i) {
+    if (static_cast<int64_t>(i) == merge_input_idx_a) {
+      // SafeInt throws on overflow; the fusion would otherwise emit a wrapped uint32_t dim.
+      // The QNN EP's SafeInt handler (qnn_safeint.h) throws std::runtime_error, not the
+      // upstream SafeIntException type.
+      uint32_t merged = 0;
+      try {
+        merged = SafeInt<uint32_t>(t1_rank5_dims[i]) * t1_rank5_dims[i + 1];
+      } catch (const std::runtime_error&) {
+        return Ort::Status("Merged dim overflows uint32_t", OrtErrorCode::ORT_FAIL);
       }
-      perm_rank5.push_back(static_cast<uint32_t>(perm_val));
+      t1_rank4_dims.push_back(merged);
+    } else if (static_cast<int64_t>(i) == merge_input_idx_b) {
+      continue;
+    } else {
+      t1_rank4_dims.push_back(t1_rank5_dims[i]);
     }
+  }
+
+  // Build the rank-4 perm by removing position (merge_perm_index + 1) and shifting any value
+  // > merge_input_idx_b down by one (since input index merge_input_idx_b is gone).
+  std::vector<uint32_t> perm_rank4;
+  perm_rank4.reserve(kRank4);
+  for (size_t i = 0; i < perm_rank5.size(); ++i) {
+    if (i == merge_perm_index + 1) {
+      continue;
+    }
+    int64_t v = perm_rank5[i];
+    if (v > merge_input_idx_b) {
+      v--;
+    }
+    perm_rank4.push_back(static_cast<uint32_t>(v));
+  }
+
+  // Build the rank-4 t2 shape by applying perm_rank4 to t1_rank4_dims.
+  std::vector<uint32_t> t2_rank4_dims;
+  t2_rank4_dims.reserve(kRank4);
+  if (t1_rank4_dims.size() != kRank4 || perm_rank4.size() != kRank4) {
+    return Ort::Status("Invalid rank-4 fusion shapes", OrtErrorCode::ORT_FAIL);
+  }
+  for (uint32_t p : perm_rank4) {
+    if (p >= t1_rank4_dims.size()) {
+      return Ort::Status("Invalid rank-4 perm", OrtErrorCode::ORT_FAIL);
+    }
+    t2_rank4_dims.push_back(t1_rank4_dims[p]);
   }
 
   // Create Reshape1 input tensor wrapper.
@@ -237,7 +318,7 @@ Ort::Status CreateOrValidateOnQnn(
                   "Failed to add the first Reshape's input tensor.");
   }
 
-  // Create Reshape1 output tensor wrapper.
+  // Create Reshape1 output tensor wrapper (rank-4).
   TensorInfo reshape1_output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(reshape1_output, reshape1_output_info));
 
@@ -245,7 +326,7 @@ Ort::Status CreateOrValidateOnQnn(
                                                   QNN_TENSOR_TYPE_NATIVE,
                                                   reshape1_output_info.qnn_data_type,
                                                   std::move(reshape1_output_info.quant_param),
-                                                  std::move(t1_rank5_dims));
+                                                  std::move(t1_rank4_dims));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reshape1_output_tensor_wrapper)),
                 "Failed to add the first Reshape's output tensor.");
 
@@ -259,7 +340,7 @@ Ort::Status CreateOrValidateOnQnn(
                                                 validate),
                 "Failed to add the first Reshape node.");
 
-  // Create Transpose output tensor wrapper.
+  // Create Transpose output tensor wrapper (rank-4).
   TensorInfo transpose_output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(transpose_output, transpose_output_info));
 
@@ -267,7 +348,7 @@ Ort::Status CreateOrValidateOnQnn(
                                                    QNN_TENSOR_TYPE_NATIVE,
                                                    transpose_output_info.qnn_data_type,
                                                    std::move(transpose_output_info.quant_param),
-                                                   std::move(t2_rank5_dims));
+                                                   std::move(t2_rank4_dims));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(transpose_output_tensor_wrapper)),
                 "Failed to add Transpose's output tensor.");
 
@@ -275,8 +356,8 @@ Ort::Status CreateOrValidateOnQnn(
   QnnParamWrapper perm_param(transpose->Index(),
                              transpose->Name(),
                              QNN_OP_TRANSPOSE_PARAM_PERM,
-                             {static_cast<uint32_t>(perm_rank5.size())},
-                             std::move(perm_rank5));
+                             {static_cast<uint32_t>(perm_rank4.size())},
+                             std::move(perm_rank4));
   const std::string param_tensor_name = perm_param.GetParamTensorName();
   RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(perm_param)), "Failed to add Transpose perm param.");
 
@@ -290,7 +371,7 @@ Ort::Status CreateOrValidateOnQnn(
                                                 validate),
                 "Failed to add Transpose node.");
 
-  // Create Reshape2 output tensor wrapper.
+  // Create Reshape2 output tensor wrapper (original rank).
   TensorInfo reshape2_output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(reshape2_output, reshape2_output_info));
 
@@ -320,14 +401,13 @@ Ort::Status CreateOrValidateOnQnn(
 
 }  // namespace
 
-std::unique_ptr<IQnnNodeGroup> Rank6ToRank5Fusion::TryFusion(
+std::unique_ptr<IQnnNodeGroup> Rank5ToRank4Fusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reshape1_node_unit,
     const MapNodeToNodeUnit& node_to_node_unit,
     const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  // Match the pattern
-  std::optional<std::array<const OrtNodeUnit*, 3>> pattern = MatchRank6ToRank5Pattern(
+  std::optional<std::array<const OrtNodeUnit*, 3>> pattern = MatchRank5ToRank4Pattern(
       qnn_model_wrapper, &reshape1_node_unit, node_to_node_unit, node_unit_to_qnn_node_group, logger);
 
   if (!pattern.has_value()) {
@@ -338,32 +418,34 @@ std::unique_ptr<IQnnNodeGroup> Rank6ToRank5Fusion::TryFusion(
   const OrtNodeUnit* transpose = pattern->at(1);
   const OrtNodeUnit* reshape2 = pattern->at(2);
 
-  // Validate pattern conditions and get unit dimension index
-  auto unit_dim_index = ValidatePatternConditions(reshape1, transpose, reshape2, qnn_model_wrapper, logger);
-  if (!unit_dim_index.has_value()) {
+  auto merge_perm_index = ValidatePatternConditions(reshape1, transpose, reshape2, qnn_model_wrapper, logger);
+  if (!merge_perm_index.has_value()) {
     return nullptr;
   }
 
-  // Validate on QNN
-  if (!CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), unit_dim_index.value(), /*validate=*/true, logger).IsOK()) {
+  if (!CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), merge_perm_index.value(),
+                             /*validate=*/true, logger)
+           .IsOK()) {
     return nullptr;
   }
 
-  return std::make_unique<Rank6ToRank5Fusion>(pattern.value(), unit_dim_index.value());
+  return std::make_unique<Rank5ToRank4Fusion>(pattern.value(), merge_perm_index.value());
 }
 
-gsl::span<const OrtNodeUnit* const> Rank6ToRank5Fusion::GetNodeUnits() const {
+gsl::span<const OrtNodeUnit* const> Rank5ToRank4Fusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status Rank6ToRank5Fusion::IsSupported(
+Ort::Status Rank5ToRank4Fusion::IsSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), unit_dim_index_, /*validate=*/true, logger);
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), merge_perm_index_,
+                               /*validate=*/true, logger);
 }
 
-Ort::Status Rank6ToRank5Fusion::AddToModelBuilder(
+Ort::Status Rank5ToRank4Fusion::AddToModelBuilder(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), unit_dim_index_, /*validate=*/false, logger);
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), merge_perm_index_,
+                               /*validate=*/false, logger);
 }
 
 }  // namespace qnn
