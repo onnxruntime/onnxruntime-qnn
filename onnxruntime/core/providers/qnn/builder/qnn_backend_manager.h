@@ -280,6 +280,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arch,
                                     uint32_t soc_model,
+                                    bool enable_htp_weight_sharing = false,
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,

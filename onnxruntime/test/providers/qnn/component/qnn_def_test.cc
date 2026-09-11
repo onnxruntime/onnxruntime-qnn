@@ -12,6 +12,8 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <cstring>
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -896,6 +898,242 @@ TEST(QnnUnit_DefTest, QnnParamWrapper_CreateQnnGraphParam_DefaultCase) {
   bool result = param.CreateQnnGraphParam(qnn_iface, nullptr, "node0", table, err);
   EXPECT_TRUE(result);
   EXPECT_FALSE(err.empty());
+}
+
+// =============================================================================
+// QnnTensorWrapper — static data storage and Clone()
+// =============================================================================
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_StaticTensor_ClientBufPointsAtData) {
+  std::vector<uint8_t> data = {1, 2, 3, 4, 5, 6, 7, 8};
+  qnn::QnnTensorWrapper tensor("w", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_UINT_8,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{8}, std::move(data));
+
+  const auto& buf = qnn::GetQnnTensorClientBuf(tensor.GetQnnTensor());
+  ASSERT_NE(buf.data, nullptr);
+  ASSERT_EQ(buf.dataSize, 8u);
+  EXPECT_EQ(static_cast<const uint8_t*>(buf.data)[7], 8u);
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_StaticTensor_Int64DataCastToInt32) {
+  std::vector<int64_t> values = {1, -2, 3};
+  std::vector<uint8_t> data(values.size() * sizeof(int64_t));
+  std::memcpy(data.data(), values.data(), data.size());
+  qnn::QnnTensorWrapper tensor("w", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_INT_64,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{3}, std::move(data));
+
+  EXPECT_EQ(tensor.GetTensorDataType(), QNN_DATATYPE_INT_32);
+  const auto& buf = qnn::GetQnnTensorClientBuf(tensor.GetQnnTensor());
+  ASSERT_EQ(buf.dataSize, 3 * sizeof(int32_t));
+  const int32_t* cast = static_cast<const int32_t*>(buf.data);
+  EXPECT_EQ(cast[0], 1);
+  EXPECT_EQ(cast[1], -2);
+  EXPECT_EQ(cast[2], 3);
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_StaticTensor_Float64DataCastToFloat32) {
+  std::vector<double> values = {1.5, -2.25};
+  std::vector<uint8_t> data(values.size() * sizeof(double));
+  std::memcpy(data.data(), values.data(), data.size());
+  qnn::QnnTensorWrapper tensor("w", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_64,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2}, std::move(data));
+
+  EXPECT_EQ(tensor.GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+  const auto& buf = qnn::GetQnnTensorClientBuf(tensor.GetQnnTensor());
+  ASSERT_EQ(buf.dataSize, 2 * sizeof(float));
+  const float* cast = static_cast<const float*>(buf.data);
+  EXPECT_FLOAT_EQ(cast[0], 1.5f);
+  EXPECT_FLOAT_EQ(cast[1], -2.25f);
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_NativeTensor_NoData_ClientBufIsNull) {
+  qnn::QnnTensorWrapper tensor("t", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper moved(std::move(tensor));
+
+  // Move re-applies the client buffer; with no data it must stay null/empty.
+  const auto& buf = qnn::GetQnnTensorClientBuf(moved.GetQnnTensor());
+  EXPECT_EQ(buf.data, nullptr);
+  EXPECT_EQ(buf.dataSize, 0u);
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Clone_SharesStaticDataAndResetsTensorId) {
+  std::vector<uint8_t> data(16, 0xAB);
+  qnn::QnnTensorWrapper original("w", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
+                                 qnn::QnnQuantParamsWrapper::PerTensor(0.5f, 3),
+                                 std::vector<uint32_t>{2, 2}, std::move(data));
+  qnn::SetQnnTensorID(original.GetQnnTensor(), 17u);
+
+  qnn::QnnTensorWrapper cloned = original.Clone();
+
+  // Metadata duplicated.
+  EXPECT_EQ(cloned.GetName(), "w");
+  EXPECT_EQ(cloned.GetTensorType(), QNN_TENSOR_TYPE_STATIC);
+  EXPECT_EQ(cloned.GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+  EXPECT_EQ(cloned.GetTensorDims(), (std::vector<uint32_t>{2, 2}));
+  const Qnn_QuantizeParams_t& clone_qp = cloned.GetQnnQuantParams().Get();
+  EXPECT_EQ(clone_qp.quantizationEncoding, QNN_QUANTIZATION_ENCODING_SCALE_OFFSET);
+  EXPECT_FLOAT_EQ(clone_qp.scaleOffsetEncoding.scale, 0.5f);
+  EXPECT_EQ(clone_qp.scaleOffsetEncoding.offset, 3);
+
+  // QNN tensor ID reset on the clone only.
+  EXPECT_EQ(qnn::GetQnnTensorID(cloned.GetQnnTensor()), 0u);
+  EXPECT_EQ(qnn::GetQnnTensorID(original.GetQnnTensor()), 17u);
+
+  // Static data shared, not copied.
+  const auto& orig_buf = qnn::GetQnnTensorClientBuf(original.GetQnnTensor());
+  const auto& clone_buf = qnn::GetQnnTensorClientBuf(cloned.GetQnnTensor());
+  EXPECT_EQ(clone_buf.data, orig_buf.data);
+  EXPECT_EQ(clone_buf.dataSize, 16u);
+
+  // Name and dims must point into the clone's own storage, not the original's.
+  EXPECT_NE(qnn::GetQnnTensorName(cloned.GetQnnTensor()), qnn::GetQnnTensorName(original.GetQnnTensor()));
+  EXPECT_STREQ(qnn::GetQnnTensorName(cloned.GetQnnTensor()), "w");
+  EXPECT_NE(qnn::GetQnnTensorDims(cloned.GetQnnTensor()), qnn::GetQnnTensorDims(original.GetQnnTensor()));
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Clone_CarriesResolvedName) {
+  qnn::QnnTensorWrapper original("internal", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                 qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  original.SetResolvedTensorName("external");
+
+  qnn::QnnTensorWrapper cloned = original.Clone();
+
+  EXPECT_EQ(cloned.GetName(), "internal");
+  EXPECT_EQ(cloned.GetResolvedTensorName(), "external");
+  EXPECT_STREQ(qnn::GetQnnTensorName(cloned.GetQnnTensor()), "external");
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Clone_NoData_ClientBufIsNull) {
+  qnn::QnnTensorWrapper original("t", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                 qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper cloned = original.Clone();
+
+  const auto& buf = qnn::GetQnnTensorClientBuf(cloned.GetQnnTensor());
+  EXPECT_EQ(buf.data, nullptr);
+  EXPECT_EQ(buf.dataSize, 0u);
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Clone_SurvivesOriginalDestruction) {
+  std::unique_ptr<qnn::QnnTensorWrapper> original;
+  {
+    std::vector<uint8_t> data = {9, 8, 7, 6};
+    original = std::make_unique<qnn::QnnTensorWrapper>("w", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_UINT_8,
+                                                       qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4},
+                                                       std::move(data));
+  }
+  qnn::QnnTensorWrapper cloned = original->Clone();
+  original.reset();
+
+  // The clone keeps the shared buffer alive after the original is gone.
+  const auto& buf = qnn::GetQnnTensorClientBuf(cloned.GetQnnTensor());
+  ASSERT_EQ(buf.dataSize, 4u);
+  EXPECT_EQ(static_cast<const uint8_t*>(buf.data)[0], 9u);
+  EXPECT_EQ(static_cast<const uint8_t*>(buf.data)[3], 6u);
+}
+
+// =============================================================================
+// QnnParamWrapper — Clone()
+// =============================================================================
+
+TEST(QnnUnit_DefTest, QnnParamWrapper_Clone_Scalar_CopiesValue) {
+  Qnn_Scalar_t scalar{};
+  scalar.dataType = QNN_DATATYPE_UINT_32;
+  scalar.uint32Value = 5u;
+  qnn::QnnParamWrapper original(1, "node0", "axis", scalar);
+
+  qnn::QnnParamWrapper cloned = original.Clone();
+
+  EXPECT_EQ(cloned.GetName(), "axis");
+  EXPECT_EQ(cloned.GetParamTensorName(), original.GetParamTensorName());
+  EXPECT_EQ(cloned.GetQnnParam().paramType, QNN_PARAMTYPE_SCALAR);
+  EXPECT_EQ(cloned.GetQnnParam().scalarParam.uint32Value, 5u);
+  // qnn_param_.name must point into the clone's own name_ storage.
+  EXPECT_NE(cloned.GetQnnParam().name, original.GetQnnParam().name);
+  EXPECT_STREQ(cloned.GetQnnParam().name, "axis");
+}
+
+TEST(QnnUnit_DefTest, QnnParamWrapper_Clone_Tensor_SharesDataAndResetsTensorId) {
+  qnn::QnnParamWrapper original(0, "node0", "perm", std::vector<uint32_t>{3},
+                                std::vector<uint32_t>{2, 0, 1});
+  qnn::SetQnnTensorID(original.GetQnnParam().tensorParam, 42u);
+
+  qnn::QnnParamWrapper cloned = original.Clone();
+
+  const Qnn_Tensor_t& orig_t = original.GetQnnParam().tensorParam;
+  const Qnn_Tensor_t& clone_t = cloned.GetQnnParam().tensorParam;
+  EXPECT_EQ(cloned.GetQnnParam().paramType, QNN_PARAMTYPE_TENSOR);
+  EXPECT_EQ(qnn::GetQnnTensorDataType(clone_t), QNN_DATATYPE_UINT_32);
+  EXPECT_EQ(qnn::GetQnnTensorID(clone_t), 0u);
+  EXPECT_EQ(qnn::GetQnnTensorID(orig_t), 42u);
+
+  // Param data shared, not copied.
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(clone_t).data, qnn::GetQnnTensorClientBuf(orig_t).data);
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(clone_t).dataSize, 3 * sizeof(uint32_t));
+  const uint32_t* values = static_cast<const uint32_t*>(qnn::GetQnnTensorClientBuf(clone_t).data);
+  EXPECT_EQ(values[0], 2u);
+  EXPECT_EQ(values[1], 0u);
+  EXPECT_EQ(values[2], 1u);
+
+  // Name and dims point into the clone's own storage.
+  EXPECT_STREQ(qnn::GetQnnTensorName(clone_t), cloned.GetParamTensorName().c_str());
+  EXPECT_NE(qnn::GetQnnTensorName(clone_t), qnn::GetQnnTensorName(orig_t));
+  EXPECT_NE(qnn::GetQnnTensorDims(clone_t), qnn::GetQnnTensorDims(orig_t));
+  EXPECT_EQ(qnn::GetQnnTensorRank(clone_t), 1u);
+  EXPECT_EQ(qnn::GetQnnTensorDims(clone_t)[0], 3u);
+}
+
+TEST(QnnUnit_DefTest, QnnParamWrapper_Clone_Moved_KeepsSharedData) {
+  std::vector<uint8_t> data(sizeof(float), 0x11);
+  qnn::QnnParamWrapper original(0, "node0", "w", QNN_DATATYPE_FLOAT_32,
+                                std::vector<uint32_t>{1}, std::move(data));
+  const void* orig_data = qnn::GetQnnTensorClientBuf(original.GetQnnParam().tensorParam).data;
+
+  qnn::QnnParamWrapper cloned = original.Clone();
+  qnn::QnnParamWrapper moved(std::move(cloned));
+
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(moved.GetQnnParam().tensorParam).data, orig_data);
+  EXPECT_STREQ(moved.GetQnnParam().name, "w");
+}
+
+// =============================================================================
+// QnnOpProperty — Clone()
+// =============================================================================
+
+TEST(QnnUnit_DefTest, QnnOpProperty_Clone_CopiesAllFields) {
+  qnn::QnnOpProperty original("relu0", "qti.aisw", "Relu",
+                              {"in0", "in1"}, {"out0"}, {"p0"});
+
+  qnn::QnnOpProperty cloned = original.Clone();
+
+  EXPECT_EQ(cloned.GetNodeName(), "relu0");
+  EXPECT_EQ(cloned.GetPackageName(), "qti.aisw");
+  EXPECT_EQ(cloned.GetNodeType(), "Relu");
+  EXPECT_EQ(cloned.GetInputNames(), (std::vector<std::string>{"in0", "in1"}));
+  EXPECT_EQ(cloned.GetOutputNames(), (std::vector<std::string>{"out0"}));
+  EXPECT_EQ(cloned.GetParamTensorNames(), (std::vector<std::string>{"p0"}));
+  // Original is untouched (Clone is const, not a move).
+  EXPECT_EQ(original.GetInputNames().size(), 2u);
+}
+
+// =============================================================================
+// OnnxTensorInfo — copyable so GraphInputOutputInfo can be cached in QnnGraphWrapper
+// =============================================================================
+
+TEST(QnnUnit_DefTest, GraphInputOutputInfo_Copy_DuplicatesTensorInfo) {
+  qnn::GraphInputOutputInfo info;
+  info.names = {"x"};
+  info.indices["x"] = 0;
+  info.tensors.emplace("x", qnn::OnnxTensorInfo(0, 1, std::vector<int64_t>{1, 4}));
+
+  qnn::GraphInputOutputInfo copied = info;
+  info.Clear();
+
+  ASSERT_EQ(copied.tensors.count("x"), 1u);
+  EXPECT_EQ(copied.tensors.at("x").index_, 0u);
+  EXPECT_EQ(copied.tensors.at("x").data_type_, 1);
+  EXPECT_EQ(copied.tensors.at("x").shape_, (std::vector<int64_t>{1, 4}));
+  EXPECT_EQ(copied.names, (std::vector<std::string>{"x"}));
 }
 
 }  // namespace test

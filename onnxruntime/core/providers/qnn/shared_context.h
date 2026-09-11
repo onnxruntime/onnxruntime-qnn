@@ -99,6 +99,21 @@ class SharedContext {
     shared_ctx_bin_file_name_.clear();
   }
 
+  void AppendSharedQnnGraphWrappers(std::vector<qnn::QnnGraphWrapper>&& qnn_graph_wrapper) {
+    const std::lock_guard<std::mutex> lock(mtx_);
+    shared_qnn_graph_wrappers_.push_back(std::move(qnn_graph_wrapper));
+  }
+
+  const std::vector<std::vector<qnn::QnnGraphWrapper>>& GetSharedQnnGraphWrappers() {
+    const std::lock_guard<std::mutex> lock(mtx_);
+    return shared_qnn_graph_wrappers_;
+  }
+
+  void ResetSharedQnnGraphWrappers() {
+    const std::lock_guard<std::mutex> lock(mtx_);
+    shared_qnn_graph_wrappers_.clear();
+  }
+
  private:
   SharedContext() = default;
   ~SharedContext() = default;
@@ -112,6 +127,8 @@ class SharedContext {
   // Track the shared ctx binary .bin file name, all _ctx.onnx point to this .bin file
   // only the last session generate the .bin file since it contains all graphs from all sessions.
   std::string shared_ctx_bin_file_name_;
+  // Used for compiling multiple models into the same multi-SoC binary.
+  std::vector<std::vector<qnn::QnnGraphWrapper>> shared_qnn_graph_wrappers_;
   // Producer sessions can be in parallel
   // Consumer sessions have to be after producer sessions initialized
   std::mutex mtx_;

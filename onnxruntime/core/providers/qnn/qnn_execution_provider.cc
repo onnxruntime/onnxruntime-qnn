@@ -1108,8 +1108,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!context_cache_enabled_) {
       LOG_AND_THROW_ERROR(logger_, "Per-SoC configurations are only supported for EP context enabled.");
     }
-    if ((share_ep_contexts_ || stop_share_ep_contexts_)) {
-      LOG_AND_THROW_ERROR(logger_, "Multi-SoC EP context is currently unsupported with shared EP context usage.");
+    if (stop_share_ep_contexts_ && !share_ep_contexts_) {
+      LOG_AND_THROW_ERROR(logger_, "Unexpected stop_share_ep_contexts without share_ep_contexts enabled.");
     }
 
     // Exploit prepare-only flag to avoid unexpected usage in overall workflow (e.g., no execution).
@@ -1859,7 +1859,7 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   qnn::GraphInputOutputInfo model_outputs;
   init_input_output_info(model_outputs.names, model_outputs.indices, graph_outputs);
 
-  auto qnn_model_wrapper = qnn::QnnModelWrapper(*graph,
+  auto qnn_model_wrapper = qnn::QnnModelWrapper(graph,
                                                 ApiPtrs{ort_api, ep_api, model_editor_api},
                                                 logger_,
                                                 *qnn_backend_manager_,
@@ -2507,12 +2507,72 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   return nullptr;
 }
 
+QnnEp::QnnGraphConfigsHolder QnnEp::BuildQnnGraphConfigs(const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                                                         const std::string& graph_name) const {
+  QnnEp::QnnGraphConfigsHolder configs_holder;
+  qnn::PopulateHtpGraphConfigs(qnn_backend_manager_->GetQnnBackendType(),
+                               htp_graph_configs,
+                               configs_holder.htp_builder);
+
+  const QnnGraph_Config_t** htp_configs = configs_holder.htp_builder.GetQnnConfigs();
+  if (htp_configs) {
+    // Reserve enough for configs + nullptr.
+    configs_holder.configs.reserve(configs_holder.htp_builder.GetSize() + 1);
+    for (const QnnGraph_Config_t** config = htp_configs; *config; ++config) {
+      configs_holder.configs.push_back(*config);
+    }
+  }
+
+  qnn::QnnSerializerConfig* qnn_serializer_config = qnn_backend_manager_->GetQnnSerializerConfig();
+  if (qnn_serializer_config) {
+    // We don't bother reserving here to keep the API simpler. Also note that if we're here,
+    // we're likely debugging and not waiting for inference.
+    qnn_serializer_config->SetGraphName(graph_name);
+    const QnnGraph_Config_t** serializer_configs = qnn_serializer_config->Configure();
+    if (serializer_configs) {
+      for (const QnnGraph_Config_t** config = serializer_configs; *config; ++config) {
+        configs_holder.configs.push_back(*config);
+      }
+    }
+  }
+
+  if (!configs_holder.configs.empty()) {
+    configs_holder.configs.push_back(nullptr);
+  }
+
+  return configs_holder;
+}
+
+OrtStatus* QnnEp::FinalizeQnnModel(qnn::QnnModel& qnn_model) {
+  // Boost the HTP only around graphFinalize() -- the accelerator-side graph
+  // compilation. ComposeGraph above is host-side (graphAddNode), so the HTP is
+  // deliberately left relaxed during it. The perf config id is valid here in both
+  // the single-SoC path (created at GetCapability) and the multi-SoC path (created
+  // per-SoC by ScopedPerSocQnnBackendSetup::Init before CompileOnnxModel runs).
+  uint32_t htp_power_config_id = 0;
+  bool valid_power_config_id = GetHtpPowerConfigId(htp_power_config_id);
+  qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, default_htp_performance_mode_,
+                                          default_rpc_polling_time_, default_rpc_control_latency_};
+  qnn::HtpPowerStateGuard power_guard(
+      &qnn_backend_manager_->GetHtpPowerConfigManager(),
+      valid_power_config_id,
+      qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
+      perf_config,
+      logger_);
+  RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
+  RETURN_IF_NOT_OK(qnn_model.FinalizeGraphs(logger_));
+  RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
+
+  return nullptr;
+}
+
 OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
                                    const OrtNode** fused_nodes,
                                    size_t count,
                                    OrtNodeComputeInfo** node_compute_infos,
                                    const qnn::HtpGraphConfigs_t& htp_graph_configs,
-                                   bool collect_subgraph_traces) {
+                                   bool collect_subgraph_traces,
+                                   bool dry_run) {
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // Initialize now for possible reuse in loop
   auto finalize_start = std::chrono::steady_clock::time_point::min();
@@ -2522,7 +2582,8 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
   auto compile_start = std::chrono::steady_clock::now();
   std::vector<GraphFinalizationInfo_t> model_infos;
 
-  bool use_multithreaded_prepare = count >= 5 || num_graph_prepare_threads_ > 1;
+  // No actual finalize during dry run.
+  bool use_multithreaded_prepare = (count >= 5 || num_graph_prepare_threads_ > 1) && !dry_run;
   if (use_multithreaded_prepare) {
     model_infos.reserve(count);
   } else {
@@ -2532,6 +2593,11 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
   }
 #endif
 
+  std::vector<qnn::QnnGraphWrapper> qnn_graph_wrappers;
+  if (dry_run) {
+    qnn_graph_wrappers.reserve(count);
+  }
+
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const OrtGraph* graph = graphs[graph_idx];
     const OrtNode* fused_node = fused_nodes[graph_idx];
@@ -2539,39 +2605,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
         qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
-
-    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
-        QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-    qnn::PopulateHtpGraphConfigs(qnn_backend_manager_->GetQnnBackendType(), htp_graph_configs, htp_graph_configs_builder);
-
-    std::vector<const QnnGraph_Config_t*> all_graph_configs;
-    const QnnGraph_Config_t** htp_configs = htp_graph_configs_builder.GetQnnConfigs();
-    if (htp_configs) {
-      // Reserve enough for configs + nullptr
-      all_graph_configs.reserve(htp_graph_configs_builder.GetSize() + 1);
-      for (const QnnGraph_Config_t** config = htp_configs; *config; ++config) {
-        all_graph_configs.push_back(*config);
-      }
-    }
-
-    qnn::QnnSerializerConfig* qnn_serializer_config = qnn_backend_manager_->GetQnnSerializerConfig();
-    if (qnn_serializer_config) {
-      // We don't bother reserving here to keep the API simpler. Also note that if we're here,
-      // we're likely debugging and not waiting for inference.
-      qnn_serializer_config->SetGraphName(fused_node_name);
-      const QnnGraph_Config_t** serializer_configs = qnn_serializer_config->Configure();
-      if (serializer_configs) {
-        for (const QnnGraph_Config_t** config = serializer_configs; *config; ++config) {
-          all_graph_configs.push_back(*config);
-        }
-      }
-    }
-
-    const QnnGraph_Config_t** all_graph_configs_ptr = nullptr;
-    if (!all_graph_configs.empty()) {
-      all_graph_configs.push_back(nullptr);
-      all_graph_configs_ptr = all_graph_configs.data();
-    }
+    QnnEp::QnnGraphConfigsHolder configs_holder = BuildQnnGraphConfigs(htp_graph_configs, fused_node_name);
 
     // Get original input/output order captured in GetCapability
     if (!onnx_graph_io_names_.has_value()) {
@@ -2583,13 +2617,13 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 
     // Build context for graph composition
     qnn::QnnModelContext context{
-        /*ort_graph=*/*graph,
-        /*fused_node=*/*fused_node,
+        /*ort_graph=*/graph,
+        /*fused_node=*/fused_node,
         /*logger=*/logger_,
         /*onnx_input_names=*/&onnx_input_names,
         /*onnx_output_names=*/&onnx_output_names,
         /*model_settings=*/&model_settings_,
-        /*graph_configs=*/all_graph_configs_ptr,
+        /*graph_configs=*/configs_holder.GetRawPtr(),
         /*tensor_name_overrides=*/&tensor_name_overrides_,
         /*json_qnn_graph_path=*/std::string{}};
 
@@ -2599,13 +2633,21 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
       context.op_trace_output = op_trace_builder_.NewSubgraphSlot();
     }
 
-    if (dump_json_qnn_graph_) {
+    // JSON graph dump happens in actual QNN graph compose which is not reached in dry run.
+    if (dump_json_qnn_graph_ && !dry_run) {
       namespace fs = std::filesystem;
       context.json_qnn_graph_path =
           (fs::path(json_qnn_graph_dir_) / fs::path(fused_node_name + ".json")).string();
     }
 
-    RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
+    if (dry_run) {
+      qnn::QnnGraphWrapper qnn_graph_wrapper;
+      RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context, /*dry_run*/true, /*qnn_graph_wrapper*/&qnn_graph_wrapper));
+      qnn_graph_wrappers.push_back(std::move(qnn_graph_wrapper));
+    } else {
+      RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
+    }
+
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     if (use_multithreaded_prepare) {
       auto& model_info = model_infos.emplace_back();
@@ -2615,25 +2657,8 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     } else {
       finalize_start = std::chrono::steady_clock::now();
 #endif
-      {
-        // Boost the HTP only around graphFinalize() -- the accelerator-side graph
-        // compilation. ComposeGraph above is host-side (graphAddNode), so the HTP is
-        // deliberately left relaxed during it. The perf config id is valid here in both
-        // the single-SoC path (created at GetCapability) and the multi-SoC path (created
-        // per-SoC by ScopedPerSocQnnBackendSetup::Init before CompileOnnxModel runs).
-        uint32_t htp_power_config_id = 0;
-        bool valid_power_config_id = GetHtpPowerConfigId(htp_power_config_id);
-        qnn::power::HtpPerfConfig_t perf_config{htp_power_config_id, default_htp_performance_mode_,
-                                                default_rpc_polling_time_, default_rpc_control_latency_};
-        qnn::HtpPowerStateGuard power_guard(
-            &qnn_backend_manager_->GetHtpPowerConfigManager(),
-            valid_power_config_id,
-            qnn::power::GraphState::INIT_START, qnn::power::GraphState::INIT_DONE,
-            perf_config,
-            logger_);
-        RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
-        RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
-        RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
+      if (!dry_run) {
+        RETURN_IF_NOT_NULL(FinalizeQnnModel(*qnn_model));
       }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
       end = std::chrono::steady_clock::now();
@@ -2654,6 +2679,11 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     }
 #endif
+  }
+
+  if (dry_run) {
+    SharedContext::GetInstance().AppendSharedQnnGraphWrappers(std::move(qnn_graph_wrappers));
+    return nullptr;
   }
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
@@ -2711,41 +2741,99 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
   return nullptr;
 }
 
+OrtStatus* QnnEp::CompileQnnGraphWrapper(const std::vector<qnn::QnnGraphWrapper>& qnn_graph_wrappers,
+                                         const qnn::HtpGraphConfigs_t& htp_graph_configs) {
+  if (!(enable_multi_soc_ep_context_ && share_ep_contexts_ && stop_share_ep_contexts_)) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "Unexpected call to QnnEp::CompileQnnGraphWrapper.");
+  }
+
+  for (size_t graph_idx = 0; graph_idx < qnn_graph_wrappers.size(); ++graph_idx) {
+    const auto& qnn_graph_wrapper = qnn_graph_wrappers[graph_idx];
+
+    qnn::QnnModel qnn_model(qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+    QnnEp::QnnGraphConfigsHolder configs_holder = BuildQnnGraphConfigs(htp_graph_configs, qnn_graph_wrapper.graph_name);
+
+    // Build context for graph composition
+    qnn::QnnModelContext context{
+        /*ort_graph=*/nullptr,
+        /*fused_node=*/nullptr,
+        /*logger=*/logger_,
+        /*onnx_input_names=*/nullptr,
+        /*onnx_output_names=*/nullptr,
+        /*model_settings=*/&qnn_graph_wrapper.model_settings,
+        /*graph_configs=*/configs_holder.GetRawPtr(),
+        /*tensor_name_overrides=*/nullptr,  // The overrides are already resolved into the cached tensors.
+        /*json_qnn_graph_path=*/std::string{}};
+    if (dump_json_qnn_graph_) {
+      context.json_qnn_graph_path =
+          (std::filesystem::path(json_qnn_graph_dir_) / (qnn_graph_wrapper.graph_name + ".json")).string();
+    }
+
+    RETURN_IF_NOT_OK(qnn_model.ComposeGraphFromGraphWrapper(context, qnn_graph_wrapper));
+    RETURN_IF_NOT_NULL(FinalizeQnnModel(qnn_model));
+
+    // No need to set QnnModel nor create QnnNodeComputeInfo as they are handled in dry run.
+  }
+
+  return nullptr;
+}
+
 OrtStatus* QnnEp::CompileMultiSocOnnxModel(const OrtGraph** graphs,
                                            const OrtNode** fused_nodes,
                                            size_t count,
                                            OrtNodeComputeInfo** node_compute_infos) {
-  // Iterate each SoC and compile.
-  for (size_t idx = 0; idx < htp_arch_per_soc_.size(); ++idx) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Compiling model for HTP arch " + std::to_string(htp_arch_per_soc_[idx]) +
-                 " and SoC model " + std::to_string(soc_model_per_soc_[idx]) + ".")
-                    .c_str());
-
-    // Complete setup for device and context.
-    ScopedPerSocQnnBackendSetup scoped_backend_setup(*this);
-    RETURN_IF_NOT_OK(scoped_backend_setup.Init(idx));
-
-    // Collect subgraph_traces once (on idx 0): the ONNX->QNN op mapping is the
-    // same across SoCs, since which QNN op a node lowers to does not depend on arch.
+  if (share_ep_contexts_) {
     RETURN_IF_NOT_NULL(CompileOnnxModel(graphs,
                                         fused_nodes,
                                         count,
                                         node_compute_infos,
-                                        htp_graph_configs_per_soc_[idx],
-                                        /*collect_subgraph_traces=*/idx == 0));
+                                        htp_graph_configs_per_soc_[0],  // Don't care in dry run.
+                                        /*collect_subgraph_traces*/true,
+                                        /*dry_run*/true));
 
-    if (idx != htp_arch_per_soc_.size() - 1) {
-      // `qnn_models_` and `node_compute_infos` are repeatedly set in each `CompileOnnxModel` call, where previous
-      // values are not properly freed. Since we know multi-SoC preparation usecase could not run inference, these
-      // objects are in fact useless.
-      // Note that the objects in the last iteration are deliberately kept and guarded by `prepare_only` flag that
-      // they will never be used.
-      for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-        delete static_cast<QnnNodeComputeInfo*>(node_compute_infos[graph_idx]);
-        node_compute_infos[graph_idx] = nullptr;
-        qnn_models_.clear();
+    // Early return if not the last model.
+    if (!stop_share_ep_contexts_) {
+      return nullptr;
+    }
+  }
+
+  // Iterate each SoC and compile.
+  for (size_t soc_idx = 0; soc_idx < htp_arch_per_soc_.size(); ++soc_idx) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Compiling model for HTP arch " + std::to_string(htp_arch_per_soc_[soc_idx]) +
+                 " and SoC model " + std::to_string(soc_model_per_soc_[soc_idx]) + ".")
+                    .c_str());
+
+    // Complete setup for device and context.
+    ScopedPerSocQnnBackendSetup scoped_backend_setup(*this);
+    RETURN_IF_NOT_OK(scoped_backend_setup.Init(soc_idx));
+
+    if (share_ep_contexts_) {  // Guarantee stop_share_ep_contexts_ when reaching here.
+      for (const auto& qnn_graph_wrappers : SharedContext::GetInstance().GetSharedQnnGraphWrappers()) {
+        RETURN_IF_NOT_NULL(CompileQnnGraphWrapper(qnn_graph_wrappers, htp_graph_configs_per_soc_[soc_idx]));
+      }
+    } else {
+      // Collect subgraph_traces once (on idx 0): the ONNX->QNN op mapping is the
+      // same across SoCs, since which QNN op a node lowers to does not depend on arch.
+      RETURN_IF_NOT_NULL(CompileOnnxModel(graphs,
+                                          fused_nodes,
+                                          count,
+                                          node_compute_infos,
+                                          htp_graph_configs_per_soc_[soc_idx],
+                                          /*collect_subgraph_traces=*/soc_idx == 0));
+
+      if (soc_idx != htp_arch_per_soc_.size() - 1) {
+        // `qnn_models_` and `node_compute_infos` are repeatedly set in each `CompileOnnxModel` call, where previous
+        // values are not properly freed. Since we know multi-SoC preparation usecase could not run inference, these
+        // objects are in fact useless.
+        // Note that the objects in the last iteration are deliberately kept and guarded by `prepare_only` flag that
+        // they will never be used.
+        for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+          delete static_cast<QnnNodeComputeInfo*>(node_compute_infos[graph_idx]);
+          node_compute_infos[graph_idx] = nullptr;
+          qnn_models_.clear();
+        }
       }
     }
     RETURN_IF_NOT_NULL(qnn_backend_manager_->AddContextToDlc());
@@ -2827,8 +2915,8 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
         }
 
         qnn::QnnModelContext context{
-            /*ort_graph=*/*graphs[graph_idx],
-            /*fused_node=*/*fused_nodes[graph_idx],
+            /*ort_graph=*/graphs[graph_idx],
+            /*fused_node=*/fused_nodes[graph_idx],
             /*logger=*/logger_,
             /*onnx_input_names=*/nullptr,
             /*onnx_output_names=*/nullptr,
@@ -2931,8 +3019,8 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
 
     auto qnn_model = std::move(qnn_model_it->second);
     qnn::QnnModelContext context{
-        /*ort_graph=*/*graphs[graph_idx],
-        /*fused_node=*/*fused_nodes[graph_idx],
+        /*ort_graph=*/graphs[graph_idx],
+        /*fused_node=*/fused_nodes[graph_idx],
         /*logger=*/logger_,
         /*onnx_input_names=*/nullptr,
         /*onnx_output_names=*/nullptr,
@@ -3337,7 +3425,7 @@ OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
     const auto& onnx_output_names = onnx_graph_io_names_->second;
 
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(
-        qnn::QnnModelContext{*graphs[graph_idx], *fused_nodes[graph_idx], logger_,
+        qnn::QnnModelContext{graphs[graph_idx], fused_nodes[graph_idx], logger_,
                              &onnx_input_names, &onnx_output_names,
                              nullptr, nullptr, nullptr, std::string{}}));
     RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(logger_));
@@ -3906,6 +3994,7 @@ void QnnEp::QnnNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, v
 Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
   RETURN_IF_ERROR(ep_.qnn_backend_manager_->SetupDeviceAndContext(ep_.htp_arch_per_soc_[per_soc_idx],
                                                                   ep_.soc_model_per_soc_[per_soc_idx],
+                                                                  ep_.share_ep_contexts_,
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
                                                                   ep_.enable_htp_ref_weight_sharing_,

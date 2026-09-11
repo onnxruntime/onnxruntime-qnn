@@ -5,6 +5,11 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <string>
+#include <type_traits>
+#include <unordered_map>
+#include <vector>
+
 #include "QnnBackend.h"
 #include "QnnInterface.h"
 #include "QnnOpDef.h"
@@ -65,7 +70,7 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
       qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
     backend_manager.BackendType() = backend_type;
     ApiPtrs api_ptrs = MakeApiPtrs();
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     return std::make_unique<qnn::QnnModelWrapper>(
         fake_graph,
         api_ptrs,
@@ -85,7 +90,7 @@ std::unique_ptr<qnn::QnnModelWrapper> MakeWrapperWithOverrides(
     const qnn::ModelSettings& settings,
     std::unordered_map<std::string, std::string>* overrides) {
   ApiPtrs api_ptrs = ctx.MakeApiPtrs();
-  const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
+  const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
   ctx.backend_manager.BackendType() = qnn::QnnBackendType::HTP;
   return std::make_unique<qnn::QnnModelWrapper>(
       fake_graph,
@@ -2639,6 +2644,251 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16Enabled_CpuBackend_ValidatorSee
 
   EXPECT_EQ(g_validated_input_data_type, QNN_DATATYPE_FLOAT_32);
   EXPECT_EQ(wrapper->GetQnnTensorWrapper("in0").GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+}
+
+// ── TakeInternalWrappers / QnnModelWrapper(QnnGraphWrapper) ───────────────
+//
+// Multi-SoC weight sharing translates each ONNX graph once (dry run), exports the
+// wrappers into a QnnGraphWrapper via TakeInternalWrappers, and later re-composes
+// that cached graph once per SoC through the cloning constructor.
+
+namespace {
+uint32_t g_next_tensor_id = 0;
+
+Qnn_ErrorHandle_t StubTensorCreateAssignId(Qnn_GraphHandle_t, Qnn_Tensor_t* tensor) {
+  qnn::SetQnnTensorID(*tensor, ++g_next_tensor_id);
+  return QNN_TENSOR_NO_ERROR;
+}
+
+// Populates `wrapper` with in0 (APP_WRITE) -> Cast(+ tensor param) -> out0 (APP_READ)
+// plus a static weight, without creating anything in a QNN graph.
+void AddDryRunGraph(qnn::QnnModelWrapper& wrapper) {
+  ASSERT_TRUE(wrapper.AddTensorWrapper(qnn::QnnTensorWrapper("in0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                                             qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4})));
+  ASSERT_TRUE(wrapper.AddTensorWrapper(qnn::QnnTensorWrapper("out0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                                                             qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4})));
+  std::vector<uint8_t> weight(4 * sizeof(float), 0x3F);
+  ASSERT_TRUE(wrapper.AddTensorWrapper(qnn::QnnTensorWrapper("weight", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
+                                                             qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4},
+                                                             std::move(weight))));
+  qnn::QnnParamWrapper perm(0, "n0", "perm", std::vector<uint32_t>{1}, std::vector<uint32_t>{0});
+  std::string perm_name = perm.GetParamTensorName();
+  ASSERT_TRUE(wrapper.AddParamWrapper(std::move(perm)));
+  ASSERT_TRUE(wrapper.CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                                    {"in0"}, {"out0"}, {std::move(perm_name)}, /*do_op_validation=*/false));
+}
+}  // namespace
+
+TEST(QnnUnit_ModelWrapperTest, TakeInternalWrappers_DryRun_MovesAllWrappers) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  ctx.output_info.names.push_back("out0");
+  ctx.output_info.indices["out0"] = 0;
+  qnn::ModelSettings settings{};
+  settings.htp_shared_memory = true;
+  auto wrapper = ctx.CreateWrapper(settings);
+  AddDryRunGraph(*wrapper);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  auto status = wrapper->TakeInternalWrappers(graph_wrapper);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+
+  ASSERT_EQ(graph_wrapper.ops.size(), 1u);
+  EXPECT_EQ(graph_wrapper.ops[0].GetNodeName(), "n0");
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+  EXPECT_EQ(graph_wrapper.params_map.size(), 1u);
+  EXPECT_EQ(graph_wrapper.graph_inputs.names, (std::vector<std::string>{"in0"}));
+  EXPECT_EQ(graph_wrapper.graph_outputs.names, (std::vector<std::string>{"out0"}));
+  EXPECT_TRUE(graph_wrapper.model_settings.htp_shared_memory);
+  // graph_name is owned by the caller (QnnModel::ComposeGraph), not filled here.
+  EXPECT_TRUE(graph_wrapper.graph_name.empty());
+
+  // The wrappers were moved out, so the source wrapper is now empty.
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("in0"));
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("weight"));
+}
+
+TEST(QnnUnit_ModelWrapperTest, TakeInternalWrappers_OffloadIOQuant_BakesOverrideIntoTensors) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  qnn::ModelSettings settings{};
+  settings.offload_graph_io_quantization = true;
+  std::unordered_map<std::string, std::string> overrides{{"in0", "onnx_in0"}};
+  auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
+  AddDryRunGraph(*wrapper);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(wrapper->TakeInternalWrappers(graph_wrapper).IsOK());
+
+  // Overridden tensor carries its ONNX name; others keep their internal name.
+  EXPECT_EQ(graph_wrapper.tensors_map.at("in0").GetResolvedTensorName(), "onnx_in0");
+  EXPECT_EQ(graph_wrapper.tensors_map.at("out0").GetResolvedTensorName(), "out0");
+}
+
+TEST(QnnUnit_ModelWrapperTest, TakeInternalWrappers_OverridesIgnoredWithoutOffloadIOQuant) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  settings.offload_graph_io_quantization = false;
+  std::unordered_map<std::string, std::string> overrides{{"in0", "onnx_in0"}};
+  auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
+  AddDryRunGraph(*wrapper);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(wrapper->TakeInternalWrappers(graph_wrapper).IsOK());
+  EXPECT_EQ(graph_wrapper.tensors_map.at("in0").GetResolvedTensorName(), "in0");
+}
+
+TEST(QnnUnit_ModelWrapperTest, TakeInternalWrappers_EmptyModel_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  auto status = wrapper->TakeInternalWrappers(graph_wrapper);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("Model is not constructed"), std::string::npos);
+}
+
+TEST(QnnUnit_ModelWrapperTest, TakeInternalWrappers_TensorsOnlyNoOps_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(wrapper->AddTensorWrapper(qnn::QnnTensorWrapper("t0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                                              qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4})));
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  EXPECT_FALSE(wrapper->TakeInternalWrappers(graph_wrapper).IsOK());
+}
+
+TEST(QnnUnit_ModelWrapperTest, TakeInternalWrappers_AfterComposeQnnGraph_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
+  ctx.qnn_interface.graphAddNode = StubGraphAddNode;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+  AddDryRunGraph(*wrapper);
+  ASSERT_TRUE(wrapper->ComposeQnnGraph());
+
+  // Tensors now exist in a QNN graph, so the wrappers hold per-graph state.
+  qnn::QnnGraphWrapper graph_wrapper;
+  auto status = wrapper->TakeInternalWrappers(graph_wrapper);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("already created in a QNN graph"), std::string::npos);
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_ClonesWithoutConsumingCache) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  ctx.output_info.names.push_back("out0");
+  ctx.output_info.indices["out0"] = 0;
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddDryRunGraph(*source);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->TakeInternalWrappers(graph_wrapper).IsOK());
+  graph_wrapper.graph_name = "cached_graph";
+
+  qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper);
+
+  EXPECT_TRUE(cloned.IsQnnTensorWrapperExist("in0"));
+  EXPECT_TRUE(cloned.IsQnnTensorWrapperExist("out0"));
+  EXPECT_TRUE(cloned.IsQnnTensorWrapperExist("weight"));
+  EXPECT_TRUE(cloned.IsGraphInput("in0"));
+  EXPECT_TRUE(cloned.IsGraphOutput("out0"));
+
+  // The cache is cloned, not consumed.
+  EXPECT_EQ(graph_wrapper.ops.size(), 1u);
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+  EXPECT_EQ(graph_wrapper.params_map.size(), 1u);
+
+  // Static data is shared between the cache and the clone.
+  const void* cached_data = qnn::GetQnnTensorClientBuf(graph_wrapper.tensors_map.at("weight").GetQnnTensor()).data;
+  const void* cloned_data = qnn::GetQnnTensorClientBuf(cloned.GetQnnTensorWrapper("weight").GetQnnTensor()).data;
+  EXPECT_EQ(cloned_data, cached_data);
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_ComposeTwice_EachCloneGetsFreshTensorIds) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  ctx.output_info.names.push_back("out0");
+  ctx.output_info.indices["out0"] = 0;
+  ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateAssignId;
+  ctx.qnn_interface.graphAddNode = StubGraphAddNode;
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddDryRunGraph(*source);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->TakeInternalWrappers(graph_wrapper).IsOK());
+
+  g_next_tensor_id = 0;
+  // Mimic one composition per SoC of a multi-SoC context binary.
+  for (int soc = 0; soc < 2; ++soc) {
+    qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper);
+    // Every clone starts unassigned, regardless of what previous compositions did.
+    EXPECT_EQ(qnn::GetQnnTensorID(cloned.GetQnnTensorWrapper("in0").GetQnnTensor()), 0u);
+    ASSERT_TRUE(cloned.ComposeQnnGraph()) << "composition " << soc;
+    EXPECT_NE(qnn::GetQnnTensorID(cloned.GetQnnTensorWrapper("out0").GetQnnTensor()), 0u);
+  }
+
+  // Compositions never write QNN tensor IDs back into the cache.
+  for (const auto& [name, tensor] : graph_wrapper.tensors_map) {
+    EXPECT_EQ(qnn::GetQnnTensorID(tensor.GetQnnTensor()), 0u) << name;
+  }
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_TakeInternalWrappersOnClone_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddDryRunGraph(*source);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->TakeInternalWrappers(graph_wrapper).IsOK());
+
+  qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper);
+  qnn::QnnGraphWrapper re_exported;
+  auto status = cloned.TakeInternalWrappers(re_exported);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("cloned from a QnnGraphWrapper"), std::string::npos);
+  // The cache is left intact.
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+}
+
+// QnnGraphWrapper must be move-only (see the comment on its copy deletion) so that
+// std::vector<QnnGraphWrapper> reallocation takes the move path.
+static_assert(!std::is_copy_constructible_v<qnn::QnnGraphWrapper>);
+static_assert(!std::is_copy_assignable_v<qnn::QnnGraphWrapper>);
+static_assert(std::is_move_constructible_v<qnn::QnnGraphWrapper>);
+static_assert(std::is_move_assignable_v<qnn::QnnGraphWrapper>);
+
+TEST(QnnUnit_ModelWrapperTest, QnnGraphWrapper_VectorGrowth_KeepsWrappers) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+
+  std::vector<qnn::QnnGraphWrapper> wrappers;
+  for (int i = 0; i < 4; ++i) {
+    auto source = ctx.CreateWrapper(settings);
+    AddDryRunGraph(*source);
+    qnn::QnnGraphWrapper graph_wrapper;
+    ASSERT_TRUE(source->TakeInternalWrappers(graph_wrapper).IsOK());
+    graph_wrapper.graph_name = "g" + std::to_string(i);
+    wrappers.push_back(std::move(graph_wrapper));
+  }
+
+  ASSERT_EQ(wrappers.size(), 4u);
+  for (size_t i = 0; i < wrappers.size(); ++i) {
+    EXPECT_EQ(wrappers[i].graph_name, "g" + std::to_string(i));
+    EXPECT_EQ(wrappers[i].tensors_map.size(), 3u);
+    // Moved tensor wrappers must still point at their own (relocated) name storage.
+    const auto& in0 = wrappers[i].tensors_map.at("in0");
+    EXPECT_STREQ(qnn::GetQnnTensorName(in0.GetQnnTensor()), "in0");
+  }
 }
 
 }  // namespace test
