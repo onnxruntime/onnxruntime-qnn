@@ -21,6 +21,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
+- [Compiled Model Encryption (ORT API v28+)](#compiled-model-encryption-ort-api-v28)
 - [QNN EP Framework Op Tracing](#qnn-ep-framework-op-tracing)
 - [QNN EP Input Graph Dump](#qnn-ep-input-graph-dump)
 - [QNN EP Profiling](#qnn-ep-profiling)
@@ -147,6 +148,10 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Disabled.|
 |'1'|Enable VTCM backup buffer sharing across sessions. Requires QNN API version >= 2.26. Conflicts with `ep.context_embed_mode`.|
 
+|`"htp_reused_io_limit_mb"`|Description|
+|---|---|
+|Size in MB (string)|Tells QNN HTP the maximum I/O your app actually keeps registered at any one time, instead of assuming every graph's I/O is live at once. Used for memory estimation and DSP PD placement when loading a context binary; a tighter value can avoid PD placement failures (QNN error 1002). See [Reused IO Limit](#reused-io-limit) below for how to choose a value (it differs between the per-context and group paths). Defaults to "0" (QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.45 or later (QNN API >= 2.34).|
+
 |`"htp_performance_mode"`|Description|
 |---|---|
 |'burst'|Burst performance mode.|
@@ -184,11 +189,11 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"soc_model"`|Description|
 |---|---|
-|Model number (string)|The SoC model to target. Accepts a **numeric model ID** (e.g. `"69"`) or a **chip-family name string** (e.g. `"SM8750"`, case-insensitive) for a subset of well-known chips — note this list is not exhaustive and chips not recognised by name must use the numeric ID. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid numeric values. Defaults to `"0"` (unknown). Accepts a comma-separated list (e.g. `"43,69"`) to enable [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
+|Model number (string)|The SoC model to target. This is the preferred identifier than htp_arch. Accepts a **numeric model ID** (e.g. `"69"`) or a **chip-family name string** (e.g. `"SM8750"`, case-insensitive) for a subset of well-known chips — note this list is not exhaustive and chips not recognised by name must use the numeric ID. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/QNN_general_overview.html#supported-snapdragon-devices) for valid numeric values. Defaults to `"0"` (unknown). If both `soc_model` and `htp_arch` are given but do not matched, `soc_model` takes priority. Accepts a comma-separated list (e.g. `"60,88"`) to enable [Flexible Context Binary (FCB) / multi-SoC](#flexible-context-binary-fcb--multi-soc-ep-context) compilation, where one EPContext model is produced that targets every listed SoC.|
 
 |`"htp_arch"`|Description|
 |---|---|
-|'0'|Default. No architecture specified.|
+|'0'|Default. No architecture specified. It is optional if `soc_model` already specified. Nevertheless, providing it along with `soc_model` during offline preparation can enable more accurate context binary compatibility check later at inference time. |
 |'68'|HTP v68.|
 |'69'|HTP v69.|
 |'73'|HTP v73.|
@@ -217,6 +222,11 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |'1'|Run the monolithic LSTM kernel on HTP (single graph node).|
 
 Warning: Enabling HTP Monolithic LSTM may improve session creation time, but this improvement may come with a regression in inference performance.
+
+|`"enable_htp_matmul_lut"`|Description|
+|---|---|
+|`"0"`|Disable the HTP MatMul LUT kernel optimization.|
+|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available only with QAIRT 2.51 or later.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
@@ -366,6 +376,11 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 |'0'|Default. Disabled.|
 |'1'|Enable HTP graph splitting: the HTP backend splits the model graph into independently-prepareable sub-graphs, reducing context preparation time. Effective in both JIT (compile-and-run) and AOT (context binary generation) workflows, including on-device AOT. Has no effect when loading from an already-compiled context binary. Requires QAIRT SDK 2.49+ at runtime; enabling this with an older runtime will cause context creation to fail. The number of sub-graph partitions is controlled by the `GPE_KWAY_PARTITIONS` environment variable.|
 
+|`"htp_graph_splitting_num_prepare_threads"`|Description|
+|---|---|
+|`UINT32_MAX` (default)|Auto-select: `min(max(1, hardware_concurrency), num_splits)`. Only effective when `enable_htp_graph_splitting=1`. Requires QAIRT SDK 2.51+; ignored on older builds.|
+|`N`|Use exactly N threads to prepare split sub-graphs in parallel. Value 0 or 1 means single-threaded. Values > 1 cap the number of splits.|
+
 |`"GPE_KWAY_PARTITIONS"`|Description|
 |---|---|
 | `8` | Default |
@@ -392,6 +407,43 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 - A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
 - Pinning an op type to a backend other than the one the session is running on fails session creation, since heterogeneous execution is not supported — except a `"cpu"` pin, which is a legitimate way to opt an op out of QNN EP (falls back to the CPU EP without failing the session).
 - On the command line (e.g. `onnxruntime_perf_test`), pass it with the `key|value` form: `op_affinity|./affinity_config.json`. This applies to the legacy built-in QNN EP path (`-e qnn -i ...`); when registering QNN EP via the plugin-EP path (`--plugin_eps`/`--plugin_ep_options`), provider options are passed through generically and are not subject to the built-in QNN EP's key allowlist.
+
+#### Reused IO Limit
+
+`htp_reused_io_limit_mb` tells QNN HTP the maximum I/O your app actually keeps registered at any one time throughout the context lifecycle (init / execute / deinit). QNN HTP uses this value for memory estimation and DSP PD placement decisions when it loads a context binary.
+
+Turned off by default (`0`), the runtime assumes no I/O reuse and estimates the context's memory using the total I/O size of all **QNN graphs** in the context. If you actually share (reuse) one or more I/O buffers across multiple QNN graphs in a context, or across multiple contexts, that default estimate can overshoot what the context really needs.
+
+This overestimation matters because HTP loads each context into one of several process domains (PDs), each with a limited memory budget. An inflated estimate can cause a context to be placed in its own PD instead of sharing one with others (which is slower, since contexts on different PDs pay extra cost to talk to each other) — or it can cause the context to fail to load at all (QNN error 1002, "Failed to find available PD") even though it would actually fit. By explicitly specifying the reused I/O size, you let QNN HTP use a smaller, more accurate estimate instead.
+
+**Choosing a value**: the value represents the maximum I/O your app actually keeps registered at any one time across the lifecycle (init / execute / deinit). It depends entirely on how your app uses the I/O buffers:
+
+- If your app maps the I/O of only one QNN graph at a time and unmaps the rest (e.g. graph switching), the peak is `max(each QNN graph's I/O)`.
+- If your app keeps all QNN graphs' I/O mapped at once, the peak is `sum(each concurrently mapped QNN graph's I/O)`.
+
+To find each QNN graph's I/O size, enable VERBOSE session logging and look for the per-QNN-graph estimate the HTP backend emits at context load, for example:
+
+```
+... estimated PD size ~3491.61MB, including nonSharedWeight 1908408320 B I/O 1662533632 B runlist 59602944 B spillfill 22282240 B
+```
+
+When loading a context binary, QNN EP also emits the total number of QNN graphs in that context at VERBOSE level:
+
+```
+... Graph count from QNN context: 4
+```
+
+The per-QNN-graph estimates show the I/O sizes; the `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
+
+**Per-context vs. group scope** — choose the value based on whether `htp_share_resource_optimization` is enabled:
+
+For example, consider 4 contexts, each containing 1 QNN graph with 100 MB I/O. If the app maps the I/O for only 1 QNN graph at a time across all 4 contexts, its actual peak is 100 MB.
+
+- **Default (`htp_share_resource_optimization` disabled):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set `25` on each context in the example above so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
+
+- **`htp_share_resource_optimization=1`:** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
+
+**Warning**: this value is a *hint* for memory estimation, not an enforced limit. QNN does not stop you from using more I/O at runtime than you configured, but exceeding it may cause undefined behavior (e.g. a `memRegister` failure due to running out of space). Set it to a value your actual runtime I/O will not exceed. When using this option purely to work around a context load failure (rather than from a known buffer budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
 
 ### Flexible Context Binary (FCB) / multi-SoC EP context
 
@@ -666,6 +718,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Squeeze||
 |ai.onnx:Sub||
 |ai.onnx:Sum||
+|ai.onnx:Swish||
 |ai.onnx:Tan||
 |ai.onnx:Tanh||
 |ai.onnx:ThresholdedRelu||
@@ -1196,34 +1249,105 @@ g_ort->AddSessionConfigEntry(session_options, kOrtSessionOptionEpContextEmbedMod
 options.add_session_config_entry("ep.context_embed_mode", "1")
 ```
 
-### At-rest encryption of the context binary (ORT API v28+)
+## Compiled Model Encryption (ORT API v28+)
 
 By default the QNN context binary is written to / read from disk in plaintext (as an external
 file when `ep.context_embed_mode` is `"0"`, or embedded in the EPContext model when `"1"`). ORT
 API v28 adds a write/read callback pair so an application can encrypt the binary before it is
 persisted and decrypt it before QNN consumes it, without either version of ONNX Runtime having
-any built-in cipher.
+any built-in cipher. This maps to the ORT core feature added in
+[microsoft/onnxruntime#28624](https://github.com/microsoft/onnxruntime/pull/28624) — see its
+[design doc](https://github.com/microsoft/onnxruntime/blob/main/docs/design/Compiled_Model_Encryption.md)
+for the full API rationale.
 
-The callback-based encryption/decryption path described here applies only when
-`ep.context_embed_mode` is `"0"`. When `ep.context_embed_mode` is `"1"` (embedded), the context
-binary is stored within the EPContext model and applications should use ONNX Runtime model
-protection mechanisms (for example, `SetOutputModelWriteFunc`) to protect the generated ONNX
-model. If no callback is registered while `ep.context_embed_mode` is `"0"`, the EP uses the
-legacy plaintext behavior.
+**Scope: these callbacks only apply when `ep.context_embed_mode` is `"0"`.** When
+`ep.context_embed_mode` is `"1"` (embedded), the context binary is stored inside the EPContext
+ONNX model itself, and there is no separate context-binary file for these callbacks to intercept.
+To protect the model in that mode, use ONNX Runtime's model protection mechanisms instead (for
+example, `SetOutputModelWriteFunc`) to encrypt the generated ONNX model. **The rest of this
+section assumes `ep.context_embed_mode` is `"0"`.**
 
-- **Write callback** (`SetEpContextDataWriteFunc`) is set on `Ort::ModelCompilationOptions`
-  during a compile session. The EP hands the plaintext context bytes to the callback instead of
-  writing them to disk; the callback is responsible for encrypting and persisting them itself.
-- **Read callback** (`SetEpContextDataReadFunc`) is set on `Ort::SessionOptions` for a later
-  inference session. The EP asks the callback for the plaintext bytes (by name) instead of
-  reading the on-disk file directly; the callback decrypts and returns them.
-- Registering **no callback** is fully backward compatible — the EP falls back to the original
-  plaintext disk read/write, unchanged.
+**Encrypt (write callback)** — set on `Ort::ModelCompilationOptions` during compile. ORT hands
+the plaintext context bytes to the callback instead of writing them to disk. The example below
+uses a single-byte XOR so the callback mechanism is easy to follow — replace the body of
+`WriteCb` with your own cipher (AES-GCM, a KMS/TEE-backed cipher, etc.); everything else about
+how ORT calls the callback stays the same:
+
+```cpp
+// C++
+constexpr uint8_t g_key = 0x5A;  // must match the key ReadCb uses below
+
+OrtStatus* WriteCb(void* state, const char* name, const void* buffer, size_t n) noexcept {
+  // >>> Replace this block with your own encryption. <<<
+  std::ofstream out(name, std::ios::binary);
+  if (!out.is_open()) return Ort::GetApi().CreateStatus(ORT_FAIL, "open failed");
+  for (size_t i = 0; i < n; ++i) {
+    out.put(static_cast<const uint8_t*>(buffer)[i] ^ g_key);
+  }
+  return out ? nullptr : Ort::GetApi().CreateStatus(ORT_FAIL, "write failed");
+}
+
+Ort::ModelCompilationOptions compile_options(env, session_options);
+compile_options.SetEpContextEmbedMode(false);
+auto write_fn = Ort::Experimental::Get_OrtCompileApi_ModelCompilationOptions_SetEpContextDataWriteFunc_SinceV28_Fn(
+    &Ort::GetApi());
+if (write_fn == nullptr) {
+  // ORT core predates API v28; this feature is unavailable.
+  return;
+}
+Ort::ThrowOnError(write_fn(compile_options, WriteCb, /*state=*/nullptr));
+Ort::CompileModel(env, compile_options);
+```
+
+**Decrypt (read callback)** — set on `Ort::SessionOptions` before creating the inference session.
+ORT asks the callback for the plaintext bytes (by name) instead of reading the file directly.
+Replace the body of `ReadCb` with the matching decryption for whatever cipher `WriteCb` used:
+
+```cpp
+// C++
+constexpr uint8_t g_key = 0x5A;  // must match the key WriteCb used above
+
+OrtStatus* ReadCb(void* state, const char* name, OrtAllocator* allocator,
+                  void** buffer, size_t* size) noexcept {
+  // >>> Replace this block with your own decryption. <<<
+  std::ifstream in(name, std::ios::binary | std::ios::ate);
+  if (!in) return Ort::GetApi().CreateStatus(ORT_FAIL, "open failed");
+  std::streamoff n_signed = in.tellg();
+  if (n_signed < 0) return Ort::GetApi().CreateStatus(ORT_FAIL, "tellg failed");
+  size_t n = static_cast<size_t>(n_signed);
+  in.seekg(0);
+  if (!in) return Ort::GetApi().CreateStatus(ORT_FAIL, "seekg failed");
+  void* mem = allocator->Alloc(allocator, n);
+  if (mem == nullptr) return Ort::GetApi().CreateStatus(ORT_FAIL, "alloc failed");
+  in.read(static_cast<char*>(mem), static_cast<std::streamsize>(n));
+  if (static_cast<size_t>(in.gcount()) != n) {
+    allocator->Free(allocator, mem);
+    return Ort::GetApi().CreateStatus(ORT_FAIL, "read failed");
+  }
+  for (size_t i = 0; i < n; ++i) static_cast<uint8_t*>(mem)[i] ^= g_key;
+  *buffer = mem;
+  *size = n;
+  return nullptr;
+}
+
+Ort::SessionOptions inference_session_options;
+auto read_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
+    &Ort::GetApi());
+if (read_fn == nullptr) {
+  // ORT core predates API v28; this feature is unavailable.
+  return;
+}
+Ort::ThrowOnError(read_fn(inference_session_options, ReadCb, /*state=*/nullptr));
+Ort::Session session(env, ctx_model_path, inference_session_options);
+```
+
+If no callback is registered, the EP uses the legacy plaintext behavior.
+
 - File-mapped weights and this feature are mutually exclusive for a given session: registering a
   read callback disables file mapping for that session, since file mapping requires reading the
   on-disk bytes directly.
 
-**Scope — what is (and isn't) covered:**
+**What is (and isn't) covered:**
 
 - Only the standard EPContext artifact is encrypted: the external `_qnn.bin` (or the
   `EP_CACHE_CONTEXT`-referenced buffer) and the context-binary-list buffers used by multi-SoC /

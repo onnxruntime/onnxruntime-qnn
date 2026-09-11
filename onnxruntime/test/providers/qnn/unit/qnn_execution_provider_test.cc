@@ -8,7 +8,7 @@
 //     qnn_context_priority, htp_graph_finalization_optimization_mode, htp_arch, vtcm_mb,
 //     soc_model, device_id, file-mapped weights, share-resource-optimization, embed_mode,
 //     disable_cpu_ep_fallback / offload_graph_io_quantization conflict, fp16/bf16 validation,
-//     enable_htp_monolithic_lstm, json dump path warning, ep_input_graph dump,
+//     enable_htp_monolithic_lstm, enable_htp_matmul_lut, json dump path warning, ep_input_graph dump,
 //     ir DLC dump warnings, rpc_control_latency.
 //   - Constructor early throws: prepare_only without context_cache, bf16 without soc_model,
 //     bf16 with soc_model<88, fp16 without soc_model (Linux x86_64), backend_type +
@@ -684,6 +684,46 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmInvalid_LogsVe
                "Invalid value for ep.qnnexecutionprovider.enable_htp_monolithic_lstm");
 }
 
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutTrue_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutInvalid_LogsVerbose) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "maybe";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.enable_htp_matmul_lut");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutFalse_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "0";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+#else
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutUnsupported_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMatmulLutUnsupportedInvalidValue_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "maybe";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+#endif
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EmbedModeInvalidValue_Succeeds) {
   EpStubContext ctx;
   ctx.session_config["ep.context_embed_mode"] = "2";
@@ -851,10 +891,142 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DumpJsonGraphDirNonWritable_Succeeds)
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Succeeds) {
   EpStubContext ctx;
-  ctx.session_config[EPKey("htp_graphsplitter_num_prepare_threads")] = "4";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {
+  // Default (not set) must not log any graph-splitting warnings or errors.
+  // VERBOSE is intentionally captured so the severity filter below can verify
+  // there are no WARNING/ERROR-level graph-splitting messages; the pre-existing
+  // VERBOSE "User specified ... enable_htp_graph_splitting: 0" from ParseBoolOption
+  // is expected and excluded by the severity check.
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  for (const auto& rec : ctx.log_records) {
+    if (rec.severity >= ORT_LOGGING_LEVEL_WARNING) {
+      EXPECT_EQ(rec.message.find("graph_splitting"), std::string::npos)
+          << "Unexpected graph-splitting warning: " << rec.message;
+    }
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Enabled_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+// Two sessions: one with graph splitting enabled, one without.
+// Verifies the enabled flag is independently translated per session via the
+// VERBOSE log emitted when enable_htp_graph_splitting=1 is parsed.
+// Gated: the VERBOSE log is only compiled in when QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+// (SDK >= 2.49); on older builds enable_htp_graph_splitting_ is silently forced
+// to false and no VERBOSE log is emitted.
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_TwoSessions_EachTranslatesOwnValue) {
+  // Session 1: graph splitting enabled — must log the verbose confirmation.
+  {
+    EpStubContext ctx1;
+    ctx1.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx1.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+    auto factory1 = MakeFactory(ctx1);
+    EXPECT_NO_THROW({ auto ep1 = MakeEp(*factory1, ctx1); });
+    ExpectLogged(ctx1, ORT_LOGGING_LEVEL_VERBOSE, "enable_htp_graph_splitting: 1");
+  }
+
+  // Session 2: graph splitting not set — must NOT emit the graph-splitting verbose log.
+  {
+    EpStubContext ctx2;
+    ctx2.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    auto factory2 = MakeFactory(ctx2);
+    EXPECT_NO_THROW({ auto ep2 = MakeEp(*factory2, ctx2); });
+    for (const auto& rec : ctx2.log_records) {
+      EXPECT_EQ(rec.message.find("enable_htp_graph_splitting: 1"), std::string::npos)
+          << "Session 2 (splitting disabled) unexpectedly logged: " << rec.message;
+    }
+  }
+}
+#endif  // QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_WithEnable_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_ZeroSingleThreaded_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "0";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+// Two sessions with different htp_graph_splitting_num_prepare_threads values must
+// each translate their own value independently. The VERBOSE log emitted at parse
+// time is the observable signal: each EP's log capture must contain exactly its
+// own value and not the other session's value.
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_TwoSessions_EachTranslatesOwnValue) {
+  // Session 1: 4 threads.
+  {
+    EpStubContext ctx1;
+    ctx1.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx1.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+    ctx1.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
+    auto factory1 = MakeFactory(ctx1);
+    EXPECT_NO_THROW({ auto ep1 = MakeEp(*factory1, ctx1); });
+    ExpectLogged(ctx1, ORT_LOGGING_LEVEL_VERBOSE, "htp_graph_splitting_num_prepare_threads: 4");
+    for (const auto& rec : ctx1.log_records) {
+      if (rec.message.find("htp_graph_splitting_num_prepare_threads:") != std::string::npos) {
+        EXPECT_NE(rec.message.find("4"), std::string::npos)
+            << "Session 1 logged wrong thread count: " << rec.message;
+        EXPECT_EQ(rec.message.find("8"), std::string::npos)
+            << "Session 1 unexpectedly contains session 2's value: " << rec.message;
+      }
+    }
+  }
+
+  // Session 2: 8 threads — entirely independent EP instance with its own config.
+  {
+    EpStubContext ctx2;
+    ctx2.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx2.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+    ctx2.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "8";
+    auto factory2 = MakeFactory(ctx2);
+    EXPECT_NO_THROW({ auto ep2 = MakeEp(*factory2, ctx2); });
+    ExpectLogged(ctx2, ORT_LOGGING_LEVEL_VERBOSE, "htp_graph_splitting_num_prepare_threads: 8");
+    for (const auto& rec : ctx2.log_records) {
+      if (rec.message.find("htp_graph_splitting_num_prepare_threads:") != std::string::npos) {
+        EXPECT_NE(rec.message.find("8"), std::string::npos)
+            << "Session 2 logged wrong thread count: " << rec.message;
+        EXPECT_EQ(rec.message.find("4"), std::string::npos)
+            << "Session 2 unexpectedly contains session 1's value: " << rec.message;
+      }
+    }
+  }
+}
+
+#ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSdk_LogsWarning) {
+  // When built against SDK < 2.51, setting the option must log a warning and be ignored.
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_htp_graph_splitting")] = "1";
+  ctx.session_config[EPKey("htp_graph_splitting_num_prepare_threads")] = "4";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
+               "QAIRT SDK < 2.51");
+}
+#endif
 
 // ===========================================================================
 // Group 8: Constructor — early throws

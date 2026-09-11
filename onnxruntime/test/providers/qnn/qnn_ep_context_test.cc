@@ -1690,6 +1690,61 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 }
 
+// htp_reused_io_limit_mb: a valid numeric value is accepted when preparing and loading an AOT context.
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
+#if QNN_API_VERSION_MAJOR < 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
+  GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
+#elif defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
+#endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["htp_reused_io_limit_mb"] = "128";
+
+  std::unordered_map<std::string, std::string> session_option_pairs;
+  session_option_pairs.emplace("ep.qnnexecutionprovider.enable_htp_prepare_and_load", "1");
+
+  const TestInputDef<float> input_def({1, 2, 3}, false, -10.0f, 10.0f);
+  const std::string op_type = "Atan";
+
+  // prepare_and_load creates and reloads the QNN context in this session.
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       provider_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       session_option_pairs);
+}
+
+// htp_reused_io_limit_mb: malformed values (negative / non-numeric / non-integer) are logged as
+// errors and ignored rather than failing session creation.
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbMalformed_LoadsSucceeds) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
+#else
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  for (const char* bad_value : {"-1", "1.1", "10abc"}) {
+    ProviderOptions provider_options;
+    provider_options["backend_type"] = "htp";
+    provider_options["offload_graph_io_quantization"] = "0";
+    provider_options["htp_reused_io_limit_mb"] = bad_value;
+
+    auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                       TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+    RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                    provider_options,
+                    13,
+                    EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.008f)});
+  }
+#endif
+}
+
 // Run QDQ model on HTP 2 times
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // Then delete the context bin file to make the 2nd sesssion.Initialize() return the status with code INVALID_GRAPH
@@ -2386,18 +2441,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 #endif
 }
 
-TEST_F(QnnHTPBackendTests, FileMapping_Off) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
-#elif defined(__ANDROID__)
-  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
-#else
-
+static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_io_limit_mb = nullptr) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["disable_file_mapped_weights"] = "1";
+  if (htp_reused_io_limit_mb != nullptr) {
+    provider_options["htp_reused_io_limit_mb"] = htp_reused_io_limit_mb;
+  }
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // By default, 8 is used, which will impact time to run all
@@ -2507,6 +2558,31 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
     std::remove(ctx_model_path.c_str());
   }
   std::remove(qnn_ctx_binary_file_name1.c_str());
+}
+
+TEST_F(QnnHTPBackendTests, FileMapping_Off) {
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  RunSharedContextWithFileMappingDisabledTest();
+#endif
+}
+
+// Verifies that htp_reused_io_limit_mb is accepted as a group-level config when
+// htp_share_resource_optimization loads contexts with contextCreateFromBinaryListAsync.
+TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_LoadsSucceeds) {
+#if QNN_API_VERSION_MAJOR < 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
+  GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
+#elif !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "contextCreateFromBinaryListAsync execution requires a real ARM64 HTP device.";
+#elif defined(__ANDROID__)
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
+#else
+  RunSharedContextWithFileMappingDisabledTest("128");
 #endif
 }
 
@@ -3302,8 +3378,8 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 // On SDK 2.48 the Graph Splittling config block is compiled out; the test still passes because
 // QnnContext_create succeeds without option 22.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+#if !(defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+      (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49)))
   GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #else
   ProviderOptions provider_options;
@@ -3381,6 +3457,73 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
   EXPECT_TRUE(std::filesystem::exists(ctx_path));
 
   CleanUpCtxFile(ctx_path);
+}
+
+// Test 3: Graph Splitting with explicit num_prepare_threads — end-to-end execution (compile + Run).
+// Verifies that the new htp_graph_splitting_num_prepare_threads option is accepted, the context
+// binary is produced, and that a subsequent inference Run() completes without error.
+// Requires QAIRT SDK 2.51+ for the num_prepare_threads config entry; on older SDK builds the
+// option is consumed by ORT_UNUSED_PARAMETER and the test still passes as the session simply
+// ignores the thread-count config.
+TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_ExecutionSucceeds) {
+#if !(defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+      (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49)))
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#else
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_graph_splitting_num_threads_exec_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetGraphSplittingOptions(so, ctx_path);
+  so.AddConfigEntry("ep.qnnexecutionprovider.htp_graph_splitting_num_prepare_threads", "2");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  auto& session = scoped.session();
+  ASSERT_TRUE(std::filesystem::exists(ctx_path));
+
+  // Run inference to verify end-to-end execution succeeds with the option set.
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
+  auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
+
+  std::vector<int64_t> input_dim{200, 200};
+  std::vector<float> input_data(200 * 200, 0.0f);
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                input_dim.data(), input_dim.size()));
+  const char* input_names[] = {input_name_ptr.get()};
+  const char* output_names[] = {output_name_ptr.get()};
+
+  EXPECT_NO_THROW(session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1));
+
+  CleanUpCtxFile(ctx_path);
+#endif
 }
 
 // ==============================================================================

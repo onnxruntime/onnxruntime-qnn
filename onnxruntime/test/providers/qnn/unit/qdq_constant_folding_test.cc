@@ -79,6 +79,24 @@ std::vector<int8_t> AsInt8(const std::vector<uint8_t>& bytes) {
   return out;
 }
 
+// Minimal DQ input def: the fold decision reads only the input's name, the registered
+// initializer's element type, and the scale's shape (a >1-element scale is per-channel).
+OrtNodeUnitIODef QuantizedInputDef(const std::string& name, const OrtValueInfo* scale) {
+  OrtNodeUnitIODef io_def;
+  io_def.name = name;
+  io_def.type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  io_def.quant_param = OrtNodeUnitIODef::QuantParam{scale};
+  return io_def;
+}
+
+bool CanSubstitute(qnn::QnnModelWrapper& wrapper, const std::string& name, const OrtValueInfo* scale) {
+  bool can_substitute = false;
+  EXPECT_TRUE(qnn::CanSubstituteRuntimeDequantize(wrapper, QuantizedInputDef(name, scale),
+                                                  can_substitute)
+                  .IsOK());
+  return can_substitute;
+}
+
 }  // namespace
 
 TEST(QnnUnit_QdqConstantFoldingTest, ConstantBytes_Int4_AreSignExtended) {
@@ -118,6 +136,48 @@ TEST(QnnUnit_QdqConstantFoldingTest, ConstantBytes_UnknownTensor_Fails) {
   MockInitWrapperFixture fx;
   std::vector<uint8_t> bytes;
   EXPECT_FALSE(qnn::GetEffectivelyConstantTensorBytes(*fx.wrapper, "missing", bytes).IsOK());
+}
+
+// A per-channel or INT4/INT2 constant must fold at any size: QNN has no standalone
+// per-channel Dequantize, and declining would also stop constant-ness from reaching the
+// next Q/DQ hop, which is what keeps chained weights STATIC instead of graph inputs.
+TEST(QnnUnit_QdqConstantFoldingTest, RuntimeDequantizeSubstitute_Refused_MustFold) {
+  MockInitWrapperFixture fx;
+  g_mock_init_reg.AddTensorUint8("w_u8", {4}, {0, 1, 2, 3});
+  g_mock_init_reg.AddTensorInt4As8bit("w_i4", {4}, {-8, -1, 1, 7});
+  const OrtValueInfo* per_tensor_scale = g_mock_init_reg.AddScalarFloat("scale", 0.1f);
+  const OrtValueInfo* per_channel_scale = g_mock_init_reg.AddTensorFloat("scales", {4},
+                                                                         {0.1f, 0.2f, 0.3f, 0.4f});
+
+  EXPECT_FALSE(CanSubstitute(*fx.wrapper, "w_u8", per_channel_scale));
+  EXPECT_FALSE(CanSubstitute(*fx.wrapper, "w_i4", per_tensor_scale));
+}
+
+// Everything else dequantizes identically at runtime, so the size budget may decline it.
+// UINT4 is included deliberately: only the signed sub-byte types carry the high-bit mask
+// hazard that the fold path has to undo.
+TEST(QnnUnit_QdqConstantFoldingTest, RuntimeDequantizeSubstitute_Allowed) {
+  MockInitWrapperFixture fx;
+  g_mock_init_reg.AddTensorUint8("w_u8", {4}, {0, 1, 2, 3});
+  g_mock_init_reg.AddTensorUint4As8bit("w_u4", {4}, {0, 1, 14, 15});
+  const OrtValueInfo* per_tensor_scale = g_mock_init_reg.AddScalarFloat("scale", 0.1f);
+
+  EXPECT_TRUE(CanSubstitute(*fx.wrapper, "w_u8", per_tensor_scale));
+  EXPECT_TRUE(CanSubstitute(*fx.wrapper, "w_u4", per_tensor_scale));
+  // An unregistered name is a previously-folded intermediate: plain bytes, no mask hazard.
+  EXPECT_TRUE(CanSubstitute(*fx.wrapper, "folded_intermediate", per_tensor_scale));
+}
+
+// Size boundary for the inputs the checks above admit. Exact by construction: the budget
+// is compared in elements so an adversarial shape cannot wrap past it.
+TEST(QnnUnit_QdqConstantFoldingTest, SkipPredicate_SmallFolds) {
+  EXPECT_FALSE(qnn::ShouldSkipConstantDQFold(6));           // bias-sized tensors fold
+  EXPECT_FALSE(qnn::ShouldSkipConstantDQFold(256 * 1024));  // exactly at budget: fold
+}
+
+TEST(QnnUnit_QdqConstantFoldingTest, SkipPredicate_LargeSkips) {
+  EXPECT_TRUE(qnn::ShouldSkipConstantDQFold(256 * 1024 + 1));  // just past budget
+  EXPECT_TRUE(qnn::ShouldSkipConstantDQFold(1536 * 6144));     // psx0 FC dims: 36 MB as FP32
 }
 
 }  // namespace test

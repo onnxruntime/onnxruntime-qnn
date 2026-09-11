@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -346,6 +347,31 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   return result;
 }
 
+template <typename T>
+static void ParseIntegerOption(const OrtApi& ort_api,
+                               const OrtSessionOptions& session_options,
+                               const std::string& key,
+                               T default_value,
+                               T& out,
+                               const Ort::Logger& logger) {
+  out = default_value;
+  std::string value_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options, key, std::to_string(default_value), value_str);
+  // An explicitly provided option may have an empty value. Treat it as default.
+  if (value_str.empty()) {
+    return;
+  }
+
+  const char* begin = value_str.data();
+  const char* end = begin + value_str.size();
+  auto [ptr, ec] = std::from_chars(begin, end, out);
+  if (ec != std::errc{} || ptr != end) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
+                ("Ignoring malformed " + key + ": " + value_str).c_str());
+    out = default_value;
+  }
+}
+
 // Creates `dir` (and any missing parents) and verifies it is writable by
 // round-tripping a small probe file. Returns true on success. On failure,
 // logs a WARNING tagged with `feature_name` so callers can disable the
@@ -484,7 +510,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
                                   htp_graph_configs_.htp_graph_finalization_opt_mode,
                                   htp_graph_configs_.enable_htp_fp16_precision,
                                   htp_graph_configs_.enable_htp_monolithic_lstm,
-                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow};
+                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow,
+                                  htp_graph_configs_.enable_htp_matmul_lut};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -991,6 +1018,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+  htp_graph_configs_.enable_htp_matmul_lut = ParseBoolOption(ort_api,
+                                                             session_options_,
+                                                             FormatEPConfigKey("enable_htp_matmul_lut"),
+                                                             true,
+                                                             logger_);
+#endif
+
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
   // Declare outside the if scope since there are users later. They may be overwritten in the else branch.
@@ -1353,6 +1388,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                    false,
                                                    logger_);
 
+  // Caps the reused IO buffer size at context load. See docs; 0 = SDK default.
+  static constexpr const char* kHtpReusedIoLimitMb = "htp_reused_io_limit_mb";
+  uint64_t reused_io_limit_mb = 0;
+  ParseIntegerOption(ort_api, session_options_, FormatEPConfigKey(kHtpReusedIoLimitMb),
+                     uint64_t{0}, reused_io_limit_mb, logger_);
+#ifndef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+  if (reused_io_limit_mb > 0) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "htp_reused_io_limit_mb was set, but this build was compiled against QAIRT SDK older than 2.45. "
+                "The option will be ignored.");
+    reused_io_limit_mb = 0;
+  }
+#endif
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              (std::string(kHtpReusedIoLimitMb) + ": " + std::to_string(reused_io_limit_mb)).c_str());
+
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -1367,7 +1418,53 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Graph splitting is not available and the option will be ignored.");
     enable_htp_graph_splitting_ = false;
   }
+#else
+  if (enable_htp_graph_splitting_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "enable_htp_graph_splitting: 1");
+  }
 #endif
+
+  // Number of threads used to prepare split subgraphs in parallel. Requires QAIRT SDK 2.51+.
+  // UINT32_MAX (default) enables auto-selection: min(max(1, hardware_concurrency), num_splits).
+  // Only meaningful when enable_htp_graph_splitting=1.
+  {
+    std::string num_threads_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   FormatEPConfigKey("htp_graph_splitting_num_prepare_threads"),
+                                   "",
+                                   num_threads_str);
+    if (!num_threads_str.empty()) {
+      bool parse_ok = false;
+      try {
+        unsigned long parsed = std::stoul(num_threads_str);
+        if (parsed > static_cast<unsigned long>(UINT32_MAX)) {
+          ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                      ("htp_graph_splitting_num_prepare_threads value '" + num_threads_str +
+                       "' exceeds UINT32_MAX. Using UINT32_MAX (auto-select).")
+                          .c_str());
+        } else {
+          htp_graph_splitting_num_prepare_threads_ = static_cast<uint32_t>(parsed);
+          parse_ok = true;
+        }
+      } catch (const std::exception& e) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                    ("htp_graph_splitting_num_prepare_threads: invalid value '" + num_threads_str +
+                     "' (" + e.what() + "). Using UINT32_MAX (auto-select).")
+                        .c_str());
+      }
+      if (parse_ok) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                    ("htp_graph_splitting_num_prepare_threads: " + num_threads_str).c_str());
+#ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                    "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
+                    "QAIRT SDK < 2.51. The option will be ignored.");
+        htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
+#endif
+      }
+    }
+  }
 
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
@@ -1414,7 +1511,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      op_packages,
                                      skip_qnn_version_check,
                                      enable_framework_op_trace_,
-                                     skip_backend_op_validation},
+                                     skip_backend_op_validation,
+                                     reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
@@ -1830,6 +1928,20 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_config->customConfig = htp_fp16_clamp_config;
 #endif
     }
+
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+    if (configs.enable_htp_matmul_lut) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> matmul_lut_config = configs_builder.PushCustomConfig();
+      matmul_lut_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG;
+      matmul_lut_config->finalizeConfig.key = "enable_matmul_lut";
+      matmul_lut_config->finalizeConfig.value.dataType = QNN_DATATYPE_BOOL_8;
+      matmul_lut_config->finalizeConfig.value.bool8Value = 1;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = matmul_lut_config;
+    }
+#endif
   }
 }
 
@@ -2152,7 +2264,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 *ep->io_dispatch_,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
-                                                ep->enable_htp_graph_splitting_);
+                                                ep->enable_htp_graph_splitting_,
+                                                ep->htp_graph_splitting_num_prepare_threads_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
@@ -3719,7 +3832,8 @@ Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
                                                                   ep_.enable_htp_extended_udma_mode_,
                                                                   ep_.prepare_only_,
                                                                   ep_.enable_htp_ref_weight_sharing_,
-                                                                  ep_.enable_htp_graph_splitting_));
+                                                                  ep_.enable_htp_graph_splitting_,
+                                                                  ep_.htp_graph_splitting_num_prepare_threads_));
 
   if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
     ep_.CreateHtpPowerConfigId();

@@ -427,6 +427,34 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Sigmoid_U16) {
                          true);  // Use MS domain Q/DQ ops
 }
 
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_FP16) {
+  RunFP16OpTest("Swish",
+                {TestInputDef<float>({7}, false, {-4.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 4.0f})},
+                {},
+                24,
+                ExpectedEPNodeAssignment::All,
+                kOnnxDomain,
+                0.01f);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_QDQ_U8) {
+  RunQDQOpTest<uint8_t>("Swish",
+                        {TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})},
+                        {},
+                        24,
+                        ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_QDQ_U16) {
+  RunQDQOpTest<uint16_t>("Swish",
+                         {TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})},
+                         {},
+                         24,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);
+}
+
 // Test the accuracy of QDQ Tanh.
 TEST_F(QnnHTPBackendTests, UnaryOp_Tanh) {
   RunQDQOpTest<uint8_t>("Tanh",
@@ -577,6 +605,35 @@ static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
     }
   }
   return false;
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_QnnGraph) {
+  const std::filesystem::path json_qnn_graph_dir = "UnaryOp_Swish_QnnGraph";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup =
+      gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})};
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Swish_node", "Swish", input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>("Swish_node", "Swish", input_defs, {}, {}),
+                       provider_options,
+                       24,
+                       ExpectedEPNodeAssignment::All);
+
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Sigmoid", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 // Builds a QDQ model and asserts the op emits as its dedicated fine-grained QNN op name.

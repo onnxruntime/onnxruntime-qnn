@@ -139,6 +139,8 @@ struct QnnBackendManagerConfig {
   // remains constant for the manager's lifetime.
   bool enable_framework_op_trace = false;
   bool skip_backend_op_validation = false;
+  // Caps the reused IO buffer size at context load. 0 = SDK default.
+  uint64_t reused_io_limit_mb = 0;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -166,6 +168,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         profiling_level_(config.profiling_level),
         profiling_file_path_(config.profiling_file_path),
         enable_framework_op_trace_(config.enable_framework_op_trace),
+        reused_io_limit_mb_(config.reused_io_limit_mb),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
@@ -266,7 +269,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
-      bool enable_htp_graph_splitting = false);
+      bool enable_htp_graph_splitting = false,
+      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -276,7 +280,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,
-                                    bool enable_htp_graph_splitting = false);
+                                    bool enable_htp_graph_splitting = false,
+                                    uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   void ReleaseDeviceAndContext();
 
@@ -527,7 +532,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
                             bool enable_htp_ref_weight_sharing,
-                            bool enable_htp_graph_splitting = false);
+                            bool enable_htp_graph_splitting = false,
+                            uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
@@ -813,6 +819,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
   int htp_share_resource_optimization_ = -1;
+  uint64_t reused_io_limit_mb_ = 0;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;

@@ -890,6 +890,95 @@ TEST_F(QnnGPUBackendTests, MatMulOp_rank1) {
 
 #endif  // defined(_M_ARM64) GPU tests
 
+// Builds: w_q0 (int8 init) -> DQ0 -> Q1 -> DQ1 -> MatMul. Qwen-class weight chain:
+// per-channel INT8 quantized along the output dim (axis=1 on [K,N]), with a real
+// requant hop (s0 != s1), at Qwen3-0.6B q/k/v/o-proj dims (1024x1024 = 1M elems, past
+// the 1 MiB fold budget). Regression test for #339: per-channel weights must keep
+// folding through every hop at any size, or the chain's tail loses QNN support and the
+// weight resurfaces as an APP_WRITE graph input.
+//
+// One-hot input, as in the conv cutoff test: output[n] becomes w_dq[0][n] with no
+// reduction, so the requantized weights are compared directly at 1e-4 instead of through
+// a 1024-term fp32 reduction whose summation order differs between QNN CPU and the ORT
+// reference. Row 0 spans all 256 int8 values (17 is coprime with 256).
+static GetTestModelFn BuildPerChannelQDQChainMatMulTestCase(int64_t K, int64_t N) {
+  return [K, N](ModelTestBuilder& builder) {
+    std::vector<float> input_data(static_cast<size_t>(K), 0.0f);
+    input_data[0] = 1.0f;
+    builder.MakeInput<float>("input", {1, K}, input_data);
+    std::vector<int8_t> w(static_cast<size_t>(K * N));
+    for (int64_t k = 0; k < K; ++k) {
+      for (int64_t n = 0; n < N; ++n) {
+        w[static_cast<size_t>(k * N + n)] = static_cast<int8_t>(((k * 31 + n * 17) % 256) - 128);
+      }
+    }
+    builder.MakeInitializer<int8_t>("w_q0", {K, N}, w);
+    std::vector<float> s0(static_cast<size_t>(N), 0.02f), s1(static_cast<size_t>(N), 0.05f);
+    std::vector<int8_t> z0(static_cast<size_t>(N), 0), z1(static_cast<size_t>(N), -2);
+    builder.MakeInitializer<float>("s0", {N}, s0);
+    builder.MakeInitializer<int8_t>("z0", {N}, z0);
+    builder.MakeInitializer<float>("s1", {N}, s1);
+    builder.MakeInitializer<int8_t>("z1", {N}, z1);
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", int64_t{1}));
+    builder.AddNode("DQ0", "DequantizeLinear", {"w_q0", "s0", "z0"}, {"w_dq0"}, kOnnxDomain,
+                    axis_attrs);
+    builder.AddNode("Q1", "QuantizeLinear", {"w_dq0", "s1", "z1"}, {"w_q1"}, kOnnxDomain, axis_attrs);
+    builder.AddNode("DQ1", "DequantizeLinear", {"w_q1", "s1", "z1"}, {"w_dq"}, kOnnxDomain,
+                    axis_attrs);
+    builder.MakeOutput("output");
+    builder.AddNode("MatMul", "MatMul", {"input", "w_dq"}, {"output"}, kOnnxDomain);
+  };
+}
+
+// No HTP mirror: the fold policy is backend-agnostic and the numerics of folded per-channel
+// weights are already covered by the small HTP folding tests.
+TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
+  namespace fs = std::filesystem;
+  // Use error_code overloads: throwing filesystem calls would terminate the whole
+  // test binary (no *.results.xml, CI exit code 1) instead of failing one test.
+  std::error_code ec;
+  fs::path graph_dir;
+  try {
+    graph_dir = fs::temp_directory_path(ec) / "MatMulQwenQProjMustFold";
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to resolve temp directory: " << ex.what();
+    return;
+  }
+  ASSERT_FALSE(ec) << "Failed to resolve temp directory: " << ec.message();
+  fs::remove_all(graph_dir, ec);
+  ASSERT_FALSE(ec) << "Failed to clean QNN graph dir " << graph_dir << ": " << ec.message();
+  ASSERT_TRUE(fs::create_directories(graph_dir, ec) && !ec)
+      << "Failed to create QNN graph dir " << graph_dir << ": " << ec.message();
+  auto cleanup = gsl::finally([&graph_dir]() {
+    std::error_code cleanup_ec;
+    fs::remove_all(graph_dir, cleanup_ec);
+  });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  RunQnnModelTest(BuildPerChannelQDQChainMatMulTestCase(/*K*/ 1024, /*N*/ 1024),
+                  provider_options,
+                  /*opset*/ 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-4f)});
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  // Every hop folded: the QNN graph is MatMul alone, with the weight as a STATIC tensor. A
+  // surviving Quantize/Dequantize would mean the chain stopped folding, which is how #339's
+  // 224 leaked v_proj weight inputs appeared.
+  AssertOpInQnnGraph(graph_dir, "Dequantize", 0);
+  AssertOpInQnnGraph(graph_dir, "Quantize", 0);
+  // The cost side of the per-channel exemption: the 4 MiB FP32 weight is in the DLC.
+  AssertFp32StaticBytesAbove(graph_dir, /*min_bytes*/ 1024 * 1024);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
