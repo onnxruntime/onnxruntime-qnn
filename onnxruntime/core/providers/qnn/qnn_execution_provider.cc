@@ -2272,6 +2272,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
+  // The GQA builder has a known performance regression on HTP, so keep GQA on CPU by default.
+  // Users can explicitly opt into HTP through the op_affinity configuration.
+  if (ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::HTP) {
+    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+  }
+
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
@@ -3043,11 +3049,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   } else {
     RETURN_IF_NOT_NULL(ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos));
   }
-
-  // Clean up transient GetCapability→Compile state.
-  // NOTE: tensor_name_overrides_ must NOT be cleared here; it is read by CreateEPContextNodes
-  // below to serialize the io_name_overrides attribute into the EPContext model.
-  ep->onnx_graph_io_names_.reset();
 
   // Framework op trace: record SoC trace(s), then finalize and write.
   if (ep->enable_framework_op_trace_) {

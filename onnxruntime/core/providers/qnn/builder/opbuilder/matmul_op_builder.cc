@@ -233,37 +233,6 @@ class MatMulOpBuilder : public BaseOpBuilder {
 };
 
 namespace {
-inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
-  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
-}
-
-Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& input_def_0,
-                        const OrtNodeUnitIODef& input_def_1, TensorInfo& input_info_0, TensorInfo& input_info_1,
-                        bool& use_fully_connected) {
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def_0, input_info_0));
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def_1, input_info_1));
-
-#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
-  // Validation crashes if use QNN FullyConnected in QNN SDK versions 2.26 - 2.27
-  // Just use QNN MatMul for these older QNN SDK versions.
-  use_fully_connected = false;
-#else
-  // Use FullyConnected if 2nd input is a rank 2 initializer or a rank 1 tensor.
-  // FullyConnected cannot pass the Op validation if keep_dims is true, so if input_0 is per-channel quantized tensor
-  // with rank > 2, it's not easy to set the quantization parameters for the output reshaped rank 2 tensor.
-  // In this case, we will not use FullyConnected.
-  use_fully_connected =
-      (input_info_1.shape.size() == 2 && input_info_1.is_initializer) || input_info_1.shape.size() == 1;
-  use_fully_connected =
-      use_fully_connected && !(input_info_0.quant_param.IsPerChannel() && input_info_0.shape.size() > 2);
-  // Don't use FullyConnected if both inputs are dynamic and uint16 (quantized)
-  use_fully_connected = use_fully_connected && !(IsQuant16bit(input_info_0.qnn_data_type) &&
-                                                 !input_info_0.is_initializer &&
-                                                 IsQuant16bit(input_info_1.qnn_data_type) &&
-                                                 !input_info_1.is_initializer);
-#endif
-  return Ort::Status();
-}
 
 // Process input[0] for ONNX MatMul that can be translated to either a QNN MatMul or a QNN FullyConnected.
 Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
@@ -857,7 +826,13 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   QnnQuantParamsWrapper op_output_quant_param = output_info.quant_param.Copy();
   if (reshape_output) {
     op_output_name = utils::UniqueNameGenerator().New(org_output_name, "_reshape");
-    if (use_fully_connected && input_info_0.shape.size() > 2) {
+    if (use_conv2d) {
+      op_output_shape.insert(op_output_shape.end() - 2, 1);
+      if (op_output_shape.size() < 4) {
+        op_output_shape.insert(op_output_shape.begin(), 1);
+      }
+      RETURN_IF_ERROR(op_output_quant_param.HandleUnsqueeze<uint32_t>(output_info.shape, op_output_shape));
+    } else if (use_fully_connected && input_info_0.shape.size() > 2) {
       op_output_shape = {std::accumulate(input_info_0.shape.begin(), input_info_0.shape.end() - 1,
                                          static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
                          reshape_input_1 ? 1 : input_info_1.shape.back()};
