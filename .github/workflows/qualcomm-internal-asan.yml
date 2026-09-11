@@ -20,6 +20,30 @@ jobs:
           fetch-depth: 0
           # submodules omitted here; initialized below only when ASan is needed.
 
+      - name: Disk usage diagnostics
+        run: |
+          echo "===== df -h ====="
+          df -h
+          echo "===== actions-runner top-level ====="
+          du -h -d1 /local/mnt/workspace/actions-runner 2>/dev/null | sort -h | tail -20
+          echo "===== Top dirs under workspace parent ====="
+          du -h -d1 "$(dirname "${{ github.workspace }}")" 2>/dev/null | sort -h | tail -20
+          echo "===== Top dirs under HOME ====="
+          du -h -d1 "$HOME" 2>/dev/null | sort -h | tail -20
+          echo "===== ort-build-tools versions ====="
+          du -h -d1 "$HOME/ort-build-tools" 2>/dev/null | sort -h | tail -40
+
+      - name: Clean previous build directory
+        run: |
+          BUILD_DIR="${{ github.workspace }}/build/linux-x86_64/Debug"
+          if [ -d "$BUILD_DIR" ]; then
+            echo "Found previous build dir, size:"
+            du -sh "$BUILD_DIR"
+            rm -rf "$BUILD_DIR"
+          else
+            echo "No previous build dir at $BUILD_DIR — nothing to clean."
+          fi
+
       - name: Check if ASan is needed
         id: gate
         run: |
