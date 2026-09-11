@@ -486,18 +486,43 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
 
         bool used_bw_block_mapped = false;
 #if defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
-        // 2-bit Standard Symmetric BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
+        // 2-bit BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
         // Gated to SDK >= 2.51: the native W2A16 HTP kernel is not available until 2.51.
-        if (!used_lpbq && bits == 2 && is_act_16bitquant && zp_is_symmetric) {
+        // Symmetric → STANDARD_SYMMETRIC (offsets=0), Asymmetric → ASYMMETRIC_PLUS_ONE (offsets from ZP tensor).
+        if (!used_lpbq && bits == 2 && is_act_16bitquant) {
           const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
-          const std::vector<int32_t> per_block_int32_offset(total_blocks, 0);
+
+          Qnn_QuantizationEncodingMapping_t mapping;
+          std::vector<int32_t> per_block_int32_offset;
+          if (zp_is_symmetric) {
+            mapping = QNN_QUANTIZATION_ENCODING_MAPPING_STANDARD_SYMMETRIC;
+            per_block_int32_offset.assign(total_blocks, 0);
+          } else {
+            mapping = QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE;
+            // Unpack block-quantized zero-points and convert to int32 offsets per QNN convention.
+            std::vector<uint8_t> per_block_uint8_zp;
+            const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
+            RETURN_IF_NOT(zp_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
+            RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
+            std::vector<float> per_block_float_zp;
+            UnpackDataToDatatype<float>(per_block_uint8_zp, bits, num_zp_per_uint8, per_block_float_zp);
+
+            const float offset_shift = static_cast<float>(1 << (bits - 1));
+            per_block_int32_offset.resize(per_block_float_zp.size());
+            for (size_t idx = 0; idx < per_block_float_zp.size(); ++idx) {
+              per_block_int32_offset[idx] = static_cast<int32_t>(-(per_block_float_zp[idx] - offset_shift));
+            }
+          }
+
           quantize_param = QnnQuantParamsWrapper::BwBlockMapped(per_block_float_scale,
                                                                 per_block_int32_offset,
                                                                 gsl::narrow_cast<uint32_t>(bits),
                                                                 block_sizes,
-                                                                QNN_QUANTIZATION_ENCODING_MAPPING_STANDARD_SYMMETRIC);
+                                                                mapping);
           used_bw_block_mapped = true;
-          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (STANDARD_SYMMETRIC) for " + weight_tensor_name).c_str());
+          const char* mapping_str = zp_is_symmetric ? "STANDARD_SYMMETRIC" : "ASYMMETRIC_PLUS_ONE";
+          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                      ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (" + std::string(mapping_str) + ") for " + weight_tensor_name).c_str());
         }
 #endif  // QNN_SDK_VERSION_MINOR >= 51
 
