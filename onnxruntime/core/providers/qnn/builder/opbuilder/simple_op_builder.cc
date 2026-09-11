@@ -347,7 +347,7 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
     std::string out_name;
 
     if (!is_last || output_quantized || needs_int64_cast) {
-      out_name = node_unit.Name() + "_fold_" + std::to_string(i);
+      out_name = utils::NodeUnitBaseName(node_unit) + "_fold_" + std::to_string(i);
       RETURN_IF_NOT(add_tensor(out_name, QNN_TENSOR_TYPE_NATIVE, intermediate_dtype,
                                QnnQuantParamsWrapper(), std::vector<uint32_t>(running_shape)),
                     "AddTensorWrapper failed for fold output.");
