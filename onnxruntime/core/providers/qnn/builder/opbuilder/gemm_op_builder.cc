@@ -154,8 +154,10 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   std::vector<int64_t> input_trans_flag(3, 0);
   input_trans_flag.at(0) = node_helper.Get("transA", (int64_t)0);
   auto transB = node_helper.Get("transB", (int64_t)0);
-  // QNN input_1 [m, n] vs Onnx [n, m]
-  input_trans_flag.at(1) = transB == 0 ? 1 : 0;
+  const bool use_matmul_path = qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc;
+  // FC path needs weight in [N,K]; MatMul path keeps weight in [K,N] and expresses the
+  // transpose via QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1 instead of a host-side data transpose.
+  input_trans_flag.at(1) = (!use_matmul_path && transB == 0) ? 1 : 0;
   for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
     // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
     if (input_i == 2 && beta == 0.0f) {
@@ -553,6 +555,9 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                               qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE;
   const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias);
 
+  const bool use_matmul = qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc;
+  const int64_t trans_a_out = node_helper.Get("transA", static_cast<int64_t>(0));
+
   if (requires_fc_add_decomposition) {
     // Gemm input and output must be at least rank 2 for the FC + Add decomposition.
     const std::string& org_output_name = node_unit.Outputs()[0].name;
@@ -565,7 +570,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
 
-    // Create FullyConnected Node
+    // Create MatMul or FullyConnected node (inputs [0] and [1] only; bias handled by Add below).
     std::vector<std::string> gemm_input_0_1;
     gemm_input_0_1.push_back(input_names[0]);
     gemm_input_0_1.push_back(input_names[1]);
@@ -574,14 +579,33 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                             QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fully_connected_output)),
                   "Failed to add FullyConnected output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_FULLY_CONNECTED,
-                                                  std::move(gemm_input_0_1),
-                                                  {fc_output_name},
-                                                  {},
-                                                  do_op_validation),
-                  "Failed to add FullyConnected node.");
+
+    if (use_matmul) {
+      std::vector<std::string> matmul_param_tensor_names;
+      RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         trans_a_out != 0,
+                                         QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, matmul_param_tensor_names));
+      RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         trans_b_out != 0,
+                                         QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, matmul_param_tensor_names));
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_MAT_MUL),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_MAT_MUL,
+                                                    std::move(gemm_input_0_1),
+                                                    {fc_output_name},
+                                                    std::move(matmul_param_tensor_names),
+                                                    do_op_validation),
+                    "Failed to add MatMul node (FC+Add decomposition path).");
+    } else {
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_FULLY_CONNECTED,
+                                                    std::move(gemm_input_0_1),
+                                                    {fc_output_name},
+                                                    {},
+                                                    do_op_validation),
+                    "Failed to add FullyConnected node.");
+    }
 
     // Create Add Node
     Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
@@ -600,6 +624,17 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                   {},
                                                   do_op_validation),
                   "Failed to add ElementWiseAdd node.");
+  } else if (use_matmul) {
+    std::vector<std::string> param_tensor_names;
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                       trans_a_out != 0,
+                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, param_tensor_names));
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                       trans_b_out != 0,
+                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, param_tensor_names));
+    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
+                                   std::move(param_tensor_names),
+                                   logger, do_op_validation, QNN_OP_MAT_MUL));
   } else {
     RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
                                    logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
