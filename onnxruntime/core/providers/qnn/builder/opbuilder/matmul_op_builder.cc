@@ -115,6 +115,10 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
   // Don't use FullyConnected for LPBQ weights
   use_fully_connected = use_fully_connected && !use_conv2d;
 #endif
+  // POC override: suppress FC translation
+  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
+    use_fully_connected = false;
+  }
   return Ort::Status();
 }
 
