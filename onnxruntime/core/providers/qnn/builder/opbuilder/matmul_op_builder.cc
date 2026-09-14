@@ -346,6 +346,12 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
 
   // Inserts a QNN Convert op before uint16 input[1] to avoid QNN HTP validation failure.
   //
+  // Gated on the NPU backend: the constraints worked around here (input[1] must be symmetric, and
+  // must be per-tensor quantized) are imposed by the HTP backend, not by the QNN API, and HTP has
+  // relaxed them across releases. The DLC/Saver serializer flows still report their intended
+  // backend here (see QnnBackendManager::LoadQnnSerializerBackend), so a serialized HTP graph
+  // keeps the workaround.
+  //
   // QNN graph that fails validation:
   //     input_0_uint16 ---> MatMul ---> output_uint16
   //                         ^
@@ -363,7 +369,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   //                                             ^
   //                                             |
   //     input_1_uint16 --> Convert(int16_sym) --+
-  if (!input_info_0.is_initializer &&
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      !input_info_0.is_initializer &&
       input_info_0.qnn_data_type == input_info_1.qnn_data_type &&
       input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
     RETURN_IF_NOT(input_info_1.quant_param.IsPerTensor(),
@@ -475,7 +482,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
   input_names.emplace_back(input_1_name);
 
   // Workaround that inserts a QNN Convert op before input[1] (converts from quantized uint16 to signed symmetric int16)
-  // to avoid a QNN validation failure.
+  // to avoid a QNN HTP validation failure. Gated on the NPU backend for the same reason as the
+  // uint16 workaround in ProcessInputsForQnnMatMul().
   //
   // QNN graph WITHOUT workaround (fails validation):
   //     input_0_uint16 ---> FC ---> output_uint16
@@ -492,7 +500,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
   std::string weight_input_name = input_names.back();
   const auto& weight_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(weight_input_name);
 
-  if (weight_tensor_wrapper.GetTensorDataType() == QNN_DATATYPE_UFIXED_POINT_16) {
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      weight_tensor_wrapper.GetTensorDataType() == QNN_DATATYPE_UFIXED_POINT_16) {
     const auto& quant_param_wrapper = weight_tensor_wrapper.GetQnnQuantParams();
     const Qnn_QuantizeParams_t& quant_param = quant_param_wrapper.Get();
     const auto& transformed_input1_shape = weight_tensor_wrapper.GetTensorDims();

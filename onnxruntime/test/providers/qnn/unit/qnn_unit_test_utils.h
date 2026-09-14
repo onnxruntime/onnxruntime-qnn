@@ -128,6 +128,9 @@ class OrtGlobalApiOverride {
 // QnnModelWrapper::IsConstantInput() safely return false on graphs with no
 // initializers — the default fixture for almost every test. Tests that need
 // non-zero initializers replace these two stubs before constructing the wrapper.
+// Experimental-function lookup is also installed: the fake runtime provides no
+// experimental APIs, so it reports them unavailable rather than calling through
+// an unset function-table entry.
 //
 // MakeApiPtrs() returns an ApiPtrs view over the three stub tables AND verifies
 // that the initializer-query stubs are still installed (a test that wholesale
@@ -141,6 +144,9 @@ struct OrtApiStubContext {
   OrtModelEditorApi stub_editor_api{};
 
   OrtApiStubContext() {
+    stub_ort_api.GetExperimentalFunction = [](const char*) noexcept -> OrtExperimentalFnPtr {
+      return nullptr;
+    };
     stub_ort_api.Graph_GetNumInitializers = [](const OrtGraph*, size_t* num) noexcept -> OrtStatus* {
       *num = 0;
       return nullptr;

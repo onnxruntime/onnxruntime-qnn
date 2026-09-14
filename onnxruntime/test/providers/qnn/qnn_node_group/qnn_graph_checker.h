@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 
@@ -20,6 +21,12 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name);
+
+// Total bytes of FP32 STATIC tensors in the compiled QNN graph JSON, i.e. the DLC cost of
+// constant folding. Use Below to assert a large weight stayed compact, Above to assert an
+// expected fold actually materialized.
+void AssertFp32StaticBytesBelow(const std::filesystem::path& dump_dir, size_t max_bytes);
+void AssertFp32StaticBytesAbove(const std::filesystem::path& dump_dir, size_t min_bytes);
 
 }  // namespace test
 }  // namespace onnxruntime

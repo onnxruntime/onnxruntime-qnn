@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "CPU/QnnCpuCommon.h"
+#include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpDevice.h"
 #include "GPU/QnnGpuBackend.h"
 #include "QnnCommon.h"
@@ -33,6 +34,7 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
@@ -137,6 +139,8 @@ struct QnnBackendManagerConfig {
   // remains constant for the manager's lifetime.
   bool enable_framework_op_trace = false;
   bool skip_backend_op_validation = false;
+  // Caps the reused IO buffer size at context load. 0 = SDK default.
+  uint64_t reused_io_limit_mb = 0;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -164,6 +168,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         profiling_level_(config.profiling_level),
         profiling_file_path_(config.profiling_file_path),
         enable_framework_op_trace_(config.enable_framework_op_trace),
+        reused_io_limit_mb_(config.reused_io_limit_mb),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
@@ -210,6 +215,37 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     std::vector<char>& buffer,
                                     const qnn::EpContextIoDispatch& io_dispatch);
 
+  // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
+  // and direct-read paths to match initial-load behavior. Always starts a new spill-fill
+  // group (firstGroupHandle = 0x0) since SSR invalidates all prior context handles.
+  // The new context handle is registered via AddQnnContextHandle on success.
+  Ort::Status ReloadContextForSSR(const std::string& context_bin_filepath,
+                                  int64_t max_spill_fill_size,
+                                  Qnn_ContextHandle_t& new_context,
+                                  const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
+
+  // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
+  // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
+  // context load (joins the existing spill-fill group).
+  // Adding a new config here propagates to both LoadCachedQnnContextFromBuffer and ReloadContextForSSR.
+  Ort::Status BuildContextBinaryConfigs(
+      int64_t max_spill_fill_size,
+      Qnn_ContextHandle_t first_group_handle,
+      QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder);
+
+  // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
+  // Attempts contextCreateFromBinaryWithCallback when use_file_mapping is true; falls back to
+  // contextCreateFromBinary on failure or when file mapping is disabled/unavailable.
+  // bin_buffer: pre-acquired mapped or pre-read buffer; pass nullptr to read from context_bin_filepath.
+  // Does NOT call AddQnnContextHandle — callers are responsible for registering the handle.
+  Ort::Status CreateContextHandleFromBinary(void* bin_buffer,
+                                            uint64_t buffer_length,
+                                            bool use_file_mapping,
+                                            const QnnContext_Config_t** context_configs,
+                                            const std::string& context_bin_filepath,
+                                            const qnn::EpContextIoDispatch& io_dispatch,
+                                            Qnn_ContextHandle_t& context);
+
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
     return context_map_.find(context_handle) != context_map_.end();
@@ -233,7 +269,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
-      bool enable_htp_graph_splitting = false);
+      bool enable_htp_graph_splitting = false,
+      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -243,7 +280,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     bool enable_htp_extended_udma_mode = false,
                                     bool enable_htp_prepare_only = false,
                                     bool enable_htp_ref_weight_sharing = false,
-                                    bool enable_htp_graph_splitting = false);
+                                    bool enable_htp_graph_splitting = false,
+                                    uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   void ReleaseDeviceAndContext();
 
@@ -494,7 +532,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             bool enable_htp_extended_udma_mode,
                             bool enable_htp_prepare_only,
                             bool enable_htp_ref_weight_sharing,
-                            bool enable_htp_graph_splitting = false);
+                            bool enable_htp_graph_splitting = false,
+                            uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
@@ -780,6 +819,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
   int htp_share_resource_optimization_ = -1;
+  uint64_t reused_io_limit_mb_ = 0;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;

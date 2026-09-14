@@ -8,7 +8,6 @@
 #include <gsl/gsl>
 #include <thread>
 
-#include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpGraph.h"
 #include "QnnOpDef.h"
 
@@ -551,45 +550,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
       // We are the first model to recover from this SSR event.
       // Free the old (shared) context and create a new one from the binary.
       qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
-
-      // Use the unified file I/O helper instead of duplicating the read logic.
-      std::vector<char> buffer;
-      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer, io_dispatch));
-
-      const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-
-      // Build context configs: priority + spill fill buffer.
-      QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
-      RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, priority_config));
-
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
-      QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
-      QnnHtpContext_CustomConfig_t spill_fill_custom_config;
-      spill_fill_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-      QnnHtpContext_GroupRegistration_t group_info;
-      group_info.firstGroupHandle = 0x0;  // New group (this is the only context after SSR)
-      group_info.maxSpillFillBuffer = max_spill_fill_size_;
-      spill_fill_custom_config.groupRegistration = group_info;
-      spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-      spill_fill_config.customConfig = &spill_fill_custom_config;
-      QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size_ > 0 ? &spill_fill_config : nullptr;
-#else
-      QnnContext_Config_t* spill_fill_ptr = nullptr;
-#endif
-
-      const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
-
-      auto rt = qnn_interface.contextCreateFromBinary(
-          qnn_backend_manager_->GetQnnBackendHandle(),
-          qnn_backend_manager_->GetQnnDeviceHandle(),
-          context_configs,
-          static_cast<void*>(buffer.data()),
-          static_cast<Qnn_ContextBinarySize_t>(buffer.size()),
-          &new_context,
-          qnn_backend_manager_->GetQnnProfileHandle());
-      RETURN_IF(QNN_SUCCESS != rt,
-                ("SSR recovery: contextCreateFromBinary failed. Error code: " + std::to_string(rt)).c_str());
-      RETURN_IF_ERROR(qnn_backend_manager_->AddQnnContextHandle(new_context));
+      RETURN_IF_ERROR(qnn_backend_manager_->ReloadContextForSSR(
+          context_bin_filepath_, max_spill_fill_size_, new_context, io_dispatch));
     } else {
       // Another model already recovered and recreated the context from this binary.
       // Reuse it — it's the only context remaining in context_map_.

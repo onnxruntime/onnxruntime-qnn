@@ -3,11 +3,13 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
@@ -277,6 +279,36 @@ TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis_Largest_0) {
                                 ExpectedEPNodeAssignment::All,
                                 21);  // opset
 }
+// A quantized TopK must fold its surrounding DQ/Q into one quantized QNN TopK node. TopK's second
+// output is integer indices and is never Q-wrapped, which used to make the node group
+// unrepresentable and left TopK running on dequantized float32 data.
+// Checks graph structure, not accuracy: the float island is value-preserving either way.
+TEST_F(QnnHTPBackendTests, TopK_QDQ_U8_FoldsQDQIntoQuantizedTopK) {
+  const std::filesystem::path json_qnn_graph_dir = "TopK_QDQ_U8_FoldsQDQIntoQuantizedTopK";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  auto input_def = TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48));
+  auto k_def = TestInputDef<int64_t>({1}, true /* is_initializer */, {2});
+
+  TestQDQModelAccuracy(BuildTopKTestCase<float>(input_def, k_def, {}),
+                       BuildQDQTopKTestCase<uint8_t>(input_def, k_def, {}),
+                       provider_options,
+                       /*opset_version=*/19,
+                       ExpectedEPNodeAssignment::All);
+
+  // `qdq_in_dq` is the DequantizeLinear feeding TopK; folding it in is what keeps TopK quantized.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "TopK", 1);
+  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "qdq_in_dq");
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
