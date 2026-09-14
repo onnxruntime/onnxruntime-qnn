@@ -866,6 +866,14 @@ class ScopedOrtSession {
   Ort::Session session_;
 };
 
+// Constructs a throwaway "terminator" session that sets stop_share_ep_contexts so the QNN EP
+// releases the SharedContext singleton across the plugin boundary. Call at the end of any test
+// that exercises enable_vtcm_backup_buffer_sharing or htp_share_resource_optimization to
+// prevent cross-test singleton leakage. The model at model_path must already exist on disk
+// (call before deleting test artifacts).
+void ResetSharedBackendManagerViaTerminatorSession(const ProviderOptions& provider_options,
+                                                   const ORTCHAR_T* model_path);
+
 /**
  * Inferences a given serialized model. Returns output values via an out-param.
  *

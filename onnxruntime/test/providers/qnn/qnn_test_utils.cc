@@ -456,6 +456,25 @@ void InferenceModel(const std::string& model_data,
   RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
+void ResetSharedBackendManagerViaTerminatorSession(const ProviderOptions& provider_options,
+                                                   const ORTCHAR_T* model_path) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, provider_options);
+  session_options.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+  session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+  session_options.AddConfigEntry("ep.qnnexecutionprovider.htp_share_resource_optimization", "1");
+  // Constructing this session drives the EP ctor into the reuse or create branch,
+  // and the unified terminator reset (stop_share_ep_contexts_=true) releases the
+  // SharedContext singleton across the plugin boundary.
+  try {
+    Ort::Session(*GetOrtEnv(), model_path, session_options);
+  } catch (...) {
+    // Ignore session construction failures — the goal is solely to trigger the
+    // singleton reset; if the model is already missing we still succeed at cleanup.
+  }
+}
+
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
                                  const std::string& name,
                                  const TestInputDef<float>& bias_def,

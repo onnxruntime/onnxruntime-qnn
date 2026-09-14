@@ -1486,17 +1486,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
-  if (
-      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1) &&
-      SharedContext::GetInstance().GetSharedQnnBackendManager()) {
+  const bool use_shared_backend_mgr =
+      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
+  if (use_shared_backend_mgr && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
     // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
     // previous session.
     qnn_backend_manager_->ResetLogger(logger_);
-    // Clear the QnnBackendManager from singleton to stop the resource share
-    if (stop_share_ep_contexts_) {
-      SharedContext::GetInstance().ResetSharedQnnBackendManager();
-    }
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
@@ -1514,9 +1510,17 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    if (htp_share_resource_optimization_ == 1) {
+    // Publish for later sessions, but NOT when this session is the terminator —
+    // publishing then immediately resetting would be a no-op and is misleading.
+    if (htp_share_resource_optimization_ == 1 && !stop_share_ep_contexts_) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
+  }
+  // Unified terminator release: whichever branch ran, if this session stops sharing,
+  // clear the singleton slot now that qnn_backend_manager_ holds its own strong reference.
+  // ResetSharedQnnBackendManager() is an idempotent reset() under lock — safe when empty.
+  if (stop_share_ep_contexts_) {
+    SharedContext::GetInstance().ResetSharedQnnBackendManager();
   }
 
   // Initialize compatibility manager with backend manager.
@@ -2999,7 +3003,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   }
 
   if (share_ep_contexts_ &&
-      !stop_share_ep_contexts_ &&
+      !stop_share_ep_contexts_ &&  // load-bearing: prevents re-publishing after the ctor terminator reset
       nullptr == SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     if (!SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_)) {
       return ort_api.CreateStatus(ORT_EP_FAIL, "Failed to set shared QnnBackendManager.");
