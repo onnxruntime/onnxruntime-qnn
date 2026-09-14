@@ -16,13 +16,13 @@ Usage:
   # QNN CPU backend (fp32 model)
   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \\
   python run_udo_sample.py cpu myadd_fp32.onnx \\
-      --op-package ../libMyAddOpPackage_cpu.so \\
+      --op-package artifacts/libMyAddOpPackage_cpu.so \\
       --qnn-ep-lib <path/to/libonnxruntime_providers_qnn.so>
 
   # QNN HTP backend (QDQ model, x86 simulator or on-device)
   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \\
   python run_udo_sample.py htp myadd_qdq.onnx \\
-      --op-package ../libMyAddOpPackage_htp.so \\
+      --op-package artifacts/libMyAddOpPackage_htp.so \\
       --qnn-ep-lib <path/to/libonnxruntime_providers_qnn.so>
 
 Domain registration:

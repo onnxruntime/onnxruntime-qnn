@@ -18,8 +18,11 @@ User-Defined Operation (UDO) through the ORT QNN Execution Provider.
 | `run_udo_sample.py` | Python sample — CPU and HTP modes |
 | `build_op_package.sh` | Build `libMyAddOpPackage_cpu.so` / `libMyAddOpPackage_htp.so` |
 
-Op package source assets live one level up in `../`:
-`MyAddOpPackageCpu.xml`, `MyAddOpPackageHtp.xml`, `MyAddCPU.cpp`, `MyAddHTP.cpp`, `HTP_Makefile`.
+The sample uses the canonical MyAdd op-package source shared with the UDO unit
+tests: `onnxruntime/test/providers/qnn/udo/` (`MyAddOpPackageCpu.xml`,
+`MyAddOpPackageHtp.xml`, `MyAddCPU.cpp`, `MyAddHTP.cpp`, and `HTP_Makefile`).
+Run the commands from a repository checkout so `build_op_package.sh` can locate
+those inputs.
 
 ---
 
@@ -40,7 +43,7 @@ Op package source assets live one level up in `../`:
 ## Step 1 — Generate ONNX models
 
 ```bash
-cd sample/
+cd qcom/samples/qnn_udo_myadd/
 python3 gen_myadd_model.py --constant 2.0 --outdir .
 # Produces: myadd_fp32.onnx, myadd_qdq.onnx
 ```
@@ -56,8 +59,8 @@ export HEXAGON_SDK_ROOT=/path/to/Hexagon_SDK/6.5.0.0   # HTP only
 
 ./build_op_package.sh all
 # Produces:
-#   ../libMyAddOpPackage_cpu.so   (QNN CPU op package)
-#   ../libMyAddOpPackage_htp.so   (QNN HTP op package)
+#   artifacts/libMyAddOpPackage_cpu.so   (QNN CPU op package)
+#   artifacts/libMyAddOpPackage_htp.so   (QNN HTP op package)
 ```
 
 Individual targets: `./build_op_package.sh cpu` or `htp`.
@@ -82,11 +85,11 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 
 # CPU backend (libQnnCpu.so must be on LD_LIBRARY_PATH)
 LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_BUILD} \
-    ./run_udo_sample cpu myadd_fp32.onnx ../libMyAddOpPackage_cpu.so
+    ./run_udo_sample cpu myadd_fp32.onnx artifacts/libMyAddOpPackage_cpu.so
 
 # HTP backend (libQnnHtp.so must be on LD_LIBRARY_PATH)
 LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_BUILD} \
-    ./run_udo_sample htp myadd_qdq.onnx ../libMyAddOpPackage_htp.so
+    ./run_udo_sample htp myadd_qdq.onnx artifacts/libMyAddOpPackage_htp.so
 ```
 
 Expected output (CPU):
@@ -113,7 +116,7 @@ CPU EP:
 
 ```bash
 LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_BUILD} \
-ORT_LOG_LEVEL=1 ./run_udo_sample cpu myadd_fp32.onnx ../libMyAddOpPackage_cpu.so 2>&1 \
+ORT_LOG_LEVEL=1 ./run_udo_sample cpu myadd_fp32.onnx artifacts/libMyAddOpPackage_cpu.so 2>&1 \
     | grep -i "node.*assign\|partition\|MyAdd"
 ```
 
@@ -142,13 +145,13 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 # CPU backend
 LD_LIBRARY_PATH=${QNN_PKG}:${ORT_LIB}:${LD_LIBRARY_PATH} \
 python3 run_udo_sample.py cpu myadd_fp32.onnx \
-    --op-package ../libMyAddOpPackage_cpu.so \
+    --op-package artifacts/libMyAddOpPackage_cpu.so \
     --qnn-ep-lib ${QNN_PKG}/libonnxruntime_providers_qnn.so
 
 # HTP backend (libQnnHtp.so is bundled in QNN_PKG)
 LD_LIBRARY_PATH=${QNN_PKG}:${ORT_LIB}:${LD_LIBRARY_PATH} \
 python3 run_udo_sample.py htp myadd_qdq.onnx \
-    --op-package ../libMyAddOpPackage_htp.so \
+    --op-package artifacts/libMyAddOpPackage_htp.so \
     --qnn-ep-lib ${QNN_PKG}/libonnxruntime_providers_qnn.so
 ```
 
@@ -170,7 +173,8 @@ while executing a compatible lower-target package, so the two values need not be
 identical.
 
 ```bash
-cd onnxruntime/test/providers/qnn/udo/
+REPO_ROOT=$(git rev-parse --show-toplevel)
+OP_PACKAGE_DIR=${REPO_ROOT}/onnxruntime/test/providers/qnn/udo
 export DEVICE_SERIAL=<adb-serial>          # from `adb devices`
 export HEXAGON_VER=75                      # e.g. 75, 79, 81 — must be device/runtime-compatible
 export QNN_SDK_ROOT=<qairt-sdk>
@@ -181,9 +185,9 @@ BUILD=/tmp/udo_arm64
 rm -rf "${BUILD}"
 PYTHONPATH=${QNN_SDK_ROOT}/lib/python \
 python3 ${QNN_SDK_ROOT}/bin/x86_64-linux-clang/qnn-op-package-generator \
-    -p MyAddOpPackageHtp.xml -o "${BUILD}"
-cp MyAddHTP.cpp "${BUILD}/MyAddOpPackage/src/ops/MyAdd.cpp"
-cp HTP_Makefile "${BUILD}/MyAddOpPackage/Makefile"
+    -p ${OP_PACKAGE_DIR}/MyAddOpPackageHtp.xml -o "${BUILD}"
+cp ${OP_PACKAGE_DIR}/MyAddHTP.cpp "${BUILD}/MyAddOpPackage/src/ops/MyAdd.cpp"
+cp ${OP_PACKAGE_DIR}/HTP_Makefile "${BUILD}/MyAddOpPackage/Makefile"
 
 env QNN_SDK_ROOT="${QNN_SDK_ROOT}" HEXAGON_SDK_ROOT="${HEXAGON_SDK_ROOT}" \
     PATH="${LLVM_TOOL_DIR}/bin:${PATH}" \
@@ -334,4 +338,3 @@ must succeed without `ORT_QNN_CUSTOM_OP_DOMAINS`.
 - Unit test (C++ gtest): `onnxruntime/test/providers/qnn/udo_op_test.cc`
 - Build automation: `cmake/onnxruntime_unittests_udo.cmake`
 - ORT QNN EP documentation: `docs/execution_providers/QNN-ExecutionProvider.md` §"QNN User-Defined Operation"
-- QA test plan: `docs/execution_providers/qa_udo_e2e_test_plan.md`

@@ -1728,6 +1728,9 @@ To enable new operator support in EP, areas to visit:
 
 A **User-Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are not natively supported in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
 
+For an end-to-end MyAdd UDO reference, including CPU, HTP, and on-device
+commands, see the [QNN UDO sample](../../qcom/samples/qnn_udo_myadd/README.md).
+
 ### Overview
 
 A UDO lets you define and register custom operations—describing their inputs, outputs, parameters, data types, and backend behavior—so they can run on:
