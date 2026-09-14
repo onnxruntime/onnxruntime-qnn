@@ -854,17 +854,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ParseQnnContextPriority(context_priority_str, context_priority, logger_);
   }
 
-  // VTCM MB
-  std::string vtcm_mb_str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("vtcm_mb"), "0", vtcm_mb_str);
-  if (!vtcm_mb_str.empty() && vtcm_mb_str != "0") {
-    vtcm_size_in_mb_ = std::stoi(vtcm_mb_str);
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("vtcm_mb: " + vtcm_mb_str).c_str());
-    if (vtcm_size_in_mb_ <= 0) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, ("Skip invalid vtcm_mb: " + vtcm_mb_str).c_str());
-    }
-  }
-
   // Context memory limit hint (MB) — triggers graph-switching for large multi-graph contexts
   std::string context_memory_limit_hint_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
@@ -958,6 +947,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_file_mapped_weights_ = false;
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is incompatible with embedded EP contexts. Feature will be disabled by default.");
+  }
+  if (context_memory_limit_hint_mb_ > 0 && enable_file_mapped_weights_) {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "File mapped weights disabled — incompatible with graph switching (persistent binary).");
   }
 #endif
 

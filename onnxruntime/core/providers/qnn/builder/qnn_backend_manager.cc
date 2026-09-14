@@ -1346,6 +1346,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
+  std::vector<std::vector<char>> buffer_list;
 
   context_params_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
@@ -1357,11 +1358,10 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer, io_dispatch));
 
     size_t buffer_size = buffer.size();
-    // Keep buffer alive for graph-switching (persistent binary) support.
-    persistent_context_buffers_.push_back(std::move(buffer));
+    buffer_list.push_back(std::move(buffer));
 
     QnnContext_ParamsV1_t context_params_v1 = {nullptr,
-                                               persistent_context_buffers_.back().data(),
+                                               buffer_list.back().data(),
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
@@ -1619,6 +1619,7 @@ Ort::Status QnnBackendManager::ReleaseContext() {
   ep_context_handle_map_.clear();
 
   context_created_ = false;
+  persistent_context_buffers_.clear();
   return Ort::Status();
 }
 
@@ -1866,17 +1867,16 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
     Qnn_ErrorHandle_t rt = QNN_SUCCESS;
 
-    // Graph switching is incompatible with file-mapped weights (CFBWithCallback).
-    // When enabled, skip the callback path entirely and use a persistent buffer
-    // that QNN can reload graphs from during execution. QNN requires this buffer
-    // to stay alive for the whole context lifetime (see persistent_context_buffers_).
-    bool skip_file_mapping = enable_memory_limit;
+    // Graph switching requires a persistent in-memory buffer that QNN can reload
+    // graphs from during execution. Read the binary into persistent_context_buffers_
+    // so it outlives the context. File-mapped weights are already disabled upstream
+    // (QnnEp constructor) when graph switching is active.
     if (enable_memory_limit) {
       if (!context_bin_filepath.empty()) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
                         "Graph switching enabled — bypassing file mapping, using persistent buffer.");
         persistent_context_buffers_.emplace_back();
-        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, persistent_context_buffers_.back()));
+        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, persistent_context_buffers_.back(), io_dispatch));
         bin_buffer = static_cast<void*>(persistent_context_buffers_.back().data());
         buffer_length = persistent_context_buffers_.back().size();
       } else {
@@ -1890,7 +1890,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     Qnn_ContextBinaryCallback_t callbacks;
-    if (use_file_mapping && file_mapper_ && !skip_file_mapping) {
+    if (use_file_mapping && file_mapper_) {
       RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
                 "Invalid function pointer for contextCreateFromBinaryWithCallback.");
 
@@ -1915,13 +1915,11 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     }
 #endif
 
-    // Local fallback buffer for the (non-graph-switching) file-mapping-failure retry.
-    // Must outlive the contextCreateFromBinary call below. Graph switching never
-    // reaches this block (skip_file_mapping bypasses the callback path), so the
-    // binary does not need to persist beyond context creation here.
+    // Local fallback buffer for the file-mapping-failure retry.
+    // Must outlive the contextCreateFromBinary call below.
     std::vector<char> backup_buffer;
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    if (use_file_mapping && file_mapper_ && !skip_file_mapping) {
+    if (use_file_mapping && file_mapper_) {
       rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
                                                               device_handle_,
                                                               context_configs,
@@ -1944,7 +1942,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 #else
   ORT_UNUSED_PARAMETER(io_dispatch);
 #endif
-    if (!use_file_mapping || skip_file_mapping || rt != QNN_SUCCESS) {
+    if (!use_file_mapping || rt != QNN_SUCCESS) {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
                                                   device_handle_,
                                                   context_configs,
@@ -2471,11 +2469,6 @@ void QnnBackendManager::ReleaseResources() {
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
   }
-
-  // Safe to free persistent binaries only after the contexts referencing them are
-  // freed (QnnContext_free). ReleaseContext above did that; reclaim the memory now.
-  persistent_context_buffers_.clear();
-  persistent_context_buffers_.shrink_to_fit();
 
   result = ReleaseProfilehandle();
   if (!result.IsOK()) {
