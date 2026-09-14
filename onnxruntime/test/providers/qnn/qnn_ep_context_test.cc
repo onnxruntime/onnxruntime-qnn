@@ -2275,6 +2275,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
   so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+  so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
@@ -2324,7 +2325,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 #endif
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
+TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
@@ -2393,6 +2394,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+  so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
 #ifdef _WIN32
