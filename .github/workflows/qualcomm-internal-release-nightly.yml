@@ -47,3 +47,14 @@ jobs:
     with:
       nightly_coverage: true
       qa_tag: ${{ needs.setup.outputs.qa_tag }}
+
+  golden-publish:
+    name: Publish Golden Files
+    needs: setup
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/qualcomm-internal-golden-publish.yml
+    secrets: inherit
+    with:
+      # Scheduled producer explicitly opts into the real upload; the reusable
+      # workflow defaults dry_run=true so manual dispatches stay safe.
+      dry_run: false

@@ -41,6 +41,16 @@ jobs:
           --spec "${{ github.workspace }}/qcom/scripts/artifactory/aql/expired_qa_artifacts.json"
           --spec-vars "repo=${{ env.BUILD_ARTIFACTORY_REPO }}"
 
+      # Prune old dated/sha golden archives only. The AQL scopes to
+      # qnn-ep-test-store/*/archive/*, so every latest/ pointer the gates read
+      # (and any permanent data outside archive/) is never matched — retention
+      # can never leave a store without a current golden.
+      - name: Delete old golden archives
+        run: >
+          jf rt delete
+          --spec "${{ github.workspace }}/qcom/scripts/artifactory/aql/expired_golden_artifacts.json"
+          --spec-vars "repo=${{ env.BUILD_ARTIFACTORY_REPO }}"
+
       # This is a bit of a hack, but there does not appear to be a way to do this nicely without
       # a server-side plugin. Instead, we just use a CLI-side plugin several times. Eventually
       # it will converge and do nothing.
