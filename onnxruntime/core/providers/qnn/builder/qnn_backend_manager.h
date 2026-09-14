@@ -141,6 +141,10 @@ struct QnnBackendManagerConfig {
   bool skip_backend_op_validation = false;
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
+  bool enable_qnn_graph_transformer = false;
+  std::string qnn_graph_transformer_enable_passes;
+  std::string qnn_graph_transformer_disable_passes;
+  bool qnn_graph_transformer_dump_dlc = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -177,6 +181,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
         skip_backend_op_validation_(config.skip_backend_op_validation),
+        enable_qnn_graph_transformer_(config.enable_qnn_graph_transformer),
+        qnn_graph_transformer_enable_passes_(config.qnn_graph_transformer_enable_passes),
+        qnn_graph_transformer_disable_passes_(config.qnn_graph_transformer_disable_passes),
+        qnn_graph_transformer_dump_dlc_(config.qnn_graph_transformer_dump_dlc),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
@@ -852,6 +860,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // When true, skip wiring up the target-backend validator during DLC dump so that
   // op validation falls back to the serializer's generic checks (see SetupBackend).
   bool skip_backend_op_validation_ = false;
+  bool enable_qnn_graph_transformer_ = false;
+  std::string qnn_graph_transformer_enable_passes_;
+  std::string qnn_graph_transformer_disable_passes_;
+  bool qnn_graph_transformer_dump_dlc_ = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 
