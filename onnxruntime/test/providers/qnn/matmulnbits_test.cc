@@ -1108,6 +1108,59 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16_AZP) {
   RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
 }
 
+// W2A16 Standard Symmetric BW_BLOCK_MAPPED (bits=2, 16-bit activation, symmetric zero-point).
+// On SDK >= 2.51 uses BW_BLOCK_MAPPED encoding; on older SDKs falls back to BW_FLOAT_BLOCK.
+TEST_F(QnnHTPBackendTests, MatMulNBits_BwBlockMapped_W2A16_StdSym_M1_N4_K64_BS16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 4;
+  params.K = 64;
+  params.block_size = 16;
+  params.has_zero_point = false;
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+TEST_F(QnnHTPBackendTests, MatMulNBits_BwBlockMapped_W2A16_StdSym_M1_N8_K128_BS32_ZP) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 8;
+  params.K = 128;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  params.is_zp_symmetric = true;
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+// W2A16 Asymmetric BW_BLOCK_MAPPED (bits=2, 16-bit activation, asymmetric zero-point).
+// Uses ASYMMETRIC_PLUS_ONE mapping: {0,1,2,3} → {-1,0,1,2}.
+TEST_F(QnnHTPBackendTests, MatMulNBits_BwBlockMapped_W2A16_AsymPlusOne_M1_N4_K64_BS16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 4;
+  params.K = 64;
+  params.block_size = 16;
+  params.has_zero_point = true;
+  RunHtpQDQMatMulNBitsTest<2, int16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+TEST_F(QnnHTPBackendTests, MatMulNBits_BwBlockMapped_W2A16_AsymPlusOne_M1_N8_K128_BS32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 8;
+  params.K = 128;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
