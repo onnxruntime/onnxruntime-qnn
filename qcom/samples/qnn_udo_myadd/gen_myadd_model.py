@@ -15,7 +15,7 @@ Usage:
 """
 
 import argparse
-import os
+from pathlib import Path
 
 import numpy as np
 import onnx
@@ -118,10 +118,11 @@ def main():
     parser.add_argument("--outdir", default=".", help="Output directory")
     args = parser.parse_args()
 
-    os.makedirs(args.outdir, exist_ok=True)
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    fp32_path = os.path.join(args.outdir, "myadd_fp32.onnx")
-    qdq_path = os.path.join(args.outdir, "myadd_qdq.onnx")
+    fp32_path = outdir / "myadd_fp32.onnx"
+    qdq_path = outdir / "myadd_qdq.onnx"
 
     onnx.save(make_fp32_model(args.constant), fp32_path)
     print(f"Saved {fp32_path}")

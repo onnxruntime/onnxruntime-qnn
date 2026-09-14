@@ -41,7 +41,7 @@ build_cpu() {
         -o "${cpu_build}"
 
     # Step 2: copy pre-implemented kernel
-    cp "${OP_PACKAGE_DIR}/MyAddCPU.cpp" \
+    /bin/cp "${OP_PACKAGE_DIR}/MyAddCPU.cpp" \
        "${cpu_build}/MyAddOpPackage/src/ops/MyAdd.cpp"
 
     # Step 3: build
@@ -52,7 +52,7 @@ build_cpu() {
         all_x86
 
     # Step 4: copy output
-    cp "${cpu_build}/MyAddOpPackage/libs/x86_64-linux-clang/libMyAddOpPackage.so" \
+    /bin/cp "${cpu_build}/MyAddOpPackage/libs/x86_64-linux-clang/libMyAddOpPackage.so" \
        "${ARTIFACT_DIR}/libMyAddOpPackage_cpu.so"
     echo ">>> CPU package: ${ARTIFACT_DIR}/libMyAddOpPackage_cpu.so"
 }
@@ -72,9 +72,9 @@ build_htp() {
         -o "${htp_build}"
 
     # Step 2: copy pre-implemented kernel + custom HTP Makefile
-    cp "${OP_PACKAGE_DIR}/MyAddHTP.cpp" \
+    /bin/cp "${OP_PACKAGE_DIR}/MyAddHTP.cpp" \
        "${htp_build}/MyAddOpPackage/src/ops/MyAdd.cpp"
-    cp "${OP_PACKAGE_DIR}/HTP_Makefile" \
+    /bin/cp "${OP_PACKAGE_DIR}/HTP_Makefile" \
        "${htp_build}/MyAddOpPackage/Makefile"
 
     # Step 3: build
@@ -86,7 +86,7 @@ build_htp() {
         htp_x86
 
     # Step 4: copy output
-    cp "${htp_build}/MyAddOpPackage/build/x86_64-linux-clang/libQnnMyAddOpPackage.so" \
+    /bin/cp "${htp_build}/MyAddOpPackage/build/x86_64-linux-clang/libQnnMyAddOpPackage.so" \
        "${ARTIFACT_DIR}/libMyAddOpPackage_htp.so"
     echo ">>> HTP package: ${ARTIFACT_DIR}/libMyAddOpPackage_htp.so"
 }

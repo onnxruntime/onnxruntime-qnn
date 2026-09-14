@@ -199,9 +199,6 @@ env QNN_SDK_ROOT="${QNN_SDK_ROOT}" HEXAGON_SDK_ROOT="${HEXAGON_SDK_ROOT}" \
 #   DSP skel: ${BUILD}/MyAddOpPackage/build/hexagon-v${HEXAGON_VER}/libQnnMyAddOpPackage.so
 ```
 
-See QA-UDO-3 §A in `docs/execution_providers/qa_udo_e2e_test_plan.md` for the
-full arch-detection and build details.
-
 ### 4b — Sign the DSP skel (if required)
 
 If the device's process domain requires skel signing, sign the DSP skel before
