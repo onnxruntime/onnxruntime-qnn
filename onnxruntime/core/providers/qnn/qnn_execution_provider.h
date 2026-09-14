@@ -15,6 +15,7 @@
 #include "HTP/QnnHtpGraph.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -97,6 +98,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                        _In_ size_t num_options) noexcept;
   static const char* ORT_API_CALL GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                         _In_ const OrtGraph* graph) noexcept;
+
+  OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
+                                   const OrtNode** fused_nodes,
+                                   size_t count);
 
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
@@ -230,6 +235,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool prepare_only_ = false;
+  bool prepare_and_load_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
@@ -280,6 +286,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   bool enable_htp_graph_splitting_ = false;
+  // Number of threads to prepare split subgraphs in parallel. UINT32_MAX = auto-select.
+  // Only meaningful when enable_htp_graph_splitting_ is true. Requires QAIRT SDK 2.51+.
+  uint32_t htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;
@@ -320,6 +329,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
   mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
+
+  // Owns the App-provided EPContext read/write callbacks.
+  // On pre-v28 ORT it degrades to a no-op stub with HasReadCallback() / HasWriteCallback() returning false.
+  std::unique_ptr<qnn::EpContextIoDispatch> io_dispatch_;
 };
 
 }  // namespace onnxruntime

@@ -12,6 +12,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gsl/gsl>
@@ -1102,6 +1103,84 @@ TEST(QnnUnit_UtilsTest, TransposeFromCnhwToHwcn_Raw_WrongRankFails) {
 }
 
 // =============================================================================
+// qnn::utils::TwoDimensionTranspose(raw)
+//
+// Element sizes 1/2/4/8 run a 32x32 tiled loop and everything else an untiled one, so the shape
+// sweeps below cover partial tiles in either dimension, single rows/columns, and multi-tile extents.
+// =============================================================================
+
+// Distinct byte pattern per element, so a misplaced element is visible in the comparison.
+static std::vector<uint8_t> MakeTransposeInput(size_t num_elems, size_t elem_byte_size) {
+  std::vector<uint8_t> input(num_elems * elem_byte_size);
+  for (size_t i = 0; i < input.size(); ++i) {
+    input[i] = static_cast<uint8_t>(i % 251);  // Prime modulus: no aliasing with any tile or row stride.
+  }
+  return input;
+}
+
+static std::vector<uint8_t> ReferenceTranspose2D(size_t rows, size_t cols, size_t elem_byte_size,
+                                                 const std::vector<uint8_t>& input) {
+  std::vector<uint8_t> expected(input.size());
+  for (size_t row = 0; row < rows; ++row) {
+    for (size_t col = 0; col < cols; ++col) {
+      std::memcpy(&expected[(col * rows + row) * elem_byte_size],
+                  &input[(row * cols + col) * elem_byte_size],
+                  elem_byte_size);
+    }
+  }
+  return expected;
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_HappyPath) {
+  // [2, 3] -> [3, 2], two bytes per element.
+  std::vector<uint8_t> input = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+  std::vector<uint8_t> output(input.size());
+  Ort::Status st = qnn::utils::TwoDimensionTranspose(2, 3, /*elem_byte_size=*/2, input, output);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(output, (std::vector<uint8_t>{0, 1, 6, 7, 2, 3, 8, 9, 4, 5, 10, 11}));
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_TiledElementSizesAcrossTileBoundaries) {
+  // Empty, degenerate rank-2, just under / exactly one tile, a partial tile in one dimension only,
+  // and partial tiles in both dimensions across several tiles.
+  const std::vector<std::pair<size_t, size_t>> shapes = {
+      {0, 0}, {0, 5}, {5, 0}, {1, 1}, {1, 70}, {70, 1}, {31, 31}, {32, 32}, {33, 31}, {31, 33}, {65, 97}};
+
+  for (size_t elem_byte_size : {1u, 2u, 4u, 8u}) {
+    for (const auto& [rows, cols] : shapes) {
+      const std::vector<uint8_t> input = MakeTransposeInput(rows * cols, elem_byte_size);
+      std::vector<uint8_t> output(input.size());
+      Ort::Status st = qnn::utils::TwoDimensionTranspose(rows, cols, elem_byte_size, input, output);
+      EXPECT_TRUE(st.IsOK()) << "[" << rows << ", " << cols << "] x " << elem_byte_size << " bytes";
+      EXPECT_EQ(output, ReferenceTranspose2D(rows, cols, elem_byte_size, input))
+          << "[" << rows << ", " << cols << "] x " << elem_byte_size << " bytes";
+    }
+  }
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_UncommonElementSizesUseUntiledPath) {
+  for (size_t elem_byte_size : {3u, 5u, 6u, 7u, 16u}) {
+    const std::vector<uint8_t> input = MakeTransposeInput(33 * 35, elem_byte_size);
+    std::vector<uint8_t> output(input.size());
+    Ort::Status st = qnn::utils::TwoDimensionTranspose(33, 35, elem_byte_size, input, output);
+    EXPECT_TRUE(st.IsOK()) << elem_byte_size << " bytes per element";
+    EXPECT_EQ(output, ReferenceTranspose2D(33, 35, elem_byte_size, input))
+        << elem_byte_size << " bytes per element";
+  }
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_BufferSizeMismatchFails) {
+  const std::vector<uint8_t> input(2 * 3 * 4, 0);
+  std::vector<uint8_t> output(input.size());
+  EXPECT_TRUE(qnn::utils::TwoDimensionTranspose(2, 3, 4, input, output).IsOK());
+
+  std::vector<uint8_t> short_output(input.size() - 4);
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 4, input, short_output).IsOK());
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(3, 3, 4, input, output).IsOK());
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 0, input, output).IsOK());
+}
+
+// =============================================================================
 // RequantizeBiasTensor — per-tensor and per-channel round-trip
 // =============================================================================
 
@@ -1442,6 +1521,63 @@ TEST(QnnUnit_UtilsTest, BroadcastShape_HigherRankMixed) {
   auto st = qnn::utils::BroadcastShape<uint32_t>(a, b, out);
   EXPECT_TRUE(st.IsOK());
   EXPECT_EQ(out, (std::vector<uint32_t>{5, 3, 4}));
+}
+
+// =============================================================================
+// SignExtendUnpackedSubByteData
+//
+// UnpackInitializerData() expands a sub-byte initializer to one byte per element with the unused
+// high bits masked off, which QNN needs but which reads as a positive number in any int8_t-based
+// decode. These tests pin the recovery of the original two's-complement value.
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_Int4_RecoversNegativeValues) {
+  // Every representable INT4 value, so both nibble positions and the whole negative half are hit.
+  const std::vector<int8_t> values{-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<uint8_t> bytes, expected;
+  for (int8_t v : values) {
+    bytes.push_back(static_cast<uint8_t>(v) & 0x0F);  // as UnpackInitializerData() leaves it
+    expected.push_back(static_cast<uint8_t>(v));
+  }
+  qnn::utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                                            gsl::make_span(bytes));
+  EXPECT_EQ(bytes, expected);
+}
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_Int2_RecoversNegativeValues) {
+  const std::vector<int8_t> values{-2, -1, 0, 1};
+  std::vector<uint8_t> bytes, expected;
+  for (int8_t v : values) {
+    bytes.push_back(static_cast<uint8_t>(v) & 0x03);
+    expected.push_back(static_cast<uint8_t>(v));
+  }
+  qnn::utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2,
+                                            gsl::make_span(bytes));
+  EXPECT_EQ(bytes, expected);
+}
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_UnsignedAndByteWideTypesAreLeftAlone) {
+  // UINT4 / UINT2 masked bytes already hold the value, and types stored one element per their own
+  // width were never masked, so all of these must pass through untouched.
+  const std::vector<uint8_t> original{0x00, 0x03, 0x0F, 0x80, 0xFF};
+  for (ONNXTensorElementDataType type : {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
+                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT}) {
+    std::vector<uint8_t> bytes = original;
+    qnn::utils::SignExtendUnpackedSubByteData(type, gsl::make_span(bytes));
+    EXPECT_EQ(bytes, original) << "type " << static_cast<int>(type) << " must not be modified";
+  }
+}
+
+TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_EmptySpanIsSafe) {
+  std::vector<uint8_t> bytes;
+  qnn::utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                                            gsl::make_span(bytes));
+  EXPECT_TRUE(bytes.empty());
 }
 
 }  // namespace test

@@ -36,6 +36,14 @@ class QnnModelWrapper;
 class QnnQuantParamsWrapper;
 
 namespace utils {
+
+template <typename T>
+inline bool IsCompatibleFcBiasShape(const std::vector<T>& bias_shape, T output_channels) {
+  return (bias_shape.empty() && output_channels == 1) ||
+         (bias_shape.size() == 1 && bias_shape[0] == output_channels) ||
+         (bias_shape.size() == 2 && bias_shape[0] == 1 && bias_shape[1] == output_channels);
+}
+
 /**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
@@ -114,6 +122,9 @@ class QnnJSONGraph {
   std::unordered_set<std::string> seen_op_types_;  // Tracks unique operator types.
 };
 
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type);
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type);
+
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
@@ -151,6 +162,16 @@ class UniqueNameGeneratorImpl {
 };
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
+
+// Returns a stable, non-empty base name for a node unit.
+// Uses node_unit.Name() when non-empty; falls back to OpType()+Index() for unnamed nodes,
+// matching the behaviour of UniqueNameGeneratorImpl::New(const OrtNodeUnit&, suffix).
+// Use this instead of node_unit.Name() when constructing intermediate tensor names that
+// must be deterministic and collision-free across GetCapability and Compile passes.
+inline std::string NodeUnitBaseName(const OrtNodeUnit& node_unit) {
+  const std::string& name = node_unit.Name();
+  return name.empty() ? node_unit.OpType() + std::to_string(node_unit.Index()) : name;
+}
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
@@ -251,6 +272,15 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
                                  gsl::span<const float> scales, gsl::span<const int32_t> offsets,
                                  /*out*/ gsl::span<float> data, Qnn_DataType_t data_type,
                                  std::optional<int64_t> axis = std::nullopt);
+
+// Recovers the true two's-complement value of sub-byte data that UnpackInitializerData() expanded
+// to one byte per element with the unused high bits masked off (UnpackInt4ToInt8 / UnpackInt2ToInt8
+// mask to work around a QNN INT4 accuracy bug; that mask must stay). Consumers that read those
+// bytes as plain integers need this: DequantizePerChannel is told SFIXED_POINT_8, since
+// CreateMapQuantize collapses INT4 into it on non-GPU backends, so a negative 4-bit value would
+// read back as q + 16. UINT4/UINT2 are never masked and are left alone.
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes);
 
 Ort::Status Quantize(const double double_value,
                      const float scale,
@@ -551,6 +581,40 @@ Ort::Status NchwShapeToNhwc(gsl::span<const T> nchw_shape, gsl::span<T> nhwc_sha
   return Ort::Status();
 }
 
+// Returns the channel-first (NCHW/NCDHW) -> channel-last (NHWC/NDHWC) permutation for the
+// given tensor rank. Works for any rank >= 2: e.g. rank 4 -> {0,2,3,1}, rank 5 -> {0,2,3,4,1}.
+inline std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i - 1] = static_cast<uint32_t>(i);
+  }
+  perm[rank - 1] = 1;
+  return perm;
+}
+
+// Returns the channel-last (NHWC/NDHWC) -> channel-first (NCHW/NCDHW) permutation for the
+// given tensor rank (inverse of ChannelFirstToLastPerm).
+inline std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  perm[1] = static_cast<uint32_t>(rank - 1);
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i] = static_cast<uint32_t>(i - 1);
+  }
+  return perm;
+}
+
+// Applies a permutation to a shape vector and returns the permuted shape.
+inline std::vector<uint32_t> ApplyPermToShape(const std::vector<uint32_t>& shape,
+                                              const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out(shape.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    out[i] = shape[perm[i]];
+  }
+  return out;
+}
+
 // NCHW shape to HWCN shape, required for Conv weight
 template <typename T>
 Ort::Status NchwShapeToHwcn(gsl::span<const T> nchw_shape, gsl::span<T> hwcn_shape) {
@@ -619,6 +683,14 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint8_t>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
+
+// Transposes a [rows, cols] buffer of `elem_byte_size`-wide elements into a [cols, rows] buffer.
+// Both buffers must hold exactly rows * cols * elem_byte_size bytes.
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer);
 
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,

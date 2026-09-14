@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -65,7 +66,9 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      const std::basic_string<ORTCHAR_T>& ctx_onnx_model_path,
                                      QnnBackendManager* qnn_backend_manager,
                                      QnnModelLookupTable& qnn_models,
-                                     int64_t max_spill_fill_size);
+                                     int64_t max_spill_fill_size,
+                                     const qnn::EpContextIoDispatch& io_dispatch,
+                                     const Ort::Logger* logger = nullptr);
 
 Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
                                    const OrtApi& ort_api,
@@ -79,7 +82,8 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnBackendManager* qnn_backend_manager,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
-                                    int64_t max_spill_fill_size);
+                                    int64_t max_spill_fill_size,
+                                    const qnn::EpContextIoDispatch& io_dispatch);
 
 Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  size_t count,
@@ -98,7 +102,8 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  bool stop_share_ep_contexts,
                                  const std::string& ep_name,
                                  const std::unordered_map<std::string, std::string>& tensor_name_overrides,
-                                 bool enable_multi_soc_ep_context);
+                                 bool enable_multi_soc_ep_context,
+                                 const qnn::EpContextIoDispatch& io_dispatch);
 
 }  // namespace qnn
 }  // namespace onnxruntime

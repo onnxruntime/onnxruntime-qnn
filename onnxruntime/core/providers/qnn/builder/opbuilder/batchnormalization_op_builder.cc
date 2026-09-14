@@ -500,9 +500,8 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
 // Single source of truth for float execution, shared by ProcessInputs (stores params) and
 // ProcessAttributesAndOutputs (emits the op).
 //   - has_float_output: quantized input, no output Q -> float island; BN emits float directly.
-//   - use_float_params: u8/u16 input where a BN param is per-channel quantized, or mean/var
-//     is raw float. QNN BN fuses them into per-tensor scale/bias, which drops per-channel
-//     range; the float path (Dequantize -> BN in F32 -> Quantize) keeps it.
+//   - use_float_params: also covers u8/u16 input with per-channel scale, whose fused weight
+//     gamma/sqrt(var+eps) can overflow a single per-tensor requant scale.
 struct BatchNormFloatExecution {
   bool has_float_output;
   bool use_float_params;
@@ -510,26 +509,15 @@ struct BatchNormFloatExecution {
 
 BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
                                                    const TensorInfo& scale_info,
-                                                   const TensorInfo& bias_info,
-                                                   const TensorInfo& mean_info,
-                                                   const TensorInfo& var_info,
                                                    const TensorInfo& output_info) {
-  const bool is_input_quantized = input_info.quant_param.IsQuantized();
-  const bool has_float_output = is_input_quantized && !output_info.quant_param.IsQuantized();
-  const bool any_param_per_channel = scale_info.quant_param.IsPerChannel() ||
-                                     bias_info.quant_param.IsPerChannel() ||
-                                     mean_info.quant_param.IsPerChannel() ||
-                                     var_info.quant_param.IsPerChannel();
-  // bias excluded: OverrideParamTypeForRequantize already converts float bias to int32.
-  const bool has_unquantized_params = is_input_quantized &&
-                                      (!mean_info.quant_param.IsQuantized() ||
-                                       !var_info.quant_param.IsQuantized());
+  const bool is_quantized_op = input_info.quant_param.IsQuantized();
+  const bool has_float_output = is_quantized_op && !output_info.quant_param.IsQuantized();
   const bool use_float_params =
       has_float_output ||
-      (is_input_quantized &&
+      (is_quantized_op &&
        (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
         input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
-       (any_param_per_channel || has_unquantized_params));
+       scale_info.quant_param.IsPerChannel());
   return {has_float_output, use_float_params};
 }
 
@@ -636,14 +624,12 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
     // Get input tensor info to determine if this is a quantized op
     TensorInfo input_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
-    const bool is_input_quantized = input_info.quant_param.IsQuantized();
+    const bool is_quantized_op = input_info.quant_param.IsQuantized();
 
     // When BN runs in float, params below are stored as f32 (see GetBatchNormFloatExecution).
     TensorInfo output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
-    const bool use_float_params =
-        GetBatchNormFloatExecution(input_info, scale_info, bias_info, mean_info, var_info, output_info)
-            .use_float_params;
+    const bool use_float_params = GetBatchNormFloatExecution(input_info, scale_info, output_info).use_float_params;
 
     // Check if bias needs conversion (will be done after preprocessing)
     const bool bias_is_float = !bias_info.quant_param.IsQuantized() &&
@@ -706,7 +692,7 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                    scale_info.qnn_data_type,
                                    bias_info.qnn_data_type,
                                    scale_rmin < 0.0);
-    if (is_input_quantized && bias_is_float) {
+    if (is_quantized_op && bias_is_float) {
       bias_info.quant_param = QnnQuantParamsWrapper::PerTensor(1.0f, 0);  // Placeholder, computed in Postprocess
     }
 
@@ -775,19 +761,12 @@ Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
   TensorInfo scale_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], scale_info));
-  TensorInfo bias_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[2], bias_info));
-  TensorInfo mean_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[3], mean_info));
-  TensorInfo var_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[4], var_info));
 
   TensorInfo output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
 
   // has_float_output emits BN's float result with no trailing Quantize, feeding downstream float ops.
-  const BatchNormFloatExecution float_exec =
-      GetBatchNormFloatExecution(input_info, scale_info, bias_info, mean_info, var_info, output_info);
+  const BatchNormFloatExecution float_exec = GetBatchNormFloatExecution(input_info, scale_info, output_info);
   const bool has_float_output = float_exec.has_float_output;
   const bool use_float_params = float_exec.use_float_params;
 

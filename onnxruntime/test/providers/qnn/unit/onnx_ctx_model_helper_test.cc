@@ -657,7 +657,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_Return
   CtxHelperTestContext ctx;
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+                                         qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
 }
 
@@ -668,7 +669,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[EMBED_MODE] = &embed_mode;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+                                         qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
   // Pin the specific guard: without this the terminal is_regular_file() check
   // catches every path case, so the test would pass even if the empty-path
@@ -686,7 +688,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePa
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+                                         qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
   // Pin the absolute-path (directory-traversal) guard: removing it lets the
   // path fall through to the "does not exist" check, which this substring
@@ -704,7 +707,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+                                         qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
   // Pin the ".." guard by both code and message. Removing it lets the path
   // fall through to the terminal "does not exist" check (also ORT_INVALID_GRAPH),
@@ -725,7 +729,8 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0);
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+                                         qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
 }
 
@@ -829,6 +834,7 @@ int64_t RunCreateEpCtxAndCaptureMultiSoc(bool enable_multi_soc_ep_context) {
   unsigned char buffer[] = {0x1, 0x2, 0x3, 0x4};
   std::basic_string<ORTCHAR_T> context_model_path;  // unused in embed mode
   std::unordered_map<std::string, std::string> no_overrides;
+  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
 
   auto status = CreateEPContextNodes(&fused_node, 1, &ep_context_node,
                                      ctx.ort_api, ctx.editor_api,
@@ -843,7 +849,8 @@ int64_t RunCreateEpCtxAndCaptureMultiSoc(bool enable_multi_soc_ep_context) {
                                      /*stop_share_ep_contexts=*/false,
                                      /*ep_name=*/"QNNExecutionProvider",
                                      no_overrides,
-                                     enable_multi_soc_ep_context);
+                                     enable_multi_soc_ep_context,
+                                     dummy_io_dispatch);
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
   EXPECT_TRUE(g_multi_soc_capture.seen) << "IS_MULTI_SOC_EP_CONTEXT attribute was never written";
   return g_multi_soc_capture.value;

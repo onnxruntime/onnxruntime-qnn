@@ -29,6 +29,32 @@
 // Public headers from ORT Core
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
+
+// EPContext encryption callbacks were added at ORT API v28.
+#if ORT_API_VERSION >= 28
+#define ORT_API_HAS_EPCONTEXT_ENCRYPTION 1
+#else
+#define ORT_API_HAS_EPCONTEXT_ENCRYPTION 0
+#endif
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+#include "onnxruntime_experimental_c_api.h"
+#include "onnxruntime_experimental_cxx_api.h"
+#else
+// Forward-declare v28 typedefs so QNN EP signatures that mention them still compile
+// against pre-v28 ORT headers. Bodies gated on ORT_API_HAS_EPCONTEXT_ENCRYPTION supply
+// the real definitions; the pointers are only ever dereferenced on the v28+ path.
+extern "C" {
+struct OrtEpContextConfig;
+typedef struct OrtEpContextConfig OrtEpContextConfig;
+typedef OrtStatus*(ORT_API_CALL* OrtWriteNamedBufferFunc)(void* state, const char* name,
+                                                          const void* buffer, size_t buffer_num_bytes);
+typedef OrtStatus*(ORT_API_CALL* OrtReadNamedBufferFunc)(void* state, const char* name,
+                                                         OrtAllocator* allocator,
+                                                         void** buffer, size_t* data_size);
+}
+#endif  // ORT_API_HAS_EPCONTEXT_ENCRYPTION
+
 #include "onnxruntime_run_options_config_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 

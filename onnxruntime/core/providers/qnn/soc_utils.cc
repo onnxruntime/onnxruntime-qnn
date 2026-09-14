@@ -1,7 +1,10 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#include <climits>
 #include <stdint.h>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #ifdef _WIN32
 #include <windows.h>
@@ -210,6 +213,43 @@ bool HasFastRpcCdspDevice() {
 #else
   return false;
 #endif
+}
+
+uint32_t SocModelFromName(std::string_view name) {
+  // Lookup table restricted to SoC models whose HTP architecture is supported
+  // by this EP (V68/V69/V73/V75/V79/V81/V85). Values match Qnn_SocModel_t in
+  // QNN/QnnTypes.h where available; entries not yet in the enum use the known
+  // assigned value. This table is best-effort — chips not listed here can still
+  // be targeted by passing the numeric soc_model ID directly.
+  static const std::unordered_map<std::string, uint32_t> kSocModelNameMap = {
+      {"SM8350", 30},
+      {"SM8325", 34},
+      {"SM8450", 36},
+      {"SM8475", 42},
+      {"SM8550", 43},
+      {"SM8650", 57},
+      {"SC8380XP", 60},
+      {"SM8635", 68},
+      {"SM8750", 69},
+      {"SM7675", 70},
+      {"SM8850", 87},
+      {"SC8480XP", 88},
+      {"SM8975", 103},
+  };
+
+  // Uppercase input for case-insensitive lookup (ASCII-only, no locale dependency).
+  std::string upper;
+  upper.reserve(name.size());
+  for (char c : name) {
+    upper += static_cast<char>(
+        (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c);
+  }
+
+  auto it = kSocModelNameMap.find(upper);
+  if (it != kSocModelNameMap.end()) {
+    return it->second;
+  }
+  return 0;
 }
 
 }  // namespace soc

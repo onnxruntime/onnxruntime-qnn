@@ -33,6 +33,17 @@
 // in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
 
+// Exported from QnnMockSSR.dll: returns true if contextCreateFromBinaryWithCallback
+// was called after SSR was injected (i.e., file mapping was used for recovery).
+// Only meaningful on Windows ARM64 with QNN >= 2.32 (QNN_FILE_MAPPED_WEIGHTS_AVAILABLE);
+// always returns false on other platforms.
+extern "C" bool QnnMockSSR_WasFileMappingUsedForRecovery();
+
+// Exported from QnnMockSSR.dll: when set to true, contextCreateFromBinaryWithCallback
+// returns QNN_COMMON_ERROR_NOT_SUPPORTED during SSR recovery (simulating a pre-3.3.3
+// context binary).  Must be reset to false explicitly after the test.
+extern "C" void QnnMockSSR_SetSimulateOldBlobVersion(bool simulate);
+
 using namespace ONNX_NAMESPACE;
 
 namespace onnxruntime {
@@ -160,6 +171,94 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedMode) {
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,  // Load from the generated context model
                        run_session_opts);
+
+  // Verify that SSR recovery used file mapping (contextCreateFromBinaryWithCallback)
+  // when the feature is available.  On platforms without file mapping support this
+  // assertion is vacuously true (the function always returns false there).
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  EXPECT_TRUE(QnnMockSSR_WasFileMappingUsedForRecovery())
+      << "SSR recovery should have used contextCreateFromBinaryWithCallback (file mapping) "
+         "but it did not. Check ReloadContextForSSR in qnn_backend_manager.cc.";
+#endif
+
+  CleanUpCtxFile(context_model_file);
+}
+
+// Test that SSR recovery falls back to direct read (contextCreateFromBinary) and produces
+// correct outputs when contextCreateFromBinaryWithCallback fails during recovery —
+// simulating the behavior expected for a pre-3.3.3 context binary.
+//
+// Because producing an actual pre-3.3.3 binary is not feasible in these tests, we use
+// QnnMockSSR_SetSimulateOldBlobVersion(true) to make the mock reject the callback API with
+// QNN_COMMON_ERROR_NOT_SUPPORTED, which exercises the same reactive-fallback branch of
+// ReloadContextForSSR.  The test asserts:
+//   (a) WasFileMappingUsedForRecovery() == false  (callback API was not successfully used)
+//   (b) session outputs match the CPU reference  (direct-read fallback produced a working context)
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextNonEmbedModeFileMappingRejected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::string context_model_file = "./ssr_ep_ctx_fm_rejected_test.onnx";
+  std::remove(context_model_file.c_str());
+
+  const std::string op_type = "Atan";
+  const TestInputDef<float> input_def_qdq({1, 2, 3}, false, -10.0f, 10.0f);
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate the embed_mode=0 context binary with the real HTP backend.
+  // -----------------------------------------------------------------------
+  ProviderOptions htp_options;
+  htp_options["backend_type"] = "htp";
+  htp_options["offload_graph_io_quantization"] = "0";
+
+  std::unordered_map<std::string, std::string> gen_session_opts;
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEnable, "1");
+  gen_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
+  gen_session_opts.emplace(kOrtSessionOptionEpContextEmbedMode, "0");
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       htp_options,
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       gen_session_opts);
+
+  ASSERT_TRUE(std::filesystem::exists(context_model_file))
+      << "Context model file was not generated: " << context_model_file;
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load the context model via QnnMockSSR.dll with the callback API
+  //         rejected, simulating a pre-3.3.3 blob.  Recovery must succeed via
+  //         the direct-read fallback.
+  // -----------------------------------------------------------------------
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // RAII guard: ensures the flag is always cleared even if an ASSERT_* exits the test early.
+  struct OldBlobGuard {
+    ~OldBlobGuard() { QnnMockSSR_SetSimulateOldBlobVersion(false); }
+  } old_blob_guard;
+  QnnMockSSR_SetSimulateOldBlobVersion(true);
+#endif
+
+  std::unordered_map<std::string, std::string> run_session_opts;
+  run_session_opts.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def_qdq}, {}, {}),
+                       provider_options,  // QnnMockSSR.dll
+                       14,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       context_model_file,
+                       run_session_opts);
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  EXPECT_FALSE(QnnMockSSR_WasFileMappingUsedForRecovery())
+      << "SSR recovery should NOT have used contextCreateFromBinaryWithCallback when "
+         "the callback API is rejected (pre-3.3.3 simulation). Direct read should be used.";
+#endif
 
   CleanUpCtxFile(context_model_file);
 }
@@ -779,6 +878,116 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableErr
 }
 
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+
+// Test that ApplyRuntimeGraphConfigs is re-applied after an SSR event on the
+// context-binary path. The mock SSR fires on the first graphExecute, triggering
+// RecoverFromSSR which calls ApplyRuntimeGraphConfigs(runtime_graph_configs_).
+// With inputs/weights of 300.0f the Conv accumulator overflows fp16 max (~65504):
+// if the clamp config is not re-applied after recovery the output would be NaN.
+//
+// Gated on QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE (QNN API >= 2.38 / QAIRT >= 2.49)
+// and HTP arch > V75 since fp16 overflow→NaN only manifests on v79+.
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && \
+    defined(QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE)
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_ReappliedAfterRecovery) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+
+  const std::string context_model_file = "./ssr_fp16_clamp_overflow_ctx.onnx";
+  std::remove(context_model_file.c_str());
+
+  // Build and serialize the ONNX model.
+  ModelTestBuilder helper;
+  BuildFp16ClampOverflowConvTestCase()(helper);
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  // -----------------------------------------------------------------------
+  // Step 1: Generate embed_mode=0 context binary with the real HTP backend.
+  // -----------------------------------------------------------------------
+  {
+    ProviderOptions htp_options;
+    htp_options["backend_type"] = "htp";
+    htp_options["offload_graph_io_quantization"] = "0";
+    htp_options["enable_htp_fp16_precision"] = "1";
+    htp_options["enable_htp_fp16_clamp_overflow"] = "1";
+    htp_options["num_graph_prepare_threads"] = "1";
+
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, htp_options);
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  }
+
+  ASSERT_TRUE(std::filesystem::exists(context_model_file.c_str()))
+      << "Context model not generated: " << context_model_file;
+
+  // -----------------------------------------------------------------------
+  // Step 2: Load via QnnMockSSR. SSR fires on the first graphExecute;
+  //         RecoverFromSSR reloads the .bin, re-applies fp16_clamp_overflow
+  //         via graphSetConfig, and retries. Output must be finite (not NaN).
+  // -----------------------------------------------------------------------
+  {
+    // provider_options from fixture SetUp() uses QnnMockSSR.dll.
+    ProviderOptions mock_options = provider_options;
+    mock_options["enable_htp_fp16_precision"] = "1";
+    // enable_htp_fp16_clamp_overflow must be set so ApplyRuntimeGraphConfigs fires on
+    // the binary-load path and is re-applied inside RecoverFromSSR after the mock SSR.
+    mock_options["enable_htp_fp16_clamp_overflow"] = "1";
+
+    Ort::SessionOptions so2;
+    so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+
+    onnx::ModelProto ctx_model_proto;
+    std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good()) << "Failed to open context model: " << context_model_file;
+    ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs));
+    std::string ctx_model_data;
+    ctx_model_proto.SerializeToString(&ctx_model_data);
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so2, kQnnExecutionProvider, mock_options);
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so2));
+
+    std::vector<float> input_value(32, 300.0f);
+    std::vector<int64_t> input_dim{1, 2, 4, 4};
+    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<Ort::Value> ort_inputs;
+    ort_inputs.push_back(Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                  input_dim.data(), input_dim.size()));
+    const char* input_names_c[] = {"input"};
+    const char* output_names_c[] = {"output"};
+
+    // First Run: mock SSR fires → RecoverFromSSR → ApplyRuntimeGraphConfigs re-applied → retry.
+    auto ort_outputs = scoped.session().Run(Ort::RunOptions{}, input_names_c, ort_inputs.data(),
+                                            ort_inputs.size(), output_names_c, 1);
+
+    ASSERT_EQ(ort_outputs.size(), 1u);
+    const float* out_data = ort_outputs[0].GetTensorData<float>();
+    const size_t out_count = ort_outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    for (size_t i = 0; i < out_count; ++i) {
+      EXPECT_TRUE(std::isfinite(out_data[i]))
+          << "Output[" << i << "] is not finite after SSR recovery: " << out_data[i];
+    }
+  }
+
+  CleanUpCtxFile(context_model_file);
+}
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+
 }  // namespace test
 }  // namespace onnxruntime
 

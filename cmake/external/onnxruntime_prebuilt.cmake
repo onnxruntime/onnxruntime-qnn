@@ -83,6 +83,12 @@ else()
         --qnn_home "${onnxruntime_QNN_HOME}"
         --no_kleidiai
     )
+    # ort_core is fetched as a URL archive (zip), not a git clone, so there is no
+    # .git directory. Without this flag, build.py unconditionally runs
+    # "git submodule sync --recursive" and crashes with "fatal: not a git repository".
+    # NOTE: if ort_core is ever switched to GIT_REPOSITORY/GIT_TAG, remove this flag
+    # so that submodule sync runs correctly.
+    list(APPEND ORT_BUILD_COMMAND --skip_submodule_sync)
     if(onnxruntime_BUILD_CACHE)
         list(APPEND ORT_BUILD_COMMAND "--use_cache")
     endif()
@@ -224,7 +230,8 @@ ExternalProject_Add(
     SOURCE_DIR ${ORT_SOURCE_DIR}
     BINARY_DIR ${ORT_BUILD_DIR}
     DOWNLOAD_COMMAND ""
-    PATCH_COMMAND ""
+    PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
+                  -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0007-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
     BUILD_ALWAYS ON
