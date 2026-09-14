@@ -1,0 +1,7 @@
+# Artifacts generated while building or running the sample.
+/build/
+/run_udo_sample
+/test_data_set_0/
+/__pycache__/
+/*.onnx
+/*.bin

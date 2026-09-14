@@ -80,8 +80,7 @@ def run_cpu(model_path: str, op_package: str, qnn_ep_lib: str) -> None:
     max_err = float(np.max(np.abs(output - expected)))
     print(f"Max absolute error vs (input + {CONSTANT}): {max_err:.2e}")
     if max_err > 1e-4:
-        print("FAIL: error exceeds threshold")
-        sys.exit(1)
+        raise RuntimeError("error exceeds threshold")
     print("PASS")
 
 
@@ -110,12 +109,11 @@ def run_htp(model_path: str, op_package: str, qnn_ep_lib: str) -> None:
     qdq_tol = 4.0 / 255.0 * 2
     print(f"Max absolute error vs (input + {CONSTANT}): {max_err:.4f}  (QDQ tol: {qdq_tol:.4f})")
     if max_err > qdq_tol:
-        print("FAIL: error exceeds QDQ tolerance")
-        sys.exit(1)
+        raise RuntimeError("error exceeds QDQ tolerance")
     print("PASS")
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Run MyAdd UDO on QNN EP")
     parser.add_argument("backend", choices=["cpu", "htp"], help="QNN backend to use")
     parser.add_argument("model", help="Path to ONNX model (myadd_fp32.onnx or myadd_qdq.onnx)")
@@ -123,11 +121,17 @@ def main() -> None:
     parser.add_argument("--qnn-ep-lib", required=True, help="Absolute path to libonnxruntime_providers_qnn.so")
     args = parser.parse_args()
 
-    if args.backend == "cpu":
-        run_cpu(args.model, args.op_package, args.qnn_ep_lib)
-    else:
-        run_htp(args.model, args.op_package, args.qnn_ep_lib)
+    try:
+        if args.backend == "cpu":
+            run_cpu(args.model, args.op_package, args.qnn_ep_lib)
+        else:
+            run_htp(args.model, args.op_package, args.qnn_ep_lib)
+    except RuntimeError as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

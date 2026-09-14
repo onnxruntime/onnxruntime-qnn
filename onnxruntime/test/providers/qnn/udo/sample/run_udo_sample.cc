@@ -102,7 +102,7 @@ static void run_cpu(const std::string& model_path, const std::string& pkg_path) 
     max_err = std::max(max_err, std::fabs(out[i] - (input[i] + kConstant)));
 
   printf("Max absolute error vs (input + %.1f): %.2e\n", kConstant, max_err);
-  printf(max_err <= 1e-4f ? "PASS\n" : "FAIL: error exceeds threshold\n");
+  fputs(max_err <= 1e-4f ? "PASS\n" : "FAIL: error exceeds threshold\n", stdout);
 }
 
 static void run_htp(const std::string& model_path, const std::string& pkg_path) {
@@ -138,7 +138,7 @@ static void run_htp(const std::string& model_path, const std::string& pkg_path) 
   const float qdq_tol = 4.0f / 255.0f * 2;
   printf("Max absolute error vs (input + %.1f): %.4f  (QDQ tol: %.4f)\n",
          kConstant, max_err, qdq_tol);
-  printf(max_err <= qdq_tol ? "PASS\n" : "FAIL: error exceeds QDQ tolerance\n");
+  fputs(max_err <= qdq_tol ? "PASS\n" : "FAIL: error exceeds QDQ tolerance\n", stdout);
 }
 
 int main(int argc, char* argv[]) {
