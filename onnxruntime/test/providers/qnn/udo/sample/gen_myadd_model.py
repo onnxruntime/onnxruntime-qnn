@@ -15,10 +15,11 @@ Usage:
 """
 
 import argparse
+import os
+
 import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
-
 
 DOMAIN = "example"
 OP_TYPE = "MyAdd"
@@ -27,14 +28,14 @@ INPUT_SHAPE = [1, 32]
 
 def make_fp32_model(constant: float) -> onnx.ModelProto:
     """Float32 model: input -> MyAdd -> output."""
-    X = helper.make_tensor_value_info("input", TensorProto.FLOAT, INPUT_SHAPE)
-    Y = helper.make_tensor_value_info("output", TensorProto.FLOAT, INPUT_SHAPE)
+    input_vi = helper.make_tensor_value_info("input", TensorProto.FLOAT, INPUT_SHAPE)
+    output_vi = helper.make_tensor_value_info("output", TensorProto.FLOAT, INPUT_SHAPE)
 
     constant_attr = helper.make_attribute("constant", constant)
     node = helper.make_node(OP_TYPE, inputs=["input"], outputs=["output"], domain=DOMAIN)
     node.attribute.append(constant_attr)
 
-    graph = helper.make_graph([node], "myadd_fp32", [X], [Y])
+    graph = helper.make_graph([node], "myadd_fp32", [input_vi], [output_vi])
     opset = helper.make_opsetid(DOMAIN, 1)
     model = helper.make_model(graph, opset_imports=[opset])
     model.ir_version = 8
@@ -64,25 +65,25 @@ def make_qdq_model(constant: float) -> onnx.ModelProto:
 
     # scale/zero_point initializers
     inits = [
-        quant_init("scale_in",  scale_in),
-        quant_init("zp_in",     zp_in),
+        quant_init("scale_in", scale_in),
+        quant_init("zp_in", zp_in),
         quant_init("scale_out", scale_out),
-        quant_init("zp_out",    zp_out),
+        quant_init("zp_out", zp_out),
     ]
 
     # Value infos
-    f32 = lambda name: helper.make_tensor_value_info(name, TensorProto.FLOAT, INPUT_SHAPE)
-    u8 = lambda name: helper.make_tensor_value_info(name, TensorProto.UINT8, INPUT_SHAPE)
+    def make_f32_value_info(name: str) -> onnx.ValueInfoProto:
+        return helper.make_tensor_value_info(name, TensorProto.FLOAT, INPUT_SHAPE)
 
-    input_vi = f32("input")
-    output_vi = f32("output")
+    input_vi = make_f32_value_info("input")
+    output_vi = make_f32_value_info("output")
 
     # Declared type/shape for the MyAdd output (intermediate tensor feeding the
     # output QuantizeLinear). The QNN EP auto-registration path registers a
     # placeholder op with no shape/type inference, so ORT resolves the custom-op
     # output type from this value_info at model-load time. Without it, load fails
     # with "type inference failed" for the custom-domain node.
-    output_dq_vi = f32("output_dq")
+    output_dq_vi = make_f32_value_info("output_dq")
 
     # Nodes: Q -> DQ -> MyAdd -> Q -> DQ
     q_in = helper.make_node("QuantizeLinear", ["input", "scale_in", "zp_in"], ["input_q"], axis=None)
@@ -113,12 +114,10 @@ def make_qdq_model(constant: float) -> onnx.ModelProto:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate MyAdd UDO ONNX models")
-    parser.add_argument("--constant", type=float, default=2.0,
-                        help="Value added to each input element (default: 2.0)")
+    parser.add_argument("--constant", type=float, default=2.0, help="Value added to each input element (default: 2.0)")
     parser.add_argument("--outdir", default=".", help="Output directory")
     args = parser.parse_args()
 
-    import os
     os.makedirs(args.outdir, exist_ok=True)
 
     fp32_path = os.path.join(args.outdir, "myadd_fp32.onnx")

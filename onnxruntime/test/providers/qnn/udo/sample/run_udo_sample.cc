@@ -114,9 +114,7 @@ static void run_htp(const std::string& model_path, const std::string& pkg_path) 
   // Register QNN HTP EP.
   // ORT_QNN_CUSTOM_OP_DOMAINS handles schema registration automatically.
   std::string op_packages = "MyAdd:" + pkg_path + ":MyAddOpPackageInterfaceProvider:CPU";
-  AppendQnnEp(env, so, {{"backend_type", "htp"},
-                        {"offload_graph_io_quantization", "0"},
-                        {"op_packages", op_packages}});
+  AppendQnnEp(env, so, {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", op_packages}});
 
   Ort::Session session(env, model_path.c_str(), so);
 
@@ -155,12 +153,14 @@ int main(int argc, char* argv[]) {
   }
 
   std::string backend = argv[1];
-  std::string model   = argv[2];
-  std::string pkg     = argv[3];
+  std::string model = argv[2];
+  std::string pkg = argv[3];
 
   try {
-    if (backend == "cpu")       run_cpu(model, pkg);
-    else if (backend == "htp")  run_htp(model, pkg);
+    if (backend == "cpu")
+      run_cpu(model, pkg);
+    else if (backend == "htp")
+      run_htp(model, pkg);
     else {
       fprintf(stderr, "Unknown backend '%s'. Use 'cpu' or 'htp'.\n", backend.c_str());
       return 1;

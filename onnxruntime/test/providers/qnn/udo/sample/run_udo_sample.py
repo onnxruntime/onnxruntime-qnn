@@ -37,9 +37,10 @@ QNN EP registration (v2 plugin API):
 """
 
 import argparse
-import os
 import sys
+
 import numpy as np
+
 import onnxruntime as ort
 
 CONSTANT = 2.0
@@ -89,11 +90,15 @@ def run_htp(model_path: str, op_package: str, qnn_ep_lib: str) -> None:
     so = ort.SessionOptions()
 
     op_packages_str = f"MyAdd:{op_package}:MyAddOpPackageInterfaceProvider:CPU"
-    append_qnn_ep(so, qnn_ep_lib, {
-        "backend_type": "htp",
-        "offload_graph_io_quantization": "0",
-        "op_packages": op_packages_str,
-    })
+    append_qnn_ep(
+        so,
+        qnn_ep_lib,
+        {
+            "backend_type": "htp",
+            "offload_graph_io_quantization": "0",
+            "op_packages": op_packages_str,
+        },
+    )
 
     sess = ort.InferenceSession(model_path, sess_options=so)
     x = build_input()
@@ -114,10 +119,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run MyAdd UDO on QNN EP")
     parser.add_argument("backend", choices=["cpu", "htp"], help="QNN backend to use")
     parser.add_argument("model", help="Path to ONNX model (myadd_fp32.onnx or myadd_qdq.onnx)")
-    parser.add_argument("--op-package", required=True,
-                        help="Path to libMyAddOpPackage_<backend>.so")
-    parser.add_argument("--qnn-ep-lib", required=True,
-                        help="Absolute path to libonnxruntime_providers_qnn.so")
+    parser.add_argument("--op-package", required=True, help="Path to libMyAddOpPackage_<backend>.so")
+    parser.add_argument("--qnn-ep-lib", required=True, help="Absolute path to libonnxruntime_providers_qnn.so")
     args = parser.parse_args()
 
     if args.backend == "cpu":

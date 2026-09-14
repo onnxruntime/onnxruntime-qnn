@@ -16,10 +16,8 @@ from onnx import numpy_helper
 
 def main():
     parser = argparse.ArgumentParser(description="Generate MyAdd ONNX test data")
-    parser.add_argument("--constant", type=float, default=2.0,
-                        help="Value added by MyAdd (default: 2.0)")
-    parser.add_argument("--outdir", required=True,
-                        help="Test-case directory that will contain test_data_set_0")
+    parser.add_argument("--constant", type=float, default=2.0, help="Value added by MyAdd (default: 2.0)")
+    parser.add_argument("--outdir", required=True, help="Test-case directory that will contain test_data_set_0")
     args = parser.parse_args()
 
     data_dir = os.path.join(args.outdir, "test_data_set_0")
