@@ -3,6 +3,11 @@
 
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 
+#ifdef _WIN32
+#include <cstdlib>
+#include <intrin.h>
+#endif
+
 #include "HTP/QnnHtpMem.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -115,6 +120,31 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
 
     Qnn_MemHandle_t raw_mem_handle{};
     const auto register_result = qnn_interface_.memRegister(context_, &mem_descriptor, 1, &raw_mem_handle);
+
+#ifdef _WIN32
+    // Repro-only dump capture gate. Break before the memRegister error propagates to ORT and
+    // releases the successfully registered handles. This preserves the failure state while
+    // WinDbg triggers a manual system crash and PCAT collects the dump.
+    bool break_on_mem_register_failure = false;
+    char* break_env_value = nullptr;
+    size_t break_env_value_size = 0;
+    if (_dupenv_s(&break_env_value, &break_env_value_size, "ORT_QNN_BREAK_ON_MEM_REGISTER_FAILURE") == 0 &&
+        break_env_value != nullptr) {
+      break_on_mem_register_failure = break_env_value[0] == '1' && break_env_value[1] == '\0';
+    }
+    std::free(break_env_value);
+
+    if (register_result == QNN_MEM_ERROR_MAPPING &&
+        IsHtpSharedMemoryAllocator(qnn_allocator_type_) &&
+        break_on_mem_register_failure) {
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  "QnnMem_register failed. ORT_QNN_BREAK_ON_MEM_REGISTER_FAILURE=1; "
+                  "breaking before ORT cleanup for WinDbg .crash dump collection.");
+
+      __debugbreak();
+    }
+#endif
 #ifdef _WIN32
     if (IsGpuBackend(qnn_backend_type_) &&
         IsDx12SharedMemoryAllocator(qnn_allocator_type_) &&
