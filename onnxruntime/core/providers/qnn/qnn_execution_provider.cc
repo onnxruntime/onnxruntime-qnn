@@ -1553,6 +1553,35 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                     false,
                                                     logger_);
 
+  // Option to enable the QnnGraphTransformer (G2G) optimization pipeline.
+  // Set to "1" to enable; default is "0" (disabled).
+  static const std::string ENABLE_QNN_GRAPH_TRANSFORMER = "enable_qnn_graph_transformer";
+  auto enable_qnn_graph_transformer = ParseBoolOption(ort_api,
+                                                      session_options,
+                                                      FormatEPConfigKey(ENABLE_QNN_GRAPH_TRANSFORMER),
+                                                      false,
+                                                      logger_);
+
+  // Comma-separated list of G2G optimization passes to explicitly enable.
+  static const std::string QNN_GT_ENABLE_PASSES = "qnn_graph_transformer_enable_passes";
+  std::string qnn_gt_enable_passes;
+  GetSessionConfigEntryOrDefault(ort_api, session_options,
+                                 FormatEPConfigKey(QNN_GT_ENABLE_PASSES), "", qnn_gt_enable_passes);
+
+  // Comma-separated list of G2G optimization passes to explicitly disable.
+  static const std::string QNN_GT_DISABLE_PASSES = "qnn_graph_transformer_disable_passes";
+  std::string qnn_gt_disable_passes;
+  GetSessionConfigEntryOrDefault(ort_api, session_options,
+                                 FormatEPConfigKey(QNN_GT_DISABLE_PASSES), "", qnn_gt_disable_passes);
+
+  // Dump DLC before and after G2G optimizations (debug feature).
+  static const std::string QNN_GT_DUMP_DLC = "qnn_graph_transformer_dump_dlc";
+  auto qnn_gt_dump_dlc = ParseBoolOption(ort_api,
+                                         session_options,
+                                         FormatEPConfigKey(QNN_GT_DUMP_DLC),
+                                         false,
+                                         logger_);
+
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exists
   // so that all graphs from later sessions will be compiled into the same QNN context. Keep the result from a single lookup:
   // another session may clear the singleton, but this session must retain the manager it adopted.
@@ -1579,7 +1608,11 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      enable_framework_op_trace_,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb,
-                                     enable_htp_cross_device_prepare},
+                                     enable_htp_cross_device_prepare,
+                                     enable_qnn_graph_transformer,
+                                     qnn_gt_enable_passes,
+                                     qnn_gt_disable_passes,
+                                     qnn_gt_dump_dlc},
         static_cast<const ApiPtrs&>(*this), logger_);
   }
 
