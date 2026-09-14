@@ -1787,8 +1787,9 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
     info.group_id = groups.size();
     info.target_node_unit = qnn_node_group->GetTargetNodeUnit();
     for (const OrtNodeUnit* nu : qnn_node_group->GetNodeUnits()) {
-      info.member_node_units.push_back(nu);
-      info.member_set.insert(nu);
+      if (info.member_set.insert(nu).second) {
+        info.member_node_units.push_back(nu);
+      }
     }
     info.is_supported = supported;
 
@@ -1826,11 +1827,15 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
     groups.push_back(std::move(info));
   }
 
-  // Helper: rechecks whether a NodeUnit is supported standalone (equivalent to wrapping it in a
-  // QnnNodeUnitWrapper and calling IsSupported). Used during demotion.
+  // Helper: rechecks whether a NodeUnit is supported standalone, matching QnnNodeUnitWrapper::IsSupported.
   auto check_standalone = [&](const OrtNodeUnit& nu) -> bool {
     const auto* op_builder = qnn::GetOpBuilder(nu.OpType());
     if (!op_builder) {
+      return false;
+    }
+    Ort::Status affinity_status = qnn_model_wrapper.GetModelSettings().op_affinity.Evaluate(
+        nu.OpType(), qnn_model_wrapper.GetQnnBackendType());
+    if (!affinity_status.IsOK()) {
       return false;
     }
     Ort::Status s = op_builder->IsOpSupported(qnn_model_wrapper, nu, logger_);
@@ -1923,12 +1928,12 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
       break;  // No cycles; group graph is a valid DAG.
     }
 
-    // Demote every multi-member group still blocked (in_degree > 0 after dry-run). Over-demotion is safe: a
-    // 1-member group can never participate in a cycle (NodeUnit graph is a DAG by construction), so after enough
-    // demotion the loop terminates.
+    // Demote ONE multi-member group still blocked (in_degree > 0 after dry-run). We demote only one per iteration
+    // to avoid over-demotion: groups merely downstream of the cycle will become schedulable once the cyclic group
+    // is demoted and the dry-run re-runs. This preserves downstream fusions that are perfectly valid.
     size_t demoted_this_iter = 0;
     const size_t original_count = groups.size();
-    for (size_t i = 0; i < original_count; ++i) {
+    for (size_t i = 0; i < original_count && demoted_this_iter == 0; ++i) {
       utils::QnnNodeGroupInfo& g = groups[i];
       if (g.is_defunct) {
         continue;
@@ -1948,16 +1953,22 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
                    "'). Members will be rechecked individually.")
                       .c_str());
 
-      // Remove this group's member OrtNodes from supported_nodes; they will be re-added below if still supported.
+      // Collect this group's member OrtNodes for batch removal from supported_nodes.
+      std::unordered_set<const OrtNode*> nodes_to_drop;
       for (const OrtNodeUnit* member_nu : g.member_node_units) {
         for (const OrtNode* n : member_nu->GetAllNodesInGroup()) {
-          supported_nodes.erase(std::remove(supported_nodes.begin(), supported_nodes.end(), n),
-                                supported_nodes.end());
+          nodes_to_drop.insert(n);
         }
       }
 
       g.is_defunct = true;
       ++demoted_this_iter;
+
+      // Batch-remove demoted nodes from supported_nodes (single pass instead of per-node O(N) erase).
+      supported_nodes.erase(
+          std::remove_if(supported_nodes.begin(), supported_nodes.end(),
+                         [&nodes_to_drop](const OrtNode* n) { return nodes_to_drop.count(n) > 0; }),
+          supported_nodes.end());
 
       // Snapshot members before mutating `groups` (push_back may invalidate references to g).
       std::vector<const OrtNodeUnit*> members_copy = g.member_node_units;
@@ -1976,6 +1987,26 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
         if (new_g.is_supported) {
           for (const OrtNode* n : member_nu->GetAllNodesInGroup()) {
             supported_nodes.push_back(n);
+          }
+          // Remove from unsupported_nodes if the member is now supported standalone.
+          if (enable_framework_op_trace_) {
+            Ort::ConstNode const_node(&member_nu->GetNode());
+            auto node_idx = const_node.GetId();
+            unsupported_nodes.erase(
+                std::remove_if(unsupported_nodes.begin(), unsupported_nodes.end(),
+                               [node_idx](const qnn::UnsupportedNodeInfo& info) { return info.node_index == node_idx; }),
+                unsupported_nodes.end());
+          }
+        } else if (enable_framework_op_trace_) {
+          // Member failed standalone check — add to unsupported_nodes for trace.
+          for (const OrtNode* n : member_nu->GetAllNodesInGroup()) {
+            Ort::ConstNode const_node(n);
+            unsupported_nodes.push_back({
+                std::string(const_node.GetName()),
+                std::string(const_node.GetOperatorType()),
+                const_node.GetId(),
+                "Demoted from fusion; unsupported standalone",
+            });
           }
         }
 

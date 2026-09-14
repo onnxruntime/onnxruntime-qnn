@@ -2034,11 +2034,11 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
   // Per-group in-degree; indexed by group_id.
   std::vector<size_t> group_in_degree(groups.size(), 0);
   size_t live_group_count = 0;
-  for (const QnnNodeGroupInfo& g : groups) {
-    if (g.is_defunct) {
+  for (const QnnNodeGroupInfo& group : groups) {
+    if (group.is_defunct) {
       continue;
     }
-    group_in_degree[g.group_id] = g.external_in_degree;
+    group_in_degree[group.group_id] = group.external_in_degree;
     ++live_group_count;
   }
 
@@ -2046,18 +2046,15 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
   std::deque<size_t> queue_next{};
 
   // Seed with groups that have no external in-edges.
-  for (const QnnNodeGroupInfo& g : groups) {
-    if (g.is_defunct) {
-      continue;
-    }
-    if (group_in_degree[g.group_id] == 0) {
-      queue_current.push_back(g.group_id);
+  for (const QnnNodeGroupInfo& group : groups) {
+    if (!group.is_defunct && group_in_degree[group.group_id] == 0) {
+      queue_current.push_back(group.group_id);
     }
   }
 
   std::vector<const OrtNode*> supported_group{};
-  // Group ids of unprocessed downstream groups reachable from the currently in-progress partition. Mirrors the
-  // `supported_group_border` concept in the old BFS but tracks groups instead of OrtNodes.
+  // Group IDs of unprocessed downstream groups reachable from the in-progress partition — used to defer
+  // unsupported groups until the current partition closes.
   std::unordered_set<size_t> supported_group_border{};
 
   auto close_group = [&]() {
@@ -2080,20 +2077,28 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     size_t gid = queue_current.front();
     queue_current.pop_front();
 
-    const QnnNodeGroupInfo& g = groups[gid];
-    if (g.is_defunct) {
+    const QnnNodeGroupInfo& group = groups[gid];
+    if (group.is_defunct) {
       ++num_groups_processed;
       continue;
     }
 
-    // A group is supported if IQnnNodeGroup::IsSupported accepted it AND the target OrtNode is not already claimed
-    // by another EP AND our own supported_nodes set contains the target (belt-and-suspenders check).
-    const OrtNode* target_ortnode = &g.target_node_unit->GetNode();
-    const char* node_ep_name = nullptr;
-    ORT_CONTINUE_ON_ERROR(ort_api.Node_GetEpName(target_ortnode, &node_ep_name), ort_api);
-    const std::string ep_name_str = node_ep_name ? std::string(node_ep_name) : std::string{};
-    const bool is_group_supported = g.is_supported &&
-                                    (ep_name_str.empty() || ep_name_str == ep_type) &&
+    // A group is supported if IQnnNodeGroup::IsSupported accepted it AND no member OrtNode is claimed by another
+    // EP AND our own supported_nodes set contains the target (belt-and-suspenders check).
+    const OrtNode* target_ortnode = &group.target_node_unit->GetNode();
+    bool all_members_free = true;
+    for (const OrtNodeUnit* member_nu : group.member_node_units) {
+      const OrtNode* member_ortnode = &member_nu->GetNode();
+      const char* member_ep_name = nullptr;
+      ORT_CONTINUE_ON_ERROR(ort_api.Node_GetEpName(member_ortnode, &member_ep_name), ort_api);
+      const std::string member_ep_str = member_ep_name ? std::string(member_ep_name) : std::string{};
+      if (!member_ep_str.empty() && member_ep_str != ep_type) {
+        all_members_free = false;
+        break;
+      }
+    }
+    const bool is_group_supported = group.is_supported &&
+                                    all_members_free &&
                                     supported_nodes_set.find(target_ortnode) != supported_nodes_set.cend();
 
     // Border deferral: an unsupported group on the border of the in-progress partition gets pushed to the next
@@ -2106,7 +2111,7 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     if (is_group_supported) {
       // Emit all member OrtNodes atomically. This preserves QDQGroup DQ/target/Q ordering for each member
       // NodeUnit (via GetAllNodesInGroup) and binds all fusion members to the same partition.
-      for (const OrtNodeUnit* member_nu : g.member_node_units) {
+      for (const OrtNodeUnit* member_nu : group.member_node_units) {
         for (const OrtNode* node : member_nu->GetAllNodesInGroup()) {
           supported_group.push_back(node);
         }
@@ -2117,14 +2122,14 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     // Propagate to downstream groups. For each distinct edge from any member OrtNode to a NodeUnit outside the
     // group, decrement the downstream group's in-degree. Edge-count semantics match ComputeGroupExternalInDegree:
     // multiple edges from the group to the same downstream group produce multiple decrements.
-    for (const OrtNodeUnit* member_nu : g.member_node_units) {
+    for (const OrtNodeUnit* member_nu : group.member_node_units) {
       for (const OrtNode* output_node : member_nu->GetOutputNodes(ort_api)) {
         auto it_nu = node_unit_map.find(output_node);
         if (it_nu == node_unit_map.cend()) {
           continue;
         }
         const OrtNodeUnit* downstream_nu = it_nu->second;
-        if (g.member_set.count(downstream_nu) > 0) {
+        if (group.member_set.count(downstream_nu) > 0) {
           continue;  // Edge to another member of the same group; internal.
         }
         auto it_gid = node_unit_to_group_id.find(downstream_nu);
