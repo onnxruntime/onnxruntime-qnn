@@ -10,10 +10,18 @@
 name: Build and upload testdata archives
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      source_repository:
+        type: string
+        default: ""
+      source_ref:
+        type: string
+        default: ""
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+  BUILD_SOURCEVERSION: "${{ inputs.source_ref || github.sha }}"
 
 jobs:
   archive-testdata:
@@ -25,7 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          repository: ${{ inputs.source_repository || github.repository }}
+          ref: ${{ inputs.source_ref || github.sha }}
           submodules: recursive
+          persist-credentials: false
 
       - name: Build testdata archive
         run: python3 qcom/build_and_test.py archive_testdata

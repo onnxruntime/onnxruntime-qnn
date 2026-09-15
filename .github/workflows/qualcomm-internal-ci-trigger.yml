@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 # Lets developers trigger CI on a draft PR by commenting "/ci" on the PR.
-# Useful because draft PRs don't auto-trigger CI (see qualcomm-internal-ci.yml).
+# After reviewing a fork contributor's code, maintainers can comment "/device-test"
+# to test its immutable SHA on QDC. That workflow is dispatched from main so an
+# unreviewed fork cannot change its credential handling.
 #
 # Any collaborator with write access (COLLABORATOR, MEMBER, OWNER) may trigger.
 # Fork contributors (CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, etc.) are rejected to
@@ -13,7 +15,7 @@ name: Qualcomm Internal CI Trigger
 permissions:
   contents: read
   pull-requests: write  # to post the acknowledgement comment
-  actions: write        # to dispatch qualcomm-internal-ci.yml via createWorkflowDispatch
+  actions: write        # to dispatch a trusted workflow via createWorkflowDispatch
 
 on:
   issue_comment:
@@ -22,45 +24,82 @@ on:
 jobs:
   trigger:
     name: Trigger CI from PR comment
-    # Only act on PR comments whose body is exactly "/ci" or starts with "/ci " or "/ci\n".
-    # Require write-level association so fork contributors cannot trigger builds.
+    # Only act on PR comments whose body is exactly "/ci" or "/device-test",
+    # with optional arguments. Require write-level association so fork contributors
+    # cannot trigger privileged workflows.
     if: |
       github.event.issue.pull_request != null &&
       (github.event.comment.body == '/ci' ||
        startsWith(github.event.comment.body, '/ci ') ||
-       startsWith(github.event.comment.body, '/ci\n')) &&
+       startsWith(github.event.comment.body, '/ci\n') ||
+       github.event.comment.body == '/device-test' ||
+       startsWith(github.event.comment.body, '/device-test ') ||
+       startsWith(github.event.comment.body, '/device-test\n')) &&
       contains(fromJSON('["COLLABORATOR", "MEMBER", "OWNER"]'),
                github.event.comment.author_association)
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Dispatch CI workflow on PR branch
+      - name: Dispatch requested workflow
         uses: actions/github-script@v8
         with:
           script: |
-            // Fetch the PR to get its head branch and draft status.
+            const command = context.payload.comment.body.trim().split(/\s+/, 1)[0];
+
+            // Fetch the PR rather than trusting comment-controlled data. In particular,
+            // device tests must use an immutable reviewed commit, never a fork branch name.
             const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
 
-            const branch = pr.data.head.ref;
-            const isDraft = pr.data.draft;
-            const prUrl = pr.data.html_url;
+            let workflowId;
+            let dispatchRef;
+            let inputs;
+            let message;
+            if (command === '/ci') {
+              // /ci remains the draft-CI escape hatch for branches in this repository.
+              // A fork branch is not a ref in context.repo, so do not dispatch it here.
+              if (pr.data.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: '❌ `/ci` cannot dispatch a fork branch. Use `/device-test` after a maintainer has reviewed the changes.',
+                });
+                core.setFailed('/ci cannot dispatch a fork branch. Use /device-test after review.');
+                return;
+              }
+              workflowId = 'qualcomm-internal-ci.yml';
+              dispatchRef = pr.data.head.ref;
+              inputs = {};
+              message = `🔄 CI triggered on \`${pr.data.head.ref}\`${pr.data.draft ? ' (draft PR — CI was skipped on push)' : ''}`;
+            } else {
+              workflowId = 'qualcomm-internal-ci.yml';
+              dispatchRef = 'main';
+              inputs = {
+                source_repository: pr.data.head.repo.full_name,
+                source_ref: pr.data.head.sha,
+                device_tests_only: 'true',
+              };
+              message = `📱 Maintainer-approved device test triggered for PR #${pr.data.number} at \`${pr.data.head.sha}\``;
+            }
 
-            // Dispatch the main CI workflow on the PR's head branch.
+            // The device-test workflow always comes from main. This prevents a fork from
+            // changing its credential handling; it explicitly checks out the reviewed
+            // source SHA where it needs to build and test it. /ci retains its historical
+            // behavior of dispatching the internal PR branch.
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'qualcomm-internal-ci.yml',
-              ref: branch,
+              workflow_id: workflowId,
+              ref: dispatchRef,
+              inputs,
             });
 
-            // Post an acknowledgement comment so the developer has a clear signal.
-            const draftNote = isDraft ? ' (draft PR — CI was skipped on push)' : '';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `🔄 CI triggered on \`${branch}\`${draftNote} by @${context.actor}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
+              body: `${message} by @${context.actor}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
             });
