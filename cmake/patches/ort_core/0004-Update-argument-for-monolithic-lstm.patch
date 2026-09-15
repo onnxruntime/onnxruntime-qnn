@@ -1,17 +1,17 @@
-From f871f0df4bf6a9ab00706db56cb2175d2cd5d297 Mon Sep 17 00:00:00 2001
+From 645993e271a5f72c165cfedb1bdbc57f0ef8ca65 Mon Sep 17 00:00:00 2001
 From: Badri Narayanan <mbadnara@qti.qualcomm.com>
 Date: Tue, 21 Jul 2026 11:40:16 -0700
-Subject: [PATCH 4/4] Update argument for monolithic lstm
+Subject: [PATCH 4/7] Update argument for monolithic lstm
 
 ---
  onnxruntime/test/onnx/main.cc | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/onnxruntime/test/onnx/main.cc b/onnxruntime/test/onnx/main.cc
-index ae7597538..dcb09f927 100644
+index 484486a..d737472 100644
 --- a/onnxruntime/test/onnx/main.cc
 +++ b/onnxruntime/test/onnx/main.cc
-@@ -611,7 +611,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
+@@ -622,7 +622,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
              std::string str = str_stream.str();
              ORT_THROW("Wrong value for htp_arch. select from: " + str);
            }

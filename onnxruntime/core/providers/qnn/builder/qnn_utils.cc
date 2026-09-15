@@ -99,7 +99,12 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, sizeof(uint16_t)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, sizeof(uint32_t)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, sizeof(uint64_t)},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ, 1},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, 2},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16, 2},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, sizeof(float)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, sizeof(double)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, sizeof(bool)}};
@@ -135,6 +140,25 @@ std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
     ORT_CXX_API_THROW("Unknown element type " + std::to_string(elem_type), ORT_EP_FAIL);
   }
   return pos->second;
+}
+
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type) {
+  SafeInt<size_t> safe_num_elements = num_elements;
+  if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 || element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
+    return (safe_num_elements + 3) / 4;
+  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 || element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
+    return (safe_num_elements + 1) / 2;
+  }
+  return (safe_num_elements * GetElementSizeByType(element_type));
+}
+
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type) {
+  // Empty shape means a 0D scalar: exactly 1 element.
+  if (shape.empty()) {
+    return GetOnnxTensorDataSizeInBytes(static_cast<size_t>(1), element_type);
+  }
+  SafeInt<size_t> num_elements = std::accumulate(shape.begin(), shape.end(), SafeInt<size_t>{1}, std::multiplies<>{});
+  return GetOnnxTensorDataSizeInBytes(num_elements, element_type);
 }
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_type) {
@@ -1533,6 +1557,74 @@ static Ort::Status TransposeDataRank5(gsl::span<const int64_t> input_shape,
   return Ort::Status();
 }
 
+// Internal function to transpose a rank-2 buffer of fixed-size elements, one cache tile at a time.
+template <size_t ElementSize>
+static void TransposeTiled2D(size_t rows,
+                             size_t cols,
+                             gsl::span<const uint8_t> input_buffer,
+                             gsl::span<uint8_t> output_buffer) {
+  // A 32x32 tile of elements up to 8 bytes wide spans at most 32 cache lines on each of the source
+  // and destination sides (2 KB per side), which stays resident in L1 for the whole tile. Every
+  // source line is therefore loaded once and fully consumed, instead of once per element as in the
+  // untiled loop below.
+  constexpr size_t tile_size = 32;
+  for (size_t row_start = 0; row_start < rows; row_start += tile_size) {
+    const size_t row_end = std::min(row_start + tile_size, rows);
+    for (size_t col_start = 0; col_start < cols; col_start += tile_size) {
+      const size_t col_end = std::min(col_start + tile_size, cols);
+      for (size_t col = col_start; col < col_end; ++col) {
+        size_t dst_byte_index = (col * rows + row_start) * ElementSize;
+        for (size_t row = row_start; row < row_end; ++row) {
+          const size_t src_byte_index = (row * cols + col) * ElementSize;
+          assert(src_byte_index < input_buffer.size());
+          assert(dst_byte_index < output_buffer.size());
+          std::memcpy(&output_buffer[dst_byte_index], &input_buffer[src_byte_index], ElementSize);
+          dst_byte_index += ElementSize;
+        }
+      }
+    }
+  }
+}
+
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer) {
+  RETURN_IF_NOT(elem_byte_size != 0, "Expected a non-zero element byte size");
+
+  const size_t num_bytes = rows * cols * elem_byte_size;
+  RETURN_IF_NOT(input_buffer.size() == num_bytes && output_buffer.size() == num_bytes,
+                "Expected both transpose buffers to hold rows * cols * elem_byte_size bytes");
+
+  switch (elem_byte_size) {
+    case 1:
+      TransposeTiled2D<1>(rows, cols, input_buffer, output_buffer);
+      break;
+    case 2:
+      TransposeTiled2D<2>(rows, cols, input_buffer, output_buffer);
+      break;
+    case 4:
+      TransposeTiled2D<4>(rows, cols, input_buffer, output_buffer);
+      break;
+    case 8:
+      TransposeTiled2D<8>(rows, cols, input_buffer, output_buffer);
+      break;
+    default:
+      // Uncommon element size: fall back to an untiled element-by-element transpose.
+      for (size_t row = 0; row < rows; ++row) {
+        for (size_t col = 0; col < cols; ++col) {
+          const size_t src_byte_index = (row * cols + col) * elem_byte_size;
+          const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
+          std::memcpy(&output_buffer[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+        }
+      }
+      break;
+  }
+
+  return Ort::Status();
+}
+
 Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint32_t>& data_shape,
                                   const OrtValueInfo* initializer,
@@ -1559,35 +1651,25 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   const size_t elem_byte_size = qnn::utils::GetElementSizeByType(onnx_type);
   RETURN_IF_NOT(elem_byte_size != 0, "Can't get element byte size from given ONNX type");
 
-  std::vector<uint8_t> input_buffer;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
-  transposed_data.resize(input_buffer.size(), 0);
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
 
   if (skip_output_data_copy) {  // Only shape & dtype validation are needed, no need for real tensor
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
+    // Callers still size their QNN tensor from this buffer, so keep the byte count and skip only the
+    // initializer read and the transpose itself.
+    transposed_data.assign(rows * cols * elem_byte_size, 0);
     data_shape = std::move(output_shape);  // Update parameter with final transposed shape
     return Ort::Status();
   }
 
   // Actual tensor content is required.
-  const size_t rows = data_shape[0];
-  const size_t cols = data_shape[1];
-  const size_t output_cols = output_shape[1];
-
-  for (size_t row = 0; row < rows; row++) {
-    for (size_t col = 0; col < cols; col++) {
-      const size_t src_elem_index = (row * cols + col);
-      const size_t dst_elem_index = (col * output_cols + row);
-      const size_t src_byte_index = src_elem_index * elem_byte_size;
-      const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-      assert(src_byte_index < input_buffer.size());
-      assert(dst_byte_index < transposed_data.size());
-
-      std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
-    }
-  }
+  std::vector<uint8_t> input_buffer;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
+  transposed_data.resize(input_buffer.size(), 0);
+  RETURN_IF_ERROR(TwoDimensionTranspose(rows, cols, elem_byte_size, input_buffer, transposed_data));
 
   data_shape = std::move(output_shape);  // Update parameter with final transposed shape
   return Ort::Status();
