@@ -828,9 +828,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;
-  // Notify params for file mapping must persist throughout lifetime of
-  // QnnBackendManager for release of DMA data callback on destruction
+  // Notify params and DMA callbacks for file mapping must persist throughout the lifetime of
+  // QnnBackendManager: QNN may fire MapDmaDataCallback / ReleaseDmaDataCallback after
+  // CreateContextFromListAsyncWithCallback returns, and notify_param / callback pointers must
+  // remain valid at that point.
   std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
+  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list_;
 #endif
 
   // NPU backend requires quantized model
