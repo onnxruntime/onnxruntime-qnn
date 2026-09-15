@@ -20,7 +20,7 @@
 // Real-QnnEp paths (autoep CreateEpImpl clone + AddSessionConfigEntry, and
 // Validate / Incompatibility temp-EP construction) are covered by the
 // QnnUnit_ProviderFactoryHtpTest fixture at the end of this file; those
-// tests GTEST_SKIP() when libQnnHtp.so is unavailable. This mirrors
+// tests GTEST_SKIP() when the platform HTP backend is unavailable. This mirrors
 // QnnUnit_BackendManagerHtpTest — component-level tests with a real backend
 // load but no ORT session.
 
@@ -994,7 +994,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEpFactory_NullPointer_ReturnsNull) {
 //   - ValidateCompiledModelCompatibilityInfoImpl temp-EP construction path.
 //   - GetHardwareDeviceIncompatibilityDetailsImpl temp-EP construction path.
 //
-// QnnEp construction dlopens libQnnHtp.so via QnnBackendManager; the fixture
+// QnnEp construction loads the platform HTP backend via QnnBackendManager; the fixture
 // GTEST_SKIP()s when the backend is unavailable, mirroring
 // QnnUnit_BackendManagerHtpTest / QnnUnit_ExecutionProviderHtpTest.
 //
@@ -1014,7 +1014,7 @@ class QnnUnit_ProviderFactoryHtpTest : public ::testing::Test {
     OrtLoggingManager::SetDefaultLogger(nullptr);
     QnnRealHtpBackendContext htp_check;
     if (!htp_check.IsValid()) {
-      GTEST_SKIP() << "libQnnHtp.so not available";
+      GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
     }
   }
 
@@ -1023,8 +1023,8 @@ class QnnUnit_ProviderFactoryHtpTest : public ::testing::Test {
 
 // Verifies that CreateEpImpl enters the autoep branch when neither
 // backend_type nor backend_path is set: it must CloneSessionOptions once and
-// AddSessionConfigEntry a "backend_path" entry whose value ends in
-// libQnnHtp.so (derived from kDefaultBackends[NPU]). QnnEp construction may
+// AddSessionConfigEntry a "backend_path" entry whose value ends in the
+// platform HTP backend (derived from kDefaultBackends[NPU]). QnnEp construction may
 // or may not succeed depending on whether the auto-computed path is
 // resolvable at runtime; either outcome is acceptable — the autoep
 // side-effects are what this test locks in.
@@ -1054,13 +1054,13 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
   bool added_backend_path = false;
   for (const auto& kv : ctx.added_config_entries) {
     if (kv.first.find("backend_path") != std::string::npos &&
-        kv.second.find("libQnnHtp.so") != std::string::npos) {
+        kv.second.find(QnnHtpBackendLibraryName()) != std::string::npos) {
       added_backend_path = true;
       break;
     }
   }
   EXPECT_TRUE(added_backend_path)
-      << "autoep should have added a backend_path entry ending in libQnnHtp.so";
+      << "autoep should have added a backend_path entry ending in " << QnnHtpBackendLibraryName();
 
   if (status == nullptr) {
     EXPECT_NE(ep, nullptr);
@@ -1100,7 +1100,7 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
   bool added_htp_path = false;
   for (const auto& kv : ctx.added_config_entries) {
     if (kv.first.find("backend_path") != std::string::npos &&
-        kv.second.find("libQnnHtp.so") != std::string::npos) {
+        kv.second.find(QnnHtpBackendLibraryName()) != std::string::npos) {
       added_htp_path = true;
       break;
     }
