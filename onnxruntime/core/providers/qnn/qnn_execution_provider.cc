@@ -1027,6 +1027,20 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                              logger_);
 #endif
 
+  // HTP num cores — parsed before ParsePerSocHtpConfigs so the value is available for per-SoC config construction.
+  std::string htp_num_cores_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("htp_num_cores"), "0", htp_num_cores_str);
+  if (!htp_num_cores_str.empty() && htp_num_cores_str != "0") {
+    try {
+      htp_graph_configs_.num_cores = static_cast<uint32_t>(std::stoul(htp_num_cores_str));
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                   ("User specified htp_num_cores: " + htp_num_cores_str).c_str());
+    } catch (...) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                   ("Invalid htp_num_cores: " + htp_num_cores_str + " will be skipped").c_str());
+    }
+  }
+
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
   // Declare outside the if scope since there are users later. They may be overwritten in the else branch.
@@ -1071,20 +1085,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("vtcm_mb"), "0", vtcm_mb_str);
     if (!vtcm_mb_str.empty() && vtcm_mb_str != "0") {
       ParseVtcmSize(vtcm_mb_str, htp_graph_configs_.vtcm_size_in_mb, logger_);
-    }
-
-    // HTP num cores
-    std::string htp_num_cores_str;
-    GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("htp_num_cores"), "0", htp_num_cores_str);
-    if (!htp_num_cores_str.empty() && htp_num_cores_str != "0") {
-      try {
-        htp_graph_configs_.num_cores = static_cast<uint32_t>(std::stoul(htp_num_cores_str));
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
-                     ("User specified htp_num_cores: " + htp_num_cores_str).c_str());
-      } catch (...) {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                     ("Invalid htp_num_cores: " + htp_num_cores_str + " will be skipped").c_str());
-      }
     }
   }
 
