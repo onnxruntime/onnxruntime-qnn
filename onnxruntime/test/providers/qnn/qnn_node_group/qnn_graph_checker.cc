@@ -4,6 +4,7 @@
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 
 #include <fstream>
+#include <limits>
 
 #include "QnnTypes.h"
 #include "nlohmann/json.hpp"
@@ -219,6 +220,64 @@ void AssertFp32StaticBytesAbove(const std::filesystem::path& dump_dir, size_t mi
   EXPECT_GT(total_bytes, min_bytes)
       << "FP32 STATIC bytes in the QNN graph are below the floor: the expected fold did not "
          "materialize.";
+}
+
+void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
+                                 const std::string& tensor_name,
+                                 const std::vector<uint32_t>& expected_dims) {
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("tensors") && root["graph"]["tensors"].is_object())
+      << "JSON missing 'graph.tensors' object in: " << json_path;
+
+  bool has_tensor = false;
+  try {
+    has_tensor = root["graph"]["tensors"].contains(tensor_name);
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to query QNN graph tensors in " << json_path << ": " << ex.what();
+  }
+  ASSERT_TRUE(has_tensor) << "QNN tensor '" << tensor_name << "' not found in " << json_path;
+
+  std::vector<uint32_t> actual_dims;
+  try {
+    auto it = root["graph"]["tensors"].find(tensor_name);
+    if (it == root["graph"]["tensors"].end()) {
+      FAIL() << "QNN tensor '" << tensor_name << "' not found in " << json_path;
+    }
+    const auto& tensor_json = *it;
+    if (!tensor_json.is_object() || !tensor_json.contains("dims") || !tensor_json["dims"].is_array()) {
+      FAIL() << "QNN tensor '" << tensor_name << "' missing 'dims' array in " << json_path;
+    }
+    for (const auto& dim : tensor_json["dims"]) {
+      if (!dim.is_number_unsigned() && !dim.is_number_integer()) {
+        FAIL() << "QNN tensor '" << tensor_name << "' has non-integer dim in " << json_path;
+      }
+      long long dim_val = 0;
+      try {
+        dim_val = dim.get<long long>();
+      } catch (const std::exception& ex) {
+        FAIL() << "Failed to read dim of QNN tensor '" << tensor_name << "' in " << json_path << ": "
+               << ex.what();
+      }
+      if (dim_val < 0 ||
+          dim_val > static_cast<long long>(std::numeric_limits<uint32_t>::max())) {
+        FAIL() << "QNN tensor '" << tensor_name << "' has out-of-range dim " << dim_val << " in " << json_path;
+      }
+      actual_dims.push_back(static_cast<uint32_t>(dim_val));
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to read dims of QNN tensor '" << tensor_name << "' in " << json_path << ": " << ex.what();
+  }
+
+  EXPECT_EQ(actual_dims, expected_dims)
+      << "QNN tensor '" << tensor_name << "': expected shape mismatch in " << json_path;
 }
 
 }  // namespace test
