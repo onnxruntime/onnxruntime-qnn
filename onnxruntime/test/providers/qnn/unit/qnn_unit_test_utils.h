@@ -24,16 +24,17 @@
 #include <string>
 #include <unordered_map>
 
-#ifndef _WIN32
-#include <dlfcn.h>
-#endif
-
 #include "QnnInterface.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
+
+#ifdef _WIN32
+extern "C" const OrtApi* ORT_API_CALL QnnUnit_SetOrtApiForTesting(const OrtApi* api) noexcept;
+extern "C" void ORT_API_CALL QnnUnit_RestoreOrtApiForTesting(const OrtApi* previous) noexcept;
+#endif
 
 namespace onnxruntime {
 namespace test {
@@ -104,10 +105,21 @@ struct StubApiEnv {
 class OrtGlobalApiOverride {
  public:
   explicit OrtGlobalApiOverride(const OrtApi* new_api) {
-    original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    original_ = Ort::detail::Global::Api();
+    if (original_ == nullptr) {
+      original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    }
     Ort::detail::Global::Api(new_api);
+#ifdef _WIN32
+    provider_original_ = QnnUnit_SetOrtApiForTesting(new_api);
+#endif
   }
-  ~OrtGlobalApiOverride() { Ort::detail::Global::Api(original_); }
+  ~OrtGlobalApiOverride() {
+#ifdef _WIN32
+    QnnUnit_RestoreOrtApiForTesting(provider_original_);
+#endif
+    Ort::detail::Global::Api(original_);
+  }
 
   OrtGlobalApiOverride(const OrtGlobalApiOverride&) = delete;
   OrtGlobalApiOverride& operator=(const OrtGlobalApiOverride&) = delete;
@@ -116,6 +128,9 @@ class OrtGlobalApiOverride {
 
  private:
   const OrtApi* original_ = nullptr;
+#ifdef _WIN32
+  const OrtApi* provider_original_ = nullptr;
+#endif
 };
 
 // Reusable OrtApi stub tables for function-level unit tests.
@@ -173,6 +188,38 @@ struct OrtApiStubContext {
     return ApiPtrs{stub_ort_api, stub_ep_api, stub_editor_api};
   }
 };
+
+inline const char* QnnHtpBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnHtp.dll";
+#else
+  return "libQnnHtp.so";
+#endif
+}
+
+inline const char* QnnIrBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnIr.dll";
+#else
+  return "libQnnIr.so";
+#endif
+}
+
+inline const char* QnnSaverBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnSaver.dll";
+#else
+  return "libQnnSaver.so";
+#endif
+}
+
+inline std::basic_string<ORTCHAR_T> QnnHtpBackendLibraryPath() {
+#ifdef _WIN32
+  return ORT_TSTR("QnnHtp.dll");
+#else
+  return ORT_TSTR("libQnnHtp.so");
+#endif
+}
 
 // ---------------------------------------------------------------------------
 // StubBackendManager — a QnnBackendManager whose QNN interface can be stubbed
@@ -253,21 +300,21 @@ class StubBackendManager {
 };
 
 // Context for tests that need a real QNN HTP backend (e.g., ValidateQnnNode).
-// Loads libQnnHtp.so via dlopen at construction and creates a live backend handle.
+// Loads the platform HTP backend library at construction and creates a live backend handle.
 //
 // This helper produces ONLY a Qnn_BackendHandle_t. It does NOT create a QNN
 // context/session (no contextCreate) and does NOT create a graph — the validation
 // path (backendValidateOpConfig) only needs the backend handle. Tests that need a
 // real context/session, graph, or graph execution must add their own helper.
 //
-// On Linux x86-64 (the unit-test host) libQnnHtp.so loads and supports graph
-// validation; graph execution requires HTP hardware and is not exercised here.
+// On host builds, the HTP backend loads locally and supports graph validation;
+// graph execution requires HTP hardware and is not exercised here.
 // See the mock-strategy table in unit/README.md for when to ASSERT_TRUE(IsValid())
 // vs GTEST_SKIP().
 //
 // Usage:
 //   QnnRealHtpBackendContext backend;
-//   ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available";
+//   ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 //   ctx.qnn_interface  = backend.qnn_interface;
 //   ctx.backend_handle = backend.backend_handle;
 struct QnnRealHtpBackendContext {
@@ -275,13 +322,18 @@ struct QnnRealHtpBackendContext {
   Qnn_BackendHandle_t backend_handle = nullptr;
 
   QnnRealHtpBackendContext() {
-#ifndef _WIN32
-    lib_handle_ = ::dlopen("libQnnHtp.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!lib_handle_) return;
+    void* lib_handle = nullptr;
+    if (!OrtLoadDynamicLibrary(QnnHtpBackendLibraryPath(), /*global_symbols=*/true, &lib_handle).IsOK()) {
+      return;
+    }
+    lib_handle_ = lib_handle;
 
     using GetProvidersFn = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
-    auto get_providers = reinterpret_cast<GetProvidersFn>(
-        ::dlsym(lib_handle_, "QnnInterface_getProviders"));
+    void* get_providers_symbol = nullptr;
+    if (!OrtGetSymbolFromLibrary(lib_handle_, "QnnInterface_getProviders", &get_providers_symbol).IsOK()) {
+      return;
+    }
+    auto get_providers = reinterpret_cast<GetProvidersFn>(get_providers_symbol);
     if (!get_providers) return;
 
     const QnnInterface_t** providers = nullptr;
@@ -296,16 +348,15 @@ struct QnnRealHtpBackendContext {
       return;
     }
     initialized_ = true;
-#endif
   }
 
   ~QnnRealHtpBackendContext() {
-#ifndef _WIN32
     if (initialized_ && qnn_interface.backendFree) {
       qnn_interface.backendFree(backend_handle);
     }
-    if (lib_handle_) ::dlclose(lib_handle_);
-#endif
+    if (lib_handle_) {
+      (void)OrtUnloadDynamicLibrary(lib_handle_);
+    }
   }
 
   bool IsValid() const { return initialized_; }
