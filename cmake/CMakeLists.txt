@@ -80,6 +80,8 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 # Coverage builds are only supported on Linux with GCC.
 # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
+option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
+       "Build QNN EP with internal symbols exported for unit tests. Do not use for production binaries." OFF)
 
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
