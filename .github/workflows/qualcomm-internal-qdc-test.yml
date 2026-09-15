@@ -18,6 +18,14 @@ on:
           Defaults to true so release callers and direct workflow_dispatch are unaffected.
         default: true
         type: boolean
+      source_repository:
+        description: Repository containing the source to test.
+        default: ""
+        type: string
+      source_ref:
+        description: Immutable source ref to test.
+        default: ""
+        type: string
       target_os:
         default: android
         type: string
@@ -48,6 +56,7 @@ env:
   # The QDC results folder is a bit odd
   QDC_RESULTS_ARCH: "${{ (inputs.target_os == 'linux' && inputs.target_arch == 'aarch64_oe_gcc11_2') && 'qualcomm_linux' || 'android' }}"
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+  BUILD_SOURCEVERSION: "${{ inputs.source_ref || github.sha }}"
 
 jobs:
   # Fork PRs cannot access Artifactory secrets or the QDC API token, so the real test job is skipped for them.
@@ -71,6 +80,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.source_repository || github.repository }}
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy QDC run is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
