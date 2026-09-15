@@ -1,14 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 //
-// Pure golden-file path / JSON normalization helpers shared by the
-// op-builder snapshot tests (snapshot.h) and the session-level snapshot
-// tests (session_snapshot.h).
-//
-// Kept dependency-free (only nlohmann/json + stdlib) so it can be safely
-// included from translation units that pull either the QNN-EP-internal world
-// (ort_api.h) or the full ORT world (qnn_test_utils.h via core/graph/...).
-// The two worlds both define kOnnxDomain etc. and cannot coexist in one TU.
+// Golden-file path and JSON normalization helpers shared by snapshot tiers.
 
 #pragma once
 
@@ -27,25 +20,13 @@
 namespace onnxruntime {
 namespace test {
 
-// Golden-tree root, taken from $QNN_UT_SNAPSHOT_GOLDEN_DIR (absolute path, no
-// trailing slash). Returns "" when the env var is unset or empty, which the
-// snapshot harness treats as "no golden available" — there is deliberately no
-// in-repo fallback: goldens live in an external store, not the source tree.
-// The path reaches the test binary via the process environment rather than
-// argv because gtest owns the binary's command line.
+// Empty means no external golden store was provided.
 inline std::string GetGoldenRootDir() {
   const char* env = std::getenv("QNN_UT_SNAPSHOT_GOLDEN_DIR");
   return (env != nullptr && env[0] != '\0') ? std::string(env) : std::string();
 }
 
-// Strips fields from the JSON graph that are not stable across test runs.
-// Currently: tensor `id` (a process-wide counter — stable within a single
-// process / test, but shifts when multiple snapshot tests run in the same
-// process; verified empirically 2026-05-14). Everything else (tensor name,
-// node name, dims, dtype, quant_params, scalar params, params_data_hash)
-// is byte-stable.
-//
-// Mutates `graph` in place and returns a reference to it for chaining.
+// Remove fields that are not stable across test runs.
 inline nlohmann::json& NormalizeQnnJSONGraph(nlohmann::json& graph) {
   auto graph_it = graph.find("graph");
   if (graph_it == graph.end() || !graph_it->is_object()) return graph;
@@ -59,18 +40,9 @@ inline nlohmann::json& NormalizeQnnJSONGraph(nlohmann::json& graph) {
   return graph;
 }
 
-// Derive `goldens/<subdir>/` from a test source file path. Strips everything
-// up to and including `providers/qnn/` and trims `_test.cc` / `_test.cpp`
-// suffix. The retained leading segment is the tier directory, so the golden
-// tree is naturally partitioned by tier:
-//   /repo/.../providers/qnn/snapshot/builder/opbuilder/clip_test.cc
-//     -> "snapshot/builder/opbuilder/clip"
-//   /repo/.../providers/qnn/session_snapshot/builder/opbuilder/clip_test.cc
-//     -> "session_snapshot/builder/opbuilder/clip"
-//
-// Returns empty string if the path doesn't contain `providers/qnn/` (caller
-// should fall back to an explicit subdir). Handles both forward and backward
-// slashes for Windows portability.
+// Derive the golden subdirectory from a test source path, e.g.
+// providers/qnn/snapshot/builder/opbuilder/clip_test.cc ->
+// snapshot/builder/opbuilder/clip.
 inline std::string DeriveGoldenSubdirFromFile(std::string_view file_path) {
   static constexpr std::string_view kAnchorFwd = "/providers/qnn/";
   static constexpr std::string_view kAnchorBack = "\\providers\\qnn\\";
@@ -97,21 +69,6 @@ inline std::string DeriveGoldenSubdirFromFile(std::string_view file_path) {
   return rel;
 }
 
-// ---------------------------------------------------------------------------
-// CompareOrWriteGolden
-//
-// Shared golden compare/write/skip protocol for both the op-builder snapshot
-// tier (snapshot.h) and the session-level snapshot tier (session_snapshot.h).
-// Each caller obtains `current` (the normalized, pretty-printed JSON string)
-// its own way — that's the only genuinely different part between the two
-// tiers — then hands it here for the identical golden-store logic:
-//   - Compares against the stored golden (default, CI mode)
-//   - Writes/overwrites the golden (when QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1)
-//   - Skips with [QNN_GOLDEN_ABSENT] when the golden store is unset/missing
-//
-// `drift_label` is folded into the update/failure messages to keep them
-// distinguishable per tier (e.g. "JSON snapshot" vs "Session-snapshot").
-// ---------------------------------------------------------------------------
 inline void CompareOrWriteGolden(const std::string& current,
                                  const std::string& golden_basename,
                                  const std::string& golden_subdir,

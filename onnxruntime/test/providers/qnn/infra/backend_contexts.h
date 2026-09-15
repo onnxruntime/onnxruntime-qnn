@@ -6,8 +6,8 @@
 //   OpBuilderTestContext       — stub-backed wrapper context (no live backend)
 //   QnnRealHtpBackendManagerContext  — full HTP backend via QnnBackendManager (has context handle)
 //
-// QnnRealHtpBackendManagerContext gives a usable Qnn_ContextHandle_t suitable
-// for CreateQnnGraph + ComposeQnnGraph (Path E1 JSON snapshot tests).
+// QnnRealHtpBackendManagerContext gives snapshot tests a usable
+// Qnn_ContextHandle_t for CreateQnnGraph + ComposeQnnGraph.
 //
 // No CPU-backend context: QnnCpu (libQnnCpu.so) is no longer shipped with the
 // QNN EP wheel.
@@ -30,10 +30,8 @@
 #include "core/providers/qnn/ort_api.h"
 #include "test/util/include/test/test_environment.h"
 
-// FakeGraph / FakeNode / FakeValueInfo primitives — OpBuilderTestContext uses a
-// plain int as OrtGraph* sentinel (never dereferenced), so we don't need FakeGraph
-// here. Kept as an include for tests that DO need the fake primitives directly.
-#include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
+#include "test/providers/qnn/infra/qnn_test_logger.h"
+#include "test/providers/qnn/infra/stub_backend_manager.h"
 
 namespace onnxruntime {
 namespace test {
@@ -61,10 +59,6 @@ OrtStatus* DefaultStubGetInitializersEmpty(const OrtGraph*, const OrtValueInfo**
 }  // namespace
 
 // Context for constructing a QnnModelWrapper in function-level unit tests.
-//
-//   ctx.input_info.indices  = {{"input0", 0}};   // declare graph inputs
-//   ctx.output_info.indices = {{"output0", 0}};  // declare graph outputs
-//   auto wrapper = ctx.CreateWrapper(settings);
 struct OpBuilderTestContext {
   // Zero-init C API structs. All function pointers are null, which is safe for
   // tests that exercise tensor-metadata logic without invoking any ORT or EP APIs.
@@ -75,16 +69,13 @@ struct OpBuilderTestContext {
   qnn::GraphInputOutputInfo input_info;
   qnn::GraphInputOutputInfo output_info;
 
-  // Null-safe logger constructed via MakeNullLogger() (declared in qnn_unit_test_utils.h,
-  // which includes this header AFTER defining the helper). Cached severity is FATAL,
-  // so every ORT_CXX_LOG call short-circuits without dereferencing the null OrtLogger*.
+  // Null-safe logger; cached severity is FATAL so ORT_CXX_LOG short-circuits.
   Ort::Logger ort_logger{MakeNullLogger()};
 
   ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
 
-  // QnnModelWrapper now takes a `const QnnBackendManager&` instead of separate
-  // interface/handle args (see qnn_unit_test_utils.h for why StubBackendManager
-  // exists). No real backend library is loaded here — the references below just
+  // QnnModelWrapper takes a `const QnnBackendManager&`. No real backend library
+  // is loaded here — the references below just
   // let existing call sites keep assigning function pointers directly, e.g.
   // ctx.qnn_interface.graphAddNode = ...
   StubBackendManager backend_manager{api_ptrs, ort_logger};
@@ -126,9 +117,6 @@ struct OpBuilderTestContext {
 // Context for tests that need a real QNN HTP backend with a live context handle
 // suitable for ComposeQnnGraph. This is the only real-backend context in this
 // header — QnnCpu (libQnnCpu.so) is no longer shipped with the QNN EP wheel.
-//
-// Note: HTP triggers `ProcessBF16Conversions` for FP32 tensors, which inserts
-// Convert ops and mutates the op list. FP32 golden JSON must reflect this.
 //
 // Usage:
 //   QnnRealHtpBackendManagerContext htp;

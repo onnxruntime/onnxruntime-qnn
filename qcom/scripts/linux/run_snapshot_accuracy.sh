@@ -5,7 +5,8 @@
 # Two-pass snapshot+accuracy test runner for QNN EP unit tests.
 #
 # Pass 1: Run all snapshot tests (QnnUnit_<Op>_Snapshot* + QnnUnit_<Op>_SessionSnapshot*).
-#          If all pass -> done (exit 0). Graph structure unchanged -> accuracy is redundant.
+#          If all pass -> done (exit 0). Graph structure unchanged, so this
+#          runner can skip the paired accuracy rerun.
 # Pass 2: For any ops whose snapshot tests failed (golden mismatch), run their
 #          QnnUnit_<Op>_Accuracy* tests to verify numerical correctness.
 #
@@ -117,6 +118,33 @@ if [ -z "${snapshot_probe}" ]; then
     die "No QnnUnit_*_Snapshot* tests found in binary. This is not a coverage build (requires --enable-coverage)."
 fi
 
+extract_snapshot_groups() {
+    local snapshot_json="$1"
+    local failures_only="${2:-false}"
+    python3 - "${snapshot_json}" "${failures_only}" <<'PY'
+import json
+import re
+import sys
+
+snapshot_json = sys.argv[1]
+failures_only = sys.argv[2].lower() == "true"
+pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+
+with open(snapshot_json, encoding="utf-8") as f:
+    data = json.load(f)
+
+ops = set()
+for suite in data.get("testsuites", []):
+    if failures_only and not (suite.get("failures", 0) > 0 or suite.get("errors", 0) > 0):
+        continue
+    match = pattern.match(suite.get("name", ""))
+    if match:
+        ops.add(match.group(1))
+
+print(",".join(sorted(ops)))
+PY
+}
+
 log_info "=== QNN EP Two-Pass Snapshot+Accuracy Runner ==="
 log_info "binary : ${binary}"
 if [ "${generate_goldens}" = true ]; then
@@ -192,8 +220,7 @@ if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
         target_ops="${filter_groups}"
     else
         # Derive all groups from the JSON output (all snapshot suites that ran).
-        target_ops=$(python3 "${REPO_ROOT}/qcom/scripts/linux/extract_snapshot_groups.py" \
-            "${snapshot_json}" 2>/dev/null) || true
+        target_ops=$(extract_snapshot_groups "${snapshot_json}" false 2>/dev/null) || true
     fi
     if [ "${generate_goldens}" = true ]; then
         log_info "Goldens updated. Verifying accuracy for: ${target_ops}"
@@ -215,8 +242,7 @@ else
         exit 99
     fi
 
-    target_ops=$(python3 "${REPO_ROOT}/qcom/scripts/linux/extract_snapshot_groups.py" \
-        "${snapshot_json}" --failures-only 2>/dev/null) || true
+    target_ops=$(extract_snapshot_groups "${snapshot_json}" true 2>/dev/null) || true
 
     if [ -z "${target_ops}" ]; then
         log_err "Snapshot tests exited ${snapshot_exit} but no group failures could be extracted."
@@ -238,9 +264,7 @@ log_info "Accuracy targets: ${target_ops}"
 # Probe whether accuracy tests are compiled in.
 accuracy_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_*_Accuracy*" 2>/dev/null || true)
 if [ -z "${accuracy_probe}" ]; then
-    log_warn "No QnnUnit_*_Accuracy* tests found (QNN_EP_ACCURACY_UT not enabled?)."
-    log_warn "Skipping Pass 2. Snapshot drift is unverified."
-    exit 0
+    die "No QnnUnit_*_Accuracy* tests found (QNN_EP_ACCURACY_UT not enabled?). Snapshot drift is unverified."
 fi
 
 # Build gtest filter from group list.

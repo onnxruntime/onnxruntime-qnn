@@ -48,8 +48,6 @@
 
 #include "core/providers/qnn/ort_api.h"
 
-#include "test/providers/qnn/infra/qnn_unit_test_utils.h"
-
 namespace onnxruntime {
 namespace test {
 

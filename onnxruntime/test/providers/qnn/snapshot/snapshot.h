@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 //
-// Snapshot helpers (Path E1 — JSON-based) for QNN EP function-level unit tests.
+// Snapshot helpers for QNN EP function-level unit tests.
 //
 // Usage in snapshot tests:
 //
@@ -112,9 +112,8 @@ inline std::unique_ptr<qnn::QnnModelWrapper> MakeSnapshotWrapperHtpJson(
 // ---------------------------------------------------------------------------
 // AssertSnapshotJson
 //
-// Path E1 snapshot assertion. Reads `wrapper.GetQnnJSONGraph()` (must be called
-// after `wrapper.ComposeQnnGraph(true)`), normalizes it (drops unstable
-// tensor `id`), pretty-prints, and either:
+// Reads `wrapper.GetQnnJSONGraph()` after `wrapper.ComposeQnnGraph(true)`,
+// normalizes it, pretty-prints it, and either:
 //   - Compares against the stored golden (default, CI mode)
 //   - Writes/overwrites the golden (when QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1)
 //   - Skips with [QNN_GOLDEN_ABSENT] when the golden store is unset/missing
