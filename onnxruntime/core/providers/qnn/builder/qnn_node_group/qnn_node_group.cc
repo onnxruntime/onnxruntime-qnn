@@ -147,10 +147,11 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except
-  // MatMul w/ LPBQ encodings, Erf, and Reshape.
+  // MatMul/Gemm w/ LPBQ encodings, Erf, Reshape, and a few others.
   if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode &&
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
+      starting_node_unit.OpType() != "Gemm" &&
       starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Tanh" &&
       starting_node_unit.OpType() != "Reshape") {

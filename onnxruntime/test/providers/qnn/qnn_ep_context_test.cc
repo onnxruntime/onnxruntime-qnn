@@ -2505,6 +2505,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
   // Test CreateFromBinaryListAsync path
   so2.SetLogId("so2");
   so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+  so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
 #ifdef _WIN32
