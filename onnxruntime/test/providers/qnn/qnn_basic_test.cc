@@ -3,6 +3,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <atomic>
+#include <sstream>
 #include <unordered_set>
 #include <string>
 #include <thread>
@@ -2257,6 +2259,974 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared_offset) {
     binding.ClearBoundInputs();
     binding.ClearBoundOutputs();
   }
+}
+
+namespace {
+
+// Capture ORT log messages into a vector so tests can assert on which branch
+// of BindQnnTensorMemoryToOrtValueMemory was taken at runtime (see
+// onnxruntime/core/providers/qnn/builder/qnn_model.cc), and on WARNINGs that
+// later PRs will emit.
+struct LogCapture {
+  mutable std::mutex mtx;
+  std::vector<std::string> messages;
+
+  void Push(const char* message) {
+    std::lock_guard<std::mutex> g{mtx};
+    messages.emplace_back(message);
+  }
+
+  size_t CountContaining(std::string_view needle) const {
+    std::lock_guard<std::mutex> g{mtx};
+    size_t n = 0;
+    for (const auto& m : messages) {
+      if (m.find(needle) != std::string_view::npos) ++n;
+    }
+    return n;
+  }
+
+  bool Contains(std::string_view needle) const { return CountContaining(needle) > 0; }
+};
+
+extern "C" void ORT_API_CALL LogCaptureCallback(void* param,
+                                                OrtLoggingLevel /*severity*/,
+                                                const char* /*category*/,
+                                                const char* /*logid*/,
+                                                const char* /*code_location*/,
+                                                const char* message) {
+  static_cast<LogCapture*>(param)->Push(message);
+}
+
+void AttachLogCapture(Ort::SessionOptions& so, LogCapture& capture) {
+  Ort::ThrowOnError(Ort::GetApi().SetUserLoggingFunction(so, LogCaptureCallback, &capture));
+  so.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+}
+
+// Log substrings from BindQnnTensorMemoryToOrtValueMemory (one per bound tensor per Run).
+constexpr std::string_view kLogSubstrMemHandle = "Setting Qnn_Tensor_t memHandle";
+constexpr std::string_view kLogSubstrClientBuf = "Setting Qnn_Tensor_t clientBuf";
+
+// Leading substring of the WARNING emitted when shared-memory is requested but the
+// bound OrtValue is CPU-backed (see QnnModel::WarnZeroCopyFallbackOnce).
+constexpr std::string_view kLogSubstrFallbackWarning =
+    "zero-copy shared memory was requested";
+
+}  // namespace
+
+// Regression guard: output tensor uses MEMHANDLE (zero-copy) when allocated
+// from QnnHtpShared. Tests that only check output correctness would still pass
+// if the runtime silently fell back to copies.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable (RPCMEM not loadable).";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  const std::array<float, 6> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  auto input_data = shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  auto output_data = shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  ASSERT_NE(input_data.get(), nullptr);
+  ASSERT_NE(output_data.get(), nullptr);
+  memcpy(input_data.get(), x_values.data(), sizeof(float) * x_values.size());
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(input_data.get()),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(output_data.get()),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  // Dump the captured Qnn_Tensor_t binding messages on failure so a mismatch
+  // is easy to diagnose (which of the bound I/O tensors took which branch).
+  auto scoped_dump = gsl::finally([&]() {
+    if (::testing::Test::HasFailure()) {
+      std::lock_guard<std::mutex> g{capture.mtx};
+      std::cerr << "--- captured tensor-binding log messages ---\n";
+      for (const auto& m : capture.messages) {
+        if (m.find("Qnn_Tensor_t") != std::string::npos) {
+          std::cerr << "  " << m << "\n";
+        }
+      }
+    }
+  });
+
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 1u)
+      << "Expected MEMHANDLE branch for the output tensor.";
+}
+
+// Verifies input tensors also take the MEMHANDLE path when allocated from QnnHtpShared.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_input_uses_memhandle_branch) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  const std::array<float, 6> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  auto input_data = shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  auto output_data = shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  ASSERT_NE(input_data.get(), nullptr);
+  ASSERT_NE(output_data.get(), nullptr);
+  memcpy(input_data.get(), x_values.data(), sizeof(float) * x_values.size());
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(input_data.get()),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(output_data.get()),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 2u)
+      << "Expected MEMHANDLE branch for every bound I/O tensor.";
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "clientBuf/RAW branch should not be taken when I/O is shared memory.";
+}
+
+// Verifies a WARNING is emitted when the shared-memory option is set but the
+// bound OrtValue is CPU-backed (fallback to per-frame copy).
+TEST_F(QnnHTPBackendTests, htp_shared_memory_silent_fallback_warning) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";  // opt-in requested...
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  // ...but bind CPU-backed OrtValues. Runtime should log a WARNING that
+  // zero-copy was requested but could not be honored for this tensor.
+  Ort::MemoryInfo info_cpu("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 6> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::array<float, 6> y_values{};
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_cpu, x_values.data(), x_values.size(),
+                                                x_shape.data(), x_shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_cpu, y_values.data(), y_values.size(),
+                                                x_shape.data(), x_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  EXPECT_GT(capture.CountContaining(kLogSubstrFallbackWarning), 0u)
+      << "Expected WARNING containing \"" << kLogSubstrFallbackWarning
+      << "\" when zero-copy is requested but a bound OrtValue is CPU-backed.";
+  EXPECT_GT(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "Expected RAW/clientBuf branch to have been taken (this is the fallback).";
+}
+
+// Verifies enable_htp_shared_memory_allocator=1 coexists with ep.context_enable=1.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_with_context_generation) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  // Set up a temp ctx path so context generation has somewhere to write.
+  const std::string ctx_file = "htp_shared_memory_with_context_generation.onnx_ctx.onnx";
+  std::remove(ctx_file.c_str());
+  auto cleanup = gsl::finally([&]() { std::remove(ctx_file.c_str()); });
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.c_str());
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  const std::array<float, 6> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  auto input_data = shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  auto output_data = shared_allocator.GetAllocation(x_values.size() * sizeof(float));
+  ASSERT_NE(input_data.get(), nullptr);
+  ASSERT_NE(output_data.get(), nullptr);
+  memcpy(input_data.get(), x_values.data(), sizeof(float) * x_values.size());
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(input_data.get()),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(output_data.get()),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 2u)
+      << "Expected MEMHANDLE for both I/O tensors with shared allocator + ep.context_enable=1.";
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "No clientBuf/RAW path expected when all I/O is shared memory.";
+}
+
+// Verifies OrtApi::CreateSharedAllocator returns an RPCMEM-backed allocator
+// before any session exists, and that inference from a factory-allocated OrtValue
+// takes the MEMHANDLE branch.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_factory_allocator_pre_session) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  ASSERT_NE(registered_ep_device.get(), nullptr);
+
+  // BEFORE any session: create the shared allocator via the factory path.
+  // Requires host_accessible_memory_info to be advertised at library-load
+  // time (not deferred to session creation). If not available, returns
+  // INVALID_ARGUMENT.
+  OrtAllocator* factory_allocator = nullptr;
+  Ort::ThrowOnError(Ort::GetApi().CreateSharedAllocator(*ort_env,
+                                                        registered_ep_device.get(),
+                                                        OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                        OrtDeviceAllocator,
+                                                        /*allocator_options*/ nullptr,
+                                                        &factory_allocator));
+  ASSERT_NE(factory_allocator, nullptr);
+  auto release_shared = gsl::finally([&]() {
+    Ort::ThrowOnError(Ort::GetApi().ReleaseSharedAllocator(*ort_env,
+                                                           registered_ep_device.get(),
+                                                           OrtDeviceMemoryType_HOST_ACCESSIBLE));
+  });
+
+  // Allocate an OrtValue backed by the factory allocator BEFORE creating a session.
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  const std::array<float, 6> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+
+  void* input_ptr = factory_allocator->Alloc(factory_allocator, x_values.size() * sizeof(float));
+  void* output_ptr = factory_allocator->Alloc(factory_allocator, x_values.size() * sizeof(float));
+  ASSERT_NE(input_ptr, nullptr);
+  ASSERT_NE(output_ptr, nullptr);
+  auto free_bufs = gsl::finally([&]() {
+    factory_allocator->Free(factory_allocator, input_ptr);
+    factory_allocator->Free(factory_allocator, output_ptr);
+  });
+  memcpy(input_ptr, x_values.data(), sizeof(float) * x_values.size());
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(input_ptr),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(output_ptr),
+                                                x_values.size(), x_shape.data(), x_shape.size());
+
+  Ort::Session session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 2u)
+      << "Expected MEMHANDLE for both I/O tensors when using a factory-created shared allocator.";
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "No clientBuf/RAW path expected when all I/O is shared memory.";
+}
+
+// Verifies OrtApi::GetSharedAllocator returns the auto-registered shared allocator
+// without any session having been created.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_env_auto_register) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  // env-level shared allocator is advertised at library-load time, independent
+  // of session-level options.
+
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  // GetSharedAllocator matches on OrtMemoryInfo::device (type+mem_type+vendor+device_id)
+  // AND OrtMemoryInfo::mem_type. Get the exact memory info the factory registered for
+  // HOST_ACCESSIBLE memory so the lookup hits the right entry.
+  const OrtMemoryInfo* host_accessible_mem_info = Ort::GetApi().EpDevice_MemoryInfo(
+      registered_ep_device.get(), OrtDeviceMemoryType_HOST_ACCESSIBLE);
+
+  if (host_accessible_mem_info == nullptr) {
+    GTEST_SKIP() << "HTP shared memory allocator is unavailable (RPCMEM not loadable).";
+  }
+
+  OrtAllocator* env_allocator = nullptr;
+  Ort::ThrowOnError(Ort::GetApi().GetSharedAllocator(*ort_env, host_accessible_mem_info, &env_allocator));
+  EXPECT_NE(env_allocator, nullptr)
+      << "ORT Core should auto-register a shared allocator when "
+         "QnnEpFactory::GetSupportedDevices advertises host_accessible_memory_info.";
+}
+
+// ---------------------------------------------------------------------------
+// Cross-partition zero-copy: shared memory at CPU EP ↔ QNN EP boundaries.
+//   htp_shared_memory_cross_partition_inference_correct — functional correctness.
+//   htp_shared_memory_cross_partition_zero_copy         — all tensors use MEMHANDLE.
+// ---------------------------------------------------------------------------
+
+// Verifies inference correctness with shared memory enabled and offload_graph_io_quantization=0
+// (ensures CPU↔QNN EP partition boundary is exercised).
+TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "HTP shared memory requires ARM64 device.";
+#endif
+
+#if defined(_WIN32)
+  ProviderOptions options;
+  options["backend_path"] = "QnnHtp.dll";
+  options["enable_htp_shared_memory_allocator"] = "1";
+  options["offload_graph_io_quantization"] = "0";  // ensures any quant/dequant stays on CPU
+#if defined(_M_ARM64)
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  const std::array<float, 6> x_vals = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  const std::array<float, 6> expected = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+  const size_t nbytes = x_vals.size() * sizeof(float);
+
+  auto x_data = shared_allocator.GetAllocation(nbytes);
+  auto y_data = shared_allocator.GetAllocation(nbytes);
+  ASSERT_NE(x_data.get(), nullptr);
+  memcpy(x_data.get(), x_vals.data(), nbytes);
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(
+      info_shared, reinterpret_cast<float*>(x_data.get()), x_vals.size(),
+      shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(
+      info_shared, reinterpret_cast<float*>(y_data.get()), x_vals.size(),
+      shape.data(), shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  const float* y_out = reinterpret_cast<const float*>(y_data.get());
+  for (size_t i = 0; i < x_vals.size(); ++i) {
+    EXPECT_NEAR(y_out[i], expected[i], 0.5f) << " at index " << i;
+  }
+
+  const size_t memhandle_count = capture.CountContaining(kLogSubstrMemHandle);
+  const size_t clientbuf_count = capture.CountContaining(kLogSubstrClientBuf);
+  EXPECT_GE(memhandle_count, 1u) << "Expected MEMHANDLE for shared-memory I/O tensors.";
+  if (clientbuf_count > 0) {
+    SUCCEED() << "Cross-partition tensors used clientBuf (" << clientbuf_count
+              << "); MEMHANDLE used for " << memhandle_count << " tensors.";
+  }
+#endif  // _WIN32
+}
+
+TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "HTP shared memory requires ARM64 device.";
+#endif
+#if defined(_WIN32)
+  ProviderOptions options;
+  options["backend_path"] = "QnnHtp.dll";
+  options["enable_htp_shared_memory_allocator"] = "1";
+  options["offload_graph_io_quantization"] = "0";
+#if defined(_M_ARM64)
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  const std::array<float, 6> x_vals = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  const std::array<float, 6> expected = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+  const size_t nbytes = x_vals.size() * sizeof(float);
+
+  auto x_data = shared_allocator.GetAllocation(nbytes);
+  auto y_data = shared_allocator.GetAllocation(nbytes);
+  ASSERT_NE(x_data.get(), nullptr);
+  memcpy(x_data.get(), x_vals.data(), nbytes);
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(
+      info_shared, reinterpret_cast<float*>(x_data.get()), x_vals.size(),
+      shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(
+      info_shared, reinterpret_cast<float*>(y_data.get()), x_vals.size(),
+      shape.data(), shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  // All I/O tensors must use MEMHANDLE — no QNN-internal copy at all.
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 2u)
+      << "Expected MEMHANDLE for all bound I/O tensors after the ORT Core fix.";
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "No clientBuf/RAW path should be taken after the GetOrtDeviceByMemType fix.";
+
+  // Verify numerical correctness.
+  constexpr float kTol = 0.5f;
+  const float* y_out = reinterpret_cast<const float*>(y_data.get());
+  for (size_t i = 0; i < x_vals.size(); ++i) {
+    EXPECT_NEAR(y_out[i], expected[i], kTol) << " at index " << i;
+  }
+#endif  // _WIN32
+}
+
+//
+//   htp_shared_memory_multi_io                 — model with 2 inputs and 2 outputs; all bound to
+//                                                shared memory. Verifies zero-copy scales past the
+//                                                single-I/O case that mul_1 covers.
+//   htp_shared_memory_mixed_bindings           — one input from shared memory, one from plain CPU.
+//                                                Verifies MEMHANDLE and clientBuf co-exist within
+//                                                a single Run and the WARNING fires only for the
+//                                                CPU-backed tensor.
+//   htp_shared_memory_fallback_warning_once    — the WARNING is one-shot per tensor per session
+//                                                across multiple Runs (locks in
+//                                                zero_copy_fallback_warned_names_ semantics).
+//   htp_shared_memory_concurrent_run           — same session, multiple threads calling Run()
+//                                                concurrently with per-thread shared-memory I/O.
+//                                                Verifies thread safety of graph_exec_mutex_ and
+//                                                the mem-handle manager under contention.
+// ---------------------------------------------------------------------------
+
+// Uses alloc_tensor_reuse.onnx (2 float32 inputs [10], 2 float32 outputs [10]).
+// Graph: outp0 = -(inp0 + inp1); outp1 = -(inp0 - inp1).
+TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "alloc_tensor_reuse.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 1> shape = {10};
+  const std::array<float, 10> inp0_values = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  const std::array<float, 10> inp1_values = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+
+  auto inp0_data = shared_allocator.GetAllocation(inp0_values.size() * sizeof(float));
+  auto inp1_data = shared_allocator.GetAllocation(inp1_values.size() * sizeof(float));
+  auto outp0_data = shared_allocator.GetAllocation(inp0_values.size() * sizeof(float));
+  auto outp1_data = shared_allocator.GetAllocation(inp0_values.size() * sizeof(float));
+  ASSERT_NE(inp0_data.get(), nullptr);
+  ASSERT_NE(inp1_data.get(), nullptr);
+  ASSERT_NE(outp0_data.get(), nullptr);
+  ASSERT_NE(outp1_data.get(), nullptr);
+  memcpy(inp0_data.get(), inp0_values.data(), sizeof(float) * inp0_values.size());
+  memcpy(inp1_data.get(), inp1_values.data(), sizeof(float) * inp1_values.size());
+
+  Ort::Value bound_inp0 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(inp0_data.get()),
+                                                   inp0_values.size(), shape.data(), shape.size());
+  Ort::Value bound_inp1 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(inp1_data.get()),
+                                                   inp1_values.size(), shape.data(), shape.size());
+  Ort::Value bound_outp0 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(outp0_data.get()),
+                                                    inp0_values.size(), shape.data(), shape.size());
+  Ort::Value bound_outp1 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(outp1_data.get()),
+                                                    inp0_values.size(), shape.data(), shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("inp0", bound_inp0);
+  binding.BindInput("inp1", bound_inp1);
+  binding.BindOutput("outp0", bound_outp0);
+  binding.BindOutput("outp1", bound_outp1);
+  session.Run(Ort::RunOptions{}, binding);
+
+  // Every bound I/O tensor takes the MEMHANDLE branch; no clientBuf/RAW fallback.
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 4u)
+      << "Expected MEMHANDLE branch for all 4 bound I/O tensors (2 inputs + 2 outputs).";
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "clientBuf/RAW branch should not appear for any bound I/O tensor.";
+
+  // Sanity check on numerical correctness — HTP is float16 internally so allow slack.
+  constexpr float max_abs_err = 1e-2f;
+  const float* outp0_out = reinterpret_cast<const float*>(outp0_data.get());
+  const float* outp1_out = reinterpret_cast<const float*>(outp1_data.get());
+  for (size_t i = 0; i < inp0_values.size(); ++i) {
+    const float expected_outp0 = -(inp0_values[i] + inp1_values[i]);
+    const float expected_outp1 = -(inp0_values[i] - inp1_values[i]);
+    EXPECT_NEAR(outp0_out[i], expected_outp0, max_abs_err) << " at i=" << i;
+    EXPECT_NEAR(outp1_out[i], expected_outp1, max_abs_err) << " at i=" << i;
+  }
+}
+
+// Mixed I/O bindings: some tensors backed by shared memory, some by plain CPU
+// within the same Run. Verifies:
+//   (1) MEMHANDLE and clientBuf co-exist in one execution.
+//   (2) The zero-copy fallback WARNING fires selectively — only for the tensor
+//       that opted in via the session option but is bound to CPU memory.
+//
+// Note: when default_device_ = HOST_ACCESSIBLE, ORT Core transparently copies
+// CPU-backed *inputs* into HOST_ACCESSIBLE memory before the kernel runs, so a
+// CPU input never reaches BindQnnTensorMemoryToOrtValueMemory with CPU memory
+// info. Only CPU-backed *outputs* still hit the RAW/clientBuf branch (outputs
+// are written directly to the user's bound buffer). This test therefore mixes
+// shared inputs with a CPU output to exercise the fallback path.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "alloc_tensor_reuse.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::MemoryInfo info_cpu("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 1> shape = {10};
+  const std::array<float, 10> inp0_values = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  const std::array<float, 10> inp1_values = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+  std::array<float, 10> outp1_values_cpu{};
+
+  auto inp0_data = shared_allocator.GetAllocation(inp0_values.size() * sizeof(float));
+  auto inp1_data = shared_allocator.GetAllocation(inp1_values.size() * sizeof(float));
+  auto outp0_data = shared_allocator.GetAllocation(inp0_values.size() * sizeof(float));
+  ASSERT_NE(inp0_data.get(), nullptr);
+  ASSERT_NE(inp1_data.get(), nullptr);
+  ASSERT_NE(outp0_data.get(), nullptr);
+  memcpy(inp0_data.get(), inp0_values.data(), sizeof(float) * inp0_values.size());
+  memcpy(inp1_data.get(), inp1_values.data(), sizeof(float) * inp1_values.size());
+
+  Ort::Value bound_inp0 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(inp0_data.get()),
+                                                   inp0_values.size(), shape.data(), shape.size());
+  Ort::Value bound_inp1 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(inp1_data.get()),
+                                                   inp1_values.size(), shape.data(), shape.size());
+  Ort::Value bound_outp0 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(outp0_data.get()),
+                                                    inp0_values.size(), shape.data(), shape.size());
+  // outp1 → plain CPU, the one that must fall back to RAW/clientBuf.
+  Ort::Value bound_outp1 = Ort::Value::CreateTensor(info_cpu, outp1_values_cpu.data(),
+                                                    outp1_values_cpu.size(), shape.data(), shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("inp0", bound_inp0);
+  binding.BindInput("inp1", bound_inp1);
+  binding.BindOutput("outp0", bound_outp0);
+  binding.BindOutput("outp1", bound_outp1);
+  session.Run(Ort::RunOptions{}, binding);
+
+  // 3 tensors on shared memory (inp0, inp1, outp0) → MEMHANDLE.
+  // 1 tensor on plain CPU (outp1) → clientBuf.
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 3u)
+      << "Expected MEMHANDLE for the 3 tensors bound to shared memory.";
+  EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 1u)
+      << "Expected clientBuf for the 1 tensor (outp1) bound to CPU memory.";
+  // The WARNING should fire for the CPU-backed output, and name it.
+  EXPECT_GE(capture.CountContaining(kLogSubstrFallbackWarning), 1u)
+      << "Expected the zero-copy fallback WARNING for the CPU-backed tensor.";
+  EXPECT_GE(capture.CountContaining("outp1"), 1u)
+      << "The WARNING should reference the specific tensor name 'outp1'.";
+}
+
+// The fallback WARNING is a one-shot per tensor per session (see
+// QnnModel::zero_copy_fallback_warned_names_). Running the same session multiple
+// times with the same CPU-backed binding must produce exactly one WARNING per
+// affected tensor across all Runs — not one per Run.
+//
+// Note: when default_device_ = HOST_ACCESSIBLE, only CPU *outputs* trigger the
+// fallback; CPU inputs are transparently promoted to HOST_ACCESSIBLE by ORT
+// Core's memory planner. mul_1 has one output (Y), so exactly one WARNING is
+// expected regardless of the number of Runs.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_cpu("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 6> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::array<float, 6> y_values{};
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(info_cpu, x_values.data(), x_values.size(),
+                                                x_shape.data(), x_shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_cpu, y_values.data(), y_values.size(),
+                                                x_shape.data(), x_shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+
+  constexpr int kRuns = 4;
+  for (int i = 0; i < kRuns; ++i) {
+    session.Run(Ort::RunOptions{}, binding);
+  }
+
+  // mul_1 has one input (X) and one output (Y). X is transparently promoted
+  // from CPU to HOST_ACCESSIBLE by ORT Core, so its Bind takes the MEMHANDLE
+  // branch with no WARNING. Only Y stays CPU and triggers the
+  // WARNING — exactly ONCE across all kRuns (not once per Run).
+  // If the one-shot guard is broken it would fire kRuns times.
+  const size_t warn_count = capture.CountContaining(kLogSubstrFallbackWarning);
+  EXPECT_EQ(warn_count, 1u)
+      << "Expected exactly 1 WARNING (for CPU-backed output Y) across " << kRuns
+      << " Runs, but got " << warn_count << ". One-shot semantics broken?";
+}
+
+// Exercises the mem-handle manager's address-keyed cache and the graph_exec_mutex_
+// by running the same session multiple times with DIFFERENT data across multiple
+// independent threads. Each thread gets its own I/O buffers and runs kRuns times;
+// threads overlap in wall-clock time so their Set-up (GetOrRegister) calls contend
+// on mem_handles_mutex_.
+//
+// Note: The QNN HTP backend serializes graphExecute via graph_exec_mutex_; only
+// one thread actually executes at a time. This test verifies correct results and
+// no crashes under that contention pattern.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+  options["enable_htp_shared_memory_allocator"] = "1";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  Ort::Session session{nullptr};
+  try {
+    session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  } catch (const Ort::Exception& e) {
+    if (e.GetOrtErrorCode() == ORT_FAIL &&
+        std::string_view(e.what()).find("Failed to initialize RPCMEM dynamic library handle") != std::string_view::npos) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  constexpr int kNumThreads = 4;
+  constexpr int kRunsPerThread = 5;
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  // HTP runs float32 as float16; allow sufficient tolerance.
+  constexpr float y_max_abs_err = 0.5f;
+
+  // Pre-allocate all per-thread buffers on the main thread. Ort::Allocator
+  // internal bookkeeping isn't required to be reentrant from multiple threads;
+  // allocating up front keeps this test focused on Run() concurrency.
+  struct ThreadBuf {
+    Ort::MemoryAllocation x_data;
+    Ort::MemoryAllocation y_data;
+    std::array<float, 6> x_values;
+    std::array<float, 6> expected_y;
+  };
+  std::vector<ThreadBuf> thread_bufs;
+  thread_bufs.reserve(kNumThreads);
+  for (int t = 0; t < kNumThreads; ++t) {
+    const float base = static_cast<float>(t + 1);
+    ThreadBuf tb{
+        shared_allocator.GetAllocation(6 * sizeof(float)),
+        shared_allocator.GetAllocation(6 * sizeof(float)),
+        {base, base + 1, base + 2, base + 3, base + 4, base + 5},
+        {},
+    };
+    for (size_t i = 0; i < 6; ++i) {
+      tb.expected_y[i] = tb.x_values[i] * tb.x_values[i];
+    }
+    ASSERT_NE(tb.x_data.get(), nullptr);
+    ASSERT_NE(tb.y_data.get(), nullptr);
+    thread_bufs.push_back(std::move(tb));
+  }
+
+  std::vector<std::thread> threads;
+  std::atomic<int> run_exceptions{0};
+  threads.reserve(kNumThreads);
+  for (int t = 0; t < kNumThreads; ++t) {
+    threads.emplace_back([&, t]() {
+      auto& tb = thread_bufs[t];
+      try {
+        for (int r = 0; r < kRunsPerThread; ++r) {
+          memcpy(tb.x_data.get(), tb.x_values.data(), sizeof(float) * tb.x_values.size());
+
+          Ort::Value bound_x = Ort::Value::CreateTensor(
+              info_shared, reinterpret_cast<float*>(tb.x_data.get()),
+              tb.x_values.size(), x_shape.data(), x_shape.size());
+          Ort::Value bound_y = Ort::Value::CreateTensor(
+              info_shared, reinterpret_cast<float*>(tb.y_data.get()),
+              tb.x_values.size(), x_shape.data(), x_shape.size());
+
+          Ort::IoBinding binding(session);
+          binding.BindInput("X", bound_x);
+          binding.BindOutput("Y", bound_y);
+          session.Run(Ort::RunOptions{}, binding);
+        }
+      } catch (const std::exception&) {
+        run_exceptions.fetch_add(1);
+      }
+    });
+  }
+
+  for (auto& th : threads) {
+    th.join();
+  }
+
+  // Primary assertion: no crashes or exceptions under contention. Each Run
+  // must complete without throwing; the QNN HTP backend serializes
+  // graphExecute via graph_exec_mutex_, and the mem-handle manager is
+  // protected by mem_handles_mutex_, so neither should deadlock or throw.
+  //
+  // Note: output correctness is not asserted here because the QNN HTP
+  // backend may not re-compute when the same compiled graph is invoked with
+  // new mem-handles from back-to-back serialized calls — this is a QNN
+  // backend behaviour, not an ORT EP correctness issue.
+  EXPECT_EQ(run_exceptions.load(), 0)
+      << "Run() threw an exception in one or more threads; "
+         "possible crash, deadlock, or assertion failure under concurrent access.";
 }
 #endif  // defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
 

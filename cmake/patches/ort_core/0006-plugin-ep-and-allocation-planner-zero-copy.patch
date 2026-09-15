@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: QNN EP team <noreply@qualcomm.com>
+Date: Sun, 20 Jul 2026 00:00:00 +0000
+Subject: [PATCH] Plugin EP + allocation planner: enable zero-copy at CPU EP <-> QNN EP boundary
+
+1. ep_plugin_provider_interfaces: fall back to host_accessible_memory_info
+   when device_memory_info is null, and override GetOrtDeviceByMemType so
+   CPUInput/CPUOutput/Default resolve to HOST_ACCESSIBLE when the default
+   device is HOST_ACCESSIBLE.
+
+2. allocation_planner::determine_device: tiebreak on
+   MemType() == HOST_ACCESSIBLE, not Type() != CPU. HOST_ACCESSIBLE has
+   Type() == CPU, so the old check never fired at the CPU-EP <-> QNN-EP
+   edge and forced the clientBuf/memcpy path.
+---
+diff --git a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
+index b94497853f..546cef0451 100644
+--- a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
++++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
+@@ -122,7 +122,7 @@ struct PluginEpMetaDefNameFunctor {
+ //
+
+ static OrtDevice GetOrtDeviceForPluginEp(gsl::span<const OrtEpDevice* const> ep_devices) {
+-  // Get the OrtDevice from OrtEpDevice.device_memory_info if it is set. Otherwise, we set it to CPU.
++  // Get the OrtDevice from OrtEpDevice.device_memory_info if it is set.
+   // If there are multiple OrtEpDevice instances, the device_memory_info must be consistent for all.
+
+   ORT_ENFORCE(!ep_devices.empty());  // Should not be possible to create an EP without OrtEpDevices.
+@@ -150,7 +150,26 @@ static OrtDevice GetOrtDeviceForPluginEp(gsl::span<const OrtEpDevice* const> ep_
+               "': expected all OrtEpDevice instances to use the same device_memory_info.");
+   }
+
+-  return device_memory_info != nullptr ? device_memory_info->device : OrtDevice();
++  if (device_memory_info != nullptr) {
++    return device_memory_info->device;
++  }
++
++  // Fall back to host_accessible_memory_info (e.g. QNN HTP with RPCMEM,
++  // where the EP's native memory IS host-accessible).
++  const OrtMemoryInfo* host_accessible_memory_info = ep_devices[0]->host_accessible_memory_info;
++  return host_accessible_memory_info != nullptr ? host_accessible_memory_info->device : OrtDevice();
++}
++
++OrtDevice PluginExecutionProvider::GetOrtDeviceByMemType(OrtMemType mem_type) const {
++  // Route CPUInput/CPUOutput/Default to HOST_ACCESSIBLE when that's our
++  // default device, so CPU EP <-> QNN EP boundary tensors share RPCMEM.
++  if (default_device_.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE) {
++    if (mem_type == OrtMemTypeCPUInput || mem_type == OrtMemTypeCPUOutput ||
++        mem_type == OrtMemTypeDefault) {
++      return default_device_;
++    }
++  }
++  return Base::GetOrtDeviceByMemType(mem_type);
+ }
+
+ static const Node* FindFirstNodeAssignedToOtherEP(const std::string& ep_type,
+diff --git a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
+index 8218571a8b..0b14fd27b9 100644
+--- a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
++++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
+@@ -142,6 +142,8 @@ class PluginExecutionProvider : public IExecutionProvider {
+
+   std::unique_ptr<profiling::EpProfiler> GetProfiler() override;
+
++  OrtDevice GetOrtDeviceByMemType(OrtMemType mem_type) const override;
++
+   ProviderOptions GetProviderOptions() const override;
+
+   bool IsGraphCaptureEnabled() const override;
+diff --git a/onnxruntime/core/framework/allocation_planner.cc b/onnxruntime/core/framework/allocation_planner.cc
+--- a/onnxruntime/core/framework/allocation_planner.cc
++++ b/onnxruntime/core/framework/allocation_planner.cc
+@@ -744,7 +744,7 @@
+           return (output_device.GetAlignment() >= suggested_device.GetAlignment()) ? output_device : suggested_device;
+         } else {
+           // prefer host accessible memory device allocator as it most likely has the higher alignment requirement
+-          return (output_device.Type() != OrtDevice::CPU) ? output_device : suggested_device;
++          return (output_device.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE) ? output_device : suggested_device;
+         }
+       } else {
+         return (output_is_cpu) ? output_device : suggested_device;
+--
+2.50.0
