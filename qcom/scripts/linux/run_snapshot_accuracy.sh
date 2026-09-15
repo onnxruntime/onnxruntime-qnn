@@ -5,9 +5,11 @@
 # Two-pass snapshot+accuracy test runner for QNN EP unit tests.
 #
 # Pass 1: Run all snapshot tests (QnnUnit_<Op>_Snapshot* + QnnUnit_<Op>_SessionSnapshot*).
-#          If all pass -> done (exit 0). Graph structure unchanged -> accuracy is redundant.
-# Pass 2: For any ops whose snapshot tests failed (golden mismatch), run their
-#          QnnUnit_<Op>_Accuracy* tests to verify numerical correctness.
+#          If all pass -> done (exit 0). Graph structure unchanged, so this
+#          runner can skip the paired accuracy rerun.
+# Pass 2: For any ops whose snapshot tests drifted or could not compare because
+#          goldens are absent, run their QnnUnit_<Op>_Accuracy* tests to verify
+#          numerical correctness.
 #
 # Suite naming is op-first: QnnUnit_<Op>_<Tier>[_<Variant>]Test, where <Tier> is
 # one of Component/Snapshot/SessionSnapshot/Accuracy. The op is recovered as the
@@ -59,7 +61,8 @@ for arg in "$@"; do
 Usage: $(basename "${BASH_SOURCE[0]}") --build-dir=<path> [options]
 
 Two-pass snapshot+accuracy test runner. Runs snapshot tests first; if any
-fail (golden mismatch), runs accuracy tests for the affected ops only.
+snapshot tests drift or skip due to missing goldens, runs accuracy tests for the
+affected ops only.
 
 Options:
   --build-dir=<path>        Required. Build root (e.g. build/linux-x86_64).
@@ -117,6 +120,102 @@ if [ -z "${snapshot_probe}" ]; then
     die "No QnnUnit_*_Snapshot* tests found in binary. This is not a coverage build (requires --enable-coverage)."
 fi
 
+extract_snapshot_groups() {
+    local snapshot_json="$1"
+    local mode="${2:-all}"
+    python3 - "${snapshot_json}" "${mode}" <<'PY'
+import json
+import re
+import sys
+
+snapshot_json = sys.argv[1]
+mode = sys.argv[2]
+pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+
+with open(snapshot_json, encoding="utf-8") as f:
+    data = json.load(f)
+
+
+def contains_marker(value, marker):
+    if isinstance(value, dict):
+        return any(contains_marker(v, marker) for v in value.values())
+    if isinstance(value, list):
+        return any(contains_marker(v, marker) for v in value)
+    return marker in str(value)
+
+
+def suite_has_drift(suite):
+    return contains_marker(suite, "QNN_SNAPSHOT_DRIFT")
+
+
+def suite_has_absent_golden(suite):
+    return contains_marker(suite, "QNN_GOLDEN_ABSENT")
+
+
+def suite_is_unverified(suite):
+    if suite_has_drift(suite) or suite_has_absent_golden(suite):
+        return True
+    return suite.get("failures", 0) > 0 or suite.get("errors", 0) > 0
+
+
+ops = set()
+for suite in data.get("testsuites", []):
+    match = pattern.match(suite.get("name", ""))
+    if not match:
+        continue
+
+    include = False
+    if mode == "all":
+        include = True
+    elif mode == "needs_accuracy":
+        include = suite_is_unverified(suite)
+    else:
+        raise ValueError(f"unknown mode: {mode}")
+
+    if include:
+        ops.add(match.group(1))
+
+print(",".join(sorted(ops)))
+PY
+}
+
+extract_snapshot_groups_from_gtest_list() {
+    local list_file="$1"
+    python3 - "${list_file}" <<'PY'
+import re
+import sys
+
+list_file = sys.argv[1]
+pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+
+ops = set()
+with open(list_file, encoding="utf-8") as f:
+    for line in f:
+        name = line.strip()
+        if not name.endswith("."):
+            continue
+        match = pattern.match(name[:-1])
+        if match:
+            ops.add(match.group(1))
+
+print(",".join(sorted(ops)))
+PY
+}
+
+list_in_scope_snapshot_groups() {
+    if [ -n "${filter_groups}" ]; then
+        echo "${filter_groups}"
+        return 0
+    fi
+
+    (
+        cd "${bin_dir}"
+        export LD_LIBRARY_PATH="${bin_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="${snapshot_filter}" > "${snapshot_list}"
+    )
+    extract_snapshot_groups_from_gtest_list "${snapshot_list}"
+}
+
 log_info "=== QNN EP Two-Pass Snapshot+Accuracy Runner ==="
 log_info "binary : ${binary}"
 if [ "${generate_goldens}" = true ]; then
@@ -154,6 +253,8 @@ mkdir -p "${results_dir}"
 
 snapshot_json="${results_dir}/snapshot_results.json"
 accuracy_json="${results_dir}/accuracy_results.json"
+snapshot_list="${results_dir}/snapshot_tests.txt"
+rm -f "${snapshot_json}" "${accuracy_json}" "${snapshot_list}"
 
 # ---------------------------------------------------------------------------
 # Pass 1: Snapshot tests
@@ -183,17 +284,28 @@ fi
 # Analyze Pass 1 results
 # ---------------------------------------------------------------------------
 
-# Determine which groups need accuracy testing.
+# Snapshot routing rule:
+#   - [QNN_SNAPSHOT_DRIFT] means the snapshot test reached golden comparison and
+#     only the QNN graph JSON changed.
+#   - [QNN_GOLDEN_ABSENT] means no golden comparison happened for that case.
+#   - Both markers leave the snapshot result unverified for that op group, so
+#     route only the affected QnnUnit_<Op>_Accuracy* tests.
+#   - Other snapshot failures also leave the snapshot result unverified. Route
+#     the affected op to accuracy instead of blocking on graph-diff enforcement.
+#   - If no snapshot JSON is produced, treat the in-scope snapshot groups as
+#     unverified, same as missing goldens, and verify them through accuracy.
+#   - The setup failure is an unverified snapshot group without a matching
+#     QnnUnit_<Op>_Accuracy* test, because then correctness is not gated.
 target_ops=""
 
 if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
     # In update/force mode: run accuracy for all groups that were in scope.
-    if [ -n "${filter_groups}" ]; then
-        target_ops="${filter_groups}"
+    if [ -f "${snapshot_json}" ]; then
+        target_ops=$(extract_snapshot_groups "${snapshot_json}" all 2>/dev/null) || true
     else
-        # Derive all groups from the JSON output (all snapshot suites that ran).
-        target_ops=$(python3 "${REPO_ROOT}/qcom/scripts/linux/extract_snapshot_groups.py" \
-            "${snapshot_json}" 2>/dev/null) || true
+        # No snapshot result was produced. Treat the in-scope snapshot groups as
+        # unverified, same as missing goldens, and verify them through accuracy.
+        target_ops=$(list_in_scope_snapshot_groups 2>/dev/null) || true
     fi
     if [ "${generate_goldens}" = true ]; then
         log_info "Goldens updated. Verifying accuracy for: ${target_ops}"
@@ -201,24 +313,24 @@ if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
         log_info "Force-accuracy mode. Running accuracy for: ${target_ops}"
     fi
 else
-    # Normal mode: run accuracy only for groups whose snapshot FAILED (drift):
-    # the builder changed but the golden was not updated, so the new graph
-    # structure is unverified and must be numerically checked.
-    if [ ${snapshot_exit} -eq 0 ]; then
-        log_info "All snapshot tests passed. No accuracy tests needed."
-        exit 0
-    fi
-
     if [ ! -f "${snapshot_json}" ]; then
-        log_err "Snapshot JSON output not found at ${snapshot_json}."
-        log_err "Test binary may have crashed (exit code: ${snapshot_exit})."
-        exit 99
+        log_warn "Snapshot JSON output not found at ${snapshot_json}."
+        log_warn "Treating in-scope snapshot groups as unverified and routing them to accuracy."
+        target_ops=$(list_in_scope_snapshot_groups 2>/dev/null) || true
+    else
+        # Normal mode: run accuracy for groups whose snapshot is unverified:
+        #   - [QNN_SNAPSHOT_DRIFT]: builder output changed vs the checked-in golden.
+        #   - [QNN_GOLDEN_ABSENT]: no golden comparison happened.
+        #   - any other snapshot failure/error: snapshot could not be used as an
+        #     accuracy-skip signal.
+        target_ops=$(extract_snapshot_groups "${snapshot_json}" needs_accuracy 2>/dev/null) || true
     fi
-
-    target_ops=$(python3 "${REPO_ROOT}/qcom/scripts/linux/extract_snapshot_groups.py" \
-        "${snapshot_json}" --failures-only 2>/dev/null) || true
 
     if [ -z "${target_ops}" ]; then
+        if [ ${snapshot_exit} -eq 0 ]; then
+            log_info "All snapshot tests passed. No accuracy tests needed."
+            exit 0
+        fi
         log_err "Snapshot tests exited ${snapshot_exit} but no group failures could be extracted."
         exit ${snapshot_exit}
     fi
@@ -235,16 +347,24 @@ log_info "Accuracy targets: ${target_ops}"
 # Pass 2: Accuracy tests for target groups
 # ---------------------------------------------------------------------------
 
-# Probe whether accuracy tests are compiled in.
-accuracy_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_*_Accuracy*" 2>/dev/null || true)
-if [ -z "${accuracy_probe}" ]; then
-    log_warn "No QnnUnit_*_Accuracy* tests found (QNN_EP_ACCURACY_UT not enabled?)."
-    log_warn "Skipping Pass 2. Snapshot drift is unverified."
-    exit 0
+# Build gtest filter from group list and verify every unverified snapshot group
+# has a matching accuracy suite. This is the only setup failure for an
+# unverified snapshot: without QnnUnit_<Op>_Accuracy*, correctness is not gated.
+IFS=',' read -ra op_array <<< "${target_ops}"
+missing_accuracy=""
+for op in "${op_array[@]}"; do
+    accuracy_probe=$("${binary}" --gtest_list_tests --gtest_filter="QnnUnit_${op}_Accuracy*Test.*" 2>/dev/null || true)
+    if [ -z "${accuracy_probe}" ]; then
+        if [ -n "${missing_accuracy}" ]; then
+            missing_accuracy+=","
+        fi
+        missing_accuracy+="${op}"
+    fi
+done
+if [ -n "${missing_accuracy}" ]; then
+    die "No matching QnnUnit_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing_accuracy}."
 fi
 
-# Build gtest filter from group list.
-IFS=',' read -ra op_array <<< "${target_ops}"
 accuracy_filter=""
 for op in "${op_array[@]}"; do
     if [ -n "${accuracy_filter}" ]; then
@@ -272,8 +392,8 @@ if [ ${accuracy_exit} -eq 0 ]; then
     if [ "${generate_goldens}" = true ]; then
         log_info "=== PASS: Goldens updated and accuracy verified ==="
     else
-        log_info "=== PASS: Snapshot drift verified numerically correct ==="
-        log_info "Action: Run with --generate-goldens to accept the new graph structure."
+        log_info "=== PASS: Snapshot drift/missing goldens verified numerically correct ==="
+        log_info "Action: Run with --generate-goldens to accept the current graph structure."
     fi
     exit 0
 else

@@ -242,10 +242,115 @@ run_test_phase() {
     return "${rc}"
 }
 
+# Snapshot gating rule for coverage CI:
+#   - Clean snapshot pass is only used as an accuracy-skip signal.
+#   - Any unverified snapshot state (drift, missing golden, setup/assert failure,
+#     or missing snapshot JSON) falls back to accuracy instead of enforcing zero
+#     graph diff.
+#   - The only setup failure is an unverified snapshot group without a matching
+#     QnnUnit_<Op>_Accuracy* test, because then correctness is not gated.
+extract_unverified_snapshot_groups() {
+    local snapshot_json="$1"
+    python3 - "${snapshot_json}" <<'PY'
+import json
+import re
+import sys
+
+snapshot_json = sys.argv[1]
+pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+
+with open(snapshot_json, encoding="utf-8") as f:
+    data = json.load(f)
+
+
+def contains_marker(value, marker):
+    if isinstance(value, dict):
+        return any(contains_marker(v, marker) for v in value.values())
+    if isinstance(value, list):
+        return any(contains_marker(v, marker) for v in value)
+    return marker in str(value)
+
+
+def suite_is_unverified(suite):
+    return (
+        suite.get("failures", 0) > 0
+        or suite.get("errors", 0) > 0
+        or contains_marker(suite, "QNN_SNAPSHOT_DRIFT")
+        or contains_marker(suite, "QNN_GOLDEN_ABSENT")
+    )
+
+
+ops = set()
+for suite in data.get("testsuites", []):
+    match = pattern.match(suite.get("name", ""))
+    if match and suite_is_unverified(suite):
+        ops.add(match.group(1))
+
+print(",".join(sorted(ops)))
+PY
+}
+
+extract_snapshot_groups_from_gtest_list() {
+    local list_file="$1"
+    python3 - "${list_file}" <<'PY'
+import re
+import sys
+
+list_file = sys.argv[1]
+pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+
+ops = set()
+with open(list_file, encoding="utf-8") as f:
+    for line in f:
+        name = line.strip()
+        if not name.endswith("."):
+            continue
+        match = pattern.match(name[:-1])
+        if match:
+            ops.add(match.group(1))
+
+print(",".join(sorted(ops)))
+PY
+}
+
+list_snapshot_groups_from_binary() {
+    (
+        cd "${build_dir}/${config}"
+        export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="${snapshot_filter}" > "${snapshot_list}"
+    )
+    extract_snapshot_groups_from_gtest_list "${snapshot_list}"
+}
+
+assert_accuracy_exists_for_groups() {
+    local groups="$1"
+    local missing=""
+    IFS=',' read -ra group_array <<< "${groups}"
+    for group in "${group_array[@]}"; do
+        local probe
+        probe=$(
+            cd "${build_dir}/${config}" &&
+                export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" &&
+                ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="QnnUnit_${group}_Accuracy*Test.*" 2>/dev/null || true
+        )
+        if [ -z "${probe}" ]; then
+            if [ -n "${missing}" ]; then
+                missing+=","
+            fi
+            missing+="${group}"
+        fi
+    done
+    if [ -n "${missing}" ]; then
+        die "No matching QnnUnit_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing}. Coverage report was still generated at ${output_dir}."
+    fi
+}
+
 # Snapshot-phase JSON report path. Written today but not yet consumed by anything;
 # reserved for a future accuracy-routing gate.
 # Holds the QnnUnit_*_Snapshot* / QnnUnit_*_SessionSnapshot* per-case results.
 snapshot_json="${build_dir}/${config}/snapshot_results.json"
+snapshot_list="${build_dir}/${config}/snapshot_tests.txt"
+rm -f "${snapshot_json}" "${snapshot_list}"
 
 comp_exit=0
 snapshot_exit=0
@@ -355,15 +460,30 @@ log_info "README       : ${output_dir}/README.md"
 # Propagate test failure after coverage report has been generated.
 #
 # The component and accuracy phases GATE (non-zero exit fails this script). The
-# snapshot phase is NON-gating: a golden byte-mismatch means the graph
-# structure drifted, which is allowed to land (goldens may go stale on main; a
-# nightly job reconciles them). Drift is a routing signal for accuracy, and
-# numerical correctness is enforced by the accuracy phase above.
+# snapshot phase is not a correctness gate; it is an accuracy-skip signal. Any
+# unverified snapshot result falls back to accuracy. The only setup failure is
+# when an unverified snapshot group has no matching accuracy test.
 # ---------------------------------------------------------------------------
 if [ "${snapshot_exit}" -ne 0 ]; then
-    log_warn "snapshot phase exited ${snapshot_exit} — graph-structure drift detected."
-    log_warn "This is NON-gating. Run run_snapshot_accuracy.sh to verify numerical correctness,"
-    log_warn "and --generate-goldens once the new structure is accepted."
+    if [ "${skip_accuracy}" = true ]; then
+        die "Snapshot phase was unverified (exit ${snapshot_exit}) but accuracy was skipped. Coverage report was still generated at ${output_dir}."
+    fi
+
+    if [ -f "${snapshot_json}" ]; then
+        unverified_snapshot_groups=$(extract_unverified_snapshot_groups "${snapshot_json}" 2>/dev/null) || true
+    else
+        log_warn "snapshot phase exited ${snapshot_exit} and did not produce ${snapshot_json}."
+        log_warn "Treating all in-scope snapshot groups as unverified."
+        unverified_snapshot_groups=$(list_snapshot_groups_from_binary 2>/dev/null) || true
+    fi
+
+    if [ -z "${unverified_snapshot_groups}" ]; then
+        die "Snapshot phase was unverified (exit ${snapshot_exit}) but no affected groups could be identified. Coverage report was still generated at ${output_dir}."
+    fi
+
+    assert_accuracy_exists_for_groups "${unverified_snapshot_groups}"
+    log_warn "snapshot phase exited ${snapshot_exit}; treating groups (${unverified_snapshot_groups}) as unverified."
+    log_warn "This is NON-gating because matching accuracy tests ran as the numerical gate."
 fi
 
 if [ "${comp_exit}" -ne 0 ] && [ "${accuracy_exit}" -ne 0 ]; then

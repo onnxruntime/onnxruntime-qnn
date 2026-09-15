@@ -4,7 +4,16 @@
 
 Tests in `onnxruntime/test/providers/qnn/` have historically been integration tests — they require a QNN SDK runtime, physical hardware, and a fully compiled EP stack. This makes them expensive to run and impossible to execute in most developer and CI environments.
 
-The `component/` subdirectory is the **component tier** in the tier-first test layout: **function-level and component-level white-box tests** that target the internal logic of the QNN EP. No on-device hardware is required — all tests run on a Linux x86-64 host. Tests that exercise op validation load `libQnnHtp.so` locally on the host (validation only, not graph execution); those tests are automatically skipped if the SDK is unavailable.
+The `component/` subdirectory is the **component tier** in the tier-based test layout:
+function-level and component-level white-box tests that target the internal logic of the
+QNN EP. No on-device hardware is required. In this PR the tier is enabled on the Linux
+x86-64 coverage build because that is the only current build that links the test binary
+directly against the shared QNN EP and exports EP-internal symbols. Windows x86-64,
+Windows ARM64, and Linux ARM64 coverage/export-symbol enablement will be added in a
+follow-up phase; until then these test bodies compile out there through the
+`QNN_EP_INTERNAL_SYMBOL_ACCESS` guard. Tests that exercise op validation load
+`libQnnHtp.so` locally on the host (validation only, not graph execution); those tests
+are automatically skipped if the SDK is unavailable.
 
 Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wrapper factory, golden utils, op specs) lives one level up in `infra/` and is reused by the sibling `snapshot/` and `session_snapshot/` tiers as well — include it via `test/providers/qnn/infra/qnn_unit_test_utils.h`. The graph-structure (`snapshot/`, `session_snapshot/`) and accuracy (`accuracy/`) tiers have their own directories; see the top-level `README.md` for the full tier map.
 
@@ -35,19 +44,15 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `onnx_ctx_model_helper_test.cc` | `QnnUnit_OnnxCtxModelHelperTest` | `builder/onnx_ctx_model_helper.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderTest` | `qnn_execution_provider.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderHtpTest` | `qnn_execution_provider.cc` (real-`libQnnHtp.so` paths) |
-| `builder/opbuilder/<op>_test.cc` | `QnnUnit_<Op>_ComponentTest` | `builder/opbuilder/<op>_op_builder.cc` |
+| `builder/opbuilder/clip_test.cc` | `QnnUnit_Clip_ComponentTest` | `builder/opbuilder/clip_op_builder.cc` |
 
-The last row is the **op-builder component tier**: unlike the core-component
-files above (which sit directly in `component/` and each cover one non-op-builder
-source file), op-builder tests mirror the production source tree under
-`component/builder/opbuilder/` and target the white-box logic of a single op
-builder — the partition reject path and the dtype-dispatch switch arms that the
-`snapshot/` tier cannot reach. One `<op>_test.cc` per op builder; the op's
-QNN-graph structure and inference accuracy are covered by the sibling
-`snapshot/` and `accuracy/` tiers, which share one set of op specs from
-`infra/specs/`. This row is a pattern, not an enumeration — new ops follow
-it without adding a table row (e.g. `clip_test.cc` → `QnnUnit_Clip_ComponentTest`
-→ `clip_op_builder.cc`).
+For other op builders, follow the same pattern:
+`component/builder/opbuilder/<op>_test.cc` contains `QnnUnit_<Op>_ComponentTest`
+and targets `builder/opbuilder/<op>_op_builder.cc`. These tests focus on
+white-box logic that the snapshot tier cannot reach, such as partition reject
+paths and dtype-dispatch switch arms. The op's QNN graph structure and inference
+accuracy are covered by the sibling `snapshot/` and `accuracy/` tiers using the
+same specs from `infra/specs/`.
 
 ## Benefits
 
@@ -237,6 +242,6 @@ The infrastructure is designed to grow in two directions:
 
 1. **Coverage gap filling** — for core components not yet covered at the unit tier (e.g., `qnn_backend_manager.cc`, `qnn_execution_provider.cc`), add targeted unit tests to cover paths that are difficult to reach through integration tests: error paths, edge cases, and internal branch logic. (`qnn_def.cc` and `qnn_model_wrapper.cc` already meet the ≥90% line / 100% function target via the test suites listed above; small follow-up patches to fill remaining branches are still welcome.)
 
-2. **Op builder test migration** — op builders (`opbuilder/*.cc`) are currently covered by on-device integration tests, which are expensive to run and structurally limited in reaching component-level logic. The goal is to migrate these tests into the tier-first layout: dtype-dispatch and reject-path logic land in this `component/` tier, QNN-graph structure lands in the `snapshot/` (op-builder) and `session_snapshot/` tiers, and inference accuracy lands in the `accuracy/` tier — all sharing one set of op specs from `infra/specs/`, using the QNN HTP SDK on the Linux host for op validation (no device required). Coverage improvement is a natural outcome of this migration, but the primary driver is lower test cost and better component-level precision.
+2. **Op builder test migration** — op builders (`opbuilder/*.cc`) are currently covered by on-device integration tests, which are expensive to run and structurally limited in reaching component-level logic. The goal is to migrate these tests into the tier-based layout: dtype-dispatch and reject-path logic land in this `component/` tier, QNN-graph structure lands in the `snapshot/` (op-builder) and `session_snapshot/` tiers, and inference accuracy lands in the `accuracy/` tier — all sharing one set of op specs from `infra/specs/`, using the QNN HTP SDK on the Linux host for op validation (no device required). Coverage improvement is a natural outcome of this migration, but the primary driver is lower test cost and better component-level precision.
 
 Coverage builds run in CI on every PR. Strict regression gating (failing PRs that drop coverage) is being rolled out in stages.

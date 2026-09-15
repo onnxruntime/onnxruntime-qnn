@@ -19,7 +19,7 @@ backend is treated as a configuration error (hard failure) rather than a skip.
 | Tier | Directory | Backend required | What it targets |
 |---|---|---|---|
 | Component | `component/` | Optional (`libQnnHtp.so` for op validation only, no session) | Pure function / op-builder logic; no graph execution |
-| Op-builder snapshot | `snapshot/` | Real backend, no finalize | QNN JSON graph structure produced by the op builder |
+| Op-builder snapshot | `snapshot/` | Real backend + QNN graph creation, no ORT session execution | QNN JSON graph structure produced by the op builder |
 | Session snapshot | `session_snapshot/` | Real backend + full session (compile only) | QNN JSON graph structure after ORT optimizer + partition transforms |
 | Accuracy | `accuracy/` | Real backend + full session (compile + execute) | Per-op inference accuracy, spec-shared with the `snapshot/` tier — the **new home** for accuracy tests |
 | **Pipeline integration** | **`integration/`** | Real backend + full session (compile + execute) | Specific EP internal code paths triggered during EP compilation |
@@ -48,20 +48,22 @@ When in doubt: the dividing line is the **ORT session**, not whether a real
 backend is loaded. If your test creates a full ORT session (compile + execute a
 model through the EP), it belongs in `integration/`. A test that constructs EP
 components directly and calls their methods — even if that loads a real
-`libQnnHtp.so` — is a component test and belongs in `unit/` (see the `*HtpTest`
+`libQnnHtp.so` — is a component test and belongs in `component/` (see the `*HtpTest`
 fixtures there).
 
 ## Platform availability
 
-These tests are **Linux-only** — the file guard `defined(__linux__)` compiles them out
-everywhere else, so the Windows row below describes *why they are excluded*, not a
-runtime skip.
+These tests are **Linux-only** because they execute models through the QNN HTP backend.
+The current Windows CI lanes build the provider test binary, but they do not provide the
+same HTP execution environment used by these pipeline tests. The file guard
+`defined(__linux__)` therefore compiles this tier out on Windows instead of building
+tests that would only fail or skip at runtime.
 
 | Platform | Behavior |
 |---|---|
 | Linux x86-64 | HTP simulator (`libQnnHtp.so`) runs fully — compile + execute. **Primary CI platform.** |
 | Linux AArch64 | Real HTP hardware — compile + execute. |
-| Windows (any) | File compiled out by the `defined(__linux__)` guard — these tests are not built or run. |
+| Windows (any) | File compiled out by the `defined(__linux__)` guard — these tests are not built or run until a Windows QNN HTP execution lane is available. |
 
 On the Linux CI host the QNN SDK is always present, so the fixture treats a missing EP
 plugin or HTP device as a **hard failure** (CI configuration error), not a skip. The

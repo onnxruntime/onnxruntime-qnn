@@ -5,7 +5,7 @@
 
 ## Directory structure
 
-Tests are organized **tier-first**: each testing tier is a top-level sibling
+Tests are organized **tier-based**: each testing tier is a top-level sibling
 directory, with shared infrastructure factored out alongside them.
 
 ```
