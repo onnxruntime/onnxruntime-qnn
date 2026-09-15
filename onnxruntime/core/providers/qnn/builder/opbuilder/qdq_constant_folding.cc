@@ -47,13 +47,16 @@ Ort::Status GetEffectivelyConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper
 
 namespace {
 
-// SafeInt guards against overflow from an adversarial shape before allocation.
+// A shape product that overflows size_t must fail rather than wrap: a wrapped count would
+// slip under the fold budget and then under-allocate the output. SafeMultiply reports
+// overflow through its return value, so this stays a status even in a no-exceptions build.
 Ort::Status ComputeNumElements(gsl::span<const uint32_t> shape, /*out*/ size_t& num_elems) {
-  SafeInt<size_t> safe_num_elems = 1;
+  size_t total = 1;
   for (uint32_t d : shape) {
-    safe_num_elems *= d;
+    RETURN_IF_NOT(SafeMultiply(total, static_cast<size_t>(d), total),
+                  "Tensor shape element count overflows size_t.");
   }
-  num_elems = safe_num_elems;
+  num_elems = total;
   return Ort::Status();
 }
 
@@ -72,7 +75,7 @@ Ort::Status UnpackQuantParams(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status ResolvePerChannelAxis(QnnModelWrapper& qnn_model_wrapper,
+Ort::Status ResolvePerChannelAxis(const QnnModelWrapper& qnn_model_wrapper,
                                   const OrtNodeUnitIODef& io_def,
                                   /*out*/ std::optional<int64_t>& axis) {
   bool is_per_chan = false;
@@ -114,6 +117,21 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF(output_info.qnn_data_type != QNN_DATATYPE_FLOAT_32,
             "Folded DequantizeLinear only supports float32 output.");
 
+  // Element count drives both the DLC-size guard below and the output allocation.
+  // (DequantizeLinear preserves shape, so output count == input count.)
+  size_t num_elems = 0;
+  RETURN_IF_ERROR(ComputeNumElements(gsl::make_span(output_info.shape), num_elems));
+
+  // Folding converts compact quantized weights into FP32 STATIC tensors stored
+  // in the DLC, so large faithfully-substitutable weights (e.g. 1536x6144 = 36 MB
+  // FP32) are left to a runtime QNN Dequantize. The 1 MiB budget keeps folding
+  // for bias-sized tensors.
+  bool can_substitute = false;
+  RETURN_IF_ERROR(CanSubstituteRuntimeDequantize(qnn_model_wrapper, input_def, can_substitute));
+  if (can_substitute && ShouldSkipConstantDQFold(num_elems)) {
+    return MAKE_EP_FAIL("DequantizeLinear output too large to fold; leaving as a runtime op to avoid FP32 DLC bloat.");
+  }
+
   std::vector<uint8_t> quant_bytes;
   RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input_def.name, quant_bytes));
 
@@ -124,8 +142,6 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
   std::vector<int32_t> offsets;
   RETURN_IF_ERROR(UnpackQuantParams(qnn_model_wrapper, *input_def.quant_param, scales, offsets));
 
-  size_t num_elems = 0;
-  RETURN_IF_ERROR(ComputeNumElements(gsl::make_span(input_info.shape), num_elems));
   std::vector<float> fp32_data(num_elems);
 
   std::optional<int64_t> axis;
@@ -197,6 +213,44 @@ Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
 
 }  // namespace
 
+// Declining to fold only trades an FP32 blob for a compact static tensor if a runtime QNN
+// Dequantize is a faithful substitute for the folded constant. Two cases where it is not:
+//   - Per-channel: ExplicitOpCheck admits a standalone per-channel Q/DQ only on the premise that
+//     folding will remove it, and declining also stops constant-ness from propagating to later
+//     Q/DQ hops, which then lose QNN support and leave the consumer's weight as an APP_WRITE input.
+//   - INT4/INT2: the initializer reaches QNN as SFIXED_POINT_8 with its high bits masked off to
+//     work around a QNN INT4 accuracy bug (see UnpackInt4ToInt8). Only the fold path undoes that
+//     mask, so a runtime Dequantize would read negative values as q + 16.
+Ort::Status CanSubstituteRuntimeDequantize(const QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnitIODef& input_def,
+                                           /*out*/ bool& can_substitute) {
+  can_substitute = false;
+
+  std::optional<int64_t> axis;
+  RETURN_IF_ERROR(ResolvePerChannelAxis(qnn_model_wrapper, input_def, axis));
+  if (axis.has_value()) {
+    return Ort::Status();
+  }
+
+  // A null init means the input is a previously-folded (not real-initializer)
+  // constant. Folded intermediates always hold plain bytes -- fp32 from DQ folding
+  // or 8/16/32-bit from Q folding (see GetEffectivelyConstantTensorBytes) -- so no
+  // sub-byte sign hazard applies and falling through below is correct. Per-channel
+  // folded inputs already returned above.
+  const OrtValueInfo* init = qnn_model_wrapper.GetConstantTensor(input_def.name);
+  if (init != nullptr) {
+    ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(init, onnx_data_type));
+    if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
+        onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
+      return Ort::Status();
+    }
+  }
+
+  can_substitute = true;
+  return Ort::Status();
+}
+
 bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper,
                         const OrtNodeUnit& node_unit) {
   // QDQGroup units are owned by the target op builder; only standalone Q/DQ are foldable here.
@@ -223,6 +277,12 @@ Ort::Status TryFoldConstantQDQ(QnnModelWrapper& qnn_model_wrapper,
     return FoldConstantQuantizeLinear(qnn_model_wrapper, node_unit);
   }
   return MAKE_EP_FAIL("TryFoldConstantQDQ called on a non-Q/DQ node.");
+}
+
+bool ShouldSkipConstantDQFold(size_t num_elems) {
+  // Compared without multiplying: num_elems * sizeof(float) can wrap before any
+  // threshold check for adversarial shapes.
+  return num_elems > kQdqFoldMaxFp32Bytes / sizeof(float);
 }
 
 }  // namespace qnn

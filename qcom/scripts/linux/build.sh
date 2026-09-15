@@ -243,9 +243,12 @@ case "${target_platform}" in
 
     # JDK 21's jlink is not compatible with Android 34's core modules,
     # so Java 17 is used instead.
+    # JAVA_HOME must be exported unconditionally (not just for --build-java) because
+    # sdkmanager checks JAVA_HOME before PATH; a pre-existing JAVA_HOME pointing to
+    # JDK < 17 causes the NDK install step to fail even when java17 is on PATH.
     PATH="$(get_java17_bindir):${PATH}"
+    export JAVA_HOME="$(get_java17_contentdir)"
     if [ -n "${build_java}" ]; then
-      export JAVA_HOME="$(get_java17_contentdir)"
       export GRADLE_USER_HOME="${build_root}/gradle-home"
     fi
 

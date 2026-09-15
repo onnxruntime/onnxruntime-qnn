@@ -162,6 +162,12 @@ class FactoryStubContext {
 
  private:
   void InstallOrtApiStubs() {
+    // QnnEp probes the v28 EPContext experimental API during construction.
+    // This fake runtime has no experimental APIs, so report them unavailable
+    // rather than leaving the lookup entry null.
+    stub_ort_api.GetExperimentalFunction = [](const char*) noexcept -> OrtExperimentalFnPtr {
+      return nullptr;
+    };
     stub_ort_api.CreateStatus = [](OrtErrorCode code, const char* msg) noexcept -> OrtStatus* {
       auto* rec = new StatusRecord{code, msg ? msg : ""};
       return reinterpret_cast<OrtStatus*>(rec);

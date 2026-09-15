@@ -12,6 +12,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gsl/gsl>
@@ -1099,6 +1100,84 @@ TEST(QnnUnit_UtilsTest, TransposeFromCnhwToHwcn_Raw_WrongRankFails) {
   std::vector<uint8_t> input(24, 0);
   std::vector<uint8_t> output(24);
   EXPECT_FALSE(qnn::utils::TransposeFromCnhwToHwcn(std::move(shape), 1, input, output).IsOK());
+}
+
+// =============================================================================
+// qnn::utils::TwoDimensionTranspose(raw)
+//
+// Element sizes 1/2/4/8 run a 32x32 tiled loop and everything else an untiled one, so the shape
+// sweeps below cover partial tiles in either dimension, single rows/columns, and multi-tile extents.
+// =============================================================================
+
+// Distinct byte pattern per element, so a misplaced element is visible in the comparison.
+static std::vector<uint8_t> MakeTransposeInput(size_t num_elems, size_t elem_byte_size) {
+  std::vector<uint8_t> input(num_elems * elem_byte_size);
+  for (size_t i = 0; i < input.size(); ++i) {
+    input[i] = static_cast<uint8_t>(i % 251);  // Prime modulus: no aliasing with any tile or row stride.
+  }
+  return input;
+}
+
+static std::vector<uint8_t> ReferenceTranspose2D(size_t rows, size_t cols, size_t elem_byte_size,
+                                                 const std::vector<uint8_t>& input) {
+  std::vector<uint8_t> expected(input.size());
+  for (size_t row = 0; row < rows; ++row) {
+    for (size_t col = 0; col < cols; ++col) {
+      std::memcpy(&expected[(col * rows + row) * elem_byte_size],
+                  &input[(row * cols + col) * elem_byte_size],
+                  elem_byte_size);
+    }
+  }
+  return expected;
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_HappyPath) {
+  // [2, 3] -> [3, 2], two bytes per element.
+  std::vector<uint8_t> input = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+  std::vector<uint8_t> output(input.size());
+  Ort::Status st = qnn::utils::TwoDimensionTranspose(2, 3, /*elem_byte_size=*/2, input, output);
+  EXPECT_TRUE(st.IsOK());
+  EXPECT_EQ(output, (std::vector<uint8_t>{0, 1, 6, 7, 2, 3, 8, 9, 4, 5, 10, 11}));
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_TiledElementSizesAcrossTileBoundaries) {
+  // Empty, degenerate rank-2, just under / exactly one tile, a partial tile in one dimension only,
+  // and partial tiles in both dimensions across several tiles.
+  const std::vector<std::pair<size_t, size_t>> shapes = {
+      {0, 0}, {0, 5}, {5, 0}, {1, 1}, {1, 70}, {70, 1}, {31, 31}, {32, 32}, {33, 31}, {31, 33}, {65, 97}};
+
+  for (size_t elem_byte_size : {1u, 2u, 4u, 8u}) {
+    for (const auto& [rows, cols] : shapes) {
+      const std::vector<uint8_t> input = MakeTransposeInput(rows * cols, elem_byte_size);
+      std::vector<uint8_t> output(input.size());
+      Ort::Status st = qnn::utils::TwoDimensionTranspose(rows, cols, elem_byte_size, input, output);
+      EXPECT_TRUE(st.IsOK()) << "[" << rows << ", " << cols << "] x " << elem_byte_size << " bytes";
+      EXPECT_EQ(output, ReferenceTranspose2D(rows, cols, elem_byte_size, input))
+          << "[" << rows << ", " << cols << "] x " << elem_byte_size << " bytes";
+    }
+  }
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_UncommonElementSizesUseUntiledPath) {
+  for (size_t elem_byte_size : {3u, 5u, 6u, 7u, 16u}) {
+    const std::vector<uint8_t> input = MakeTransposeInput(33 * 35, elem_byte_size);
+    std::vector<uint8_t> output(input.size());
+    Ort::Status st = qnn::utils::TwoDimensionTranspose(33, 35, elem_byte_size, input, output);
+    EXPECT_TRUE(st.IsOK()) << elem_byte_size << " bytes per element";
+    EXPECT_EQ(output, ReferenceTranspose2D(33, 35, elem_byte_size, input))
+        << elem_byte_size << " bytes per element";
+  }
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_BufferSizeMismatchFails) {
+  const std::vector<uint8_t> input(2 * 3 * 4, 0);
+  std::vector<uint8_t> output(input.size());
+  EXPECT_TRUE(qnn::utils::TwoDimensionTranspose(2, 3, 4, input, output).IsOK());
+
+  std::vector<uint8_t> short_output(input.size() - 4);
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 4, input, short_output).IsOK());
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(3, 3, 4, input, output).IsOK());
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 0, input, output).IsOK());
 }
 
 // =============================================================================

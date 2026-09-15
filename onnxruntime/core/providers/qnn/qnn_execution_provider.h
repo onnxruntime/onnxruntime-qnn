@@ -98,6 +98,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static const char* ORT_API_CALL GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                         _In_ const OrtGraph* graph) noexcept;
 
+  OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
+                                   const OrtNode** fused_nodes,
+                                   size_t count);
+
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
@@ -277,6 +281,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   bool enable_htp_graph_splitting_ = false;
+  // Number of threads to prepare split subgraphs in parallel. UINT32_MAX = auto-select.
+  // Only meaningful when enable_htp_graph_splitting_ is true. Requires QAIRT SDK 2.51+.
+  uint32_t htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;

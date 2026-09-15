@@ -1,21 +1,25 @@
-MSVC 14.51+ (cl 19.51) emits C4875 ("a non-string literal argument to
-[[gsl::suppress]] is deprecated") for the bundled Microsoft.GSL v4.0.0
-GSL_SUPPRESS macro, which expands to [[gsl::suppress(bounds.2)]] with a bare
-token. ORT builds with /WX, so this turns into C2220 and fails compilation of
-sources that include ort_core first-party headers using GSL_SUPPRESS (e.g.
-capture.cc via capture.h). Older toolsets (14.44) did not emit C4875. Suppress
-just this warning via ORT_WARNING_FLAGS, alongside the other per-warning
-suppressions already present here.
+From 17dc1290ec9651c54ea72251e044fedab2f7aa0a Mon Sep 17 00:00:00 2001
+From: Badri Narayanan <mbadnara@qti.qualcomm.com>
+Date: Tue, 1 Sep 2026 16:10:31 -0700
+Subject: [PATCH 5/7] Suppress C4875 for MSVC 14.51
+
+---
+ cmake/CMakeLists.txt | 2 ++
+ 1 file changed, 2 insertions(+)
 
 diff --git a/cmake/CMakeLists.txt b/cmake/CMakeLists.txt
+index 9c5263c..c6cf882 100644
 --- a/cmake/CMakeLists.txt
 +++ b/cmake/CMakeLists.txt
-@@ -603,6 +603,8 @@ set(ORT_WARNING_FLAGS)
+@@ -637,6 +637,8 @@ if (WIN32)
      list(APPEND ORT_WARNING_FLAGS "/wd5054")
      # Enable warning: data member 'member' will be initialized after data member 'member2' / base class 'base_class'
      list(APPEND ORT_WARNING_FLAGS "/w15038")
 +    # MSVC 14.51+ deprecates non-string-literal [[gsl::suppress]] args (C4875); GSL v4.0.0 still emits the bare-token form.
 +    list(APPEND ORT_WARNING_FLAGS "/wd4875")
-
+ 
      # set linker flags to minimize the binary size.
      if (MSVC)
+-- 
+2.53.0.windows.1
+

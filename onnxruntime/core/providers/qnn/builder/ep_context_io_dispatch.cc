@@ -11,6 +11,14 @@ namespace qnn {
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_options,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
+  // A null session options pointer is used by code paths that do not have an
+  // application session (including the context-model helper unit tests). There
+  // cannot be application callbacks in that case, and wrapping nullptr in
+  // ConstSessionOptions would still try to resolve the experimental v28 API.
+  if (session_options == nullptr) {
+    return;
+  }
+
   try {
     config_ = Ort::Experimental::EpContextConfig(Ort::ConstSessionOptions(session_options));
   } catch (const Ort::Exception& e) {

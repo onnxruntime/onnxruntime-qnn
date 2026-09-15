@@ -3,7 +3,10 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <atomic>
+#include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -17,44 +20,70 @@
 #include "test/util/include/api_asserts.h"
 #include "gtest/gtest.h"
 
+// QNN_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.37 (QAIRT 2.48).
+// QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.38 (QAIRT 2.49).
+// Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so this test file does not
+// need to include that EP-private header.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37)
+#define QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
 namespace onnxruntime {
 namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 
-#if defined(_M_ARM64) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 template <typename T, typename M>
-static GetTestModelFn BuildGQATestCase(
-    // Op Inputs
-    const TestInputDef<T>& query_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> key_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> value_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> past_key_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> past_value_def,
-    const TestInputDef<M>& seqlens_k_def,
-    const TestInputDef<M>& total_sequence_length_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> cos_cache_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> sin_cache_def,
-    const std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> attention_bias_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> head_sink_def,
-    // Op Attributes
-    const std::optional<int32_t> do_rotary,
-    const std::optional<std::string> k_quant_type,
-    const std::optional<int32_t> kv_cache_bit_width,
-    const int32_t kv_num_heads,
-    const std::optional<int32_t> local_window_size,
-    const int32_t num_heads,
-    const std::optional<int32_t> qk_output,
-    const std::optional<int32_t> rotary_interleaved,
-    const std::optional<float> scale,
-    const std::optional<int32_t> smooth_softmax,
-    const std::optional<std::string> v_quant_type) {
-  return [query_def, key_def, value_def, past_key_def, past_value_def, seqlens_k_def, total_sequence_length_def,
-          cos_cache_def, sin_cache_def, position_ids_def, attention_bias_def, head_sink_def,
-          do_rotary, k_quant_type, kv_cache_bit_width, kv_num_heads, local_window_size, num_heads, qk_output,
-          rotary_interleaved, scale, smooth_softmax, v_quant_type](ModelTestBuilder& builder) {
+struct GqaTestConfig {
+  // Required GQA inputs.
+  TestInputDef<T> query_def;
+  TestInputDef<M> seqlens_k_def;
+  TestInputDef<M> total_sequence_length_def;
+
+  // Optional GQA inputs.
+  std::optional<TestInputDef<T>> key_def;
+  std::optional<TestInputDef<T>> value_def;
+  std::optional<TestInputDef<T>> past_key_def;
+  std::optional<TestInputDef<T>> past_value_def;
+  std::optional<TestInputDef<T>> cos_cache_def;
+  std::optional<TestInputDef<T>> sin_cache_def;
+  std::optional<TestInputDef<int64_t>> position_ids_def;
+  std::optional<TestInputDef<T>> attention_bias_def;
+  std::optional<TestInputDef<T>> head_sink_def;
+
+  // GQA attributes.
+  std::optional<int32_t> do_rotary;
+  std::optional<std::string> k_quant_type;
+  std::optional<int32_t> kv_cache_bit_width;
+  int32_t kv_num_heads{};
+  std::optional<int32_t> local_window_size;
+  int32_t num_heads{};
+  std::optional<int32_t> qk_output;
+  std::optional<int32_t> rotary_interleaved;
+  std::optional<float> scale;
+  std::optional<int32_t> smooth_softmax;
+  std::optional<std::string> v_quant_type;
+
+  // Test execution settings.
+  ExpectedEPNodeAssignment expected_ep_assignment{ExpectedEPNodeAssignment::All};
+  std::string backend_name;
+  int opset{13};
+  TensorVerifier tensor_verifier{ElementwiseAbsoluteVerifier{1e-5f}};
+  bool use_shared_memory_allocator{false};
+  std::optional<std::string> op_affinity_path;
+};
+
+template <typename T, typename M>
+static GetTestModelFn BuildGQATestCase(const GqaTestConfig<T, M>& config) {
+  return [config](ModelTestBuilder& builder) {
     // helpers to make inputs
     auto add_input_T = [&](const char* name, const TestInputDef<T>& def) -> std::string {
       MakeTestInput(builder, name, def);
@@ -71,18 +100,18 @@ static GetTestModelFn BuildGQATestCase(
 
     std::vector<std::string> input_names;
 
-    input_names.push_back(add_input_T("query", query_def));
-    input_names.push_back(key_def ? add_input_T("key", key_def->get()) : "");
-    input_names.push_back(value_def ? add_input_T("value", value_def->get()) : "");
-    input_names.push_back(past_key_def ? add_input_T("past_key", past_key_def->get()) : "");
-    input_names.push_back(past_value_def ? add_input_T("past_value", past_value_def->get()) : "");
-    input_names.push_back(add_input_M("seqlens_k", seqlens_k_def));
-    input_names.push_back(add_input_M("total_sequence_length", total_sequence_length_def));
-    input_names.push_back(cos_cache_def ? add_input_T("cos_cache", cos_cache_def->get()) : "");
-    input_names.push_back(sin_cache_def ? add_input_T("sin_cache", sin_cache_def->get()) : "");
-    input_names.push_back(position_ids_def ? add_input_I64("position_ids", position_ids_def->get()) : "");
-    input_names.push_back(attention_bias_def ? add_input_T("attention_bias", attention_bias_def->get()) : "");
-    input_names.push_back(head_sink_def ? add_input_T("head_sink", head_sink_def->get()) : "");
+    input_names.push_back(add_input_T("query", config.query_def));
+    input_names.push_back(config.key_def ? add_input_T("key", *config.key_def) : "");
+    input_names.push_back(config.value_def ? add_input_T("value", *config.value_def) : "");
+    input_names.push_back(config.past_key_def ? add_input_T("past_key", *config.past_key_def) : "");
+    input_names.push_back(config.past_value_def ? add_input_T("past_value", *config.past_value_def) : "");
+    input_names.push_back(add_input_M("seqlens_k", config.seqlens_k_def));
+    input_names.push_back(add_input_M("total_sequence_length", config.total_sequence_length_def));
+    input_names.push_back(config.cos_cache_def ? add_input_T("cos_cache", *config.cos_cache_def) : "");
+    input_names.push_back(config.sin_cache_def ? add_input_T("sin_cache", *config.sin_cache_def) : "");
+    input_names.push_back(config.position_ids_def ? add_input_I64("position_ids", *config.position_ids_def) : "");
+    input_names.push_back(config.attention_bias_def ? add_input_T("attention_bias", *config.attention_bias_def) : "");
+    input_names.push_back(config.head_sink_def ? add_input_T("head_sink", *config.head_sink_def) : "");
 
     std::vector<std::string> output_names;
 
@@ -95,34 +124,34 @@ static GetTestModelFn BuildGQATestCase(
     builder.MakeOutput("present_value");
     output_names.push_back("present_value");
 
-    if (qk_output.has_value() && qk_output.value() != 0) {
+    if (config.qk_output.has_value() && config.qk_output.value() != 0) {
       builder.MakeOutput("output_qk");
       output_names.push_back("output_qk");
     }
 
     std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
 
-    attrs.push_back(builder.MakeScalarAttribute("num_heads", static_cast<int64_t>(num_heads)));
-    attrs.push_back(builder.MakeScalarAttribute("kv_num_heads", static_cast<int64_t>(kv_num_heads)));
+    attrs.push_back(builder.MakeScalarAttribute("num_heads", static_cast<int64_t>(config.num_heads)));
+    attrs.push_back(builder.MakeScalarAttribute("kv_num_heads", static_cast<int64_t>(config.kv_num_heads)));
 
-    if (do_rotary.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("do_rotary", static_cast<int64_t>(do_rotary.value())));
-    if (local_window_size.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("local_window_size", static_cast<int64_t>(local_window_size.value())));
-    if (rotary_interleaved.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("rotary_interleaved", static_cast<int64_t>(rotary_interleaved.value())));
-    if (scale.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("scale", scale.value()));
-    if (smooth_softmax.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("smooth_softmax", static_cast<int64_t>(smooth_softmax.value())));
-    if (qk_output.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("qk_output", static_cast<int64_t>(qk_output.value())));
-    if (kv_cache_bit_width.has_value())
-      attrs.push_back(builder.MakeScalarAttribute("kv_cache_bit_width", static_cast<int64_t>(kv_cache_bit_width.value())));
-    if (k_quant_type.has_value())
-      attrs.push_back(builder.MakeStringAttribute("k_quant_type", k_quant_type.value()));
-    if (v_quant_type.has_value())
-      attrs.push_back(builder.MakeStringAttribute("v_quant_type", v_quant_type.value()));
+    if (config.do_rotary.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("do_rotary", static_cast<int64_t>(config.do_rotary.value())));
+    if (config.local_window_size.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("local_window_size", static_cast<int64_t>(config.local_window_size.value())));
+    if (config.rotary_interleaved.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("rotary_interleaved", static_cast<int64_t>(config.rotary_interleaved.value())));
+    if (config.scale.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("scale", config.scale.value()));
+    if (config.smooth_softmax.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("smooth_softmax", static_cast<int64_t>(config.smooth_softmax.value())));
+    if (config.qk_output.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("qk_output", static_cast<int64_t>(config.qk_output.value())));
+    if (config.kv_cache_bit_width.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("kv_cache_bit_width", static_cast<int64_t>(config.kv_cache_bit_width.value())));
+    if (config.k_quant_type.has_value())
+      attrs.push_back(builder.MakeStringAttribute("k_quant_type", config.k_quant_type.value()));
+    if (config.v_quant_type.has_value())
+      attrs.push_back(builder.MakeStringAttribute("v_quant_type", config.v_quant_type.value()));
 
     builder.AddNode("GQA",
                     "GroupQueryAttention",
@@ -254,54 +283,14 @@ static void CompareQnnVsCpuOutputs(Ort::Session& cpu_session,
 // Runs a model with a GQA operator through QNN EP. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename T, typename M>
-static void RunGQATest(
-    // Op Inputs
-    const TestInputDef<T>& query_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> key_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> value_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> past_key_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> past_value_def,
-    const TestInputDef<M>& seqlens_k_def,
-    const TestInputDef<M>& total_sequence_length_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> cos_cache_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> sin_cache_def,
-    const std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> attention_bias_def,
-    const std::optional<std::reference_wrapper<TestInputDef<T>>> head_sink_def,
-    // Op Attributes
-    const std::optional<int32_t> do_rotary,
-    const std::optional<std::string> k_quant_type,
-    const std::optional<int32_t> kv_cache_bit_width,
-    const int32_t kv_num_heads,
-    const std::optional<int32_t> local_window_size,
-    const int32_t num_heads,
-    const std::optional<int32_t> qk_output,
-    const std::optional<int32_t> rotary_interleaved,
-    const std::optional<float> scale,
-    const std::optional<int32_t> smooth_softmax,
-    const std::optional<std::string> v_quant_type,
-    // Test options
-    ExpectedEPNodeAssignment expected_ep_assignment,
-    const std::string& backend_name,
-    int opset = 13,
-    // GPU tests compare against CPU by cosine similarity; HTP tests use an absolute error bound.
-    const TensorVerifier& tensor_verifier = ElementwiseAbsoluteVerifier{1e-5f},
-    bool use_shared_memory_allocator = false,
-    const std::optional<std::string>& op_affinity_path = std::nullopt) {
-  const GetTestModelFn build_test_case = BuildGQATestCase<T, M>(query_def, key_def, value_def,
-                                                                past_key_def, past_value_def,
-                                                                seqlens_k_def, total_sequence_length_def,
-                                                                cos_cache_def, sin_cache_def,
-                                                                position_ids_def, attention_bias_def, head_sink_def,
-                                                                do_rotary, k_quant_type, kv_cache_bit_width, kv_num_heads,
-                                                                local_window_size, num_heads, qk_output, rotary_interleaved,
-                                                                scale, smooth_softmax, v_quant_type);
+static void RunGQATest(const GqaTestConfig<T, M>& config) {
+  const GetTestModelFn build_test_case = BuildGQATestCase(config);
   // The GPU backend only supports GQA with past/present buffer sharing on gpu-accessible shared memory. So, the GQA UTs do not
   // use RunQnnModelTest and instead manually create/run the QNN inference session with the buffer sharing.
   ModelTestBuilder helper;
   build_test_case(helper);
 
-  const std::unordered_map<std::string, int> domain_to_version = {{"", opset}, {kMSDomain, 1}};
+  const std::unordered_map<std::string, int> domain_to_version = {{"", config.opset}, {kMSDomain, 1}};
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);
@@ -313,22 +302,27 @@ static void RunGQATest(
   helper.model_.SerializeToString(&model_data);
 
   ProviderOptions provider_options;
-  provider_options["backend_type"] = backend_name;
+  provider_options["backend_type"] = config.backend_name;
 
   // On HTP the EP seeds a default CPU pin for GQA (HTP is opt-in); callers targeting HTP pass a
   // config pinning GQA -> HTP, else the op is filtered off QNN and the assignment check below fails.
-  if (op_affinity_path.has_value()) {
-    provider_options["op_affinity"] = *op_affinity_path;
+  if (config.op_affinity_path.has_value()) {
+    provider_options["op_affinity"] = *config.op_affinity_path;
   }
-  if (use_shared_memory_allocator) {
+  if (config.use_shared_memory_allocator) {
     // GPU and HTP use different shared-memory allocators. Both expose the same "QnnHtpShared"
     // host-accessible MemoryInfo, but they are enabled via different provider options.
-    if (backend_name == "gpu") {
+    if (config.backend_name == "gpu") {
       provider_options["enable_dx12_shared_memory_allocator"] = "1";
-    } else if (backend_name == "htp") {
+    } else if (config.backend_name == "htp") {
       provider_options["enable_htp_shared_memory_allocator"] = "1";
     }
   }
+#if defined(__linux__) && !defined(__aarch64__)
+  if (config.backend_name == "htp") {
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  }
+#endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions qnn_so;
@@ -338,7 +332,7 @@ static void RunGQATest(
       std::move(registered_ep_device),
       Ort::Session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), qnn_so));
   Ort::Session& qnn_session = scoped_qnn_session.session();
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, expected_ep_assignment));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, config.expected_ep_assignment));
 
   Ort::SessionOptions cpu_so;
   Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
@@ -358,7 +352,7 @@ static void RunGQATest(
 
   Ort::MemoryInfo memory_info(nullptr);
   Ort::Allocator allocator(nullptr);
-  if (use_shared_memory_allocator && (backend_name == "gpu" || backend_name == "htp")) {
+  if (config.use_shared_memory_allocator && (config.backend_name == "gpu" || config.backend_name == "htp")) {
     // Both GPU and HTP share past/present in-place on QNN host-accessible shared memory, exposed
     // via the "QnnHtpShared" allocator on the QNN session. HTP requires RPCMEM (libcdsprpc), which
     // is only available on-device, so this may be unavailable in host/emulator environments.
@@ -385,40 +379,48 @@ static void RunGQATest(
                                                    owned_qnn_outputs, qnn_outputs));
 
   ASSERT_NO_FATAL_FAILURE(CompareQnnVsCpuOutputs(cpu_session, helper.feeds_, output_names,
-                                                 qnn_outputs, tensor_verifier));
+                                                 qnn_outputs, config.tensor_verifier));
 }
 
-static std::filesystem::path WriteOpAffinityConfig(const std::string& contents, const std::string& tag) {
-  const std::filesystem::path path =
-      std::filesystem::temp_directory_path() / ("gqa_op_affinity_" + tag + ".json");
-  std::ofstream ofs(path);
-  ofs << contents;
-  if (!ofs) {
-    ADD_FAILURE() << "WriteOpAffinityConfig: failed to write " << path;
+class ScopedGqaOpAffinityConfig {
+ public:
+  explicit ScopedGqaOpAffinityConfig(const std::string& contents, const std::string& tag = CurrentTestTag())
+      : path_(MakeUniquePath(tag)) {
+    std::ofstream ofs(path_);
+    ofs << contents;
+    if (!ofs) {
+      ADD_FAILURE() << "ScopedGqaOpAffinityConfig: failed to write " << path_;
+    }
   }
-  ofs.close();
-  return path;
-}
 
-#if defined(_M_ARM64)
-//
-// HTP tests:
-//
-struct ScopedGQAHtpAffinityConfig {
-  explicit ScopedGQAHtpAffinityConfig(const std::string& tag = CurrentTestTag())
-      : path(WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", tag)) {}
-  ~ScopedGQAHtpAffinityConfig() {
+  ~ScopedGqaOpAffinityConfig() {
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path_, ec);
   }
-  ORT_DISALLOW_COPY_AND_ASSIGNMENT(ScopedGQAHtpAffinityConfig);
-  std::filesystem::path path;
+
+  ScopedGqaOpAffinityConfig(const ScopedGqaOpAffinityConfig&) = delete;
+  ScopedGqaOpAffinityConfig& operator=(const ScopedGqaOpAffinityConfig&) = delete;
+
+  const std::filesystem::path& path() const { return path_; }
+
+  static std::filesystem::path MakeUniquePath(const std::string& tag) {
+    static std::atomic<uint64_t> next_id{0};
+    std::string sanitized_tag;
+    sanitized_tag.reserve(tag.size());
+    for (const char ch : tag) {
+      sanitized_tag.push_back(std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_');
+    }
+    return std::filesystem::temp_directory_path() /
+           ("gqa_op_affinity_" + sanitized_tag + "_" + std::to_string(next_id.fetch_add(1)) + ".json");
+  }
 
  private:
   static std::string CurrentTestTag() {
     const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
     return info == nullptr ? "gqa" : std::string(info->test_suite_name()) + "_" + info->name();
   }
+
+  std::filesystem::path path_;
 };
 
 // Compact driver for HTP GQA tests over a packed-QKV model with a full-capacity past KV cache.
@@ -432,67 +434,49 @@ static void RunHTPPackedGQATest(int32_t num_heads,
                                 int32_t do_rotary,
                                 float fp32_abs_err = 1e-2f,
                                 int32_t max_seq_len = 0) {
+  // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   const int32_t batch_size = 1;
   const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
   if (max_seq_len <= 0) {
     max_seq_len = total_seq_len;  // default: cache capacity == valid length (no padding region)
   }
-
-  auto query_def = TestInputDef<T>({batch_size, sequence_length, packed_qkv_d},
-                                   false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<T>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<T>>> value_def = std::nullopt;
+  GqaTestConfig<T, int32_t> config{
+      TestInputDef<T>({batch_size, sequence_length, packed_qkv_d}, false, static_cast<T>(-1.0f), static_cast<T>(1.0f)),
+      TestInputDef<int32_t>({batch_size}, true, std::vector<int32_t>(batch_size, total_seq_len - 1)),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len})};
 
   // Past KV buffer has capacity max_seq_len, filled with random data (so when max_seq_len >
   // total_seq_len the padding region naturally holds noise values).
-  TestInputDef<T> pk_max({batch_size, kv_num_heads, max_seq_len, head_size},
-                         false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  TestInputDef<T> pv_max({batch_size, kv_num_heads, max_seq_len, head_size},
-                         false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<T>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<T>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len});
+  config.past_key_def.emplace(std::vector<int64_t>{batch_size, kv_num_heads, max_seq_len, head_size},
+                              false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.past_value_def.emplace(std::vector<int64_t>{batch_size, kv_num_heads, max_seq_len, head_size},
+                                false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
 
   // Rotary caches (only consumed when do_rotary != 0, but cheap to always build). Sized to cache
   // capacity (max_seq_len rows).
-  TestInputDef<T> cos_def({max_seq_len, head_size / 2}, true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  TestInputDef<T> sin_def({max_seq_len, head_size / 2}, true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<T>>> cos_cache_def =
-      do_rotary != 0 ? std::optional<std::reference_wrapper<TestInputDef<T>>>(std::ref(cos_def)) : std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<T>>> sin_cache_def =
-      do_rotary != 0 ? std::optional<std::reference_wrapper<TestInputDef<T>>>(std::ref(sin_def)) : std::nullopt;
+  if (do_rotary != 0) {
+    config.cos_cache_def.emplace(std::vector<int64_t>{max_seq_len, head_size / 2}, true,
+                                 static_cast<T>(-1.0f), static_cast<T>(1.0f));
+    config.sin_cache_def.emplace(std::vector<int64_t>{max_seq_len, head_size / 2}, true,
+                                 static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  }
 
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<T>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<T>>> head_sink_def = std::nullopt;
+  config.do_rotary = do_rotary;
+  config.kv_num_heads = kv_num_heads;
+  config.num_heads = num_heads;
+  config.scale = scale;
+  config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
+  config.backend_name = "htp";
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{fp32_abs_err};
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
 
-  // Pin GQA -> HTP (see ScopedGQAHtpAffinityConfig).
-  const ScopedGQAHtpAffinityConfig affinity_config;
-
-  RunGQATest<T, int32_t>(
-      query_def, key_def, value_def, past_key_def, past_value_def,
-      seqlens_k_def, total_sequence_length_def,
-      cos_cache_def, sin_cache_def, position_ids_def, attention_bias_def, head_sink_def,
-      /*do_rotary*/ do_rotary,
-      /*k_quant_type*/ std::nullopt,
-      /*kv_cache_bit_width*/ std::nullopt,
-      kv_num_heads,
-      /*local_window_size*/ std::nullopt,
-      num_heads,
-      /*qk_output*/ std::nullopt,
-      /*rotary_interleaved*/ std::nullopt,
-      /*scale*/ scale,
-      /*smooth_softmax*/ std::nullopt,
-      /*v_quant_type*/ std::nullopt,
-      ExpectedEPNodeAssignment::All,
-      "htp",
-      /*opset*/ 13,
-      ElementwiseAbsoluteVerifier{fp32_abs_err},
-      /*use_shared_memory_allocator*/ true,
-      /*op_affinity_path*/ affinity_config.path.string());
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.op_affinity_path = affinity_config.path().string();
+  RunGQATest(config);
 }
 
 // Compact driver for HTP GQA tests over an unpacked (separate Q / K / V) model with a full-capacity
@@ -506,67 +490,46 @@ static void RunHTPUnpackedGQATest(int32_t num_heads,
                                   float scale,
                                   int32_t do_rotary,
                                   float fp32_abs_err = 1e-2f) {
+  // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   const int32_t batch_size = 1;
   const int32_t q_hidden = num_heads * head_size;
   const int32_t kv_hidden = kv_num_heads * head_size;
 
-  auto query_def = TestInputDef<T>({batch_size, sequence_length, q_hidden},
-                                   false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-
-  TestInputDef<T> k_cur({batch_size, sequence_length, kv_hidden},
-                        false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  TestInputDef<T> v_cur({batch_size, sequence_length, kv_hidden},
-                        false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<T>>> key_def = std::ref(k_cur);
-  std::optional<std::reference_wrapper<TestInputDef<T>>> value_def = std::ref(v_cur);
-
-  TestInputDef<T> pk_max({batch_size, kv_num_heads, total_seq_len, head_size},
+  GqaTestConfig<T, int32_t> config{
+      TestInputDef<T>({batch_size, sequence_length, q_hidden}, false, static_cast<T>(-1.0f), static_cast<T>(1.0f)),
+      TestInputDef<int32_t>({batch_size}, true, std::vector<int32_t>(batch_size, total_seq_len - 1)),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len})};
+  config.key_def.emplace(std::vector<int64_t>{batch_size, sequence_length, kv_hidden},
                          false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  TestInputDef<T> pv_max({batch_size, kv_num_heads, total_seq_len, head_size},
-                         false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<T>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<T>>> past_value_def = std::ref(pv_max);
+  config.value_def.emplace(std::vector<int64_t>{batch_size, sequence_length, kv_hidden},
+                           false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.past_key_def.emplace(std::vector<int64_t>{batch_size, kv_num_heads, total_seq_len, head_size},
+                              false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.past_value_def.emplace(std::vector<int64_t>{batch_size, kv_num_heads, total_seq_len, head_size},
+                                false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  if (do_rotary != 0) {
+    config.cos_cache_def.emplace(std::vector<int64_t>{total_seq_len, head_size / 2}, true,
+                                 static_cast<T>(-1.0f), static_cast<T>(1.0f));
+    config.sin_cache_def.emplace(std::vector<int64_t>{total_seq_len, head_size / 2}, true,
+                                 static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  }
 
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len});
+  config.do_rotary = do_rotary;
+  config.kv_num_heads = kv_num_heads;
+  config.num_heads = num_heads;
+  config.scale = scale;
+  config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
+  config.backend_name = "htp";
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{fp32_abs_err};
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
 
-  // Rotary caches (only consumed when do_rotary != 0, but cheap to always build).
-  TestInputDef<T> cos_def({total_seq_len, head_size / 2}, true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  TestInputDef<T> sin_def({total_seq_len, head_size / 2}, true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<T>>> cos_cache_def =
-      do_rotary != 0 ? std::optional<std::reference_wrapper<TestInputDef<T>>>(std::ref(cos_def)) : std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<T>>> sin_cache_def =
-      do_rotary != 0 ? std::optional<std::reference_wrapper<TestInputDef<T>>>(std::ref(sin_def)) : std::nullopt;
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<T>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<T>>> head_sink_def = std::nullopt;
-
-  // Pin GQA -> HTP (see ScopedGQAHtpAffinityConfig).
-  const ScopedGQAHtpAffinityConfig affinity_config;
-
-  RunGQATest<T, int32_t>(
-      query_def, key_def, value_def, past_key_def, past_value_def,
-      seqlens_k_def, total_sequence_length_def,
-      cos_cache_def, sin_cache_def, position_ids_def, attention_bias_def, head_sink_def,
-      /*do_rotary*/ do_rotary,
-      /*k_quant_type*/ std::nullopt,
-      /*kv_cache_bit_width*/ std::nullopt,
-      kv_num_heads,
-      /*local_window_size*/ std::nullopt,
-      num_heads,
-      /*qk_output*/ std::nullopt,
-      /*rotary_interleaved*/ std::nullopt,
-      /*scale*/ scale,
-      /*smooth_softmax*/ std::nullopt,
-      /*v_quant_type*/ std::nullopt,
-      ExpectedEPNodeAssignment::All,
-      "htp",
-      /*opset*/ 13,
-      ElementwiseAbsoluteVerifier{fp32_abs_err},
-      /*use_shared_memory_allocator*/ true,
-      /*op_affinity_path*/ affinity_config.path.string());
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.op_affinity_path = affinity_config.path().string();
+  RunGQATest(config);
 }
 
 // === HTP inference tests (QNN vs CPU) ===
@@ -629,14 +592,13 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Unpacked_Basic_FP16) {
   RunHTPUnpackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
 }
 
-#endif  // defined(_M_ARM64)
-
 // === op_affinity EP-assignment gate tests ===
 // These check ONLY the QNN EP's partitioning / session-creation decision for the op_affinity gate
 static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
                                             const std::optional<std::string>& op_affinity_path,
                                             ExpectedEPNodeAssignment expected_ep_assignment,
-                                            bool* session_failed) {
+                                            bool* session_failed,
+                                            std::string* session_error) {
   const int32_t num_heads = 8;
   const int32_t kv_num_heads = 4;
   const int32_t head_size = 32;
@@ -645,42 +607,20 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
   const int32_t batch_size = 1;
   const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
 
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({batch_size, sequence_length, packed_qkv_d}, false, -1.0f, 1.0f),
+      TestInputDef<int32_t>({batch_size}, true, std::vector<int32_t>(batch_size, total_seq_len - 1)),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len})};
+  config.past_key_def.emplace(std::vector<int64_t>{batch_size, kv_num_heads, total_seq_len, head_size},
+                              false, -1.0f, 1.0f);
+  config.past_value_def.emplace(std::vector<int64_t>{batch_size, kv_num_heads, total_seq_len, head_size},
+                                false, -1.0f, 1.0f);
+  config.do_rotary = 0;
+  config.kv_num_heads = kv_num_heads;
+  config.num_heads = num_heads;
+  config.scale = 0.0f;
 
-  TestInputDef<float> pk_max({batch_size, kv_num_heads, total_seq_len, head_size}, false, -1.0f, 1.0f);
-  TestInputDef<float> pv_max({batch_size, kv_num_heads, total_seq_len, head_size}, false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len});
-
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  const GetTestModelFn build_test_case = BuildGQATestCase<float, int32_t>(
-      query_def, key_def, value_def, past_key_def, past_value_def,
-      seqlens_k_def, total_sequence_length_def,
-      cos_cache_def, sin_cache_def, position_ids_def, attention_bias_def, head_sink_def,
-      /*do_rotary*/ 0,
-      /*k_quant_type*/ std::nullopt,
-      /*kv_cache_bit_width*/ std::nullopt,
-      kv_num_heads,
-      /*local_window_size*/ std::nullopt,
-      num_heads,
-      /*qk_output*/ std::nullopt,
-      /*rotary_interleaved*/ std::nullopt,
-      /*scale*/ 0.0f,
-      /*smooth_softmax*/ std::nullopt,
-      /*v_quant_type*/ std::nullopt);
-
+  const GetTestModelFn build_test_case = BuildGQATestCase(config);
   ModelTestBuilder helper;
   build_test_case(helper);
 
@@ -702,6 +642,7 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
   }
 
   *session_failed = false;
+  session_error->clear();
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions qnn_so;
   qnn_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
@@ -714,1198 +655,163 @@ static void RunGQAOpAffinityAssignmentCheck(const std::string& backend_name,
     ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(qnn_session, kQnnExecutionProvider, expected_ep_assignment));
   } catch (const Ort::Exception& e) {
     *session_failed = true;
+    *session_error = e.what();
   }
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpNoConfig_NotAssigned) {
   bool session_failed = false;
-  RunGQAOpAffinityAssignmentCheck("htp", std::nullopt, ExpectedEPNodeAssignment::None, &session_failed);
-  ASSERT_FALSE(session_failed);
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", std::nullopt, ExpectedEPNodeAssignment::None, &session_failed, &session_error);
+  ASSERT_FALSE(session_failed) << session_error;
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinHtp_Assigned) {
-  const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "HTP" } })", "htp_pin_htp");
+  // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below,
+  // so pinning it to HTP can't actually get the node assigned there.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const ScopedGqaOpAffinityConfig config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
   bool session_failed = false;
-  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::All, &session_failed);
-  ASSERT_FALSE(session_failed);
-  std::filesystem::remove(path);
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", config.path().string(), ExpectedEPNodeAssignment::All, &session_failed, &session_error);
+  ASSERT_FALSE(session_failed) << session_error;
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_HtpPinGpu_SessionFails) {
-  const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "GPU" } })", "htp_pin_gpu");
+  const ScopedGqaOpAffinityConfig config(R"({ "op_type": { "GroupQueryAttention": "GPU" } })");
   bool session_failed = false;
-  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", config.path().string(), ExpectedEPNodeAssignment::None, &session_failed, &session_error);
   ASSERT_TRUE(session_failed);
-  std::filesystem::remove(path);
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_PinCpu_NotAssigned) {
-  const auto path = WriteOpAffinityConfig(R"({ "op_type": { "GroupQueryAttention": "CPU" } })", "pin_cpu");
+  const ScopedGqaOpAffinityConfig config(R"({ "op_type": { "GroupQueryAttention": "CPU" } })");
   bool session_failed = false;
-  RunGQAOpAffinityAssignmentCheck("htp", path.string(), ExpectedEPNodeAssignment::None, &session_failed);
-  ASSERT_FALSE(session_failed);
-  std::filesystem::remove(path);
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", config.path().string(), ExpectedEPNodeAssignment::None, &session_failed, &session_error);
+  ASSERT_FALSE(session_failed) << session_error;
 }
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_SessionFails) {
-  const std::filesystem::path missing =
-      std::filesystem::temp_directory_path() / "gqa_op_affinity_does_not_exist_12345.json";
+  const std::filesystem::path missing = ScopedGqaOpAffinityConfig::MakeUniquePath("missing");
+  std::error_code ec;
+  std::filesystem::remove(missing, ec);
+  ASSERT_FALSE(std::filesystem::exists(missing));
+
   bool session_failed = false;
-  RunGQAOpAffinityAssignmentCheck("htp", missing.string(), ExpectedEPNodeAssignment::None, &session_failed);
+  std::string session_error;
+  RunGQAOpAffinityAssignmentCheck("htp", missing.string(), ExpectedEPNodeAssignment::None, &session_failed, &session_error);
   ASSERT_TRUE(session_failed);
 }
 
-#endif  // defined(_M_ARM64) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#endif  // (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 
 #if defined(_M_ARM64)
 //
 // GPU tests:
 //
 
-TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP32) {
-  // Test parameters
+struct GpuPackedGqaCase {
+  int32_t num_heads;
+  int32_t kv_num_heads;
+  int32_t head_size;
+  int32_t sequence_length;
+  int32_t total_seq_len;
+  float scale;
+  bool use_2d_seqlens{false};
+  bool use_shared_memory_allocator{false};
+};
+
+template <typename T>
+static void RunGpuPackedGQATest(const GpuPackedGqaCase& test_case) {
   const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 8;
-  const int32_t kv_num_heads = 4;
-  const int32_t head_size = 32;
+  const int32_t packed_qkv_d = test_case.num_heads * test_case.head_size +
+                               2 * test_case.kv_num_heads * test_case.head_size;
+  const std::vector<int64_t> seqlens_k_shape =
+      test_case.use_2d_seqlens ? std::vector<int64_t>{batch_size, 1} : std::vector<int64_t>{batch_size};
 
-  const float scale = 10.0f;
+  GqaTestConfig<T, int32_t> config{
+      TestInputDef<T>({batch_size, test_case.sequence_length, packed_qkv_d},
+                      false, static_cast<T>(-1.0f), static_cast<T>(1.0f)),
+      TestInputDef<int32_t>(seqlens_k_shape, true,
+                            std::vector<int32_t>(batch_size, test_case.total_seq_len - 1)),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{test_case.total_seq_len})};
+  config.past_key_def.emplace(std::vector<int64_t>{batch_size, test_case.kv_num_heads,
+                                                   test_case.total_seq_len, test_case.head_size},
+                              false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.past_value_def.emplace(std::vector<int64_t>{batch_size, test_case.kv_num_heads,
+                                                     test_case.total_seq_len, test_case.head_size},
+                                false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.cos_cache_def.emplace(std::vector<int64_t>{test_case.total_seq_len, test_case.head_size / 2},
+                               true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.sin_cache_def.emplace(std::vector<int64_t>{test_case.total_seq_len, test_case.head_size / 2},
+                               true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.do_rotary = 1;
+  config.kv_num_heads = test_case.kv_num_heads;
+  config.num_heads = test_case.num_heads;
+  config.scale = test_case.scale;
+  config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
+  config.backend_name = "gpu";
+  config.opset = 13;
+  config.tensor_verifier = CosineSimilarityVerifier{0.99f};
+  config.use_shared_memory_allocator = test_case.use_shared_memory_allocator;
+  RunGQATest(config);
+}
 
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP32) {
+  RunGpuPackedGQATest<float>({8, 4, 32, 1, 1024, 10.0f});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP16) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 8;
-  const int32_t kv_num_heads = 4;
-  const int32_t head_size = 32;
-
-  const float scale = 10.0f;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<Ort::Float16_t>({batch_size, sequence_length, packed_qkv_d},
-                                                false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+  RunGpuPackedGQATest<Ort::Float16_t>({8, 4, 32, 1, 1024, 10.0f});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_2D_SeqlensK) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 8;
-  const int32_t kv_num_heads = 4;
-  const int32_t head_size = 32;
-
-  const float scale = 10.0f;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size, 1}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+  RunGpuPackedGQATest<float>({8, 4, 32, 1, 1024, 10.0f, /*use_2d_seqlens*/ true});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_FP32) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+  RunGpuPackedGQATest<float>({32, 8, 64, 1, 1024, 0.125f});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_FP16) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<Ort::Float16_t>({batch_size, sequence_length, packed_qkv_d},
-                                                false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+  RunGpuPackedGQATest<Ort::Float16_t>({32, 8, 64, 1, 1024, 0.125f});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP32) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 64;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+  RunGpuPackedGQATest<float>({32, 8, 64, 64, 1024, 0.125f});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP16) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 64;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<Ort::Float16_t>({batch_size, sequence_length, packed_qkv_d},
-                                                false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ false);
+  RunGpuPackedGQATest<Ort::Float16_t>({32, 8, 64, 64, 1024, 0.125f});
 }
 
 #if defined(_WIN32)
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_SharedMemoryAllocator_FP32) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 8;
-  const int32_t kv_num_heads = 4;
-  const int32_t head_size = 32;
-
-  const float scale = 10.0f;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ true);
+  RunGpuPackedGQATest<float>({8, 4, 32, 1, 1024, 10.0f, false, /*shared*/ true});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_SharedMemoryAllocator_FP16) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 8;
-  const int32_t kv_num_heads = 4;
-  const int32_t head_size = 32;
-
-  const float scale = 10.0f;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<Ort::Float16_t>({batch_size, sequence_length, packed_qkv_d},
-                                                false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ true);
+  RunGpuPackedGQATest<Ort::Float16_t>({8, 4, 32, 1, 1024, 10.0f, false, /*shared*/ true});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_SharedMemoryAllocator_FP32) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ true);
+  RunGpuPackedGQATest<float>({32, 8, 64, 1, 1024, 0.125f, false, /*shared*/ true});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR1_SharedMemoryAllocator_FP16) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 1;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<Ort::Float16_t>({batch_size, sequence_length, packed_qkv_d},
-                                                false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ true);
+  RunGpuPackedGQATest<Ort::Float16_t>({32, 8, 64, 1, 1024, 0.125f, false, /*shared*/ true});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocator_FP32) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 64;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<float>({batch_size, sequence_length, packed_qkv_d},
-                                       false, -1.0f, 1.0f);
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<float>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  auto pv_max = TestInputDef<float>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                    false, -1.0f, 1.0f);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-  auto sin_def = TestInputDef<float>({total_seq_len, head_size / 2},
-                                     true, -1.0f, 1.0f);
-
-  std::optional<std::reference_wrapper<TestInputDef<float>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<float>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<float>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ true);
+  RunGpuPackedGQATest<float>({32, 8, 64, 64, 1024, 0.125f, false, /*shared*/ true});
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocator_FP16) {
-  // Test parameters
-  const int32_t batch_size = 1;
-  const int32_t sequence_length = 64;
-  const int32_t total_seq_len = 1024;
-  const int32_t num_heads = 32;
-  const int32_t kv_num_heads = 8;
-  const int32_t head_size = 64;
-
-  const float scale = 0.125;
-
-  // Derived sizes
-  const int32_t packed_qkv_d = num_heads * head_size + 2 * kv_num_heads * head_size;
-
-  // === Inputs ===
-  auto query_def = TestInputDef<Ort::Float16_t>({batch_size, sequence_length, packed_qkv_d},
-                                                false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> key_def = std::nullopt;
-  const std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> value_def = std::nullopt;
-
-  auto pk_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto pv_max = TestInputDef<Ort::Float16_t>({batch_size, kv_num_heads, total_seq_len, head_size},
-                                             false, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_key_def = std::ref(pk_max);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> past_value_def = std::ref(pv_max);
-
-  std::vector<int32_t> seqlens_k_data(batch_size, total_seq_len - 1);
-  auto seqlens_k_def = TestInputDef<int32_t>({batch_size}, true, seqlens_k_data);
-
-  auto total_sequence_length_def = TestInputDef<int32_t>({}, true,
-                                                         std::vector<int32_t>{total_seq_len});
-
-  auto cos_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-  auto sin_def = TestInputDef<Ort::Float16_t>({total_seq_len, head_size / 2},
-                                              true, Ort::Float16_t(-1.0f), Ort::Float16_t(1.0f));
-
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> cos_cache_def = std::ref(cos_def);
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> sin_cache_def = std::ref(sin_def);
-
-  std::optional<std::reference_wrapper<TestInputDef<int64_t>>> position_ids_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> attention_bias_def = std::nullopt;
-  std::optional<std::reference_wrapper<TestInputDef<Ort::Float16_t>>> head_sink_def = std::nullopt;
-
-  // === Attributes ===
-  const std::optional<int32_t> do_rotary_attr = 1;
-  const std::optional<std::string> k_quant_type = std::nullopt;
-  const std::optional<int32_t> kv_cache_bit_width = std::nullopt;
-  const std::optional<int32_t> local_window_size_attr = std::nullopt;
-  const std::optional<int32_t> qk_output_attr = std::nullopt;
-  const std::optional<int32_t> rotary_interleaved_attr = std::nullopt;
-  const std::optional<float> scale_attr = scale;
-  const std::optional<int32_t> smooth_softmax_attr = std::nullopt;
-  const std::optional<std::string> v_quant_type = std::nullopt;
-
-  // === Run ===
-  RunGQATest(
-      query_def,
-      key_def,
-      value_def,
-      past_key_def,
-      past_value_def,
-      seqlens_k_def,
-      total_sequence_length_def,
-      cos_cache_def,
-      sin_cache_def,
-      position_ids_def,
-      attention_bias_def,
-      head_sink_def,
-      do_rotary_attr,
-      k_quant_type,
-      kv_cache_bit_width,
-      kv_num_heads,
-      local_window_size_attr,
-      num_heads,
-      qk_output_attr,
-      rotary_interleaved_attr,
-      scale_attr,
-      smooth_softmax_attr,
-      v_quant_type,
-      ExpectedEPNodeAssignment::All,
-      "gpu",
-      13,
-      CosineSimilarityVerifier{0.99f},
-      /*use_shared_memory_allocator*/ true);
+  RunGpuPackedGQATest<Ort::Float16_t>({32, 8, 64, 64, 1024, 0.125f, false, /*shared*/ true});
 }
 
 #endif  // defined(_WIN32)
