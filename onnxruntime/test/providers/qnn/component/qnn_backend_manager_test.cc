@@ -7,8 +7,8 @@
 //
 //   1. Stub-based tests (no real QNN library) — QnnSerializerConfig, SetupBackend
 //      load-failure paths, and before-setup early returns. These always run.
-//   2. Real-HTP-backend tests (QnnUnit_BackendManagerHtpTest) — load libQnnHtp.so
-//      (and libQnnIr.so / libQnnSaver.so) and drive SetupBackend directly, with no
+//   2. Real-HTP-backend tests (QnnUnit_BackendManagerHtpTest) — load the platform
+//      HTP backend (and QnnIr / QnnSaver) and drive SetupBackend directly, with no
 //      ORT session. The fixture GTEST_SKIP()s when the backend is unavailable,
 //      mirroring the QnnHTPBackendTests::SetUp() convention.
 //
@@ -144,7 +144,7 @@ TEST(QnnUnit_BackendManagerTest, SetupBackend_InvalidPath_ReturnsError) {
 // backend_setup_completed_ == false → early return OK without touching QNN API.
 TEST(QnnUnit_BackendManagerTest, ResetQnnLogLevel_BeforeSetup_ReturnsOk) {
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   EXPECT_TRUE(manager->ResetQnnLogLevel(std::nullopt).IsOK());
 }
@@ -157,7 +157,7 @@ TEST(QnnUnit_BackendManagerTest, ResetQnnLogLevel_BeforeSetup_ReturnsOk) {
 // leaves the out buffer untouched.
 TEST(QnnUnit_BackendManagerTest, GetContextBinaryBuffer_BeforeSetup_ReturnsError) {
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 
   unsigned char* context_buffer = nullptr;
@@ -174,7 +174,7 @@ TEST(QnnUnit_BackendManagerTest, GetContextBinaryBuffer_BeforeSetup_ReturnsError
 // Config file does not exist → logs error, returns OK.
 TEST(QnnUnit_BackendManagerTest, ParseLoraConfig_FileNotFound_ReturnsOk) {
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   EXPECT_TRUE(manager->ParseLoraConfig("/nonexistent/lora_config.txt").IsOK());
 }
@@ -188,7 +188,7 @@ TEST(QnnUnit_BackendManagerTest, ParseLoraConfig_EmptyFile_ReturnsOk) {
   }
 
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   EXPECT_TRUE(manager->ParseLoraConfig(cfg.string()).IsOK());
   std::filesystem::remove(cfg);
@@ -204,7 +204,7 @@ TEST(QnnUnit_BackendManagerTest, ParseLoraConfig_NoSemicolon_ReturnsOk) {
   }
 
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   EXPECT_TRUE(manager->ParseLoraConfig(cfg.string()).IsOK());
   std::filesystem::remove(cfg);
@@ -228,7 +228,7 @@ TEST(QnnUnit_BackendManagerTest, ParseLoraConfig_ValidFormatNoContext_ReturnsErr
   }
 
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   EXPECT_FALSE(manager->ParseLoraConfig(cfg.string()).IsOK());
 
@@ -248,7 +248,7 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManagerWithHtpArch(
     const ApiPtrs& api_ptrs,
     const Ort::Logger& logger) {
   qnn::QnnBackendManagerConfig cfg{};
-  cfg.backend_path = "libQnnHtp.so";
+  cfg.backend_path = QnnHtpBackendLibraryName();
   cfg.context_priority = qnn::ContextPriority::NORMAL;
   cfg.device_id = 0;
   cfg.htp_arch = htp_arch;
@@ -275,7 +275,7 @@ TEST(QnnUnit_BackendManagerTest, GetHtpArch_UserProvidedArchBeforeSetup_ReturnsN
 // requested arch to the internal holder.
 TEST(QnnUnit_BackendManagerTest, SetupDeviceAndContext_WithoutPartialSetup_ReturnsErrorAndLeavesArchNone) {
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 
   auto status = manager->SetupDeviceAndContext(QNN_HTP_DEVICE_ARCH_V79, QNN_SOC_MODEL_SM8550);
@@ -307,7 +307,7 @@ TEST(QnnUnit_BackendManagerTest, ReleaseDeviceAndContext_BeforeSetup_ResetsArchA
 // fails here rather than in the wrapper.
 TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
   StubApiEnv env;
-  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 
   const qnn::QnnBackendManager& const_manager = *manager;
@@ -357,8 +357,8 @@ TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
 // ===========================================================================
 // Real-HTP-backend tests
 //
-// The tests below load a real QNN backend (libQnnHtp.so, and for the serializer
-// cases libQnnIr.so / libQnnSaver.so) and drive QnnBackendManager directly — no
+// The tests below load a real QNN backend (HTP, and for the serializer cases
+// QnnIr / QnnSaver) and drive QnnBackendManager directly — no
 // ORT session is created. They target qnn_backend_manager.cc code paths that are
 // only reachable once a real backend interface is bound: SetupBackend config
 // permutations (priority / device / profiling), context serialization, and
@@ -376,7 +376,7 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeHTPManager(
     QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE,
     bool skip_version_check = true) {
   qnn::QnnBackendManagerConfig cfg;
-  cfg.backend_path = "libQnnHtp.so";
+  cfg.backend_path = QnnHtpBackendLibraryName();
   cfg.profiling_level = profiling_level;
   cfg.profiling_level_etw = profiling_level_etw;
   cfg.context_priority = context_priority;
@@ -410,7 +410,7 @@ static Ort::Status SetupBackendHtp(qnn::QnnBackendManager& manager) {
 }
 
 // Fixture: probes HTP backend availability once (cached) and skips the whole
-// group via GTEST_SKIP() when libQnnHtp.so cannot be loaded — mirroring the
+// group via GTEST_SKIP() when the platform HTP backend cannot be loaded — mirroring the
 // established QnnHTPBackendTests::SetUp() convention (backend unavailable → skip,
 // not fail). This keeps CI signal clean on environments without the HTP library
 // while leaving each test's ASSERT_TRUE(status.IsOK()) as a genuine behavioral
@@ -419,7 +419,7 @@ class QnnUnit_BackendManagerHtpTest : public ::testing::Test {
  protected:
   void SetUp() override {
     if (!HtpAvailable()) {
-      GTEST_SKIP() << "QNN HTP backend (libQnnHtp.so) is not available! Skipping test.";
+      GTEST_SKIP() << "QNN HTP backend (" << QnnHtpBackendLibraryName() << ") is not available! Skipping test.";
     }
   }
 
@@ -444,7 +444,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_Succeeds) {
   auto manager = MakeHTPManager(env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   auto status = SetupBackendHtp(*manager);
-  ASSERT_TRUE(status.IsOK()) << "libQnnHtp.so setup failed: " << status.GetErrorMessage();
+  ASSERT_TRUE(status.IsOK()) << QnnHtpBackendLibraryName() << " setup failed: " << status.GetErrorMessage();
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
 }
 
@@ -732,7 +732,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
 // ---------------------------------------------------------------------------
 // IR backend loaded directly (no QnnSerializerConfig)
 //
-// Loading libQnnIr.so as the main backend exercises:
+// Loading the platform QNN IR backend as the main backend exercises:
 //   - SetQnnBackendType IR/SAVER case: backend_id → QnnBackendType::SERIALIZER
 //   - CreateContext SERIALIZER branch: configs = nullptr
 // ---------------------------------------------------------------------------
@@ -740,13 +740,13 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
 TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_WithIrBackendDirectly_SetsSerializerBackendType) {
   StubApiEnv env;
   qnn::QnnBackendManagerConfig cfg{};  // value-init to zero all fields (profiling, device_id, etc.)
-  cfg.backend_path = "libQnnIr.so";
+  cfg.backend_path = QnnIrBackendLibraryName();
   cfg.context_priority = qnn::ContextPriority::NORMAL;
   cfg.skip_qnn_version_check = true;
   auto manager = qnn::QnnBackendManager::Create(cfg, env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
   auto status = SetupBackendHtp(*manager);
-  ASSERT_TRUE(status.IsOK()) << "libQnnIr.so setup failed: " << status.GetErrorMessage();
+  ASSERT_TRUE(status.IsOK()) << QnnIrBackendLibraryName() << " setup failed: " << status.GetErrorMessage();
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::SERIALIZER);
 }
 
@@ -766,8 +766,8 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_WithIrBackendDirectly_SetsSer
 TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithQnnSaverSerializer_Succeeds) {
   StubApiEnv env;
   auto manager = MakeSerializerManager(
-      "libQnnHtp.so",
-      qnn::QnnSerializerConfig::CreateSaver("libQnnSaver.so"),
+      QnnHtpBackendLibraryName(),
+      qnn::QnnSerializerConfig::CreateSaver(QnnSaverBackendLibraryName()),
       env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 
@@ -780,7 +780,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithQnnSaverSerializer_Su
 
 // QnnIrConfig::SupportsArbitraryGraphConfigs() returns false, so CreateContext
 // overrides configs to nullptr even for the HTP backend's default configs.
-// Distinct from SetupBackend_WithIrBackendDirectly above which loads libQnnIr.so
+// Distinct from SetupBackend_WithIrBackendDirectly above which loads QnnIr
 // as the main backend (SERIALIZER type) without QnnSerializerConfig.
 TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithQnnIrSerializer_CoversNoArbitraryGraphConfigs) {
   StubApiEnv env;
@@ -788,8 +788,8 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithQnnIrSerializer_Cover
   std::filesystem::create_directories(tmp_dir);
 
   auto manager = MakeSerializerManager(
-      "libQnnHtp.so",
-      qnn::QnnSerializerConfig::CreateIr("libQnnIr.so", tmp_dir.string()),
+      QnnHtpBackendLibraryName(),
+      qnn::QnnSerializerConfig::CreateIr(QnnIrBackendLibraryName(), tmp_dir.string()),
       env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 

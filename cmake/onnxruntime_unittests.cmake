@@ -223,6 +223,8 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 # TODO: Re-enable the recent op testcases
 list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
+list(REMOVE_ITEM onnxruntime_test_framework_src
+     "${TEST_SRC_DIR}/providers/qnn/component/qnn_ort_api_test_bridge.cc")
 
 # qnn_op_tracing_serialization.cc is compiled directly into the test binary so
 # that QnnFrameworkOpTraceUnit tests can call ComputeTraceSummary and
@@ -391,10 +393,15 @@ block()
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
   endif()
 
-  # Coverage build: link against the SHARED QNN EP library so tests can call
-  # EP-internal functions directly. Coverage is recorded in the .so's .gcda files and
-  # collected by lcov --directory <build_dir> (recursive search finds them automatically).
-  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
+  if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
+     (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+    set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
+  endif()
+
+  # Internal-symbol test build: link against the SHARED QNN EP library so tests
+  # can call EP-internal functions directly.
+  if(onnxruntime_qnn_internal_ut_symbols_enabled)
     target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
@@ -402,9 +409,7 @@ block()
     # under #if. When the macro is off, tier test bodies (component/, snapshot/,
     # session_snapshot/, accuracy/) compile to empty translation units, so
     # non-coverage builds do not see undefined references.
-    # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
-    # stabilises, the gate can be widened to other CI build configurations without
-    # touching the test code.
+    # Coverage builds and explicit internal-symbol builds enable this gate.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
     # Accuracy tier: gates the per-op accuracy test files (e.g.
     # accuracy/builder/opbuilder/clip_test.cc). Shares the
