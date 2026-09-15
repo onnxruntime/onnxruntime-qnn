@@ -1510,18 +1510,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    // Publish for later sessions, but NOT when this session is the terminator —
-    // publishing then immediately resetting would be a no-op and is misleading.
-    if (htp_share_resource_optimization_ == 1 && !stop_share_ep_contexts_) {
+    // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
+    // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
+    // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
+    // all sharing paths is deferred to after SetupBackend completes (in GetCapabilityImpl).
+    if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
-  // Unified terminator release: whichever branch ran, if this session stops sharing,
-  // clear the singleton slot now that qnn_backend_manager_ holds its own strong reference.
-  // ResetSharedQnnBackendManager() is an idempotent reset() under lock — safe when empty.
-  if (stop_share_ep_contexts_) {
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
-  }
+  // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
+  // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -2279,7 +2277,19 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   if (!rt.IsOK()) {
     const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    // Reset on failure too so the singleton is not left stale if this was a terminator session.
+    if (ep->stop_share_ep_contexts_) {
+      SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    }
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
+  }
+
+  // Deferred terminator reset for both htp_share_resource_optimization and share_ep_contexts:
+  // the singleton must remain populated during SetupBackend because ContextCreateAsyncCallback
+  // retrieves the backend manager from it. Now that SetupBackend has completed it is safe to
+  // clear the slot.
+  if (ep->stop_share_ep_contexts_) {
+    SharedContext::GetInstance().ResetSharedQnnBackendManager();
   }
 
   // op_affinity: the GQA builder may trigger the known performance regression on HTP,

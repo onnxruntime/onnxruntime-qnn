@@ -870,9 +870,9 @@ class ScopedOrtSession {
 // releases the SharedContext singleton across the plugin boundary. Call at the end of any test
 // that exercises enable_vtcm_backup_buffer_sharing or htp_share_resource_optimization to
 // prevent cross-test singleton leakage. The model at model_path must already exist on disk
-// (call before deleting test artifacts). Pass the registered_ep_device that was used for the
-// sharing sessions so the EP device is reused without re-registering the EP library.
-void ResetSharedBackendManagerViaTerminatorSession(const RegisteredEpDeviceUniquePtr& registered_ep_device,
+// (call before deleting test artifacts). Pass the raw OrtEpDevice* that was used for the
+// sharing sessions — use registered_ep_device.get() or ScopedOrtSession::ep_device().
+void ResetSharedBackendManagerViaTerminatorSession(const OrtEpDevice* ep_device,
                                                    const ProviderOptions& provider_options,
                                                    const ORTCHAR_T* model_path);
 

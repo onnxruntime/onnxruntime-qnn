@@ -1205,6 +1205,12 @@ static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
                                        Qnn_ErrorHandle_t /* status */) {
   auto qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
 
+  if (!qnn_backend_manager) {
+    // Singleton was reset before the callback fired — should not happen under normal usage
+    // because the reset is deferred until after SetupBackend completes.
+    return;
+  }
+
   if (context) {
     qnn_backend_manager->ProcessContextFromBinListAsync(context, notify_param);
   }

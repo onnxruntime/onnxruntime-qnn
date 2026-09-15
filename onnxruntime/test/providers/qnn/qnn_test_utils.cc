@@ -456,12 +456,12 @@ void InferenceModel(const std::string& model_data,
   RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
-void ResetSharedBackendManagerViaTerminatorSession(const RegisteredEpDeviceUniquePtr& registered_ep_device,
+void ResetSharedBackendManagerViaTerminatorSession(const OrtEpDevice* ep_device,
                                                    const ProviderOptions& provider_options,
                                                    const ORTCHAR_T* model_path) {
   Ort::SessionOptions session_options;
   session_options.AppendExecutionProvider_V2(*GetOrtEnv(),
-                                             {Ort::ConstEpDevice(registered_ep_device.get())},
+                                             {Ort::ConstEpDevice(ep_device)},
                                              provider_options);
   session_options.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
   session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");

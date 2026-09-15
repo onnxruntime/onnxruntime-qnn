@@ -2430,7 +2430,7 @@ TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
   auto ort_outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                             output_names_c.data(), 1);
   // Release the SharedContext singleton before deleting files to avoid cross-test leakage.
-  ResetSharedBackendManagerViaTerminatorSession(registered_ep_device, provider_options, ctx_model_file1.c_str());
+  ResetSharedBackendManagerViaTerminatorSession(scoped1.ep_device(), provider_options, ctx_model_file1.c_str());
 #endif
 
   for (auto model_path : onnx_model_paths) {

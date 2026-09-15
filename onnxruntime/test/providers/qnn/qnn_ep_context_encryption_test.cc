@@ -534,7 +534,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
 
   std::error_code ec;
   // Release the SharedContext singleton before deleting files to avoid cross-test leakage.
-  ResetSharedBackendManagerViaTerminatorSession(phase_b_ep_device, phase_b_provider_options, ORT_TSTR("./vtcm_baseline.onnx"));
+  ResetSharedBackendManagerViaTerminatorSession(phase_b_ep_device.get(), phase_b_provider_options, ORT_TSTR("./vtcm_baseline.onnx"));
   std::filesystem::remove(ORT_TSTR("./vtcm_baseline.onnx"), ec);
   std::filesystem::remove(ORT_TSTR("./vtcm_baseline_qnn.bin"), ec);
 }
@@ -684,7 +684,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
   std::error_code ec;
   // Release the SharedContext singleton before deleting files to avoid cross-test leakage.
   auto s1_cleanup_options = make_provider_options();
-  ResetSharedBackendManagerViaTerminatorSession(s1_registered_ep_device, s1_cleanup_options, ORT_TSTR("./vtcm_multi.onnx"));
+  ResetSharedBackendManagerViaTerminatorSession(s1_registered_ep_device.get(), s1_cleanup_options, ORT_TSTR("./vtcm_multi.onnx"));
   std::filesystem::remove(kCipherPath, ec);
   std::filesystem::remove(ORT_TSTR("./vtcm_multi.onnx"), ec);
 }
