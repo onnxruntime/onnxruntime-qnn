@@ -1,6 +1,8 @@
+From 9e78cfd582f4388f9d009c2b0d794a60cad8ef92 Mon Sep 17 00:00:00 2001
 From: QNN EP team <noreply@qualcomm.com>
-Date: Mon, 18 Aug 2026 00:00:00 +0000
-Subject: [PATCH] cmake: guard QNN_LIB_FILES copy in onnxruntime_unittests.cmake
+Date: Tue, 18 Aug 2026 00:00:00 +0000
+Subject: [PATCH 7/7] cmake: guard QNN_LIB_FILES copy in
+ onnxruntime_unittests.cmake
 
 In static_lib mode (e.g. Android builds) QNN_LIB_FILES is empty because
 the file(GLOB ...) block that populates it is inside an if(MSVC OR Linux)
@@ -17,19 +19,23 @@ Shared-lib builds are unaffected; QNN_LIB_FILES is still non-empty there.
 
 TODO: re-check this patch on future ort_core upleveling since the target
 line number may drift.
-
 ---
  cmake/onnxruntime_unittests.cmake | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
+diff --git a/cmake/onnxruntime_unittests.cmake b/cmake/onnxruntime_unittests.cmake
+index 8d09dfc..c3feea1 100644
 --- a/cmake/onnxruntime_unittests.cmake
 +++ b/cmake/onnxruntime_unittests.cmake
-@@ -2081,7 +2081,7 @@
+@@ -2420,7 +2420,7 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND NOT onnxruntime_CUDA_MINIMAL
                  ${JAVA_NATIVE_TEST_DIR}/${CUSTOM_OP_LIBRARY_DST_FILE_NAME})
-
+ 
          # also copy other library dependencies that may be required by tests to native-test
 -        if(onnxruntime_USE_QNN)
 +        if(onnxruntime_USE_QNN AND QNN_LIB_FILES)
            add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
                COMMAND ${CMAKE_COMMAND} -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
          endif()
+-- 
+2.53.0.windows.1
+
