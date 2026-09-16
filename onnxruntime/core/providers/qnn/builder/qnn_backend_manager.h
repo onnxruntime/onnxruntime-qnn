@@ -446,7 +446,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   bool IsBackendSetup() { return backend_setup_completed_; }
   bool FileMappingIsEnabled() {
-    return file_mapped_weights_enabled_;
+    return file_mapped_weights_enabled_.load(std::memory_order_acquire);
   }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -844,7 +844,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;
   Qnn_Version_t backend_api_version_ = QNN_VERSION_INIT;
-  bool file_mapped_weights_enabled_ = false;
+  // DMA data-provider callbacks may inspect this flag concurrently with a failed file-mapping
+  // request disabling the feature before its direct-read retry.
+  std::atomic<bool> file_mapped_weights_enabled_{false};
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;

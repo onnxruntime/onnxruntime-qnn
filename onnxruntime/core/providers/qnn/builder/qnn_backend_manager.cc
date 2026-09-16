@@ -1368,6 +1368,11 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                       ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
                        "). Retrying with direct read.")
                           .c_str());
+      // The failed request may still issue data-provider callbacks. Disable any further DMA
+      // mappings before retrying so callbacks from the rejected request cannot register new
+      // buffers while the direct-read context is being created or torn down. Keep file_mapper_
+      // and its callback records alive so already-registered buffers can still be released.
+      file_mapped_weights_enabled_.store(false, std::memory_order_release);
     }
   }
 #endif
@@ -1514,6 +1519,11 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
+      // This state transition was part of the original file-mapping retry implementation but
+      // was lost when context creation was refactored. Without it, late DMA callbacks from the
+      // rejected request can continue registering mappings concurrently with the direct-read
+      // retry and session teardown.
+      file_mapped_weights_enabled_.store(false, std::memory_order_release);
       // QNN can still dispatch callbacks belonging to the rejected file-mapped request. Mark
       // them inactive before clearing partial mappings, so they cannot race the direct-read retry.
       for (size_t i = callback_info_start; i < context_create_async_callback_infos_.size(); ++i) {
