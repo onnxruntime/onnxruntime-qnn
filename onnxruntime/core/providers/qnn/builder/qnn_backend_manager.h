@@ -13,6 +13,7 @@
 #endif
 
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -855,7 +856,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // CreateContextFromListAsyncWithCallback returns, and notify_param / callback pointers must
   // remain valid at that point.
   std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
-  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list_;
+  std::deque<Qnn_ContextBinaryCallback_t> context_callbacks_list_;
 #endif
 
   // NPU backend requires quantized model

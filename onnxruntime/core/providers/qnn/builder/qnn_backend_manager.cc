@@ -1345,7 +1345,8 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
 
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
 
-    Qnn_ContextBinaryCallback_t callbacks;
+    context_callbacks_list_.emplace_back();
+    Qnn_ContextBinaryCallback_t& callbacks = context_callbacks_list_.back();
     callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
     callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
     callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
@@ -1599,9 +1600,6 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
 
   context_params_list.reserve(context_bin_map.size());
   context_paramsv2_list.reserve(context_bin_map.size());
-  // Existing entries may still be referenced by QNN callbacks from a prior request. Reserve
-  // enough room for this request without relocating them.
-  context_callbacks_list_.reserve(context_callbacks_list_.size() + context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
 
   for (auto& it : context_bin_map) {

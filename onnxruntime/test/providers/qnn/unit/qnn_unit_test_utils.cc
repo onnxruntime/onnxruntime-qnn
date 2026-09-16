@@ -58,6 +58,15 @@ QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnValidatorBackendHandleTag, Qnn_Backe
                                          validator_backend_handle_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnBackendTypeTag, qnn::QnnBackendType, qnn_backend_type_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnHtpArchTag, QnnHtpDevice_Arch_t, htp_arch_internal_);
+using EpContextHandleMap = std::unordered_map<std::string, Qnn_ContextHandle_t>;
+QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(
+    ContextCreateAsyncCallbackInfosTag,
+    std::vector<std::unique_ptr<qnn::ContextCreateAsyncCallbackInfo>>,
+    context_create_async_callback_infos_);
+QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(
+    EpContextHandleMapTag,
+    EpContextHandleMap,
+    ep_context_handle_map_);
 
 }  // namespace
 
@@ -99,6 +108,15 @@ qnn::QnnBackendType& StubBackendManager::BackendType() {
 
 QnnHtpDevice_Arch_t& StubBackendManager::HtpArch() {
   return (*manager_).*GetPrivateMemberPtr(QnnHtpArchTag{});
+}
+
+std::vector<std::unique_ptr<qnn::ContextCreateAsyncCallbackInfo>>&
+StubBackendManager::ContextCreateAsyncCallbackInfos() {
+  return (*manager_).*GetPrivateMemberPtr(ContextCreateAsyncCallbackInfosTag{});
+}
+
+std::unordered_map<std::string, Qnn_ContextHandle_t>& StubBackendManager::EpContextHandleMap() {
+  return (*manager_).*GetPrivateMemberPtr(EpContextHandleMapTag{});
 }
 
 }  // namespace test
