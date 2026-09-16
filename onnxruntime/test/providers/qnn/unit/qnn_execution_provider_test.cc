@@ -905,7 +905,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCores_Succeeds) {
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresDefault_Succeeds) {
   EpStubContext ctx;
-  // htp_num_cores not set — default 0, no NUM_CORES config pushed.
+  // htp_num_cores not set - default 0, no NUM_CORES config pushed.
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
@@ -1050,6 +1050,44 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSd
                "QAIRT SDK < 2.51");
 }
 #endif
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "-1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: -1 will be skipped");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresTrailingCharacters_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "2cores";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: 2cores will be skipped");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresOverflow_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "4294967296";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: 4294967296 will be skipped");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, HtpNumCoresGraphConfigPolicy_AllowsOnlyAotContextFlows) {
+  EXPECT_FALSE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
+      false /*context_cache_enabled*/, false /*prepare_and_load*/));
+  EXPECT_TRUE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
+      true /*context_cache_enabled*/, false /*prepare_and_load*/));
+  EXPECT_TRUE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
+      false /*context_cache_enabled*/, true /*prepare_and_load*/));
+  EXPECT_TRUE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
+      true /*context_cache_enabled*/, true /*prepare_and_load*/));
+}
 
 // ===========================================================================
 // Group 8: Constructor — early throws
