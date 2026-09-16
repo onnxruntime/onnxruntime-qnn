@@ -48,7 +48,7 @@
 #include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
-#include "core/providers/qnn/soc_utils.h"
+#include "core/providers/qnn/soc_utility/soc_utils.h"
 
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
@@ -293,7 +293,7 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string,
 
 static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_model, const Ort::Logger& logger) {
   // First try a chip-family name lookup (e.g. "SM8750", case-insensitive).
-  uint32_t name_value = qnn::soc::SocModelFromName(soc_model_string);
+  uint32_t name_value = qnn::soc::MapSocModelFromSocName(soc_model_string);
   if (name_value != 0) {
     soc_model = name_value;
     return;
@@ -321,6 +321,36 @@ static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_mod
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid soc_model: " + soc_model_string).c_str());
   } else {
     soc_model = static_cast<uint32_t>(value);
+  }
+}
+
+static void MatchSocModelAndHtpArch(const uint32_t soc_model,
+                                    QnnHtpDevice_Arch_t& htp_arch,
+                                    const Ort::Logger& logger) {
+  uint32_t mapped_htp_arch = qnn::soc::MapHtpArchFromSocModel(soc_model);
+  if (mapped_htp_arch == 0) {
+    ORT_CXX_LOG(logger,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Unrecognized SoC model " + std::to_string(soc_model) + ". Skip matching with HTP arch.").c_str());
+    return;
+  }
+
+  if (htp_arch == QNN_HTP_DEVICE_ARCH_NONE) {
+    ORT_CXX_LOG(logger,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Setting HTP arch to " + std::to_string(mapped_htp_arch) + " according to given SoC model.").c_str());
+    htp_arch = static_cast<QnnHtpDevice_Arch_t>(mapped_htp_arch);
+  } else {
+    uint32_t given_htp_arch = static_cast<uint32_t>(htp_arch);
+    if (given_htp_arch != mapped_htp_arch) {
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Given HTP arch " + std::to_string(given_htp_arch) +
+                   " did not match the given SoC model. Setting to " +
+                   std::to_string(mapped_htp_arch) + " instead.")
+                      .c_str());
+      htp_arch = static_cast<QnnHtpDevice_Arch_t>(mapped_htp_arch);
+    }
   }
 }
 
@@ -442,17 +472,18 @@ void QnnEp::ParsePerSocHtpConfigs() {
     }
   }
 
-  if (!soc_model_per_soc_.empty() && !htp_arch_per_soc_.empty()) {
-    if (soc_model_per_soc_.size() == htp_arch_per_soc_.size()) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  "Both soc_model and htp_arch are given but soc_model has higher priority if they do not match.");
-    } else {
+  if (!soc_model_per_soc_.empty()) {
+    if (htp_arch_per_soc_.empty()) {
+      htp_arch_per_soc_.assign(soc_model_per_soc_.size(), QNN_HTP_DEVICE_ARCH_NONE);
+    }
+    if (htp_arch_per_soc_.size() != soc_model_per_soc_.size()) {
       LOG_AND_THROW_ERROR(logger_,
                           "Expecting soc_model and htp_arch having equal number of values in multi-SoC EP context.");
+    } else {
+      for (size_t soc_idx = 0; soc_idx < soc_model_per_soc_.size(); ++soc_idx) {
+        MatchSocModelAndHtpArch(soc_model_per_soc_[soc_idx], htp_arch_per_soc_[soc_idx], logger_);
+      }
     }
-  } else if (htp_arch_per_soc_.empty()) {
-    htp_arch_per_soc_.assign(soc_model_per_soc_.size(), QNN_HTP_DEVICE_ARCH_NONE);
   } else {
     soc_model_per_soc_.assign(htp_arch_per_soc_.size(), QNN_SOC_MODEL_UNKNOWN);
   }
@@ -1063,6 +1094,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!soc_model_str.empty()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("User specified soc_model: " + soc_model_str).c_str());
       ParseSocModel(soc_model_str, soc_model, logger_);
+      MatchSocModelAndHtpArch(soc_model, htp_arch, logger_);
     }
 
     // VTCM MB
