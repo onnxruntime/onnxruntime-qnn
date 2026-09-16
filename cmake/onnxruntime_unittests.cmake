@@ -196,13 +196,19 @@ set (onnxruntime_test_providers_dependencies ${onnxruntime_EXTERNAL_DEPENDENCIES
 set(onnxruntime_test_framework_src_patterns)
 if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/accuracy/builder/opbuilder/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/builder/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/builder/opbuilder/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/infra/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/infra/specs/builder/opbuilder/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/integration/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/session_snapshot/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/session_snapshot/builder/opbuilder/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/snapshot/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/snapshot/builder/opbuilder/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/ssr/qnn_ssr_test.cc)
   include(onnxruntime_unittests_udo.cmake)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
@@ -394,12 +400,18 @@ block()
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
     # (i.e., the cmake conditions above hold), not whether any production source is
-    # under #if. When the macro is off, component test bodies compile to empty
-    # translation units, so non-coverage builds do not see undefined references.
+    # under #if. When the macro is off, tier test bodies (component/, snapshot/,
+    # session_snapshot/, accuracy/) compile to empty translation units, so
+    # non-coverage builds do not see undefined references.
     # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
     # stabilises, the gate can be widened to other CI build configurations without
     # touching the test code.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
+    # Accuracy tier: gates the per-op accuracy test files (e.g.
+    # accuracy/builder/opbuilder/clip_test.cc). Shares the
+    # INTERNAL_SYMBOL_ACCESS prereqs (Linux x86_64 + shared QNN EP), so it
+    # is enabled together with coverage rather than as a separate opt-in.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
   endif()
 
   if(WIN32)
