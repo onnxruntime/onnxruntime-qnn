@@ -1,0 +1,62 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Windows ARM64 QNN Unit Tests
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  build:
+    if: ${{ github.event_name != 'pull_request' || github.head_ref == 'dev/tzuhwei/windows-arm64-qnn-ut-internal-symbols' }}
+    name: Build Windows ARM64 QNN internal-symbol tests
+    runs-on: ["self-hosted", "X64", "Windows", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build and archive
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version None
+          build_ort_windows_arm64_internal_symbols
+      - name: Upload Windows ARM64 test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-unit-windows-arm64-inputs
+          path: build/windows-arm64-internal-symbols/Release/Release/
+          if-no-files-found: error
+
+  test:
+    name: Test Windows ARM64 QNN internal-symbol tests
+    needs: build
+    runs-on: ["self-hosted", "ARM64", "Windows", "Test"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Download Windows ARM64 test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-unit-windows-arm64-inputs
+          path: build/windows-arm64/Release/Release
+      - name: Run QNN unit tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testBin = Get-ChildItem 'build/windows-arm64/Release' -Recurse -Filter onnxruntime_provider_test.exe |
+            Select-Object -First 1
+          if ($null -eq $testBin) { throw 'onnxruntime_provider_test.exe not found' }
+
+          $env:PATH = "$($testBin.DirectoryName);$env:PATH"
+          Push-Location $testBin.DirectoryName
+          try {
+            & $testBin.FullName '--gtest_filter=QnnUnit_*:QnnInteg_*' '--gtest_brief=1'
+            if ($LASTEXITCODE -ne 0) { throw 'QNN unit and integration tests failed' }
+          }
+          finally { Pop-Location }
