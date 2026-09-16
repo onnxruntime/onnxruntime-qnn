@@ -1248,6 +1248,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                            false,
                                                                            logger_);
 
+  model_settings_.disable_matmul_to_fc = ParseBoolOption(ort_api,
+                                                         session_options_,
+                                                         FormatEPConfigKey("disable_matmul_to_fc"),
+                                                         false,
+                                                         logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
