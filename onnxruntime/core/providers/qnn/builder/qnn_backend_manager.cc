@@ -1205,6 +1205,12 @@ static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
                                        Qnn_ErrorHandle_t /* status */) {
   auto qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
 
+  if (!qnn_backend_manager) {
+    // Singleton was reset before the callback fired — should not happen under normal usage
+    // because the reset is deferred until after SetupBackend completes.
+    return;
+  }
+
   if (context) {
     qnn_backend_manager->ProcessContextFromBinListAsync(context, notify_param);
   }
@@ -1507,6 +1513,10 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
+      // Clear any partial ep_context_handle_map_ entries written by callbacks that fired
+      // during the failed attempt; the retry will repopulate them with valid handles.
+      std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+      ep_context_handle_map_.clear();
     } else {
       return Ort::Status();
     }
@@ -1567,12 +1577,12 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                                                          std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
-  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
 
   context_params_list.reserve(context_bin_map.size());
   context_paramsv2_list.reserve(context_bin_map.size());
-  context_callbacks_list.reserve(context_bin_map.size());
+  context_callbacks_list_.clear();
+  context_callbacks_list_.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
 
   for (auto& it : context_bin_map) {
@@ -1614,7 +1624,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
     file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-    context_callbacks_list.push_back(std::move(context_file_map_callbacks));
+    context_callbacks_list_.push_back(std::move(context_file_map_callbacks));
 
     // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
     QnnContext_ParamsV2_t context_params_v2 = {nullptr,
@@ -1623,7 +1633,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                nullptr,
                                                ContextCreateAsyncCallback,
                                                it.second.get(),
-                                               &context_callbacks_list.back()};
+                                               &context_callbacks_list_.back()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_2,
                                           {}};

@@ -449,9 +449,9 @@ TEST_F(QnnHTPBackendTests, Encryption_NewReadWriteCallback_RoundTrip) {
   std::filesystem::remove(kPlaintextQnnBin, ec);
 }
 
-// Baseline: htp_share_resource_optimization=1 WITHOUT encryption; hangs here → pre-existing QAIRT issue, unrelated to this PR.
-// TODO: Option "htp_share_resource_optimization" usage here is incorrect.
-TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) {
+// Baseline: htp_share_resource_optimization=1 WITHOUT encryption.
+// Session cleanup uses ResetSharedBackendManagerViaTerminatorSession (see below).
+TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -491,6 +491,13 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) 
     }
   }
 
+  ProviderOptions phase_b_provider_options;
+  phase_b_provider_options["backend_type"] = "htp";
+  phase_b_provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  phase_b_provider_options["num_graph_prepare_threads"] = "1";
+#endif
+  RegisteredEpDeviceUniquePtr phase_b_ep_device;
   {
     ProviderOptions provider_options;
     provider_options["backend_type"] = "htp";
@@ -498,9 +505,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     provider_options["num_graph_prepare_threads"] = "1";
 #endif
-    RegisteredEpDeviceUniquePtr registered_ep_device;
     Ort::SessionOptions session_options;
-    RegisterQnnEpLibrary(registered_ep_device, session_options,
+    RegisterQnnEpLibrary(phase_b_ep_device, session_options,
                          kQnnExecutionProvider, provider_options);
 
     session_options.AddConfigEntry("ep.qnnexecutionprovider.htp_share_resource_optimization", "1");
@@ -527,14 +533,16 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) 
   }
 
   std::error_code ec;
+  // Release the SharedContext singleton before deleting files to avoid cross-test leakage.
+  ResetSharedBackendManagerViaTerminatorSession(phase_b_ep_device.get(), phase_b_provider_options, ORT_TSTR("./vtcm_baseline.onnx"));
   std::filesystem::remove(ORT_TSTR("./vtcm_baseline.onnx"), ec);
   std::filesystem::remove(ORT_TSTR("./vtcm_baseline_qnn.bin"), ec);
 }
 
 // 2-session shared-context E2E. Session 1 heap-leaked (workaround for a pre-existing
 // QAIRT 2.45 teardown hang, see Encryption_VtcmSharing_Baseline_NoCallback).
-// TODO: Option "htp_share_resource_optimization" usage here is incorrect.
-TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_MultiSession_EndToEnd) {
+// Session cleanup uses ResetSharedBackendManagerViaTerminatorSession (see below).
+TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -674,6 +682,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_MultiSession_EndToEnd
   }
 
   std::error_code ec;
+  // Release the SharedContext singleton before deleting files to avoid cross-test leakage.
+  auto s1_cleanup_options = make_provider_options();
+  ResetSharedBackendManagerViaTerminatorSession(s1_registered_ep_device.get(), s1_cleanup_options, ORT_TSTR("./vtcm_multi.onnx"));
   std::filesystem::remove(kCipherPath, ec);
   std::filesystem::remove(ORT_TSTR("./vtcm_multi.onnx"), ec);
 }

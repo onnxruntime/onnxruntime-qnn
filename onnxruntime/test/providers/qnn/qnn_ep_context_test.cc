@@ -2324,7 +2324,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 #endif
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
+TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
@@ -2429,6 +2429,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 
   auto ort_outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                             output_names_c.data(), 1);
+  // Release the SharedContext singleton before deleting files to avoid cross-test leakage.
+  ResetSharedBackendManagerViaTerminatorSession(scoped1.ep_device(), provider_options, ctx_model_file1.c_str());
 #endif
 
   for (auto model_path : onnx_model_paths) {
