@@ -18,6 +18,14 @@ on:
           (build-artifacts.yml) and direct workflow_dispatch are unaffected.
         default: true
         type: boolean
+      source_repository:
+        description: Repository containing the source to build.
+        default: ""
+        type: string
+      source_ref:
+        description: Immutable source ref to build.
+        default: ""
+        type: string
       target_os:
         description: "The OS for which to build: windows or linux"
         default: windows
@@ -135,7 +143,7 @@ env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
   BUILD_SOURCEBRANCH: "${{ github.ref }}"
-  BUILD_SOURCEVERSION: "${{ github.sha }}"
+  BUILD_SOURCEVERSION: "${{ inputs.source_ref || github.sha }}"
   BUILD_BUILDID: "${{ github.run_id }}"
 
 jobs:
@@ -147,6 +155,10 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.source_repository || github.repository }}
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy build is needed, so
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
       - name: Initialize submodules
@@ -303,6 +315,8 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy test run is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
@@ -372,6 +386,8 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy wheel smoke test is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}

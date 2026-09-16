@@ -19,6 +19,20 @@ on:
 
   # Allow this workflow to be run manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      source_repository:
+        description: Repository containing source to test (maintainer-triggered runs only)
+        required: false
+        type: string
+      source_sha:
+        description: Immutable source SHA to test (maintainer-triggered runs only)
+        required: false
+        type: string
+      device_tests_only:
+        description: Run only the Android and Qualcomm Linux QDC paths
+        required: false
+        default: false
+        type: boolean
 
 # only one active job per PR. this will cause jobs to be immediately cancelled on subsequent pushes in PRs.
 # ref: https://docs.github.com/en/actions/using-jobs/using-concurrency#example-using-a-fallback-value
@@ -36,7 +50,10 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
-      do_all: true
+      do_all: ${{ !inputs.device_tests_only }}
+      do_device_tests: ${{ inputs.device_tests_only }}
+      source_repository: ${{ inputs.source_repository || github.repository }}
+      source_ref: ${{ inputs.source_sha || github.sha }}
 
   coverage:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
