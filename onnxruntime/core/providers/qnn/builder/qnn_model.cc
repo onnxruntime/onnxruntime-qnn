@@ -377,6 +377,84 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   return Ort::Status();
 }
 
+Ort::Status QnnModel::ValidateGraph(const Ort::Logger& logger) {
+  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+
+  //check for valid Function pointer
+  if (qnn_interface.graphValidate == nullptr) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                "graphValidate not available in active QNN interface — skipping full-graph validation.");
+    return Ort::Status();
+  }
+
+  ORT_CXX_LOG_PTR(&logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Running full-graph validation for graph: " + graph_info_->Name()).c_str());
+  
+  //QnnGraphTransformer would assign validation_result with valid result address for each node
+  QnnGraph_ValidationResult_t* validation_result = nullptr;
+  Qnn_ErrorHandle_t status = qnn_interface.graphValidate(
+      graph_info_->Graph(),
+      nullptr,  // config: nullptr selects default validation settings
+      &validation_result);
+
+  // Guard: always free the result before returning.
+  auto free_result = [&]() {
+    if (validation_result != nullptr && qnn_interface.graphFreeValidationResult != nullptr) {
+      qnn_interface.graphFreeValidationResult(validation_result);
+      validation_result = nullptr;
+    }
+  };
+
+  if (status != QNN_SUCCESS) {
+    free_result();
+    return MAKE_EP_FAIL(("QnnGraph_validate API call failed for graph: " + graph_info_->Name() +
+                         ". Error: " + utils::FormatQnnError(qnn_interface, status))
+                            .c_str());
+  }
+  // TO:DO - Delegates team can decided to partition the graph based on the result from QnnGraphTransformer.
+  // Below code snippet only prints the required message based on the node validation results.
+  bool any_unsupported = false;
+  if (validation_result != nullptr) {
+    for (uint32_t i = 0; i < validation_result->numResults; ++i) {
+      const QnnGraph_NodeValidationResult_t& node = validation_result->results[i];
+      const char* name = node.nodeName ? node.nodeName : "<unknown>";
+      if (node.status == QNN_GRAPH_NODE_VALIDATION_STATUS_UNSUPPORTED) {
+        any_unsupported = true;
+        std::string msg = std::string("Unsupported node '") + name +
+                          "' in graph '" + graph_info_->Name() +
+                          "'. Error: " + utils::FormatQnnError(qnn_interface, node.errorCode);
+        if (node.errorMessage) {
+          msg += std::string(" (") + node.errorMessage + ")";
+        }
+        ORT_CXX_LOG_PTR(&logger, ORT_LOGGING_LEVEL_ERROR, msg.c_str());
+      } else {
+        ORT_CXX_LOG_PTR(&logger, ORT_LOGGING_LEVEL_VERBOSE,
+                        (std::string("Node '") + name + "' validated as supported.").c_str());
+      }
+    }
+
+    if (validation_result->overallStatus != QNN_SUCCESS) {
+      any_unsupported = true;
+      ORT_CXX_LOG_PTR(&logger, ORT_LOGGING_LEVEL_ERROR,
+                      ("QnnGraph_validate overall status non-success for graph: " + graph_info_->Name() +
+                       ". Error: " + utils::FormatQnnError(qnn_interface, validation_result->overallStatus))
+                          .c_str());
+    }
+  }
+
+  free_result();
+
+  if (any_unsupported) {
+    return MAKE_EP_FAIL(("Full-graph validation found unsupported nodes in graph: " + graph_info_->Name() +
+                         ". Check logs for per-node details.")
+                            .c_str());
+  }
+
+  ORT_CXX_LOG_PTR(&logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Full-graph validation passed for graph: " + graph_info_->Name()).c_str());
+  return Ort::Status();
+}
+
 Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs started.");
 
