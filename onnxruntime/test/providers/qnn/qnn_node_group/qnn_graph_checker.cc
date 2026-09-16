@@ -71,6 +71,15 @@ bool ParseQnnJsonGraph(const std::filesystem::path& json_path,
 void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
                         const std::string& op,
                         size_t count) {
+  // Safety net: TestQDQModelAccuracy/RunQnnModelTest issue GTEST_SKIP() from a
+  // helper on unsupported HTP arch/devices. That skip marks the test but does
+  // not return from the caller's TEST_F body, so a caller that forgot its own
+  // `if (IsSkipped()) return;` guard would otherwise fail spuriously on the
+  // missing JSON dump. Propagate the skip instead (matches conv/matmul/
+  // resize/softmax call-site guards).
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
   std::filesystem::path json_path;
   ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
       << "No QNN JSON graph file found in " << dump_dir;
@@ -102,6 +111,10 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
 
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name) {
+  // Same skip-propagation safety net as AssertOpInQnnGraph above.
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
   std::filesystem::path json_path;
   ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
       << "No QNN JSON graph file found in " << dump_dir;
@@ -207,6 +220,10 @@ size_t SumFp32StaticBytes(const std::filesystem::path& dump_dir) {
 }  // namespace
 
 void AssertFp32StaticBytesBelow(const std::filesystem::path& dump_dir, size_t max_bytes) {
+  // Same skip-propagation safety net as AssertOpInQnnGraph above.
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
   const size_t total_bytes = SumFp32StaticBytes(dump_dir);
   ASSERT_NE(total_bytes, kUnreadableDump) << "No readable QNN JSON graph in " << dump_dir;
   EXPECT_LE(total_bytes, max_bytes)
@@ -215,6 +232,10 @@ void AssertFp32StaticBytesBelow(const std::filesystem::path& dump_dir, size_t ma
 }
 
 void AssertFp32StaticBytesAbove(const std::filesystem::path& dump_dir, size_t min_bytes) {
+  // Same skip-propagation safety net as AssertOpInQnnGraph above.
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
   const size_t total_bytes = SumFp32StaticBytes(dump_dir);
   ASSERT_NE(total_bytes, kUnreadableDump) << "No readable QNN JSON graph in " << dump_dir;
   EXPECT_GT(total_bytes, min_bytes)
