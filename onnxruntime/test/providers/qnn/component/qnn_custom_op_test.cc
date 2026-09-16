@@ -22,7 +22,7 @@
 #include "core/providers/qnn/custom_op/qnn_custom_op_domain_parser.h"
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/ort_api.h"
-#include "test/providers/qnn/unit/qnn_unit_test_utils.h"
+#include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
