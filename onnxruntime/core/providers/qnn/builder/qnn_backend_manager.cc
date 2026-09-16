@@ -24,6 +24,10 @@
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
 
+#ifdef QNN_GRAPH_TRANSFORMER_AVAILABLE
+#include "QnnGraphTransformerConfig.h"
+#endif  // QNN_GRAPH_TRANSFORMER_AVAILABLE
+
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
@@ -677,7 +681,80 @@ Ort::Status QnnBackendManager::InitializeBackend(bool enable_gpu_weight_sharing)
     backend_config_ = backend_configs_ptr_;
   }
 
+#ifdef QNN_GRAPH_TRANSFORMER_AVAILABLE
+  QnnGraphTransformer_CustomConfig_t gt_enable_cfg = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_INIT;
+  QnnGraphTransformer_CustomConfig_t gt_enable_passes_cfg = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_INIT;
+  QnnGraphTransformer_CustomConfig_t gt_disable_passes_cfg = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_INIT;
+  QnnGraphTransformer_CustomConfig_t gt_dump_dlc_cfg = QNN_GRAPH_TRANSFORMER_DUMP_DLC_CONFIG_INIT;
+  QnnBackend_Config_t bc_enable = QNN_BACKEND_CONFIG_INIT;
+  QnnBackend_Config_t bc_enable_passes = QNN_BACKEND_CONFIG_INIT;
+  QnnBackend_Config_t bc_disable_passes = QNN_BACKEND_CONFIG_INIT;
+  QnnBackend_Config_t bc_dump_dlc = QNN_BACKEND_CONFIG_INIT;
+
+  auto SplitPassNames = [](const std::string& csv) -> std::vector<std::string> {
+    std::vector<std::string> out;
+    size_t start = 0, pos;
+    while ((pos = csv.find(',', start)) != std::string::npos) {
+      if (pos > start) out.push_back(csv.substr(start, pos - start));
+      start = pos + 1;
+    }
+    if (start < csv.size()) out.push_back(csv.substr(start));
+    return out;
+  };
+  std::vector<std::string> enable_pass_names = SplitPassNames(qnn_graph_transformer_enable_passes_);
+  std::vector<std::string> disable_pass_names = SplitPassNames(qnn_graph_transformer_disable_passes_);
+  std::vector<char*> enable_pass_ptrs, disable_pass_ptrs;
+  for (auto& s : enable_pass_names) enable_pass_ptrs.push_back(s.data());
+  for (auto& s : disable_pass_names) disable_pass_ptrs.push_back(s.data());
+
+  std::vector<QnnBackend_Config_t*> gt_backend_configs;
+
+  gt_enable_cfg.option = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_OPTION_ENABLE_QNN_GRAPH_TRANSFORMS;
+  gt_enable_cfg.enableQnnGraphTransformer = enable_qnn_graph_transformer_;
+  bc_enable.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+  bc_enable.customConfig = static_cast<QnnBackend_CustomConfig_t>(&gt_enable_cfg);
+  gt_backend_configs.push_back(&bc_enable);
+  if (enable_qnn_graph_transformer_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Enabling QnnGraphTransformer (G2G) pipeline.");
+
+    if (!enable_pass_ptrs.empty()) {
+      gt_enable_passes_cfg.option = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_OPTION_ENABLE_PASSES;
+      gt_enable_passes_cfg.enablePasses.data = const_cast<char**>(enable_pass_ptrs.data());
+      gt_enable_passes_cfg.enablePasses.size = static_cast<int>(enable_pass_ptrs.size());
+      bc_enable_passes.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+      bc_enable_passes.customConfig = static_cast<QnnBackend_CustomConfig_t>(&gt_enable_passes_cfg);
+      gt_backend_configs.push_back(&bc_enable_passes);
+    }
+    if (!disable_pass_ptrs.empty()) {
+      gt_disable_passes_cfg.option = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_OPTION_DISABLE_PASSES;
+      gt_disable_passes_cfg.disablePasses.data = const_cast<char**>(disable_pass_ptrs.data());
+      gt_disable_passes_cfg.disablePasses.size = static_cast<int>(disable_pass_ptrs.size());
+      bc_disable_passes.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+      bc_disable_passes.customConfig = static_cast<QnnBackend_CustomConfig_t>(&gt_disable_passes_cfg);
+      gt_backend_configs.push_back(&bc_disable_passes);
+    }
+    if (qnn_graph_transformer_dump_dlc_) {
+      gt_dump_dlc_cfg.option = QNN_GRAPH_TRANSFORMER_CUSTOM_CONFIG_OPTION_DUMP_DLC;
+      gt_dump_dlc_cfg.enableDumpDLC = true;
+      bc_dump_dlc.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+      bc_dump_dlc.customConfig = static_cast<QnnBackend_CustomConfig_t>(&gt_dump_dlc_cfg);
+      gt_backend_configs.push_back(&bc_dump_dlc);
+    }
+  } else {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Disabling QnnGraphTransformer (G2G) pipeline.");
+  }
+  // Merge any pre-existing backend configs (e.g., GPU weight-sharing) and
+  // append a null terminator for backendCreate.
+  if (backend_config_ != nullptr) {
+    for (QnnBackend_Config_t** p = backend_config_; *p != nullptr; ++p) {
+      gt_backend_configs.push_back(*p);
+    }
+  }
+  gt_backend_configs.push_back(nullptr);
+  backend_config_ = const_cast<QnnBackend_Config_t**>(gt_backend_configs.data());
+#endif // QNN_GRAPH_TRANSFORMER_AVAILABLE
   return InitializeBackendCommon(qnn_interface_, log_handle_, backend_handle_, backend_initialized_, "backend");
+ 
 }
 
 Ort::Status QnnBackendManager::InitializeValidatorBackend() {

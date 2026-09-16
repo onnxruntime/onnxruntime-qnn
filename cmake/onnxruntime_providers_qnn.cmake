@@ -105,6 +105,12 @@
                                                                ${onnxruntime_QNN_HOME}/include/QNN
                                                                ${onnxruntime_QNN_HOME}/include)
 
+  # Enable QnnGraphTransformer support if the header is present in the SDK.
+  if(EXISTS "${onnxruntime_QNN_HOME}/include/QNN/QnnGraphTransformerConfig.h")
+    message(STATUS "QnnGraphTransformerConfig.h found - enabling QNN_GRAPH_TRANSFORMER_AVAILABLE")
+    target_compile_definitions(onnxruntime_providers_qnn PRIVATE QNN_GRAPH_TRANSFORMER_AVAILABLE)
+  endif()
+
   # Set preprocessor definitions used in onnxruntime_providers_qnn.rc
   if(WIN32)
     if(NOT QNN_SDK_VERSION)
