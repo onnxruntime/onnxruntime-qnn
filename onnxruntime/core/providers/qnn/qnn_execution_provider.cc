@@ -511,7 +511,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
                                   htp_graph_configs_.enable_htp_fp16_precision,
                                   htp_graph_configs_.enable_htp_monolithic_lstm,
                                   htp_graph_configs_.enable_htp_fp16_clamp_overflow,
-                                  htp_graph_configs_.enable_htp_matmul_lut};
+                                  htp_graph_configs_.enable_htp_matmul_lut,
+                                  htp_graph_configs_.num_cores};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -1025,6 +1026,20 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                              true,
                                                              logger_);
 #endif
+
+  // HTP num cores — parsed before ParsePerSocHtpConfigs so the value is available for per-SoC config construction.
+  std::string htp_num_cores_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("htp_num_cores"), "0", htp_num_cores_str);
+  if (!htp_num_cores_str.empty() && htp_num_cores_str != "0") {
+    try {
+      htp_graph_configs_.num_cores = static_cast<uint32_t>(std::stoul(htp_num_cores_str));
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                   ("User specified htp_num_cores: " + htp_num_cores_str).c_str());
+    } catch (...) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                   ("Invalid htp_num_cores: " + htp_num_cores_str + " will be skipped").c_str());
+    }
+  }
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
@@ -1895,6 +1910,16 @@ void QnnEp::InitQnnHtpGraphConfigs(
       gsl::not_null<QnnGraph_Config_t*> graph_opt_config_vtcm = configs_builder.PushConfig();
       graph_opt_config_vtcm->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_opt_config_vtcm->customConfig = htp_graph_opt_config_vtcm;
+    }
+
+    if (configs.num_cores > 0) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_num_cores_config = configs_builder.PushCustomConfig();
+      htp_num_cores_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES;
+      htp_num_cores_config->numCores = configs.num_cores;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_num_cores_config = configs_builder.PushConfig();
+      graph_num_cores_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_num_cores_config->customConfig = htp_num_cores_config;
     }
 
     if (configs.enable_htp_fp16_precision) {
