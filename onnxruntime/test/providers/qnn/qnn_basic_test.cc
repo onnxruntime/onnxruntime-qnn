@@ -2247,8 +2247,8 @@ void AttachLogCapture(Ort::SessionOptions& so, LogCapture& capture) {
 constexpr std::string_view kLogSubstrMemHandle = "Setting Qnn_Tensor_t memHandle";
 constexpr std::string_view kLogSubstrClientBuf = "Setting Qnn_Tensor_t clientBuf";
 
-// Leading substring of the WARNING emitted when shared-memory is requested but the
-// bound OrtValue is CPU-backed (see QnnModel::WarnZeroCopyFallbackOnce).
+// Leading substring of the one-shot WARNING emitted when shared-memory is
+// requested but a CPU-backed OrtValue is bound.
 constexpr std::string_view kLogSubstrFallbackWarning =
     "zero-copy shared memory was requested";
 
@@ -2706,6 +2706,8 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) 
     SUCCEED() << "Cross-partition tensors used clientBuf (" << clientbuf_count
               << "); MEMHANDLE used for " << memhandle_count << " tensors.";
   }
+#else
+  GTEST_SKIP() << "Cross-partition shared-memory coverage currently requires Windows ARM64.";
 #endif  // _WIN32
 }
 
@@ -2777,6 +2779,8 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
   for (size_t i = 0; i < x_vals.size(); ++i) {
     EXPECT_NEAR(y_out[i], expected[i], kTol) << " at index " << i;
   }
+#else
+  GTEST_SKIP() << "Cross-partition shared-memory coverage currently requires Windows ARM64.";
 #endif  // _WIN32
 }
 
@@ -2788,9 +2792,8 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
 //                                                Verifies MEMHANDLE and clientBuf co-exist within
 //                                                a single Run and the WARNING fires only for the
 //                                                CPU-backed tensor.
-//   htp_shared_memory_fallback_warning_once    — the WARNING is one-shot per tensor per session
-//                                                across multiple Runs (locks in
-//                                                zero_copy_fallback_warned_names_ semantics).
+//   htp_shared_memory_fallback_warning_once    — the WARNING is one-shot per model/session
+//                                                across multiple Runs.
 //   htp_shared_memory_concurrent_run           — same session, multiple threads calling Run()
 //                                                concurrently with per-thread shared-memory I/O.
 //                                                Verifies thread safety of graph_exec_mutex_ and
@@ -2970,17 +2973,14 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
       << "Expected MEMHANDLE for the 3 tensors bound to shared memory.";
   EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 1u)
       << "Expected clientBuf for the 1 tensor (outp1) bound to CPU memory.";
-  // The WARNING should fire for the CPU-backed output, and name it.
+  // The WARNING should fire once for the CPU-backed output.
   EXPECT_GE(capture.CountContaining(kLogSubstrFallbackWarning), 1u)
       << "Expected the zero-copy fallback WARNING for the CPU-backed tensor.";
-  EXPECT_GE(capture.CountContaining("outp1"), 1u)
-      << "The WARNING should reference the specific tensor name 'outp1'.";
 }
 
-// The fallback WARNING is a one-shot per tensor per session (see
-// QnnModel::zero_copy_fallback_warned_names_). Running the same session multiple
-// times with the same CPU-backed binding must produce exactly one WARNING per
-// affected tensor across all Runs — not one per Run.
+// The fallback WARNING is a one-shot per model/session. Running the same
+// session multiple times with CPU-backed bindings must produce exactly one
+// WARNING across all Runs — not one per tensor or Run.
 //
 // Note: when default_device_ = HOST_ACCESSIBLE, only CPU *outputs* trigger the
 // fallback; CPU inputs are transparently promoted to HOST_ACCESSIBLE by ORT

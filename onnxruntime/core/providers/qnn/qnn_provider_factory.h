@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -19,6 +20,14 @@ namespace onnxruntime {
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
+
+  // Loads RPCMEM on first use. This is intentionally factory-owned so an allocator
+  // created through OrtEnv before session creation and a QnnEp share one library handle.
+  std::shared_ptr<qnn::RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message);
+
+  const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
+    return host_accessible_memory_info_.get();
+  }
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
@@ -79,8 +88,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
   MemoryInfoUniquePtr host_accessible_memory_info_;
 
-  // Non-null when libcdsprpc is loadable; probed once in the factory ctor.
+  // Created on first allocator/session request. A factory must be usable on hosts
+  // without RPCMEM (for example, offline context generation on x86).
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_;
+  std::mutex rpcmem_library_mutex_;
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
@@ -91,10 +102,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
-
-  // Tracks the allocator type for ReleaseAllocatorImpl dispatch.
-  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
-
   // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
   // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
   // domain.Add(op*) does NOT transfer ownership; op objects must be kept alive here.

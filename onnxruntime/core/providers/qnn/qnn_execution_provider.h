@@ -91,6 +91,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL CreateAllocatorImpl(_In_ OrtEp* this_ptr,
                                                      _In_ const OrtMemoryInfo* memory_info,
                                                      _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept;
+  static OrtStatus* ORT_API_CALL GetDefaultMemoryDeviceImpl(
+      _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept;
   static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                        _In_reads_(num_options) const char* const* option_keys,
                                                        _In_reads_(num_options) const char* const* option_values,
@@ -219,6 +221,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // GetCapability() is a const function, so these options must be mutable
   mutable std::optional<uint32_t> htp_power_config_id_;
   mutable std::mutex config_id_mutex_;
+
+  QnnEpFactory& factory_;
+
+  // Non-null only when enable_htp_shared_memory_allocator is enabled for this
+  // session. The factory still exposes QnnHtpShared before session creation.
+  const OrtMemoryDevice* default_memory_device_ = nullptr;
 
   // const QnnEpFactory& factory_;
   std::string name_;
