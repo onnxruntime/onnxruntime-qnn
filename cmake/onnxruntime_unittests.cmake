@@ -467,8 +467,8 @@ endif()
 
     set_target_properties(ep_weight_sharing_ctx_gen PROPERTIES FOLDER "ONNXRuntimeTest")
 
-    # Compiled-model-encryption prepare/run sample apps
-    set(qnn_enc_apps_src_dir ${TEST_SRC_DIR}/qnn_ep_context_encryption_apps)
+    # Internal QA tools for compiled-model encryption.
+    set(qnn_enc_apps_src_dir ${REPO_ROOT}/qcom/samples/ep_context_encryption)
 
     onnxruntime_add_executable(prepare_app
       ${qnn_enc_apps_src_dir}/prepare_app.cc
