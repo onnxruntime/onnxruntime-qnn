@@ -8,7 +8,7 @@ permissions:
   checks: write
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs: &common_inputs
       has_code_changes:
         description: |
@@ -18,14 +18,6 @@ on:
           (build-artifacts.yml) and direct workflow_dispatch are unaffected.
         default: true
         type: boolean
-      source_repository:
-        description: Repository containing the source to build.
-        default: ""
-        type: string
-      source_ref:
-        description: Immutable source ref to build.
-        default: ""
-        type: string
       target_os:
         description: "The OS for which to build: windows or linux"
         default: windows
@@ -124,8 +116,17 @@ on:
           Must be set together with build_aar (see build_aar's description).
         default: false
         type: boolean
-  workflow_dispatch:
-    inputs: *common_inputs
+  workflow_call:
+    inputs:
+      <<: *common_inputs
+      source_repository:
+        description: Repository containing the source to build.
+        default: ""
+        type: string
+      source_ref:
+        description: Immutable source ref to build.
+        default: ""
+        type: string
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
