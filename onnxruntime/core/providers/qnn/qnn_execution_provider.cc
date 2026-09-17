@@ -2274,22 +2274,18 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   context_bin_map.clear();
 
-  if (!rt.IsOK()) {
-    const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-    // Reset on failure too so the singleton is not left stale if this was a terminator session.
-    if (ep->stop_share_ep_contexts_) {
-      SharedContext::GetInstance().ResetSharedQnnBackendManager();
-    }
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
-  }
-
   // Deferred terminator reset for both htp_share_resource_optimization and share_ep_contexts:
   // the singleton must remain populated during SetupBackend because ContextCreateAsyncCallback
   // retrieves the backend manager from it. Now that SetupBackend has completed it is safe to
-  // clear the slot.
+  // clear the slot, regardless of whether setup succeeded.
   if (ep->stop_share_ep_contexts_) {
     SharedContext::GetInstance().ResetSharedQnnBackendManager();
+  }
+
+  if (!rt.IsOK()) {
+    const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
   // op_affinity: the GQA builder may trigger the known performance regression on HTP,
