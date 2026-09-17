@@ -1259,9 +1259,9 @@ TEST_F(QnnUnit_ExecutionProviderTest, GetHardwareDeviceIncompatibilityDetails_No
 // Group 13: Real-HTP-backend paths (QnnUnit_ExecutionProviderHtpTest)
 //
 // These tests construct QnnEp directly and invoke methods that internally call
-// qnn_backend_manager_->SetupBackend(), which dlopens a real libQnnHtp.so. They
+// qnn_backend_manager_->SetupBackend(), which loads a real platform HTP backend. They
 // never create an ORT session, so they are unit-tier component tests (mirroring
-// QnnUnit_BackendManagerHtpTest) and GTEST_SKIP() when libQnnHtp.so is absent.
+// QnnUnit_BackendManagerHtpTest) and GTEST_SKIP() when the backend is absent.
 // ===========================================================================
 
 class QnnUnit_ExecutionProviderHtpTest : public ::testing::Test {
@@ -1269,13 +1269,13 @@ class QnnUnit_ExecutionProviderHtpTest : public ::testing::Test {
   void SetUp() override {
     SharedContext::GetInstance().ResetSharedQnnBackendManager();
 
-    // Skip when libQnnHtp.so is unavailable (non-SDK environment).
+    // Skip when the platform HTP backend is unavailable (non-SDK environment).
     QnnRealHtpBackendContext htp_check;
     if (!htp_check.IsValid()) {
-      GTEST_SKIP() << "libQnnHtp.so not available";
+      GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
     }
 
-    ctx_.session_config[EPKey("backend_path")] = "libQnnHtp.so";
+    ctx_.session_config[EPKey("backend_path")] = QnnHtpBackendLibraryName();
     factory_ = MakeFactory(ctx_);
     ep_ = MakeEp(*factory_, ctx_);
   }
@@ -1310,7 +1310,7 @@ TEST_F(QnnUnit_ExecutionProviderHtpTest, ValidateCompatibilityInfo_BackendNotSet
 }
 
 // Covers the GetHardwareDeviceIncompatibilityDetails success path:
-// SetupBackend succeeds with libQnnHtp.so → SetDetails(NONE, QNN_SUCCESS, nullptr).
+// SetupBackend succeeds with the platform HTP backend → SetDetails(NONE, QNN_SUCCESS, nullptr).
 TEST_F(QnnUnit_ExecutionProviderHtpTest, GetHardwareDeviceIncompatibilityDetails_HtpBackend_ReturnsNone) {
   // Activate current_ so the SetDetails stub captures the classification.
   // No OrtGlobalApiOverride: SetupBackend must run under the real ORT API.
