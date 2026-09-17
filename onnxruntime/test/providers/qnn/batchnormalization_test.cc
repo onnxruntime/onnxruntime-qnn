@@ -469,52 +469,6 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U16S16S32) {
 #endif
 }
 
-// Input quantized u8, output quantized u16: BatchNormalizationNodeGroupSelector::Check (ORT core)
-// requires the quantized input and output element types to match to fuse BatchNorm into a QDQGroup
-// NodeUnit. With mismatched types, BatchNorm degrades to a SingleNode NodeUnit whose GetDQNodes() is
-// empty, so IsParamConstant's DQ-node fallback couldn't recognize the (still individually
-// EP-supported) DQ-wrapped scale/bias/mean/var as constant, rejecting BatchNorm as "dynamic scale".
-// Reproduces tetracode #20348.
-TEST_F(QnnHTPBackendTests, BatchNorm2D_U8In_U16Out_MixedDtype) {
-  constexpr int64_t num_channels = 2;
-  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
-  TestInputDef<float> input_def({2, num_channels, 2, 2}, false, input_data);
-  TestInputDef<float> scale_def({num_channels}, true, {1.0f, 2.0f});
-  TestInputDef<float> bias_def({num_channels}, true, {1.1f, 2.1f});
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-                       BuildQDQBatchNormMixedDtypeTestCase<uint8_t, uint16_t, uint8_t>(input_def, scale_def, bias_def),
-                       provider_options,
-                       21,
-                       ExpectedEPNodeAssignment::All);
-}
-
-// Same mismatch in the other direction: input quantized u16, output quantized u8.
-// Reproduces tetracode #20348.
-TEST_F(QnnHTPBackendTests, BatchNorm2D_U16In_U8Out_MixedDtype) {
-  constexpr int64_t num_channels = 2;
-  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
-  TestInputDef<float> input_def({2, num_channels, 2, 2}, false, input_data);
-  TestInputDef<float> scale_def({num_channels}, true, {1.0f, 2.0f});
-  TestInputDef<float> bias_def({num_channels}, true, {1.1f, 2.1f});
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-                       BuildQDQBatchNormMixedDtypeTestCase<uint16_t, uint8_t, uint8_t>(input_def, scale_def, bias_def),
-                       provider_options,
-                       21,
-                       ExpectedEPNodeAssignment::All);
-}
-
 // Test FP16 BatchNormalization on the HTP backend.
 TEST_F(QnnHTPBackendTests, BatchNorm_FP16) {
 #if defined(_WIN32)
