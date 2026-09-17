@@ -406,15 +406,11 @@ block()
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
     # (i.e., the cmake conditions above hold), not whether any production source is
-    # under #if. When the macro is off, tier test bodies (component/, snapshot/,
+    # under #if. When the macro is off, the tier test bodies (component/, snapshot/,
     # session_snapshot/, accuracy/) compile to empty translation units, so
-    # non-coverage builds do not see undefined references.
-    # Coverage builds and explicit internal-symbol builds enable this gate.
+    # production builds do not see undefined references.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
-    # Accuracy tier: gates the per-op accuracy test files (e.g.
-    # accuracy/builder/opbuilder/clip_test.cc). Shares the
-    # INTERNAL_SYMBOL_ACCESS prereqs (Linux x86_64 + shared QNN EP), so it
-    # is enabled together with coverage rather than as a separate opt-in.
+    # Accuracy-tier sources share the same internal-symbol prerequisites.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
   endif()
 

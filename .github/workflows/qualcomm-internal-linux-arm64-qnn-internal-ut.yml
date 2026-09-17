@@ -1,0 +1,211 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Linux ARM64 QNN Internal-UT
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      golden_source_run_id:
+        description: "Optional Actions run ID containing a snapshot-goldens artifact"
+        required: false
+        type: string
+      golden_artifact_name:
+        description: "Artifact name for the optional snapshot golden archive"
+        required: false
+        default: "goldens-zip-bca30fd7d793c9ac8fcc2b4baa99bb9c0c33ddf8"
+        type: string
+      diagnose_clip_component:
+        description: "Run the first Clip component dispatch case before the full suite"
+        required: false
+        default: false
+        type: boolean
+      test_archive_source_run_id:
+        description: "Optional successful run ID whose Linux ARM64 test archive should be reused"
+        required: false
+        type: string
+      test_filter:
+        description: "Optional gtest filter for a test-only diagnostic run"
+        required: false
+        type: string
+  push:
+    branches:
+      - dev/tzuhwei/linux-arm64-qnn-ut-internal-symbols
+
+jobs:
+  build:
+    name: Build Linux ARM64 QNN internal-symbol tests
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.test_archive_source_run_id == '' }}
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build and archive
+        run: |
+          python3 qcom/build_and_test.py \
+            archive_ort_linux_aarch64_manylinux_2_34_qnn_internal \
+            archive_testdata
+      - name: Upload Linux ARM64 test archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-internal-ut-linux-arm64-inputs
+          path: |
+            build/onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2
+            build/onnxruntime-testdata.tar.bz2
+          if-no-files-found: error
+
+  test:
+    name: Test Linux ARM64 QNN internal-symbol tests
+    needs: build
+    if: ${{ always() && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.test_archive_source_run_id != '')) }}
+    runs-on: ["self-hosted", "ARM64", "Linux", "Test"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Download Linux ARM64 test archives
+        if: ${{ inputs.test_archive_source_run_id == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-ut-linux-arm64-inputs
+          path: build
+      - name: Reuse Linux ARM64 test archives from a successful build
+        if: ${{ inputs.test_archive_source_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: onnxruntime/onnxruntime-qnn
+          run-id: ${{ inputs.test_archive_source_run_id }}
+          name: qnn-internal-ut-linux-arm64-inputs
+          path: build
+      - name: Extract test archives
+        run: |
+          python3 qcom/build_and_test.py \
+            create_venv \
+            extract_ort_linux_aarch64_manylinux_2_34 \
+            --only
+      - name: Download snapshot goldens
+        if: ${{ inputs.golden_source_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: onnxruntime/onnxruntime-qnn
+          run-id: ${{ inputs.golden_source_run_id }}
+          name: ${{ inputs.golden_artifact_name }}
+          path: snapshot-golden-artifact
+      - name: List and run QNN unit and integration tests
+        shell: bash
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          set -euo pipefail
+          test_bin="$(find "$GITHUB_WORKSPACE/build/linux-aarch64_manylinux_2_34/Release" \
+            -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "$test_bin" || { echo "onnxruntime_provider_test not found"; exit 1; }
+
+          export ORT_QNN_ENABLE_CPU_BACKEND=1
+          export LD_LIBRARY_PATH="$(dirname "$test_bin")${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          if [[ '${{ inputs.golden_source_run_id }}' != '' ]]; then
+            unzip -q "$GITHUB_WORKSPACE/snapshot-golden-artifact/goldens.zip" -d "$GITHUB_WORKSPACE/snapshot-goldens"
+            export QNN_UT_SNAPSHOT_GOLDEN_DIR="$GITHUB_WORKSPACE/snapshot-goldens"
+          fi
+          filter='QnnUnit_*:QnnInteg_*'
+          if [[ -n "$TEST_FILTER" ]]; then
+            filter="$TEST_FILTER"
+          fi
+          cd "$(dirname "$test_bin")"
+          listed="$($test_bin --gtest_list_tests --gtest_filter="$filter")"
+          test -n "$listed" || { echo "No QNN unit or integration tests listed"; exit 1; }
+          printf '%s\n' "$listed"
+          if [[ '${{ inputs.diagnose_clip_component }}' == 'true' ]]; then
+            "$test_bin" --gtest_filter='QnnUnit_Clip_ComponentTest.ProcessClipMinMax_FP32' --gtest_color=no
+          fi
+          if [[ -n "${QNN_UT_SNAPSHOT_GOLDEN_DIR:-}" ]]; then
+            "$test_bin" --gtest_filter='QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*' --gtest_brief=1
+          fi
+          results_xml=qnn-tier-results.xml
+          set +e
+          if [[ -n "$TEST_FILTER" ]]; then
+            "$test_bin" --gtest_filter="$filter" --gtest_color=no --gtest_output="xml:$results_xml"
+          else
+            # Keep per-test progress in the CI log. A process-level fault does
+            # not produce GTest XML, so --gtest_brief would otherwise hide the
+            # last testcase reached before the fault.
+            "$test_bin" --gtest_filter="$filter" --gtest_color=no --gtest_output="xml:$results_xml"
+          fi
+          test_rc=$?
+          set -e
+          if [[ ! -f "$results_xml" ]]; then
+            echo "onnxruntime_provider_test exited with $test_rc before writing $results_xml"
+            exit "$test_rc"
+          fi
+          python3 - "$results_xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          skipped = []
+          failures = []
+          for suite in root.findall("testsuite"):
+              for case in suite.findall("testcase"):
+                  node = case.find("skipped")
+                  if node is not None:
+                      skipped.append((suite.get("name"), case.get("name"), node.get("message", "")))
+                  for node in (*case.findall("failure"), *case.findall("error")):
+                      failures.append((suite.get("name"), case.get("name"), node.get("message", "")))
+
+          print(f"QNN tier skipped tests: {len(skipped)}")
+          for suite, case, reason in skipped:
+              print(f"QNN_SKIP tier {suite}.{case}: {reason}")
+          print(f"QNN tier failed tests: {len(failures)}")
+          for suite, case, reason in failures:
+              print(f"QNN_FAILURE tier {suite}.{case}: {reason}")
+          PY
+          exit "$test_rc"
+      - name: Run legacy QNN catch-all path
+        if: ${{ inputs.test_filter == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(find "$GITHUB_WORKSPACE/build/linux-aarch64_manylinux_2_34/Release" \
+            -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "$test_bin" || { echo "onnxruntime_provider_test not found"; exit 1; }
+
+          export ORT_QNN_ENABLE_CPU_BACKEND=1
+          export LD_LIBRARY_PATH="$(dirname "$test_bin")${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          # QNN tests resolve testdata/ relative to the test binary, matching
+          # qcom/scripts/linux/run_tests.sh.
+          cd "$(dirname "$test_bin")"
+          results_xml=qnn-legacy-results.xml
+          set +e
+          "$test_bin" --gtest_filter='*Qnn*' --gtest_brief=1 --gtest_output="xml:$results_xml"
+          test_rc=$?
+          set -e
+          python3 - "$results_xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          skipped = []
+          failures = []
+          for suite in root.findall("testsuite"):
+              for case in suite.findall("testcase"):
+                  node = case.find("skipped")
+                  if node is not None:
+                      skipped.append((suite.get("name"), case.get("name"), node.get("message", "")))
+                  for node in (*case.findall("failure"), *case.findall("error")):
+                      failures.append((suite.get("name"), case.get("name"), node.get("message", "")))
+
+          print(f"QNN legacy skipped tests: {len(skipped)}")
+          for suite, case, reason in skipped:
+              print(f"QNN_SKIP legacy {suite}.{case}: {reason}")
+          print(f"QNN legacy failed tests: {len(failures)}")
+          for suite, case, reason in failures:
+              print(f"QNN_FAILURE legacy {suite}.{case}: {reason}")
+          PY
+          exit "$test_rc"

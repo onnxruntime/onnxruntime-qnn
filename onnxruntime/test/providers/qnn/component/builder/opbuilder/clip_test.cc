@@ -115,6 +115,14 @@ TEST(QnnUnit_Clip_ComponentTest, Clip_Dynamic_MinMax_Unsupported) {
 // do_op_validation=false against a stub wrapper — validation and dispatch are
 // orthogonal, so coupling them would obscure which concern a failure belongs to.
 TEST(QnnUnit_Clip_ComponentTest, Clip_BackendValidation_Htp) {
+#if defined(__linux__) && defined(__aarch64__)
+  // The Linux ARM64 CI runner uses HTP V68. Its real backend validator reports
+  // QNN_ERROR_NOT_SUPPORTED for the FP16 precision path used by this FP32 Clip
+  // validation case ("The SocModel doesn't support FP16"). Keep the real
+  // validation coverage on platforms that support it; V68 cannot exercise it.
+  GTEST_SKIP() << "HTP V68 does not support FP16 Clip backend validation";
+#endif
+
   QnnRealHtpBackendContext backend;
   if (!backend.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
 
