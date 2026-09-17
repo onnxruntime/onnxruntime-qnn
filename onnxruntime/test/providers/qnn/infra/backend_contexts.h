@@ -130,6 +130,8 @@ struct QnnRealHtpBackendManagerContext {
   // need_load_system_lib additionally loads libQnnSystem.so so that the manager's
   // QNN system interface (SystemContext / SystemLog / SystemDlc) is populated.
   explicit QnnRealHtpBackendManagerContext(bool need_load_system_lib = false) {
+    EnsureQnnTestDefaultLogger();
+
     qnn::QnnBackendManagerConfig cfg;
 #ifdef _WIN32
     cfg.backend_path = "QnnHtp.dll";

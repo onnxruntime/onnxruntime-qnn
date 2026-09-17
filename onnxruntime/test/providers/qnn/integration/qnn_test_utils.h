@@ -98,7 +98,12 @@ inline bool MakeQnnHtpSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOpti
   }
   if (!target) return false;
 
-  const std::unordered_map<std::string, std::string> provider_opts{{"backend_path", QnnHtpBackendLibraryName()}};
+  std::unordered_map<std::string, std::string> provider_opts{{"backend_path", QnnHtpBackendLibraryName()}};
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  // Keep the complete QDQ group together for the V68 Conv/ConvTranspose
+  // integration cases, so assignment records the QNN compile path.
+  provider_opts.emplace("offload_graph_io_quantization", "0");
+#endif
   try {
     out_opts.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(target)}, provider_opts);
   } catch (const Ort::Exception&) {

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -91,6 +92,16 @@ int TEST_MAIN(int argc, char** argv) {
   _putenv_s("ORT_QNN_ENABLE_CPU_BACKEND", "1");
 #else
   setenv("ORT_QNN_ENABLE_CPU_BACKEND", "1", /*overwrite*/ 1);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  // QNN's Linux HTP runtime resolves its DSP skel through this process-global
+  // path. Provider tests run with their packaged QNN libraries as the working
+  // directory, so establish that known-good path before any test can load an
+  // intentionally invalid backend path.
+  if (std::getenv("ADSP_LIBRARY_PATH") == nullptr) {
+    const auto qnn_lib_dir = std::filesystem::current_path().string();
+    setenv("ADSP_LIBRARY_PATH", qnn_lib_dir.c_str(), /*overwrite*/ 0);
+  }
+#endif
 #endif
 #endif  // USE_QNN
 
