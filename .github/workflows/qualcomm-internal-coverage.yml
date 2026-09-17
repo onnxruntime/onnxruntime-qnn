@@ -41,6 +41,8 @@ jobs:
         with:
           fetch-depth: 0
           # submodules omitted here; initialized below only when coverage is needed.
+      # The post step removes this full-history checkout regardless of job result.
+      - uses: ./.github/actions/cleanup-git-history
 
       - name: Clean previous build directory
         run: rm -rf "${{ github.workspace }}/build/linux-x86_64/RelWithDebInfo"

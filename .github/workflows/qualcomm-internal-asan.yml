@@ -19,6 +19,8 @@ jobs:
         with:
           fetch-depth: 0
           # submodules omitted here; initialized below only when ASan is needed.
+      # The post step removes this full-history checkout regardless of job result.
+      - uses: ./.github/actions/cleanup-git-history
 
       - name: Check if ASan is needed
         id: gate
