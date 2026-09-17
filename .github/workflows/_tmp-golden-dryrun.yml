@@ -4,8 +4,10 @@
 # TEMPORARY — DELETE BEFORE MERGE.
 #
 # Pre-merge sanity check for the golden pipeline. On every push to the PR2
-# branch, run golden-publish in DRY-RUN so nothing touches Artifactory, and
-# upload the packaged goldens.zip + manifest.json as a downloadable artifact.
+# branch, run golden-publish in DRY-RUN so the shared golden store is not
+# updated, upload the packaged goldens.zip as a downloadable GitHub artifact,
+# and temporarily validate an Artifactory upload/download round trip through
+# ci/qnn-golden-validation/<run-id>/goldens.zip.
 #
 # We pass dry_run + filter EXPLICITLY here. A push event has no `inputs`
 # context, so calling golden-publish.yml directly from a push trigger would
@@ -33,3 +35,4 @@ jobs:
       dry_run: true
       filter: Clip
       keep_zip_artifact: true
+      temp_artifactory_validation_upload: true

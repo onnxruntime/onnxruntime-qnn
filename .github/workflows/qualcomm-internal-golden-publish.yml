@@ -30,6 +30,10 @@ on:
         description: "Also upload the packaged goldens.zip as a GitHub Actions artifact (retained 3 days). For manual inspection only, off by default."
         type: boolean
         default: false
+      temp_artifactory_validation_upload:
+        description: "TEMPORARY: upload/download goldens.zip through ci/qnn-golden-validation/<run-id> to validate the Artifactory path without touching the shared golden store."
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs: *common_inputs
 
@@ -66,7 +70,7 @@ jobs:
         run: mkdir -p "${QNN_UT_SNAPSHOT_GOLDEN_DIR}"
 
       - name: Set up JFrog CLI
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run || inputs.temp_artifactory_validation_upload }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -95,7 +99,7 @@ jobs:
             args+=(--skip-regen)
           fi
 
-          if [ "${{ inputs.keep_zip_artifact }}" = "true" ]; then
+          if [ "${{ inputs.keep_zip_artifact }}" = "true" ] || [ "${{ inputs.temp_artifactory_validation_upload }}" = "true" ]; then
             args+=(--keep-zip="${GITHUB_WORKSPACE}/goldens_artifact/goldens.zip")
           fi
 
@@ -115,12 +119,42 @@ jobs:
           path: goldens_artifact/goldens.zip
           retention-days: 3
 
+      - name: TEMP validate Artifactory upload/download
+        if: ${{ inputs.temp_artifactory_validation_upload }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BUILD_ARTIFACTORY_REPO}" ]; then
+            echo "BUILD_ARTIFACTORY_REPO is not set" >&2
+            exit 1
+          fi
+
+          zip_path="${GITHUB_WORKSPACE}/goldens_artifact/goldens.zip"
+          test -s "${zip_path}"
+
+          validation_path="${BUILD_ARTIFACTORY_REPO}/ci/qnn-golden-validation/${GITHUB_RUN_ID}/goldens.zip"
+          download_dir="${GITHUB_WORKSPACE}/goldens_artifactory_validation"
+          rm -rf "${download_dir}"
+          mkdir -p "${download_dir}"
+
+          jf rt upload --flat "${zip_path}" "${validation_path}"
+          jf rt download --flat "${validation_path}" "${download_dir}/"
+
+          test -s "${download_dir}/goldens.zip"
+          unzip -t "${download_dir}/goldens.zip"
+
+          echo "TEMP_ARTIFACTORY_GOLDEN_PATH=${validation_path}" >> "${GITHUB_ENV}"
+          echo "Validated temporary Artifactory round trip: ${validation_path}"
+
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
           echo "### Golden Publish" >> "${GITHUB_STEP_SUMMARY}"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "Mode: **dry-run** (no upload)" >> "${GITHUB_STEP_SUMMARY}"
+            echo "Mode: **dry-run** (shared golden store not updated)" >> "${GITHUB_STEP_SUMMARY}"
           else
             echo "Mode: **publish** (uploaded to Artifactory)" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if [ "${{ inputs.temp_artifactory_validation_upload }}" = "true" ]; then
+            echo "Temporary Artifactory validation path: \`${TEMP_ARTIFACTORY_GOLDEN_PATH:-ci/qnn-golden-validation/${GITHUB_RUN_ID}/goldens.zip}\`" >> "${GITHUB_STEP_SUMMARY}"
           fi
