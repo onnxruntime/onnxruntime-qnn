@@ -67,7 +67,11 @@ static const char* DlError() {
 #ifdef _WIN32
   return "";
 #else
-  return ::dlerror();
+  // dlerror() returns nullptr when no loader error is pending. Error-reporting
+  // paths concatenate this value into std::string, so never pass that nullable
+  // C string through to a string operation.
+  const char* error = ::dlerror();
+  return error != nullptr ? error : "";
 #endif
 }
 

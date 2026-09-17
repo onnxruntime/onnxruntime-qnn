@@ -592,13 +592,9 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithSocModel_Succeeds) {
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
 }
 
-// HTP emulator accepts arbitrary arch values.
-//
-// Also covers the x86 half of GetPlatformInfo(): with no real device to query, its
-// #else branch copies the configured htp_arch into htp_arch_internal_, the holder
-// GetHtpArch() reads. (The __aarch64__ / _M_ARM64 branch queries the hardware
-// instead and is not reachable from x86 tests.)
-TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsConfiguredArch) {
+// The x86 HTP emulator accepts arbitrary arch values, so GetPlatformInfo() copies
+// the configured value. ARM64 instead queries the physical HTP architecture.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsPlatformArch) {
   StubApiEnv env;
   auto manager = MakeHTPManager(env.api_ptrs, env.logger,
                                 qnn::ContextPriority::NORMAL, 0,
@@ -612,7 +608,11 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsConfig
   auto status = SetupBackendHtp(*manager);
   ASSERT_TRUE(status.IsOK()) << "SetupBackend failed: " << status.GetErrorMessage();
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
+#if defined(__aarch64__) || defined(_M_ARM64)
+  EXPECT_NE(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+#else
   EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V73);
+#endif
 }
 
 // ---------------------------------------------------------------------------
