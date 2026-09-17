@@ -2629,6 +2629,113 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_env_auto_register) {
          "QnnEpFactory::GetSupportedDevices advertises host_accessible_memory_info.";
 }
 
+// A shared OrtValue may be created from the env-level allocator even when the
+// session does not opt in to zero-copy. In that case, use clientBuf instead of
+// trying to register a QNN memHandle with an allocator type of NONE.
+TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_to_clientbuf) {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+  constexpr bool use_htp_backend = true;
+#else
+  constexpr bool use_htp_backend = false;
+#endif
+#ifdef _WIN32
+  const char* backend_path = use_htp_backend ? "QnnHtp.dll" : "QnnCpu.dll";
+#else
+  const char* backend_path = use_htp_backend ? "libQnnHtp.so" : "libQnnCpu.so";
+#endif
+
+  ProviderOptions options;
+  options["backend_path"] = backend_path;
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+
+  const OrtMemoryInfo* host_accessible_mem_info = Ort::GetApi().EpDevice_MemoryInfo(
+      registered_ep_device.get(), OrtDeviceMemoryType_HOST_ACCESSIBLE);
+  if (host_accessible_mem_info == nullptr) {
+    GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+  }
+
+  OrtAllocator* env_allocator = nullptr;
+  Ort::ThrowOnError(Ort::GetApi().GetSharedAllocator(*ort_env, host_accessible_mem_info, &env_allocator));
+  ASSERT_NE(env_allocator, nullptr);
+
+  const std::vector<int64_t> shape = {1, 3, 2};
+  const std::vector<float> input_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, [shape, input_values](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input0", TestInputDef<float>(shape, false, input_values));
+    MakeTestInput<float>(builder, "input1", TestInputDef<float>(shape, false, input_values));
+    MakeTestInput<float>(builder, "input2", TestInputDef<float>(shape, false, input_values));
+    const auto input0 = AddQDQNodePair<uint8_t>(builder, "qdq0", "input0", 1.0f, 0);
+    const auto input1 = AddQDQNodePair<uint8_t>(builder, "qdq1", "input1", 1.0f, 0);
+    const auto input2 = AddQDQNodePair<uint8_t>(builder, "qdq2", "input2", 1.0f, 0);
+    builder.AddNode("Add0", "Add", {input0, input1}, {"add0_out"}, kOnnxDomain);
+    const auto add0 = AddQDQNodePair<uint8_t>(builder, "add_qdq", "add0_out", 1.0f, 0);
+    builder.AddNode("Add1", "Add", {add0, input2}, {"add1_out"}, kOnnxDomain);
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "add1_out", 1.0f, 0);
+  });
+
+  constexpr size_t tensor_count = 6;
+  const size_t nbytes = tensor_count * sizeof(float);
+  std::array<void*, 4> buffers{};
+  for (void*& buffer : buffers) {
+    buffer = env_allocator->Alloc(env_allocator, nbytes);
+    ASSERT_NE(buffer, nullptr);
+  }
+  auto free_bufs = gsl::finally([&]() {
+    for (void* buffer : buffers) {
+      env_allocator->Free(env_allocator, buffer);
+    }
+  });
+  for (size_t i = 0; i < 3; ++i) {
+    memcpy(buffers[i], input_values.data(), nbytes);
+  }
+
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Value bound_x0 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(buffers[0]),
+                                                 tensor_count, shape.data(), shape.size());
+  Ort::Value bound_x1 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(buffers[1]),
+                                                 tensor_count, shape.data(), shape.size());
+  Ort::Value bound_x2 = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(buffers[2]),
+                                                 tensor_count, shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(info_shared, reinterpret_cast<float*>(buffers[3]),
+                                                tensor_count, shape.data(), shape.size());
+
+  Ort::Session session{*ort_env, model->model_data.data(), model->model_data.size(), so};
+  Ort::IoBinding binding(session);
+  binding.BindInput("input0", bound_x0);
+  binding.BindInput("input1", bound_x1);
+  binding.BindInput("input2", bound_x2);
+  binding.BindOutput("qdq_out_dq_out", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  const std::array<float, 6> expected = {3.0f, 6.0f, 9.0f, 12.0f, 15.0f, 18.0f};
+  const auto* actual = reinterpret_cast<const float*>(buffers[3]);
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_NEAR(actual[i], expected[i], 1e-4f);
+  }
+
+  auto scoped_dump = gsl::finally([&]() {
+    if (::testing::Test::HasFailure()) {
+      std::lock_guard<std::mutex> g{capture.mtx};
+      for (const auto& message : capture.messages) {
+        std::cerr << message << "\n";
+      }
+    }
+  });
+  EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 4u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
+}
+
 // ---------------------------------------------------------------------------
 // Cross-partition zero-copy: shared memory at CPU EP ↔ QNN EP boundaries.
 //   htp_shared_memory_cross_partition_inference_correct — functional correctness.
