@@ -50,11 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          # No submodules: the gate only needs git history, not the working tree.
+          fetch-depth: 1
+          # No submodules: the gate only needs the checked-out tree and PR base tree.
       # Register a post-job cleanup immediately after checkout. It removes .git even
-      # when a later step fails, preventing this full-history gate from persisting
-      # its object database on a self-hosted runner.
+      # when a later step fails, preventing Git data from persisting on a self-hosted runner.
       - uses: ./.github/actions/cleanup-git-history
       - name: Detect changed paths
         id: gate
@@ -74,8 +73,17 @@ jobs:
             exit 1
           fi
 
-          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
-            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          if [ -z "${base_sha}" ]; then
+            echo "::error::pull_request.base.sha is empty (base_ref=${base_ref})"
+            exit 1
+          fi
+
+          # A full checkout downloads every remote branch. Fetch only the exact
+          # target-branch snapshot needed for this PR.
+          git fetch --no-tags --depth=1 origin "${base_sha}"
+          if ! changed=$(git diff --name-only "${base_sha}" HEAD); then
+            echo "::error::git diff against ${base_ref} (${base_sha}) failed"
             exit 1
           fi
 

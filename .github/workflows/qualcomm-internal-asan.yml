@@ -17,9 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           # submodules omitted here; initialized below only when ASan is needed.
-      # The post step removes this full-history checkout regardless of job result.
+      # The post step removes the checkout's Git data regardless of job result.
       - uses: ./.github/actions/cleanup-git-history
 
       - name: Check if ASan is needed
@@ -38,8 +38,16 @@ jobs:
             exit 1
           fi
 
-          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
-            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          if [ -z "${base_sha}" ]; then
+            echo "::error::pull_request.base.sha is empty (base_ref=${base_ref})"
+            exit 1
+          fi
+
+          # Fetch only the PR target-branch snapshot, not every remote branch and tag.
+          git fetch --no-tags --depth=1 origin "${base_sha}"
+          if ! changed=$(git diff --name-only "${base_sha}" HEAD); then
+            echo "::error::git diff against ${base_ref} (${base_sha}) failed"
             exit 1
           fi
 
