@@ -29,5 +29,5 @@ try {
   console.info(`Removed Git database: ${gitDir}`);
 } catch (error) {
   console.error(`Failed to remove Git database ${gitDir}: ${error.message}`);
-  process.exitCode = 1;
+  process.exit(1);
 }
