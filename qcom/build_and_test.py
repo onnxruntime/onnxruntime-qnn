@@ -306,6 +306,28 @@ class TaskLibrary:
             )
         )
 
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_qnn_internal_ut_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
+        """In-container build for Linux ARM64 QNN internal-symbol tests."""
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=["--qnn-arch-abi=aarch64-oe-linux-gcc11.2"],
+                build_archive=self.__build_archive,
+                internal_ut_symbols=True,
+                accuracy_ut=True,
+            )
+        )
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -345,6 +367,27 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
+                )
+            )
+
+    if is_host_linux() or is_host_mac():
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34_qnn_internal", "create_venv"])
+        def archive_ort_linux_aarch64_manylinux_2_34_qnn_internal(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving Linux ARM64 QNN internal-symbol UT tests",
+                    self.__venv_path,
+                    "linux",
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                    internal_ut_symbols=True,
+                    accuracy_ut=True,
                 )
             )
 
@@ -572,6 +615,22 @@ class TaskLibrary:
                 self.__docker_ccache_root,
                 self.__build_archive,
             ),
+        )
+
+    @public_task("Build QNN internal-symbol UT binary for Linux ARM64")
+    @depends(["docker_build_manylinux_2_34_aarch64"])
+    def build_ort_linux_aarch64_manylinux_2_34_qnn_internal(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building Linux ARM64 QNN internal-symbol UT binary",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_qnn_internal_ut_linux_aarch64_manylinux_2_34",
+            )
         )
 
     if (is_host_linux() and is_host_x86_64()) or is_host_mac():

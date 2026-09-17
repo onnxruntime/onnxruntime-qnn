@@ -274,8 +274,11 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, const EPVerificationParams& verification_params,
                      OrtLoggingLevel log_severity,
-                     bool verify_outputs, Ort::CustomOpDomain* custom_op_domain) {
-  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+                     bool verify_outputs, Ort::CustomOpDomain* custom_op_domain,
+                     bool skip_v68_fp16) {
+  if (skip_v68_fp16) {
+    CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  }
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_json() ||
