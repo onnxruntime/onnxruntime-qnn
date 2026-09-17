@@ -27,7 +27,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if (!defined(__aarch64__) && !defined(_M_ARM64)) || defined(QNN_CROSS_DEVICE_PREPARE_AVAILABLE)
 
 namespace {
 
@@ -37,6 +37,9 @@ void CompileModelWithPerSocOptions(const ProviderOptions& per_soc_options,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";  // Avoid IO QDQ CPU fallback.
   provider_options["num_graph_prepare_threads"] = "1";
+#if defined(QNN_CROSS_DEVICE_PREPARE_AVAILABLE)
+  provider_options["enable_cross_device_prepare"] = "1";
+#endif
 
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   std::filesystem::path output_model_file("model_ctx.onnx");
@@ -220,6 +223,9 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupporte
   ProviderOptions provider_options = {{"backend_type", "htp"},
                                       {"offload_graph_io_quantization", "0"},
                                       {"num_graph_prepare_threads", "1"}};
+#if defined(QNN_CROSS_DEVICE_PREPARE_AVAILABLE)
+  provider_options["enable_cross_device_prepare"] = "1";
+#endif
   provider_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
   provider_options["soc_model"] = "37,60,88";

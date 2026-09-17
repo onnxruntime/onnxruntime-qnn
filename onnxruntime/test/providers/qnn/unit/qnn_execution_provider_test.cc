@@ -667,6 +667,35 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFp16ClampOverflowTrueOnUnsupported
 }
 #endif  // !QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
+// Covers the ctor WARNING that fires when enable_cross_device_prepare=1 but the
+// current build lacks cross-device-prepare support (QNN_CROSS_DEVICE_PREPARE_AVAILABLE
+// requires QNN_ARCH_ARM64, which is never true on this unit-test host). The guard
+// mirrors the source's own #ifndef so the test self-disables if a future arm64 unit-test
+// tier defines the macro (see qnn_def.h for the version/arch gate).
+#ifndef QNN_CROSS_DEVICE_PREPARE_AVAILABLE
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableCrossDevicePrepareOnUnsupportedBuild_LogsWarning) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("enable_cross_device_prepare")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Cross device prepare is not available in current build.");
+}
+#endif  // !QNN_CROSS_DEVICE_PREPARE_AVAILABLE
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableCrossDevicePrepareDefault_NoWarningLogged_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  // enable_cross_device_prepare defaults to false, so the "not available" warning
+  // (which only fires when the option was explicitly requested) must not be logged.
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  for (const auto& rec : ctx.log_records) {
+    EXPECT_EQ(rec.message.find("Cross device prepare"), std::string::npos)
+        << "Unexpected cross-device-prepare log with default (unset) option: " << rec.message;
+  }
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmTrue_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("enable_htp_monolithic_lstm")] = "1";
