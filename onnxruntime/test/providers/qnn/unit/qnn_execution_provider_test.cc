@@ -1137,6 +1137,9 @@ TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_EmptyString_Logs
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_NonEmptyOnX86Host_LogsSkipAndReturnsNotApplicable) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  GTEST_SKIP() << "Compatibility validation is only skipped on x86 hosts.";
+#endif
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   auto factory = MakeFactory(ctx);
@@ -1155,6 +1158,27 @@ TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_NonEmptyOnX86Hos
   EXPECT_EQ(s, nullptr);
   EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation on x86 platforms.");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest,
+       ValidateCompatibilityInfo_MalformedOnArm64_LogsDeserializationFailureAndReturnsNotApplicable) {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  GTEST_SKIP() << "Compatibility-info parsing is only reached on ARM64 hosts.";
+#endif
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  OrtCompiledModelCompatibility compat = OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL;
+  OrtStatus* s;
+  {
+    UseGlobalEpStubs use(ctx);
+    s = ep->ValidateCompiledModelCompatibilityInfo(nullptr, 0, "not:valid:compatibility:info", &compat);
+  }
+  EXPECT_EQ(s, nullptr);
+  EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation due to deserialization failure:");
 }
 
 // ===========================================================================
