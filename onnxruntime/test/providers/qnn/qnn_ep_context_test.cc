@@ -2326,6 +2326,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 }
 
 TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
