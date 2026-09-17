@@ -122,7 +122,7 @@ Ort::Status QLinearConvOpBuilder::ReadScalarScale(const QnnModelWrapper& qnn_mod
                                                   const OrtNodeUnitIODef& scale_input,
                                                   float& out_scale) {
   RETURN_IF(!scale_input.Exists(), "QLinearConv: scale input does not exist.");
-  RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(scale_input.name),
+  RETURN_IF(!qnn_model_wrapper.IsConstantInput(scale_input.name),
             "QLinearConv: scale must be a compile-time constant (initializer).");
   const OrtValueInfo* scale_tensor = qnn_model_wrapper.GetConstantTensor(scale_input.name);
   RETURN_IF(scale_tensor == nullptr, "QLinearConv: could not retrieve scale initializer.");
@@ -143,7 +143,7 @@ Ort::Status QLinearConvOpBuilder::BuildPerTensorQuantParam(const QnnModelWrapper
 
   int32_t offset = 0;
   if (zp_input.Exists() && !zp_input.name.empty()) {
-    RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(zp_input.name),
+    RETURN_IF(!qnn_model_wrapper.IsConstantInput(zp_input.name),
               "QLinearConv: zero_point must be a compile-time constant (initializer).");
     const OrtValueInfo* zp_tensor = qnn_model_wrapper.GetConstantTensor(zp_input.name);
     RETURN_IF(zp_tensor == nullptr, "QLinearConv: could not retrieve zero_point initializer.");
@@ -165,7 +165,7 @@ Ort::Status QLinearConvOpBuilder::BuildWeightQuantParam(const QnnModelWrapper& q
                                                         uint32_t num_output_channels,
                                                         QnnQuantParamsWrapper& out_quant_param) {
   RETURN_IF(!scale_input.Exists(), "QLinearConv: w_scale input does not exist.");
-  RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(scale_input.name),
+  RETURN_IF(!qnn_model_wrapper.IsConstantInput(scale_input.name),
             "QLinearConv: w_scale must be a compile-time constant (initializer).");
   const OrtValueInfo* scale_tensor = qnn_model_wrapper.GetConstantTensor(scale_input.name);
   RETURN_IF(scale_tensor == nullptr, "QLinearConv: could not retrieve w_scale initializer.");
@@ -176,7 +176,7 @@ Ort::Status QLinearConvOpBuilder::BuildWeightQuantParam(const QnnModelWrapper& q
   // Read zero-points (already negated by UnpackZeroPoints). Default to all-zero if absent.
   std::vector<int32_t> offsets;
   if (zp_input.Exists() && !zp_input.name.empty()) {
-    RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(zp_input.name),
+    RETURN_IF(!qnn_model_wrapper.IsConstantInput(zp_input.name),
               "QLinearConv: w_zero_point must be a compile-time constant (initializer).");
     const OrtValueInfo* zp_tensor = qnn_model_wrapper.GetConstantTensor(zp_input.name);
     RETURN_IF(zp_tensor == nullptr, "QLinearConv: could not retrieve w_zero_point initializer.");
@@ -264,7 +264,7 @@ Ort::Status QLinearConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
   for (size_t idx : const_indices) {
     RETURN_IF(idx >= inputs.size() || !inputs[idx].Exists(),
               "QLinearConv: required scale/zero_point input is missing.");
-    RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(inputs[idx].name),
+    RETURN_IF(!qnn_model_wrapper.IsConstantInput(inputs[idx].name),
               "QLinearConv: scale/zero_point inputs must be compile-time constants.");
   }
 
@@ -286,7 +286,7 @@ Ort::Status QLinearConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
     const int64_t w_scale_elems = std::accumulate(w_scale_shape.begin(), w_scale_shape.end(),
                                                   static_cast<int64_t>(1), std::multiplies<int64_t>());
     if (w_scale_elems > 1) {
-      RETURN_IF(!qnn_model_wrapper.IsEffectivelyConstantInput(inputs[kIdxW].name),
+      RETURN_IF(!qnn_model_wrapper.IsConstantInput(inputs[kIdxW].name),
                 "QLinearConv: per-channel weight quantization requires a constant weight initializer.");
       RETURN_IF(w_scale_elems != static_cast<int64_t>(weight_shape[0]),
                 "QLinearConv: per-channel w_scale size must equal the number of output channels (M).");
@@ -376,7 +376,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
       // MakeTensorWrapper does not attach our explicit quant params; rebuild with quant_x.
       Qnn_TensorType_t src_type = qnn_model_wrapper.GetTensorType(x_name);
       std::vector<uint8_t> src_bytes;
-      if (qnn_model_wrapper.IsEffectivelyConstantInput(x_name)) {
+      if (qnn_model_wrapper.IsConstantInput(x_name)) {
         RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
             qnn_model_wrapper.GetConstantTensor(x_name), src_bytes));
       }
@@ -392,7 +392,7 @@ Ort::Status QLinearConvOpBuilder::CreateOrValidate(QnnModelWrapper& qnn_model_wr
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(x_name)) {
       Qnn_TensorType_t src_type = qnn_model_wrapper.GetTensorType(x_name);
       std::vector<uint8_t> src_bytes;
-      if (qnn_model_wrapper.IsEffectivelyConstantInput(x_name)) {
+      if (qnn_model_wrapper.IsConstantInput(x_name)) {
         RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
             qnn_model_wrapper.GetConstantTensor(x_name), src_bytes));
       }

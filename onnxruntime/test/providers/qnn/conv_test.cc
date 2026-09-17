@@ -3,15 +3,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
-#include <filesystem>
 #include <optional>
 #include <string>
 
-#include <gsl/gsl_util>
-#include "gtest/gtest.h"
-
-#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
+
+#include "gtest/gtest.h"
 
 namespace onnxruntime {
 namespace test {
@@ -949,123 +946,6 @@ TEST_F(QnnCPUBackendTests, ConvTranspose1Df32_DynamicWeights_DefaultBias) {
                 ExpectedEPNodeAssignment::All);
 }
 
-// Builds: weight_q0 (int8 init) -> DQ -> Q -> DQ -> Conv.
-// Used to regression-test chained folding; differing scale0/scale1 exercises real requant
-// on the intermediate STATIC tensor rather than a byte round-trip.
-static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
-    const std::vector<float>& scale0,
-    const std::vector<int8_t>& zp0,
-    const std::vector<float>& scale1,
-    const std::vector<int8_t>& zp1) {
-  return [scale0, zp0, scale1, zp1](ModelTestBuilder& builder) {
-    constexpr int64_t out_ch = 2;
-    constexpr int64_t in_ch = 3;
-    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
-    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
-
-    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
-
-    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
-    builder.MakeInitializer<float>("scale0", {out_ch}, scale0);
-    builder.MakeInitializer<int8_t>("zp0", {out_ch}, zp0);
-    builder.MakeInitializer<float>("scale1", {out_ch}, scale1);
-    builder.MakeInitializer<int8_t>("zp1", {out_ch}, zp1);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
-    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-
-    builder.AddNode("WeightDQ0", "DequantizeLinear", {"weight_q0", "scale0", "zp0"}, {"weight_dq0"},
-                    kOnnxDomain, axis_attrs);
-    builder.AddNode("WeightQ1", "QuantizeLinear", {"weight_dq0", "scale1", "zp1"}, {"weight_q1"},
-                    kOnnxDomain, axis_attrs);
-    builder.AddNode("WeightDQ1", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq1"},
-                    kOnnxDomain, axis_attrs);
-
-    builder.MakeOutput("output");
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
-
-    builder.AddNode("Conv", "Conv", {"input", "weight_dq1"}, {"output"}, kOnnxDomain, conv_attrs);
-  };
-}
-
-TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
-                  provider_options,
-                  /*opset*/ 13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
-}
-
-TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
-                  provider_options,
-                  /*opset*/ 13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
-}
-
-// Builds: weight_q (int4 init) -> per-channel DQ -> Conv. QNN cannot represent a standalone
-// per-channel DQ, so it is folded to an fp32 static by decoding the initializer's bytes as int8.
-// Weights span the negative INT4 range, which a sign-handling regression would decode as q + 16.
-static GetTestModelFn BuildPerChannelInt4DQConstWeightConvTestCase(const std::vector<float>& scales) {
-  return [scales](ModelTestBuilder& builder) {
-    constexpr int64_t out_ch = 2;
-    constexpr int64_t in_ch = 3;
-    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
-    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
-    const std::vector<int8_t> weight_values{-8, -7, -1, 1, 5, 7};
-
-    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
-
-    std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(weight_values.size()));
-    for (size_t i = 0; i < weight_values.size(); ++i) {
-      weight_data[i >> 1].SetElem(i & 1, weight_values[i]);
-    }
-    builder.MakeInitializer<Int4x2>("weight_q", weight_shape, weight_data);
-    builder.MakeInitializer<float>("weight_scale", {out_ch}, scales);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
-    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-    builder.AddNode("WeightDQ", "DequantizeLinear", {"weight_q", "weight_scale"}, {"weight_dq"},
-                    kOnnxDomain, axis_attrs);
-
-    builder.MakeOutput("output");
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
-    builder.AddNode("Conv", "Conv", {"input", "weight_dq"}, {"output"}, kOnnxDomain, conv_attrs);
-  };
-}
-
-TEST_F(QnnCPUBackendTests, Convf32_PerChannelInt4DQConstWeight_SignRegression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelInt4DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f}),
-                  provider_options,
-                  /*opset*/ 21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
-}
-
 // Tests for reuse_sparse_indices parameter (always false, verifies the parameter is accepted by QNN without errors).
 // Conv2d: reuse_sparse_indices should be added to the QNN node parameters.
 TEST_F(QnnCPUBackendTests, Conv2D_ReuseSparseIndices) {
@@ -1216,32 +1096,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
-                  provider_options,
-                  /*opset*/ 13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
-}
-
-TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
-                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
-                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
-                  provider_options,
-                  /*opset*/ 13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
-}
-
 // Smoke test for the enable_htp_fp16_clamp_overflow HTP option.
 // The option is compiled unconditionally: on QAIRT < 2.49 the EP logs a warning
 // and ignores it (see qnn_execution_provider.cc), so this degrades to a plain
@@ -1269,17 +1123,6 @@ TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
                   provider_options,
                   /*opset*/ 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
-}
-
-TEST_F(QnnHTPBackendTests, Convf32_PerChannelInt4DQConstWeight_SignRegression) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildPerChannelInt4DQConstWeightConvTestCase(/*scales*/ {0.1f, 0.2f}),
-                  provider_options,
-                  /*opset*/ 21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
@@ -3433,45 +3276,6 @@ ProviderOptions GetLPBQConvProviderOptions() {
   return opts;
 }
 
-// Runs a BQ Conv model on the QNN HTP backend and verifies which BQ encoding path QNN EP selected by inspecting the
-// dumped QNN graph JSON.
-//   - Native BQ  (QNN_QUANTIZATION_ENCODING_BLOCK): no INT16→FP16 activation Dequantize and no
-//     FP16→INT16 output Quantize are inserted → Quantize=1, Dequantize=1.
-//   - Fallback   (QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK): activation Dequantize and output
-//     Quantize are inserted → Quantize=2, Dequantize=2.
-void RunNativeBQConvTest(GetQDQTestCaseFn build_fn,
-                         bool expect_native_bq,
-                         float fp32_abs_err = 1e-2f) {
-  ProviderOptions provider_options = GetBQConvProviderOptions();
-
-  // Dump JSON graph for verifying native BQ working as expected.
-  const std::filesystem::path json_qnn_graph_dir = "ConvNativeBQ";
-  std::filesystem::remove_all(json_qnn_graph_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
-  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-
-  RunQnnModelTest(build_fn,
-                  provider_options,
-                  /*opset=*/21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(fp32_abs_err)});
-
-#ifndef QNN_HTP_NATIVE_BQ_AVAILABLE
-  // HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
-  // Disable here to avoid guarding everywhere.
-  expect_native_bq = false;
-#endif
-
-  if (expect_native_bq) {
-    AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", 1);
-    AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 1);
-  } else {
-    AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", 2);
-    AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 2);
-  }
-}
-
 }  // namespace
 
 // 1x1 Conv, INT4 weight, block_size=8, uint16 activation, no bias.
@@ -3793,123 +3597,6 @@ TEST_F(QnnHTPBackendTests, ConvLPBQ_U16Int4_1x1_WithFloatBias_BS32) {
                   GetLPBQConvProviderOptions(),
                   /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
-}
-
-// ── HTP native BQ path ────────────────────────────────────────────────────────
-// HTP native BQ kernel adopts QNN_QUANTIZATION_ENCODING_BLOCK encoding type.
-// Compared to non-native BQ kernel adopting QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK, no INT16→FP16 activation dequant
-// and no FP16→INT16 output quantize are inserted.
-
-// Native path: INT4, block_size=32, IC=32, OC=32.
-TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_BlockSize32) {
-  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto htp_arch = GetPlatformAttributes().htp_arch;
-
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{32, 32, 1, 1},
-                                          /*block_size=*/32,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
-}
-
-// Native path: INT4, block_size=64, IC=64, OC=32.
-TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_BlockSize64) {
-  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto htp_arch = GetPlatformAttributes().htp_arch;
-
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
-                                          /*weight=*/{32, 64, 1, 1},
-                                          /*block_size=*/64,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
-}
-
-// Native path: INT4, block_size=128, IC=128, OC=32.
-TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_BlockSize128) {
-  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto htp_arch = GetPlatformAttributes().htp_arch;
-
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 128, 4, 4},
-                                          /*weight=*/{32, 128, 1, 1},
-                                          /*block_size=*/128,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
-}
-
-// Native path: INT4, block_size=32, IC=64, OC=64.
-TEST_F(QnnHTPBackendTests, ConvBQ_Native_U16Int4_MultiBlock) {
-  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto htp_arch = GetPlatformAttributes().htp_arch;
-
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 64, 4, 4},
-                                          /*weight=*/{64, 64, 1, 1},
-                                          /*block_size=*/32,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
-}
-
-// Fallback edge: Unsupported bitwidth 8.
-TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_Int8BlockSize32) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{32, 32, 1, 1},
-                                          /*block_size=*/32,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/8),
-                      /*expect_native_bq=*/false);
-}
-
-// Fallback edge: Unsupported block size 16.
-TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_BlockSize16) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{32, 32, 1, 1},
-                                          /*block_size=*/16,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/false);
-}
-
-// Fallback edge: Unsupported asymmetric offsets.
-TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_UInt4Asymmetric) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{32, 32, 1, 1},
-                                          /*block_size=*/32,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4,
-                                          /*weight_is_unsigned=*/true),
-                      /*expect_native_bq=*/false);
-}
-
-// Fallback edge: Unsupported non-32 multiplier OC.
-TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_OcNotMultipleOf32) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{16, 32, 1, 1},
-                                          /*block_size=*/32,
-                                          /*bias=*/false,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/false);
-}
-
-// Fallback edge: Unsupported Conv with bias.
-TEST_F(QnnHTPBackendTests, ConvBQ_NativeFallback_ConvWithBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunNativeBQConvTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                          /*weight=*/{32, 32, 1, 1},
-                                          /*block_size=*/32,
-                                          /*bias=*/true,
-                                          /*weight_bits=*/4),
-                      /*expect_native_bq=*/false);
 }
 
 // Tests for reuse_sparse_indices parameter (always false, verifies the parameter is accepted by QNN without errors).
