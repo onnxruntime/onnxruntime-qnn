@@ -32,7 +32,6 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
-#include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_external_resource_importer.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -1203,27 +1202,34 @@ static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
                                        QnnContext_createFromBinaryAsyncNotifyType_t /* notify_type */,
                                        void* notify_param,
                                        Qnn_ErrorHandle_t /* status */) {
-  auto qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
+  auto* callback_info = static_cast<ContextCreateAsyncCallbackInfo*>(notify_param);
+  if (!callback_info || !callback_info->active.load(std::memory_order_acquire)) {
+    // A failed file-mapped attempt can still deliver a late callback after the direct-read
+    // retry has started. Its context must not be published into the retry's handle map.
+    return;
+  }
 
-  if (context) {
-    qnn_backend_manager->ProcessContextFromBinListAsync(context, notify_param);
+  if (context && callback_info->backend_manager) {
+    // Do not look this up through SharedContext. A terminator session may intentionally clear
+    // that singleton while an existing QnnBackendManager still owns the QNN callback request.
+    callback_info->backend_manager->ProcessContextFromBinListAsync(context, *callback_info);
   }
 }
 
-void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t context, void* notifyParam) {
+void QnnBackendManager::ProcessContextFromBinListAsync(
+    Qnn_ContextHandle_t context,
+    const ContextCreateAsyncCallbackInfo& callback_info) {
   std::ostringstream context_ss;
   context_ss << context;
 
   std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
-  if (!notifyParam) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_WARNING,
-                    ("No known node names associated with context handle: " + context_ss.str()).c_str());
+  // Recheck while holding the same mutex used to clear failed-attempt mappings. This closes
+  // the race where a callback observes active=true just before the retry deactivates it.
+  if (!callback_info.active.load(std::memory_order_acquire)) {
     return;
   }
 
-  std::vector<std::string>* ep_node_names = reinterpret_cast<std::vector<std::string>*>(notifyParam);
-  for (const auto& node_name : *ep_node_names) {
+  for (const auto& node_name : callback_info.ep_node_names) {
     if (!(ep_context_handle_map_.emplace(node_name, context).second)) {
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_VERBOSE,
@@ -1339,7 +1345,8 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
 
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
 
-    Qnn_ContextBinaryCallback_t callbacks;
+    context_callbacks_list_.emplace_back();
+    Qnn_ContextBinaryCallback_t& callbacks = context_callbacks_list_.back();
     callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
     callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
     callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
@@ -1362,6 +1369,11 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                       ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
                        "). Retrying with direct read.")
                           .c_str());
+      // The failed request may still issue data-provider callbacks. Disable any further DMA
+      // mappings before retrying so callbacks from the rejected request cannot register new
+      // buffers while the direct-read context is being created or torn down. Keep file_mapper_
+      // and its callback records alive so already-registered buffers can still be released.
+      file_mapped_weights_enabled_.store(false, std::memory_order_release);
     }
   }
 #endif
@@ -1504,9 +1516,24 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   if (file_mapped_weights_enabled_ && file_mapper_) {
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
+    const size_t callback_info_start = context_create_async_callback_infos_.size();
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
+      // This state transition was part of the original file-mapping retry implementation but
+      // was lost when context creation was refactored. Without it, late DMA callbacks from the
+      // rejected request can continue registering mappings concurrently with the direct-read
+      // retry and session teardown.
+      file_mapped_weights_enabled_.store(false, std::memory_order_release);
+      // QNN can still dispatch callbacks belonging to the rejected file-mapped request. Mark
+      // them inactive before clearing partial mappings, so they cannot race the direct-read retry.
+      for (size_t i = callback_info_start; i < context_create_async_callback_infos_.size(); ++i) {
+        context_create_async_callback_infos_[i]->active.store(false, std::memory_order_release);
+      }
+      // Clear any partial ep_context_handle_map_ entries written by callbacks that fired
+      // during the failed attempt; the retry will repopulate them with valid handles.
+      std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+      ep_context_handle_map_.clear();
     } else {
       return Ort::Status();
     }
@@ -1536,12 +1563,13 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     size_t buffer_size = buffer.size();
     buffer_list.push_back(std::move(buffer));
 
+    auto callback_info = std::make_unique<ContextCreateAsyncCallbackInfo>(this, *it.second);
     QnnContext_ParamsV1_t context_params_v1 = {nullptr,
                                                buffer_list.back().data(),
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
-                                               it.second.get()};
+                                               callback_info.get()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_1,
                                           {context_params_v1}};
@@ -1549,6 +1577,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     context_params_list.push_back(std::move(context_params));
     context_paramsv1_list.push_back(std::move(context_params_v1));
     context_params_ptr_list.push_back(&context_params_list.back());
+    context_create_async_callback_infos_.push_back(std::move(callback_info));
   }
   context_params_ptr_list.push_back(nullptr);
   auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
@@ -1567,12 +1596,10 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                                                          std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
-  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
 
   context_params_list.reserve(context_bin_map.size());
   context_paramsv2_list.reserve(context_bin_map.size());
-  context_callbacks_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
 
   for (auto& it : context_bin_map) {
@@ -1605,6 +1632,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     }
 
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
+    auto callback_info = std::make_unique<ContextCreateAsyncCallbackInfo>(this, *it.second);
 
     Qnn_ContextBinaryCallback_t context_file_map_callbacks;
     context_file_map_callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
@@ -1614,7 +1642,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
     file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-    context_callbacks_list.push_back(std::move(context_file_map_callbacks));
+    context_callbacks_list_.push_back(std::move(context_file_map_callbacks));
 
     // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
     QnnContext_ParamsV2_t context_params_v2 = {nullptr,
@@ -1622,8 +1650,8 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
-                                               it.second.get(),
-                                               &context_callbacks_list.back()};
+                                               callback_info.get(),
+                                               &context_callbacks_list_.back()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_2,
                                           {}};
@@ -1633,6 +1661,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_params.v2 = &context_paramsv2_list.back();
     context_params_list.push_back(std::move(context_params));
     context_params_ptr_list.push_back(&(context_params_list.back()));
+    context_create_async_callback_infos_.push_back(std::move(callback_info));
   }
   context_params_ptr_list.push_back(nullptr);
   auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
@@ -1804,6 +1833,24 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
 }
 
 Ort::Status QnnBackendManager::ReleaseContext() {
+  // Stop every asynchronous context-creation callback before inspecting
+  // context_created_. A failed asynchronous request may leave that flag false
+  // while QNN still has a callback in flight. In particular, this occurs when
+  // file mapping is unavailable and context creation falls back to the direct
+  // binary path.
+  //
+  // Use the same mutex acquired by ProcessContextFromBinListAsync. Once this
+  // critical section completes, a callback either finished publishing its
+  // context or will observe active=false and return without touching manager
+  // context state.
+  {
+    std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+    for (const auto& callback_info : context_create_async_callback_infos_) {
+      callback_info->active.store(false, std::memory_order_release);
+    }
+    ep_context_handle_map_.clear();
+  }
+
   if (false == context_created_) {
     return Ort::Status();
   }
@@ -1811,7 +1858,6 @@ Ort::Status QnnBackendManager::ReleaseContext() {
   // release QNN context handles
   contexts_.clear();
   context_map_.clear();
-  ep_context_handle_map_.clear();
 
   context_created_ = false;
   return Ort::Status();
@@ -1997,8 +2043,10 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   if (htp_share_resource_optimization_ == 1) {
-    if (ep_context_handle_map_.find(node_name) != ep_context_handle_map_.end()) {
-      context = ep_context_handle_map_.at(node_name);
+    std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+    const auto mapping_it = ep_context_handle_map_.find(node_name);
+    if (mapping_it != ep_context_handle_map_.end()) {
+      context = mapping_it->second;
     }
     RETURN_IF(nullptr == context, ("Failed to retrieve context for " + node_name).c_str());
 
@@ -2099,8 +2147,13 @@ Ort::Status QnnBackendManager::SetupBackend(
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
-      auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
-      if (first_mapping_it == ep_context_handle_map_.end()) {
+      bool first_context_is_mapped = false;
+      {
+        std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+        first_context_is_mapped =
+            ep_context_handle_map_.find(context_bin_map.begin()->first) != ep_context_handle_map_.end();
+      }
+      if (!first_context_is_mapped) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                            io_dispatch);
@@ -2108,6 +2161,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
 
+      std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
       for (auto& it : context_bin_map) {
         auto context_bin_filepath = it.first;
         auto ep_node_names = *(it.second);

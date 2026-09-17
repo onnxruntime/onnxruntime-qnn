@@ -12,6 +12,8 @@
 #include <dlfcn.h>
 #endif
 
+#include <atomic>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -57,6 +59,21 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 // Forward declaration.
 class QnnModel;
 class QnnBackendSystemDlcPlugin;
+class QnnBackendManager;
+
+// QNN retains this notifyParam for contextCreateFromBinaryListAsync callbacks. Keep the
+// node names independent of the caller's context-bin map, which is released immediately after
+// backend setup. `active` is cleared when a file-mapped creation attempt fails and its direct-read
+// retry takes over, so a late callback from the failed request cannot restore stale mappings.
+struct ContextCreateAsyncCallbackInfo {
+  QnnBackendManager* const backend_manager;
+  const std::vector<std::string> ep_node_names;
+  std::atomic<bool> active{true};
+
+  ContextCreateAsyncCallbackInfo(QnnBackendManager* manager,
+                                 const std::vector<std::string>& node_names)
+      : backend_manager(manager), ep_node_names(node_names) {}
+};
 
 class QnnSerializerConfig {
  public:
@@ -413,12 +430,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   QnnSerializerConfig* GetQnnSerializerConfig();
 
-  // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
-  // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
-  // Takes in the context and the notifyParam objects received by the callback function
-  // notifyParam is expected to be a pointer to a vector of node names associated with that context handle
-  // For each node name, a mapping to the context handle will be created
-  void ProcessContextFromBinListAsync(Qnn_ContextHandle_t handle, void* notifyParam);
+  // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync().
+  // The callback info is manager-owned, so its node names stay valid after the caller's
+  // context-bin map has been released.
+  void ProcessContextFromBinListAsync(Qnn_ContextHandle_t handle,
+                                      const ContextCreateAsyncCallbackInfo& callback_info);
 
   // Sets the context priority to the given value, if valid
   Ort::Status SetContextPriority(ContextPriority context_priority);
@@ -431,7 +447,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   bool IsBackendSetup() { return backend_setup_completed_; }
   bool FileMappingIsEnabled() {
-    return file_mapped_weights_enabled_;
+    return file_mapped_weights_enabled_.load(std::memory_order_acquire);
   }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -784,6 +800,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::mutex ep_context_handle_map_mutex_;
   std::unordered_map<std::string, Qnn_ContextHandle_t> ep_context_handle_map_;
 
+  // Context-creation callbacks may arrive after contextCreateFromBinaryListAsync returns.
+  // Retain their notifyParams for the manager lifetime. QNN context teardown must complete
+  // before the manager (and therefore these callback records) is destroyed.
+  std::vector<std::unique_ptr<ContextCreateAsyncCallbackInfo>> context_create_async_callback_infos_;
+
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
 
@@ -824,13 +845,18 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;
   Qnn_Version_t backend_api_version_ = QNN_VERSION_INIT;
-  bool file_mapped_weights_enabled_ = false;
+  // DMA data-provider callbacks may inspect this flag concurrently with a failed file-mapping
+  // request disabling the feature before its direct-read retry.
+  std::atomic<bool> file_mapped_weights_enabled_{false};
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;
-  // Notify params for file mapping must persist throughout lifetime of
-  // QnnBackendManager for release of DMA data callback on destruction
+  // Notify params and DMA callbacks for file mapping must persist throughout the lifetime of
+  // QnnBackendManager: QNN may fire MapDmaDataCallback / ReleaseDmaDataCallback after
+  // CreateContextFromListAsyncWithCallback returns, and notify_param / callback pointers must
+  // remain valid at that point.
   std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
+  std::deque<Qnn_ContextBinaryCallback_t> context_callbacks_list_;
 #endif
 
   // NPU backend requires quantized model

@@ -238,6 +238,7 @@ class StubBackendManager {
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(StubBackendManager);
 
+  qnn::QnnBackendManager* Get() { return manager_.get(); }
   const qnn::QnnBackendManager* Get() const { return manager_.get(); }
 
   // Defined in qnn_unit_test_utils.cc — see the comment block above.
@@ -247,6 +248,8 @@ class StubBackendManager {
   Qnn_BackendHandle_t& ValidatorBackendHandle();
   qnn::QnnBackendType& BackendType();
   QnnHtpDevice_Arch_t& HtpArch();
+  std::vector<std::unique_ptr<qnn::ContextCreateAsyncCallbackInfo>>& ContextCreateAsyncCallbackInfos();
+  std::unordered_map<std::string, Qnn_ContextHandle_t>& EpContextHandleMap();
 
  private:
   std::shared_ptr<qnn::QnnBackendManager> manager_;

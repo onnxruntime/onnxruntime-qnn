@@ -167,6 +167,43 @@ TEST(QnnUnit_BackendManagerTest, GetContextBinaryBuffer_BeforeSetup_ReturnsError
   EXPECT_EQ(context_buffer, nullptr);
 }
 
+TEST(QnnUnit_BackendManagerTest, ContextCreateAsyncCallbackInfo_OwnsNodeNames) {
+  std::vector<std::string> node_names{"node_0", "node_1"};
+  qnn::ContextCreateAsyncCallbackInfo callback_info(nullptr, node_names);
+
+  node_names.clear();
+
+  ASSERT_EQ(callback_info.ep_node_names.size(), 2u);
+  EXPECT_EQ(callback_info.ep_node_names[0], "node_0");
+  EXPECT_EQ(callback_info.ep_node_names[1], "node_1");
+}
+
+TEST(QnnUnit_BackendManagerTest, ProcessContextFromBinListAsync_InactiveCallbackIsIgnored) {
+  StubApiEnv env;
+  StubBackendManager manager(env.api_ptrs, env.logger);
+  qnn::ContextCreateAsyncCallbackInfo callback_info(manager.Get(), {"node_0"});
+  callback_info.active.store(false, std::memory_order_release);
+
+  manager.Get()->ProcessContextFromBinListAsync(reinterpret_cast<Qnn_ContextHandle_t>(1), callback_info);
+
+  EXPECT_TRUE(manager.EpContextHandleMap().empty());
+}
+
+TEST(QnnUnit_BackendManagerTest, ReleaseContext_DeactivatesCallbacksWithoutCreatedContext) {
+  StubApiEnv env;
+  StubBackendManager manager(env.api_ptrs, env.logger);
+  auto callback_info = std::make_unique<qnn::ContextCreateAsyncCallbackInfo>(manager.Get(),
+                                                                             std::vector<std::string>{"node_0"});
+  auto* callback_info_ptr = callback_info.get();
+  manager.ContextCreateAsyncCallbackInfos().push_back(std::move(callback_info));
+  manager.EpContextHandleMap().emplace("node_0", reinterpret_cast<Qnn_ContextHandle_t>(1));
+
+  ASSERT_TRUE(manager.Get()->ReleaseContext().IsOK());
+
+  EXPECT_FALSE(callback_info_ptr->active.load(std::memory_order_acquire));
+  EXPECT_TRUE(manager.EpContextHandleMap().empty());
+}
+
 // ---------------------------------------------------------------------------
 // Group 5: ParseLoraConfig — file I/O error paths (no QNN API needed)
 // ---------------------------------------------------------------------------
