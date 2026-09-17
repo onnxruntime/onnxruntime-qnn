@@ -124,8 +124,7 @@ jobs:
       upload_test_archive: true
       upload_wheel: false
       run_tests: false
-      source_repository: ${{ inputs.source_repository }}
-      source_ref: ${{ inputs.source_ref }}
+      source: ${{ inputs.source_repository != '' && format('{0}@{1}', inputs.source_repository, inputs.source_ref) || '' }}
 
   test-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all || inputs.do_device_tests }}
