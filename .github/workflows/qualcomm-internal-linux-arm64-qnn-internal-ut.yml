@@ -1,0 +1,81 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Linux ARM64 QNN Internal-UT
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev/tzuhwei/linux-arm64-qnn-ut-internal-symbols
+
+jobs:
+  build:
+    name: Build Linux ARM64 QNN internal-symbol tests
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build and archive
+        run: |
+          python3 qcom/build_and_test.py \
+            archive_ort_linux_aarch64_manylinux_2_34_qnn_internal \
+            archive_testdata
+      - name: Upload Linux ARM64 test archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-internal-ut-linux-arm64-inputs
+          path: |
+            build/onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2
+            build/onnxruntime-testdata.tar.bz2
+          if-no-files-found: error
+
+  test:
+    name: Test Linux ARM64 QNN internal-symbol tests
+    needs: build
+    runs-on: ["self-hosted", "ARM64", "Linux", "Test"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Download Linux ARM64 test archives
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-ut-linux-arm64-inputs
+          path: build
+      - name: Extract test archives
+        run: |
+          python3 qcom/build_and_test.py \
+            create_venv \
+            extract_ort_linux_aarch64_manylinux_2_34 \
+            --only
+      - name: List and run QNN unit and integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(find "$GITHUB_WORKSPACE/build/linux-aarch64_manylinux_2_34/Release" \
+            -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "$test_bin" || { echo "onnxruntime_provider_test not found"; exit 1; }
+
+          export ORT_QNN_ENABLE_CPU_BACKEND=1
+          export LD_LIBRARY_PATH="$(dirname "$test_bin")${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          filter='QnnUnit_*:QnnInteg_*'
+          listed="$($test_bin --gtest_list_tests --gtest_filter="$filter")"
+          test -n "$listed" || { echo "No QNN unit or integration tests listed"; exit 1; }
+          printf '%s\n' "$listed"
+          "$test_bin" --gtest_filter="$filter" --gtest_brief=1
+      - name: Run legacy QNN catch-all path
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(find "$GITHUB_WORKSPACE/build/linux-aarch64_manylinux_2_34/Release" \
+            -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "$test_bin" || { echo "onnxruntime_provider_test not found"; exit 1; }
+
+          export ORT_QNN_ENABLE_CPU_BACKEND=1
+          export LD_LIBRARY_PATH="$(dirname "$test_bin")${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          "$test_bin" --gtest_filter='*Qnn*' --gtest_brief=1

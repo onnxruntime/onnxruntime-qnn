@@ -398,9 +398,14 @@ block()
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
     # (i.e., the cmake conditions above hold), not whether any production source is
-    # under #if. When the macro is off, the test bodies under unit/ compile to empty
-    # translation units, so non-coverage builds do not see undefined references.
+    # under #if. When the macro is off, the tier test bodies (component/, snapshot/,
+    # session_snapshot/, accuracy/) compile to empty translation units, so
+    # production builds do not see undefined references.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
+    if(onnxruntime_QNN_ENABLE_ACCURACY_UT OR
+       (ENABLE_COVERAGE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+      target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
+    endif()
   endif()
 
   if(WIN32)
