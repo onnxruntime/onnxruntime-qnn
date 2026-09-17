@@ -15,10 +15,9 @@
 //
 // Models are built inline via the Ort C++ model editor wrappers (Ort::Model,
 // Ort::Graph, Ort::Node, Ort::ValueInfo) — no dependency on op-builder test
-// infrastructure.  Sessions use the QNN HTP backend (Linux x86-64 simulator);
-// tests skip when unavailable.
+// infrastructure. Sessions use the QNN HTP backend and skip when unavailable.
 
-#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 
 #include <cstdint>
 #include <cstring>
@@ -46,15 +45,26 @@ class QnnInteg_OrtApiTest : public ::testing::Test {
       GTEST_SKIP() << "OrtModelEditorApi not available (minimal build)";
 
     ep_ = std::make_unique<RegisteredQnnEp>("QNNExecutionProvider");
-    ASSERT_TRUE(ep_->valid) << "libonnxruntime_providers_qnn.so not available — CI configuration error";
+    ASSERT_TRUE(ep_->valid) << "QNN EP plugin library not available — CI configuration error";
 
     ASSERT_TRUE(MakeQnnHtpSessionOptions(*ep_, session_opts_))
-        << "QNN HTP EP device not found (libQnnHtp.so not available) — CI configuration error";
+        << "QNN HTP EP device not found (HTP backend unavailable) — CI configuration error";
   }
 
   std::unique_ptr<RegisteredQnnEp> ep_;
   Ort::SessionOptions session_opts_;
 };
+
+static void AddU8QdqParams(Ort::Graph& graph, const std::string& prefix, float scale) {
+  int64_t scalar_shape[] = {};
+  auto scale_value = Ort::Value::CreateTensor<float>(Ort::AllocatorWithDefaultOptions(), scalar_shape, 0);
+  *scale_value.GetTensorMutableData<float>() = scale;
+  graph.AddInitializer(prefix + "_scale", scale_value, false);
+
+  auto zero_point_value = Ort::Value::CreateTensor<uint8_t>(Ort::AllocatorWithDefaultOptions(), scalar_shape, 0);
+  *zero_point_value.GetTensorMutableData<uint8_t>() = 0;
+  graph.AddInitializer(prefix + "_zp", zero_point_value, false);
+}
 
 // ============================================================
 // Test 1: QDQ group — covers GetQDQIODefs + QDQ OrtNodeUnit ctor
@@ -81,14 +91,14 @@ TEST_F(QnnInteg_OrtApiTest, QDQGroup_CoversGetQDQIODefs) {
 
   // Initializers: scale (float32 = 0.01), zp (uint8 = 0)
   {
-    int64_t shape[] = {};
+    const std::vector<int64_t> shape;
     auto scale_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *scale_val.GetTensorMutableData<float>() = 0.01f;
     graph.AddInitializer("scale", scale_val, false);
 
     auto zp_val = Ort::Value::CreateTensor<uint8_t>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *zp_val.GetTensorMutableData<uint8_t>() = 0;
     graph.AddInitializer("zp", zp_val, false);
   }
@@ -234,7 +244,9 @@ TEST_F(QnnInteg_OrtApiTest, LeakyReluAttr_CoversOrtNodeAttrHelperFoundFloat) {
 //         kernel_shape / strides / pads (lines 509-511, 533-535, 557-559)
 //
 // Model: float[1,1,5,5] input, float[1,1,3,3] weight → Conv → float[1,1,3,3]
-//        (kernel_shape=[3,3], strides=[1,1], pads=[0,0,0,0])
+//        (kernel_shape=[3,3], strides=[1,1]). The Linux ARM64 CI HTP target
+// is V68, where an equivalent U8 QDQ model is used because float Conv is not
+// assigned to QNN after the NHWC layout transform.
 //
 // During Compile the Conv op builder reads all three GetInt64s attrs,
 // exercising the "found" branch for each.
@@ -244,25 +256,54 @@ TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
-  // input: float[1,1,5,5],  weight: float[1,1,3,3]
+  // input: float[1,1,5,5], weight: float[1,1,3,3]
 
   std::vector<Ort::ValueInfo> inputs, outputs;
+#if defined(__aarch64__)
+  inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 5, 5));
+#else
   inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 5, 5));
+#endif
   graph.SetInputs(inputs);
+#if defined(__aarch64__)
+  outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 3, 3));
+#else
   outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 3, 3));
+#endif
   graph.SetOutputs(outputs);
 
-  // weight initializer: shape [1,1,3,3], all-0.1f
+  // weight initializer: shape [1,1,3,3]
   {
     int64_t w_shape[] = {1, 1, 3, 3};
+#if defined(__aarch64__)
+    auto w_val = Ort::Value::CreateTensor<uint8_t>(
+        Ort::AllocatorWithDefaultOptions(), w_shape, 4);
+    uint8_t* w_data = w_val.GetTensorMutableData<uint8_t>();
+    for (int i = 0; i < 9; ++i) w_data[i] = 1;
+#else
     auto w_val = Ort::Value::CreateTensor<float>(
         Ort::AllocatorWithDefaultOptions(), w_shape, 4);
     float* w_data = w_val.GetTensorMutableData<float>();
     for (int i = 0; i < 9; ++i) w_data[i] = 0.1f;
+#endif
     graph.AddInitializer("weight", w_val, false);
   }
 
-  // Conv node: input, weight → output
+#if defined(__aarch64__)
+  AddU8QdqParams(graph, "input", 1.0f);
+  AddU8QdqParams(graph, "weight", 0.1f);
+  AddU8QdqParams(graph, "output", 0.1f);
+
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node input_dq_node("DequantizeLinear", "", "dq_input", {"input", "input_scale", "input_zp"}, {"dq_input"}, attrs);
+    graph.AddNode(input_dq_node);
+    Ort::Node weight_dq_node("DequantizeLinear", "", "dq_weight", {"weight", "weight_scale", "weight_zp"}, {"dq_weight"}, attrs);
+    graph.AddNode(weight_dq_node);
+  }
+#endif
+
+  // Conv node: dq_input, dq_weight → conv_output
   // auto_pad="VALID" covers Get(string) "found" path (lines 509-511)
   // kernel_shape/strides cover Get(vector<int32_t>) "found" path (lines 533-546)
   {
@@ -273,21 +314,43 @@ TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
     attrs.emplace_back("auto_pad", auto_pad_str, static_cast<int>(strlen(auto_pad_str)), ORT_OP_ATTR_STRING);
     attrs.emplace_back("kernel_shape", kernel_shape, 2, ORT_OP_ATTR_INTS);
     attrs.emplace_back("strides", strides, 2, ORT_OP_ATTR_INTS);
+#if defined(__aarch64__)
+    Ort::Node conv_node("Conv", "", "conv", {"dq_input", "dq_weight"}, {"conv_output"}, attrs);
+#else
     Ort::Node conv_node("Conv", "", "conv", {"input", "weight"}, {"output"}, attrs);
+#endif
     graph.AddNode(conv_node);
   }
+
+#if defined(__aarch64__)
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node output_q_node("QuantizeLinear", "", "q_output", {"conv_output", "output_scale", "output_zp"}, {"output"}, attrs);
+    graph.AddNode(output_q_node);
+  }
+#endif
 
   model.AddGraph(graph);
 
   try {
     Ort::Session session(*ort_env, model, session_opts_);
 
+#if defined(__aarch64__)
+    uint8_t input_data[25];
+    for (int i = 0; i < 25; ++i) input_data[i] = static_cast<uint8_t>(i + 1);
+#else
     float input_data[25];
     for (int i = 0; i < 25; ++i) input_data[i] = static_cast<float>(i + 1);
+#endif
     int64_t input_shape[] = {1, 1, 5, 5};
     auto mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+#if defined(__aarch64__)
+    auto input_tensor = Ort::Value::CreateTensor<uint8_t>(
+        mem_info, input_data, 25, input_shape, 4);
+#else
     auto input_tensor = Ort::Value::CreateTensor<float>(
         mem_info, input_data, 25, input_shape, 4);
+#endif
 
     const char* input_names[] = {"input"};
     const char* output_names[] = {"output"};
@@ -297,7 +360,11 @@ TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
     auto shape = result[0].GetTensorTypeAndShapeInfo().GetShape();
     EXPECT_EQ(shape, (std::vector<int64_t>{1, 1, 3, 3}));
   } catch (const Ort::Exception& e) {
+#if defined(__aarch64__)
+    FAIL() << "QNN HTP EP failed to compile V68 QDQ Conv model: " << e.what();
+#else
     GTEST_SKIP() << "QNN HTP EP failed to compile model — coverage goal not reached: " << e.what();
+#endif
   }
 }
 
@@ -324,14 +391,14 @@ TEST_F(QnnInteg_OrtApiTest, StandaloneDQ_CoversDequantizeLinearBranch) {
 
   // Initializers: scale (float = 0.1), zp (uint8 = 0)
   {
-    int64_t shape[] = {};
+    const std::vector<int64_t> shape;
     auto scale_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *scale_val.GetTensorMutableData<float>() = 0.1f;
     graph.AddInitializer("scale", scale_val, false);
 
     auto zp_val = Ort::Value::CreateTensor<uint8_t>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *zp_val.GetTensorMutableData<uint8_t>() = 0;
     graph.AddInitializer("zp", zp_val, false);
   }
@@ -384,14 +451,14 @@ TEST_F(QnnInteg_OrtApiTest, StandaloneQ_CoversQuantizeLinearBranch) {
 
   // Initializers: scale (float = 0.1), zp (uint8 = 0)
   {
-    int64_t shape[] = {};
+    const std::vector<int64_t> shape;
     auto scale_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *scale_val.GetTensorMutableData<float>() = 0.1f;
     graph.AddInitializer("scale", scale_val, false);
 
     auto zp_val = Ort::Value::CreateTensor<uint8_t>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *zp_val.GetTensorMutableData<uint8_t>() = 0;
     graph.AddInitializer("zp", zp_val, false);
   }
@@ -514,7 +581,9 @@ TEST_F(QnnInteg_OrtApiTest, ArgMaxAttr_CoversOrtNodeAttrHelperFoundInt32) {
 //         (lines 533-545)
 //
 // Model: float[1,1,3,3] input, float[1,1,3,3] weight
-//        → ConvTranspose(kernel_shape=[3,3], dilations=[1,1]) → float[1,1,5,5]
+//        → ConvTranspose(kernel_shape=[3,3], dilations=[1,1]) → float[1,1,5,5].
+// The Linux ARM64 CI HTP target is V68, where an equivalent U8 QDQ model is
+// used because float ConvTranspose is not assigned after the NHWC transform.
 //
 // ConvTranspose's validation reads dilations as vector<int32_t>, exercising
 // the int32 vector "found" branch which converts int64 attribute values to
@@ -526,20 +595,49 @@ TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32V
   Ort::Graph graph;
 
   std::vector<Ort::ValueInfo> inputs, outputs;
+#if defined(__aarch64__)
+  inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 3, 3));
+#else
   inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 3, 3));
+#endif
   graph.SetInputs(inputs);
+#if defined(__aarch64__)
+  outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 5, 5));
+#else
   outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 5, 5));
+#endif
   graph.SetOutputs(outputs);
 
   // weight initializer: shape [1,1,3,3]
   {
     int64_t w_shape[] = {1, 1, 3, 3};
+#if defined(__aarch64__)
+    auto w_val = Ort::Value::CreateTensor<uint8_t>(
+        Ort::AllocatorWithDefaultOptions(), w_shape, 4);
+    uint8_t* w_data = w_val.GetTensorMutableData<uint8_t>();
+    for (int i = 0; i < 9; ++i) w_data[i] = 1;
+#else
     auto w_val = Ort::Value::CreateTensor<float>(
         Ort::AllocatorWithDefaultOptions(), w_shape, 4);
     float* w_data = w_val.GetTensorMutableData<float>();
     for (int i = 0; i < 9; ++i) w_data[i] = 0.1f;
+#endif
     graph.AddInitializer("weight", w_val, false);
   }
+
+#if defined(__aarch64__)
+  AddU8QdqParams(graph, "input", 1.0f);
+  AddU8QdqParams(graph, "weight", 0.1f);
+  AddU8QdqParams(graph, "output", 0.1f);
+
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node input_dq_node("DequantizeLinear", "", "dq_input", {"input", "input_scale", "input_zp"}, {"dq_input"}, attrs);
+    graph.AddNode(input_dq_node);
+    Ort::Node weight_dq_node("DequantizeLinear", "", "dq_weight", {"weight", "weight_scale", "weight_zp"}, {"dq_weight"}, attrs);
+    graph.AddNode(weight_dq_node);
+  }
+#endif
 
   // ConvTranspose: dilations=[1,1] triggers Get(vector<int32_t>) "found" path
   {
@@ -550,9 +648,21 @@ TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32V
     attrs.emplace_back("kernel_shape", kernel_shape, 2, ORT_OP_ATTR_INTS);
     attrs.emplace_back("dilations", dilations, 2, ORT_OP_ATTR_INTS);
     attrs.emplace_back("strides", strides, 2, ORT_OP_ATTR_INTS);
+#if defined(__aarch64__)
+    Ort::Node ct_node("ConvTranspose", "", "convtranspose", {"dq_input", "dq_weight"}, {"conv_output"}, attrs);
+#else
     Ort::Node ct_node("ConvTranspose", "", "convtranspose", {"input", "weight"}, {"output"}, attrs);
+#endif
     graph.AddNode(ct_node);
   }
+
+#if defined(__aarch64__)
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node output_q_node("QuantizeLinear", "", "q_output", {"conv_output", "output_scale", "output_zp"}, {"output"}, attrs);
+    graph.AddNode(output_q_node);
+  }
+#endif
 
   model.AddGraph(graph);
 
@@ -560,11 +670,15 @@ TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32V
     Ort::Session session(*ort_env, model, session_opts_);
     SUCCEED();
   } catch (const Ort::Exception& e) {
+#if defined(__aarch64__)
+    FAIL() << "QNN HTP EP failed to compile V68 QDQ ConvTranspose model: " << e.what();
+#else
     GTEST_SKIP() << "QNN HTP EP failed to compile model — coverage goal not reached: " << e.what();
+#endif
   }
 }
 
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#endif  // !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))

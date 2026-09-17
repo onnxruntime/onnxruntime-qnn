@@ -1208,8 +1208,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr,
-                                 Ort::CustomOpDomain* custom_op_domain = nullptr) {
-  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+                                 Ort::CustomOpDomain* custom_op_domain = nullptr,
+                                 bool skip_v68_qdq = true) {
+  if (skip_v68_qdq) {
+    CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+  }
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1935,12 +1938,14 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param verify_outputs True to verify that the outputs match (within tolerance).
  * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
  *                         EP assignment via public API.
+ * \param skip_v68_fp16 Skip on Linux ARM64 HTP V68 when the test requires the FP16 path.
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, const EPVerificationParams& verification_params,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
-                     Ort::CustomOpDomain* custom_op_domain = nullptr);
+                     Ort::CustomOpDomain* custom_op_domain = nullptr,
+                     bool skip_v68_fp16 = true);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,

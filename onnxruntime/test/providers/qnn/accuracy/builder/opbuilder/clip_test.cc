@@ -135,7 +135,9 @@ void RunClipAccuracy(const ClipSpec& spec) {
       // Integer math — exact.
       RunQnnModelTest(BuildClipOnnxInt32(spec), po,
                       /*opset=*/13,
-                      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+                      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)},
+                      OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, true, nullptr,
+                      /*skip_v68_fp16=*/false);
       break;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
       // FP16 needs FP32 reference (ORT-CPU may not have native FP16 Clip).
@@ -167,7 +169,10 @@ void RunClipQDQFloatHelper(const ClipQDQFloatSpec& spec,
       "Clip_node", "Clip", {input_def}, min_max_defs, /*attrs=*/{},
       kOnnxDomain, spec.use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder, qdq_model_builder, po,
-                       spec.opset, ExpectedEPNodeAssignment::All);
+                       spec.opset, ExpectedEPNodeAssignment::All,
+                       QDQTolerance{}, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "", {}, std::nullopt, nullptr, nullptr,
+                       /*skip_v68_qdq=*/false);
 }
 
 // Build the float-side input + min/max defs used by both f32 reference and
@@ -201,7 +206,9 @@ void RunClipQDQFloatAccuracy(const ClipQDQFloatSpec& spec) {
   if (spec.shape.size() > 4) {
     ProviderOptions po = MakeAccuracyProviderOptions(spec.accuracy_backend);
     RunQnnModelTest(BuildClipQDQFloatRank5HandRolled(spec), po,
-                    spec.opset, EPVerificationParams{ExpectedEPNodeAssignment::All});
+                    spec.opset, EPVerificationParams{ExpectedEPNodeAssignment::All},
+                    OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, true, nullptr,
+                    /*skip_v68_fp16=*/false);
     return;
   }
 
@@ -328,7 +335,9 @@ GetTestModelFn BuildClipQDQQuantOnnxFromSpec(const ClipQDQQuantSpec& spec) {
 void RunClipQDQQuantAccuracy(const ClipQDQQuantSpec& spec) {
   ProviderOptions po = MakeAccuracyProviderOptions(spec.accuracy_backend);
   RunQnnModelTest(BuildClipQDQQuantOnnxFromSpec(spec), po,
-                  spec.opset, EPVerificationParams{ExpectedEPNodeAssignment::All});
+                  spec.opset, EPVerificationParams{ExpectedEPNodeAssignment::All},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, true, nullptr,
+                  /*skip_v68_fp16=*/false);
 }
 
 }  // namespace
@@ -343,11 +352,11 @@ void RunClipQDQQuantAccuracy(const ClipQDQQuantSpec& spec) {
 // default-min/max set, so accuracy = snapshot ∪ session holds by construction
 // (see clip_specs.h).
 class QnnAcc_Clip_AccuracyTest
-    : public ::testing::TestWithParam<ClipSpec> {};
+    : public QnnHTPBackendTests, public ::testing::WithParamInterface<ClipSpec> {};
 class QnnAcc_Clip_Accuracy_QDQFloatTest
-    : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
+    : public QnnHTPBackendTests, public ::testing::WithParamInterface<ClipQDQFloatSpec> {};
 class QnnAcc_Clip_Accuracy_QDQQuantTest
-    : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
+    : public QnnHTPBackendTests, public ::testing::WithParamInterface<ClipQDQQuantSpec> {};
 
 TEST_P(QnnAcc_Clip_AccuracyTest, Case) {
   RunClipAccuracy(GetParam());
