@@ -246,7 +246,11 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable the QNN HTP shared memory allocator. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+|'1'|Enable QNN HTP shared-memory binding for this session. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+
+When the QNN EP library is registered, its NPU device advertises the `QnnHtpShared` HOST_ACCESSIBLE memory type. Applications can therefore obtain a `QnnHtpShared` allocator from `OrtEnv` before creating a session and use it to allocate I/O tensors. Set `enable_htp_shared_memory_allocator=1` on the QNN session that consumes those tensors; this enables QNN MEMHANDLE binding and avoids the per-frame copy. The option also works with `ep.context_enable=1`.
+
+If the option is enabled but a bound tensor is backed by regular CPU memory, QNN logs one warning per model/session and safely falls back to the normal copy path. Allocate that tensor from `QnnHtpShared` to enable zero-copy.
 
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|

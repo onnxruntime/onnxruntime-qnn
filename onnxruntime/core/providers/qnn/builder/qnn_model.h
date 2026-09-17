@@ -4,7 +4,6 @@
 #pragma once
 
 #include <mutex>
-#include <unordered_set>
 #include <vector>
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
@@ -181,6 +180,13 @@ class QnnModel {
                                   const Ort::Logger& logger,
                                   Qnn_ErrorHandle_t& execute_status);
 
+  Ort::Status BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
+                                                   const OrtMemoryInfo* ort_value_memory_info,
+                                                   void* ort_value_data,
+                                                   uint32_t ort_value_data_size,
+                                                   Qnn_ContextHandle_t qnn_context,
+                                                   Qnn_Tensor_t& qnn_tensor);
+
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
 
@@ -221,14 +227,9 @@ class QnnModel {
   // re-retrieves the graph handle. See the single-call contract in the .cc.
   HtpGraphConfigs_t runtime_graph_configs_;
 
-  // One-shot warning state: emits at most one WARNING per tensor per session
-  // when the shared-memory allocator is enabled but a CPU-backed OrtValue is bound.
-  std::mutex zero_copy_fallback_warned_mutex_;
-  std::unordered_set<std::string> zero_copy_fallback_warned_names_;
-
-  // Emits a one-shot WARNING when shared-memory zero-copy was requested but
-  // the bound OrtValue is CPU-backed (fallback to per-frame copy).
-  void WarnZeroCopyFallbackOnce(const Ort::Logger& logger, const std::string& tensor_name);
+  // BindAndExecuteGraph is serialized by graph_exec_mutex_, so one boolean is
+  // sufficient to emit a single fallback warning for this model/session.
+  bool zero_copy_fallback_warned_ = false;
 };
 
 }  // namespace qnn
