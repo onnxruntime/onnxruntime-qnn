@@ -220,6 +220,9 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
   // Don't use FullyConnected if both inputs are dynamic and 16-bit quantized (QNN validation fails).
   use_fully_connected = use_fully_connected && !(utils::IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
                                                  utils::IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
+  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
+    return false;
+  }
   return use_fully_connected;
 #endif
 }

@@ -4,8 +4,10 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <cassert>
+#include <filesystem>
 #include <string>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -1225,6 +1227,113 @@ TEST_F(QnnGPUBackendTests, ReshapeGemmFusion) {
 }
 
 #endif  // defined(_M_ARM64) GPU tests
+
+// Tests for the `disable_matmul_to_fc` session config option (AISW-202299).
+// When set to "1", the QNN EP routes float32 Gemm to QNN_OP_MAT_MUL (with transpose params)
+// instead of QNN_OP_FULLY_CONNECTED. Each test sets the flag and uses the JSON graph dump to
+// assert the exact op type in the compiled QNN graph.
+
+// Gemm, no bias, transB=0, static B [8,3]: verify MatMul replaces FullyConnected.
+TEST_F(QnnCPUBackendTests, GemmDisableFC_NoBias_TransB0) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "GemmDisableFC_NoBias_TransB0";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4,8] dynamic;  B: [8,3] static initializer, no bias, transB=0.
+  RunQnnModelTest(
+      BuildOpTestCase<float>("Gemm_node", "Gemm",
+                             {TestInputDef<float>({4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32)),
+                              TestInputDef<float>({8, 3}, true, GetFloatDataInRange(-5.0f, 5.0f, 24))},
+                             {}, {}),
+      provider_options,
+      /*opset=*/13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Gemm, no bias, transB=1, static B [3,8]: the weight is pre-transposed; QNN MatMul
+// expresses the same computation via TRANSPOSE_IN1=true.
+TEST_F(QnnCPUBackendTests, GemmDisableFC_NoBias_TransB1) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "GemmDisableFC_NoBias_TransB1";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4,8] dynamic;  B: [3,8] static initializer (transposed), transB=1.
+  RunQnnModelTest(
+      BuildOpTestCase<float>("Gemm_node", "Gemm",
+                             {TestInputDef<float>({4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32)),
+                              TestInputDef<float>({3, 8}, true, GetFloatDataInRange(-5.0f, 5.0f, 24))},
+                             {}, {test::MakeAttribute("transB", static_cast<int64_t>(1))}),
+      provider_options,
+      /*opset=*/13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Gemm with static bias [3], static B [8,3], transB=0: the bias is compatible with
+// QNN FC but with the flag set the EP must still emit MatMul + ElementWiseAdd.
+TEST_F(QnnCPUBackendTests, GemmDisableFC_WithBias) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "GemmDisableFC_WithBias";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4,8] dynamic;  B: [8,3] static initializer;  C: [3] static bias, transB=0.
+  RunQnnModelTest(
+      BuildOpTestCase<float>("Gemm_node", "Gemm",
+                             {TestInputDef<float>({4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32)),
+                              TestInputDef<float>({8, 3}, true, GetFloatDataInRange(-5.0f, 5.0f, 24)),
+                              TestInputDef<float>({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3))},
+                             {}, {}),
+      provider_options,
+      /*opset=*/13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
 
 }  // namespace test
 }  // namespace onnxruntime
