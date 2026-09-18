@@ -256,7 +256,7 @@ jobs:
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: 'test-windows-arm64-py${{ inputs.target_py_vsn }}',
+              name: 'test-windows-arm64-pynone',
               head_sha: sourceRef,
               status: 'completed',
               conclusion,
