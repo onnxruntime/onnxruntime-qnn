@@ -16,13 +16,13 @@ on:
       do_windows_arm64:
         type: boolean
         default: false
-      # Run the two QDC paths without enabling the rest of the platform matrix.
+      # Run the device paths without enabling the rest of the platform matrix.
       # Used by the maintainer-approved /device-test trigger for reviewed fork PRs.
       do_device_tests:
         type: boolean
         default: false
-      # Report real QDC results on source_ref when CI was dispatched from main
-      # for a reviewed external PR.
+      # Report real device-test results on source_ref when CI was dispatched from
+      # main for a reviewed external PR.
       report_device_result_to_source:
         type: boolean
         default: false
@@ -177,7 +177,7 @@ jobs:
       test_runner_arch: arm64
 
   build-and-test-windows-arm64:
-    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 || inputs.do_device_tests }}
     needs: [archive-testdata, path-filter]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -185,13 +185,15 @@ jobs:
       has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
       target_arch: arm64
       testdata_archive_artifact_name: testdata-zip
-      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
+      # The maintainer-approved path builds and tests on the Windows ARM64 device.
+      build_runner_arch: ${{ inputs.do_device_tests && 'ARM64' || inputs.windows_arm64_runner_arch }}
       test_runner_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
-      upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
-      build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
-      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      upload_wheel: ${{ inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64' }}
+      upload_test_archive: ${{ !inputs.do_device_tests && inputs.windows_arm64_runner_arch != 'ARM64' }}
+      build_test_same_runner: ${{ inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64' }}
+      target_py_vsn: ${{ (inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64') && inputs.target_py_vsn || 'None' }}
       nightly_build: ${{ inputs.nightly_build }}
+      source: ${{ inputs.source_repository != '' && format('{0}@{1}', inputs.source_repository, inputs.source_ref) || '' }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
