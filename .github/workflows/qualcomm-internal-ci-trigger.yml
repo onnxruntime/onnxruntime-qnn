@@ -3,7 +3,7 @@
 
 # Lets developers trigger CI on a draft PR by commenting "/ci" on the PR.
 # After reviewing a fork contributor's code, maintainers can comment "/device-test"
-# to test its immutable SHA on QDC. That workflow is dispatched from main so an
+# to test its immutable SHA on device runners. That workflow is dispatched from main so an
 # unreviewed fork cannot change its credential handling.
 #
 # Any collaborator with write access (COLLABORATOR, MEMBER, OWNER) may trigger.

@@ -29,7 +29,7 @@ on:
         required: false
         type: string
       device_tests_only:
-        description: Run only the Android and Qualcomm Linux QDC paths
+        description: Run only the Android and Qualcomm Linux QDC paths plus Windows ARM64 device tests
         required: false
         default: false
         type: boolean
@@ -56,8 +56,8 @@ jobs:
       do_all: ${{ github.event.inputs.device_tests_only != 'true' }}
       do_device_tests: ${{ github.event.inputs.device_tests_only == 'true' }}
       report_device_result_to_source: ${{ github.event.inputs.device_tests_only == 'true' }}
-      source_repository: ${{ github.event.inputs.source_repository || github.repository }}
-      source_ref: ${{ github.event.inputs.source_ref || github.sha }}
+      source_repository: ${{ github.event.inputs.source_repository }}
+      source_ref: ${{ github.event.inputs.source_ref }}
 
   coverage:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
