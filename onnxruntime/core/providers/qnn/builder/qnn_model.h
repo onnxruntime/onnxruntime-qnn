@@ -180,6 +180,13 @@ class QnnModel {
                                   const Ort::Logger& logger,
                                   Qnn_ErrorHandle_t& execute_status);
 
+  Ort::Status BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
+                                                   const OrtMemoryInfo* ort_value_memory_info,
+                                                   void* ort_value_data,
+                                                   uint32_t ort_value_data_size,
+                                                   Qnn_ContextHandle_t qnn_context,
+                                                   Qnn_Tensor_t& qnn_tensor);
+
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
 
@@ -219,6 +226,10 @@ class QnnModel {
   // Runtime graph configs recorded by ApplyRuntimeGraphConfigs for re-application after an SSR
   // re-retrieves the graph handle. See the single-call contract in the .cc.
   HtpGraphConfigs_t runtime_graph_configs_;
+
+  // BindAndExecuteGraph is serialized by graph_exec_mutex_, so one boolean is
+  // sufficient to emit a single fallback warning for this model/session.
+  bool zero_copy_fallback_warned_ = false;
 };
 
 }  // namespace qnn

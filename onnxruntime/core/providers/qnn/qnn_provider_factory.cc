@@ -122,6 +122,25 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
     ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+
+  // Keep this available before session creation so OrtEnv can create a shared
+  // allocator for Python I/O binding. RPCMEM itself is loaded lazily because this
+  // factory is also used on hosts where it is unavailable (for example x86).
+  CreateAllocator = CreateAllocatorImpl;
+}
+
+std::shared_ptr<qnn::RpcMemLibrary> QnnEpFactory::GetOrCreateRpcMemLibrary(std::string& error_message) {
+  std::lock_guard<std::mutex> lock(rpcmem_library_mutex_);
+  if (rpcmem_library_ != nullptr) {
+    return rpcmem_library_;
+  }
+
+  try {
+    rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+  } catch (const std::exception& e) {
+    error_message = e.what();
+  }
+  return rpcmem_library_;
 }
 
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
@@ -163,6 +182,16 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device);
     ep_devices[num_ep_devices++] = ep_device;
     factory->ep_devices_.push_back(ep_device);
+
+    // Advertise HOST_ACCESSIBLE memory for NPU devices so OrtEnv can create a
+    // QnnHtpShared allocator before a QNN session exists. Loading RPCMEM is deferred
+    // until that allocator (or an opted-in session) actually needs it.
+    const auto device_type = factory->ort_api.HardwareDevice_Type(device);
+    if (device_type == OrtHardwareDeviceType_NPU &&
+        factory->host_accessible_memory_info_ != nullptr) {
+      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
+          ep_device, factory->host_accessible_memory_info_.get()));
+    }
 
     return status;
   };
@@ -342,13 +371,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
-  factory->qnn_allocator_type_ = qnn_ep->qnn_allocator_type_;
-  if (factory->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
-    for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
-    }
-  }
-
   factory->qnn_ep_ = qnn_ep.get();
   *ep = qnn_ep.release();
 
@@ -364,22 +386,54 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
   delete dummy_ep;
 }
 
-void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(_In_ OrtEpFactory* this_ptr,
+                                                          _In_ const OrtMemoryInfo* memory_info,
+                                                          _In_opt_ const OrtKeyValuePairs* /*allocator_options*/,
+                                                          _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  *allocator = nullptr;
 
-  if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
+  OrtDeviceMemoryType mem_type = factory->ort_api.MemoryInfoGetDeviceMemType(memory_info);
+  if (mem_type != OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+    return nullptr;
+  }
+
+  std::string rpcmem_error;
+  auto rpcmem_library = factory->GetOrCreateRpcMemLibrary(rpcmem_error);
+  if (rpcmem_library == nullptr) {
+    return factory->ort_api.CreateStatus(
+        ORT_FAIL, ("Unable to load RPCMEM for QnnHtpShared allocator: " + rpcmem_error).c_str());
+  }
+
+  try {
+    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::move(rpcmem_library));
+    *allocator = htp_allocator.release();
+  } catch (const std::exception& e) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
+  }
+
+  return nullptr;
+}
+
+void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
+  if (allocator == nullptr) {
+    return;
+  }
+
+  // ORT Core releases allocators through the factory even when its preferred
+  // allocator was created by QnnEp. Dispatch by the concrete allocator callback,
+  // not factory/session state, because HTP and DX12 sessions may coexist.
+  if (allocator->Alloc == qnn::HtpSharedMemoryAllocator::AllocImpl) {
     delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
 #ifdef _WIN32
-  } else if (qnn::IsDx12SharedMemoryAllocator(factory->qnn_allocator_type_)) {
+  } else if (allocator->Alloc == qnn::Dx12SharedMemoryAllocator::AllocImpl) {
     delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
 #endif
   } else {
-    std::ignore = factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
-                                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
-                                                     "Cannot release allocator of unknown type!",
-                                                     ORT_FILE,
-                                                     __LINE__,
-                                                     __FUNCTION__);
+    auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+    std::ignore = factory->ort_api.Logger_LogMessage(
+        OrtLoggingManager::GetDefaultLoggerPtr(), OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+        "Cannot release allocator of unknown type!", ORT_FILE, __LINE__, __FUNCTION__);
   }
 }
 

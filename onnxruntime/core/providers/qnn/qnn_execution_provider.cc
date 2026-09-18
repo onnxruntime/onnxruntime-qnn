@@ -641,7 +641,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
              const OrtLogger* logger)
     : OrtEp{},
       ApiPtrs{static_cast<const ApiPtrs&>(factory)},
-      // factory_{factory},
+      factory_{factory},
       name_{name},
       logger_{Ort::Logger(logger)},
       session_options_{session_options} {
@@ -655,6 +655,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
+  GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 
@@ -1563,20 +1564,25 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
                       false,
                       logger_)) {
-    // Initialize rpcmem_library_.
-    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
-    // generation stage, there is no need to load it as no allocations will be made.
-    if (!context_cache_enabled_) {
-      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+    std::string rpcmem_error;
+    rpcmem_library_ = factory.GetOrCreateRpcMemLibrary(rpcmem_error);
+    if (rpcmem_library_ == nullptr) {
+      ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_WARNING,
+                   "Unable to load RPCMEM; disabling HTP shared memory allocator: %s",
+                   rpcmem_error.c_str());
     } else {
-      ORT_CXX_LOGF(logger_,
-                   ORT_LOGGING_LEVEL_INFO,
-                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
-                   " as no allocations are expected to be made.",
-                   kOrtSessionOptionEpContextEnable);
+      // Enable shared allocator regardless of context-generation mode; a session that
+      // generates a context binary may still run inference in the same session.
+      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+      model_settings_.htp_shared_memory = true;
+      default_memory_device_ = ep_api.MemoryInfo_GetMemoryDevice(factory.GetHostAccessibleMemoryInfo());
+      if (context_cache_enabled_) {
+        ORT_CXX_LOGF(logger_,
+                     ORT_LOGGING_LEVEL_VERBOSE,
+                     "HTP shared memory allocator enabled with %s.",
+                     kOrtSessionOptionEpContextEnable);
+      }
     }
-    model_settings_.htp_shared_memory = true;
   }
 
   static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
@@ -3558,6 +3564,30 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     *allocator = dx12_allocator.release();
   }
 #endif  // _WIN32
+  else if (ep->ort_api.MemoryInfoGetDeviceMemType(memory_info) == OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+    // The factory advertises QnnHtpShared so OrtEnv can create it before a
+    // session exists. A session that did not opt into zero-copy may still ask
+    // for that allocator explicitly; create it without changing this session's
+    // default memory device or QNN memhandle binding policy.
+    std::string rpcmem_error;
+    auto rpcmem_library = ep->factory_.GetOrCreateRpcMemLibrary(rpcmem_error);
+    if (rpcmem_library == nullptr) {
+      return ep->ort_api.CreateStatus(
+          ORT_FAIL, ("Unable to load RPCMEM for QnnHtpShared allocator: " + rpcmem_error).c_str());
+    }
+    try {
+      auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::move(rpcmem_library));
+      *allocator = htp_allocator.release();
+    } catch (const std::exception& e) {
+      return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
+    }
+  }
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
+    _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
+  *device = static_cast<const QnnEp*>(this_ptr)->default_memory_device_;
   return nullptr;
 }
 
