@@ -18,6 +18,10 @@ on:
           (build-artifacts.yml) and direct workflow_dispatch are unaffected.
         default: true
         type: boolean
+      source:
+        description: Optional source in owner/repo@40-character-SHA form.
+        default: ""
+        type: string
       target_os:
         description: "The OS for which to build: windows or linux"
         default: windows
@@ -146,7 +150,48 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Resolve reviewed source
+        id: source
+        if: ${{ inputs.target_os != 'windows' && inputs.source != '' }}
+        shell: bash
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          if [ -z "$SOURCE" ]; then
+            exit 0
+          fi
+          case "$SOURCE" in
+            */*@*) ;;
+            *) echo "::error::source must be owner/repo@40-character-SHA"; exit 1 ;;
+          esac
+          repository="${SOURCE%@*}"
+          ref="${SOURCE##*@}"
+          if ! [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::source must end with a 40-character commit SHA"
+            exit 1
+          fi
+          printf 'repository=%s\nref=%s\n' "$repository" "$ref" >> "$GITHUB_OUTPUT"
+          printf 'BUILD_SOURCEVERSION=%s\n' "$ref" >> "$GITHUB_ENV"
+      - name: Resolve reviewed source (Windows)
+        id: windows-source
+        if: ${{ inputs.target_os == 'windows' && inputs.source != '' }}
+        shell: powershell
+        env:
+          SOURCE: ${{ inputs.source }}
+        run: |
+          if ($env:SOURCE -notmatch '^[^/@]+/[^/@]+@([0-9a-fA-F]{40})$') {
+            Write-Error "source must be owner/repo@40-character-SHA"
+            exit 1
+          }
+          $repository, $ref = $env:SOURCE -split '@', 2
+          "repository=$repository" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "ref=$ref" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "BUILD_SOURCEVERSION=$ref" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.source.outputs.repository || steps.windows-source.outputs.repository || github.repository }}
+          ref: ${{ steps.source.outputs.ref || steps.windows-source.outputs.ref || github.sha }}
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy build is needed, so
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
       - name: Initialize submodules
@@ -195,6 +240,32 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+
+      # A maintainer-dispatched run executes from main, so report the real Windows
+      # device result on the reviewed source SHA rather than on the main commit.
+      - name: Report Windows device result on reviewed source
+        if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.source != '' && inputs.run_tests && inputs.build_test_same_runner }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const source = '${{ inputs.source }}';
+            const sourceRef = source.slice(source.lastIndexOf('@') + 1);
+            const jobStatus = '${{ job.status }}';
+            const conclusion = jobStatus === 'success' ? 'success' :
+              jobStatus === 'cancelled' ? 'cancelled' : 'failure';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'test-windows-arm64-pynone',
+              head_sha: sourceRef,
+              status: 'completed',
+              conclusion,
+              details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              output: {
+                title: 'Maintainer-approved Windows ARM64 device test',
+                summary: `Windows ARM64 completed with ${jobStatus}.`,
+              },
+            });
 
       # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
       - name: Setup JFrog CLI
@@ -268,30 +339,6 @@ jobs:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn-*-win-*-pdb.zip"
 
-  # Fork PRs cannot access Artifactory secrets, so the real test/test-wheel jobs are skipped for them.
-  # GitHub branch protection treats a skipped required check as not-satisfied, permanently blocking fork PRs.
-  # These two stub jobs carry the same `name:` as the real ones and run only on fork PRs so that branch
-  # protection sees a green check on the exact context it requires, without running anything that needs secrets.
-  test-fork-stub:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork == true }}
-    needs: [build]
-    runs-on: ["self-hosted", "linux", "X64", "Build"]
-    timeout-minutes: 10
-    steps:
-      - run: echo "Cross-runner tests skipped on fork PRs (need Artifactory secrets); change is still compiled, x86_64 jobs run unit tests, full suite runs post-merge on main."
-        shell: bash
-
-  test-wheel-fork-stub:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
-    if: ${{ inputs.test_wheel && github.event.pull_request.head.repo.fork == true }}
-    needs: [build]
-    runs-on: ["self-hosted", "linux", "X64", "Build"]
-    timeout-minutes: 10
-    steps:
-      - run: echo "Wheel smoke test skipped on fork PRs (downloads wheel from Artifactory, needs secrets); wheel is still built, full suite runs post-merge on main."
-        shell: bash
-
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
@@ -302,7 +349,11 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      # Deliberately use the trusted workflow checkout: this stage runs CI scripts
+      # while consuming artifacts selected by BUILD_SOURCEVERSION, not fork code.
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy test run is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
@@ -363,7 +414,7 @@ jobs:
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
-    # Wheel smoke test downloads the wheel from Artifactory; fork stub above handles the fork case.
+    # Wheel smoke test downloads the wheel from Artifactory, so it cannot run on an untrusted fork PR.
     if: ${{ inputs.test_wheel && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
@@ -371,7 +422,11 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      # Deliberately use the trusted workflow checkout: this stage runs CI scripts
+      # while consuming artifacts selected by BUILD_SOURCEVERSION, not fork code.
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy wheel smoke test is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}

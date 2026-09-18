@@ -16,6 +16,22 @@ on:
       do_windows_arm64:
         type: boolean
         default: false
+      # Run the device paths without enabling the rest of the platform matrix.
+      # Used by the maintainer-approved /device-test trigger for reviewed fork PRs.
+      do_device_tests:
+        type: boolean
+        default: false
+      # Report real device-test results on source_ref when CI was dispatched from
+      # main for a reviewed external PR.
+      report_device_result_to_source:
+        type: boolean
+        default: false
+      source_repository:
+        type: string
+        default: ""
+      source_ref:
+        type: string
+        default: ""
       # If true, build with NIGHTLY_BUILD=1, etc. to enable --nightly_build
       nightly_build:
         type: boolean
@@ -31,12 +47,16 @@ on:
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+  BUILD_SOURCEVERSION: "${{ inputs.source_ref || github.sha }}"
 
 jobs:
 
   archive-testdata:
     uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
     secrets: inherit
+    with:
+      source_repository: ${{ inputs.source_repository }}
+      source_ref: ${{ inputs.source_ref }}
 
   # Single change-detection gate (DRY): computes whether the diff touches code that needs a
   # real build/test. Downstream required jobs consume this via the `has_code_changes` input and stay
@@ -51,6 +71,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
           # No submodules: the gate only needs git history, not the working tree.
       - name: Detect changed paths
         id: gate
@@ -89,7 +110,7 @@ jobs:
           fi
 
   build-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_all || inputs.do_device_tests }}
     needs: [archive-testdata, path-filter]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -103,9 +124,10 @@ jobs:
       upload_test_archive: true
       upload_wheel: false
       run_tests: false
+      source: ${{ inputs.source_repository != '' && format('{0}@{1}', inputs.source_repository, inputs.source_ref) || '' }}
 
   test-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_all || inputs.do_device_tests }}
     needs: [build-linux-aarch64-oe-gcc11_2, path-filter]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
@@ -114,6 +136,9 @@ jobs:
       target_os: linux
       target_arch: aarch64_oe_gcc11_2
       testdata_archive_artifact_name: testdata-tarbz2
+      source_repository: ${{ inputs.source_repository }}
+      source_ref: ${{ inputs.source_ref }}
+      report_result_to_source: ${{ inputs.report_device_result_to_source }}
 
   build-and-test-linux-x86_64-ubuntu-22-04:
     if: ${{ inputs.do_all }}
@@ -152,7 +177,7 @@ jobs:
       test_runner_arch: arm64
 
   build-and-test-windows-arm64:
-    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 || inputs.do_device_tests }}
     needs: [archive-testdata, path-filter]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -160,13 +185,15 @@ jobs:
       has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
       target_arch: arm64
       testdata_archive_artifact_name: testdata-zip
-      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
+      # The maintainer-approved path builds and tests on the Windows ARM64 device.
+      build_runner_arch: ${{ inputs.do_device_tests && 'ARM64' || inputs.windows_arm64_runner_arch }}
       test_runner_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
-      upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
-      build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
-      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      upload_wheel: ${{ inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64' }}
+      upload_test_archive: ${{ !inputs.do_device_tests && inputs.windows_arm64_runner_arch != 'ARM64' }}
+      build_test_same_runner: ${{ inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64' }}
+      target_py_vsn: ${{ (inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64') && inputs.target_py_vsn || 'None' }}
       nightly_build: ${{ inputs.nightly_build }}
+      source: ${{ inputs.source_repository != '' && format('{0}@{1}', inputs.source_repository, inputs.source_ref) || '' }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
@@ -203,17 +230,22 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Run Linting Tool
         run: |
           python3 qcom/build_and_test.py lint
 
   build-android-aarch64:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_all || inputs.do_device_tests }}
     needs: [archive-testdata, path-filter]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.source_repository || github.repository }}
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
         # Submodules omitted here; initialized below only when a build is needed.
       - name: Initialize submodules
         if: ${{ needs['path-filter'].outputs.code == 'true' }}
@@ -243,7 +275,7 @@ jobs:
           src_pattern: onnxruntime-tests-android-aarch64.zip
 
   test-android-aarch64:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_all || inputs.do_device_tests }}
     needs: [build-android-aarch64, path-filter]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
@@ -252,3 +284,6 @@ jobs:
       target_os: android
       target_arch: aarch64
       testdata_archive_artifact_name: testdata-zip
+      source_repository: ${{ inputs.source_repository }}
+      source_ref: ${{ inputs.source_ref }}
+      report_result_to_source: ${{ inputs.report_device_result_to_source }}
