@@ -58,6 +58,14 @@ class QnnModel {
 
   Ort::Status ComposeGraph(const QnnModelContext& context);
 
+  // Performs full-graph validation if the QGT is enabled via the QnnGraphTransformer .
+  // Runs G2G IR optimizations on the composed IRgraph and validates every resulting op
+  // against the target backend. Returns per-source-node pass/fail results via the logger
+  // and an error status if any node is unsupported.
+  // Must be called after ComposeGraph() - or at leaset single node is added and before FinalizeGraphs().
+  // No-op when graphValidate is not available in the active QNN interface (e.g. QGT disabled).
+  Ort::Status ValidateGraph(const Ort::Logger& logger);
+
   Ort::Status FinalizeGraphs(const Ort::Logger& logger);
 
   Ort::Status SetupQnnInputOutput(const Ort::Logger& logger);
