@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -799,11 +800,20 @@ class TaskLibrary:
         @depends(["coverage_linux_x86_64"])
         def diff_coverage_linux_x86_64(self, plan: Plan) -> str:
             build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            base_commit = None
+            if github_event_path := os.environ.get("GITHUB_EVENT_PATH"):
+                try:
+                    github_event = json.loads(Path(github_event_path).read_text())
+                    base_commit = github_event.get("pull_request", {}).get("base", {}).get("sha")
+                except (OSError, json.JSONDecodeError) as error:
+                    logging.warning(f"Unable to read the GitHub event payload: {error}")
+
             return plan.add_step(
                 GenerateDiffCoverageTask(
                     "Generating diff coverage report (Linux x86_64)",
                     self.__venv_path,
                     build_dir,
+                    base_commit=base_commit,
                 )
             )
 
