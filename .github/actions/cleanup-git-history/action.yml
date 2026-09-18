@@ -1,0 +1,7 @@
+name: "Cleanup Git History"
+description: "Remove the per-job Git database from a self-hosted runner workspace"
+
+runs:
+  using: "node24"
+  main: "main.js"
+  post: "post.js"
