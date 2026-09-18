@@ -31,6 +31,13 @@ if(onnxruntime_ORT_HOME)
     endif()
     message(STATUS "ORT_PREBUILT_SOURCE: ${ORT_PREBUILT_SOURCE}")
     set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include")
+    # In prebuilt mode the ort_core source is not fetched, so ort_core_SOURCE_DIR/ort_core_BINARY_DIR
+    # (and thus ORT_SOURCE_DIR/ORT_BUILD_DIR set above) are empty. ExternalProject_Add below still
+    # requires a valid, non-empty SOURCE_DIR/BINARY_DIR even though its build/configure/install steps
+    # are no-ops here, so point them at an empty stub directory.
+    set(ORT_SOURCE_DIR "${CMAKE_BINARY_DIR}/ort_core_prebuilt_stub")
+    set(ORT_BUILD_DIR "${CMAKE_BINARY_DIR}/ort_core_prebuilt_stub")
+    file(MAKE_DIRECTORY "${ORT_SOURCE_DIR}")
     # Debian/Ubuntu system packages install ORT headers flat under include/onnxruntime/
     # (e.g. include/onnxruntime/onnxruntime_cxx_api.h). Source files use bare
     # "core/session/..." includes, so the include root must be include/onnxruntime/ rather
