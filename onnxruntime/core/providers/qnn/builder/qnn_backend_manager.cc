@@ -647,7 +647,7 @@ Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_T
                                                        bool& initialized_flag,
                                                        const std::string& backend_label) {
   Qnn_ErrorHandle_t result = qnn_interface.backendCreate(log_handle,
-                                                         (const QnnBackend_Config_t**)backend_config_,
+                                                         backend_config_,
                                                          &backend_handle);
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
             ("Failed to initialize backend (" + backend_label + "). Error: " +
@@ -658,23 +658,36 @@ Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_T
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::InitializeBackend(bool enable_gpu_weight_sharing) {
+Ort::Status QnnBackendManager::InitializeBackend(bool enable_gpu_weight_sharing, const std::string& cl_compiler_lib_path) {
   if (backend_initialized_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Backend initialized already.");
     return Ort::Status();
   }
 
-  if (IsGpuBackend(GetQnnBackendType()) && enable_gpu_weight_sharing) {
-    gpu_backend_custom_config_.option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
-    gpu_backend_custom_config_.weightSharingEnabled = 1;
+  if (IsGpuBackend(GetQnnBackendType())) {
+    if (enable_gpu_weight_sharing) {
+      gsl::not_null<QnnGpuBackend_CustomConfig_t*> gpu_backend_weight_sharing_config =
+          gpu_backend_custom_configs_.PushCustomConfig();
+      gpu_backend_weight_sharing_config->option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
+      gpu_backend_weight_sharing_config->weightSharingEnabled = 1;
 
-    backend_config_wrapper_.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
-    backend_config_wrapper_.customConfig = &gpu_backend_custom_config_;
+      gsl::not_null<QnnBackend_Config_t*> backend_weight_sharing_config = gpu_backend_custom_configs_.PushConfig();
+      backend_weight_sharing_config->option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+      backend_weight_sharing_config->customConfig = gpu_backend_weight_sharing_config;
+    }
 
-    backend_configs_ptr_[0] = &backend_config_wrapper_;
-    backend_configs_ptr_[1] = nullptr;
+    if (!cl_compiler_lib_path.empty()) {
+      gsl::not_null<QnnGpuBackend_CustomConfig_t*> gpu_backend_cl_compiler_lib_path_config =
+          gpu_backend_custom_configs_.PushCustomConfig();
+      gpu_backend_cl_compiler_lib_path_config->option = QNN_GPU_BACKEND_CONFIG_OPTION_CL_COMPILER_LIB_PATH;
+      gpu_backend_cl_compiler_lib_path_config->clCompilerLibPath = cl_compiler_lib_path.c_str();
 
-    backend_config_ = backend_configs_ptr_;
+      gsl::not_null<QnnBackend_Config_t*> backend_cl_compiler_lib_path_config = gpu_backend_custom_configs_.PushConfig();
+      backend_cl_compiler_lib_path_config->option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+      backend_cl_compiler_lib_path_config->customConfig = gpu_backend_cl_compiler_lib_path_config;
+    }
+
+    backend_config_ = gpu_backend_custom_configs_.GetQnnConfigs();
   }
 
   return InitializeBackendCommon(qnn_interface_, log_handle_, backend_handle_, backend_initialized_, "backend");
@@ -2082,7 +2095,8 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
     bool enable_htp_graph_splitting,
-    uint32_t htp_graph_splitting_num_prepare_threads) {
+    uint32_t htp_graph_splitting_num_prepare_threads,
+    const std::string& cl_compiler_lib_path) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
@@ -2174,10 +2188,25 @@ Ort::Status QnnBackendManager::SetupBackend(
     const std::string msg = std::string("GPU weight sharing: ") +
                             (enable_gpu_weight_sharing ? "enabled" : "disabled");
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, msg.c_str());
+
+    const auto* device = GetActiveOrtDevice();
+    const OrtKeyValuePairs* metadata = api_ptrs_.ort_api.HardwareDevice_Metadata(device);
+    const char* is_virtual = api_ptrs_.ort_api.GetKeyValue(metadata, kOrtHardwareDevice_MetadataKey_IsVirtual);
+
+    if (is_virtual != nullptr && std::string(is_virtual) == "1") {
+      QnnGlobalConfig_t soc_model_config = QNN_GLOBAL_CONFIG_INIT;
+      soc_model_config.option = QNN_GLOBAL_CONFIG_OPTION_SOC_MODEL;
+      soc_model_config.socModel = static_cast<Qnn_SocModel_t>(soc_model_);
+
+      const QnnGlobalConfig_t* global_configs[2];
+      global_configs[0] = &soc_model_config;
+      global_configs[1] = nullptr;
+      qnn_interface_.globalConfigSet(global_configs);
+    }
   }
 
   if (status.IsOK()) {
-    status = InitializeBackend(enable_gpu_weight_sharing);
+    status = InitializeBackend(enable_gpu_weight_sharing, cl_compiler_lib_path);
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
@@ -3464,6 +3493,30 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
   RETURN_IF(system_dlc_plugin_ == nullptr, "Unexpected call of this function without DLC initialized.");
   RETURN_IF_NOT(GetQnnContextSize() == 1, "Expecting only one context to be added into DLC.");
   return system_dlc_plugin_->AddContextToDlc(GetQnnContext());
+}
+
+const OrtHardwareDevice* QnnBackendManager::GetActiveOrtDevice() const {
+  OrtHardwareDeviceType device_type;
+  if (IsNpuBackend(qnn_backend_type_)) {
+    device_type = OrtHardwareDeviceType_NPU;
+  } else if (IsGpuBackend(qnn_backend_type_)) {
+    device_type = OrtHardwareDeviceType_GPU;
+  } else if (IsCpuBackend(qnn_backend_type_)) {
+    device_type = OrtHardwareDeviceType_CPU;
+  } else {
+    return nullptr;
+  }
+
+  const auto is_device_type_matching = [this, device_type](const OrtHardwareDevice* device) {
+    return api_ptrs_.ort_api.HardwareDevice_Type(device) == device_type;
+  };
+
+  auto device_it = std::find_if(devices_.begin(), devices_.end(), is_device_type_matching);
+  if (device_it != devices_.end()) {
+    return *device_it;
+  } else {
+    return nullptr;
+  }
 }
 
 }  // namespace qnn

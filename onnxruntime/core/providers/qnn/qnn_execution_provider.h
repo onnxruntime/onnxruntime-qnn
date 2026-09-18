@@ -47,6 +47,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   QnnEp(QnnEpFactory& factory,
         const std::string& name,
         const OrtSessionOptions& session_options,
+        const std::vector<const OrtHardwareDevice*>& devices,
         const OrtLogger* logger);
   ~QnnEp();
 
@@ -168,6 +169,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
     return GetProviderOptionPrefix(name_) + key;
   }
 
+  static const std::unordered_map<OrtHardwareDeviceType, std::string>& GetDefaultBackends();
+
+  std::string GetDefaultBackendPath(const std::vector<const OrtHardwareDevice*>& devices) const;
+
+  bool IsUsingVirtualDevice() const;
+
   struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
@@ -256,6 +263,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 
+  std::string cl_compiler_lib_path_;
+
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
 
@@ -328,6 +337,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Owns the App-provided EPContext read/write callbacks.
   // On pre-v28 ORT it degrades to a no-op stub with HasReadCallback() / HasWriteCallback() returning false.
   std::unique_ptr<qnn::EpContextIoDispatch> io_dispatch_;
+
+  using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
+  std::unordered_map<OrtHardwareDeviceType, MemoryInfoUniquePtr> host_accessible_memory_infos_;
 };
 
 }  // namespace onnxruntime

@@ -122,6 +122,7 @@ class QnnSerializerConfig {
 
 // configuration values for QnnBackendManager creation
 struct QnnBackendManagerConfig {
+  std::reference_wrapper<const std::vector<const OrtHardwareDevice*>> devices;
   std::string backend_path;
   ProfilingLevel profiling_level_etw;
   ProfilingLevel profiling_level;
@@ -141,6 +142,7 @@ struct QnnBackendManagerConfig {
   bool skip_backend_op_validation = false;
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
+  bool virtual_device = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -163,7 +165,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                     const ApiPtrs& api_ptrs,
                     const Ort::Logger& logger,
                     PrivateConstructorTag)
-      : backend_path_(config.backend_path),
+      : devices_(config.devices),
+        backend_path_(config.backend_path),
         profiling_level_etw_(config.profiling_level_etw),
         profiling_level_(config.profiling_level),
         profiling_file_path_(config.profiling_file_path),
@@ -177,6 +180,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
         skip_backend_op_validation_(config.skip_backend_op_validation),
+        virtual_device(config.virtual_device),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
@@ -270,7 +274,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false,
-      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
+      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX,
+      const std::string& cl_compiler_lib_path = "");
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
@@ -483,7 +488,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       bool& initialized_flag,
                                       const std::string& backend_label);
 
-  Ort::Status InitializeBackend(bool enable_gpu_weight_sharing = false);
+  Ort::Status InitializeBackend(bool enable_gpu_weight_sharing = false, const std::string& cl_compiler_lib_path = "");
 
   Ort::Status InitializeValidatorBackend();
 
@@ -743,6 +748,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
            (act_ver.major == min_ver.major && act_ver.minor == min_ver.minor && act_ver.patch >= min_ver.patch);
   }
 
+  const OrtHardwareDevice* GetActiveOrtDevice() const;
+
+  const std::vector<const OrtHardwareDevice*> devices_;
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
@@ -757,11 +765,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void* system_lib_handle_ = nullptr;
   Qnn_BackendHandle_t backend_handle_ = nullptr;
   Qnn_BackendHandle_t validator_backend_handle_ = nullptr;
-  QnnBackend_Config_t** backend_config_ = nullptr;
-  // GPU backend weight sharing config (valid only when GPU backend is active, lifetime: owned by this class)
+  const QnnBackend_Config_t** backend_config_ = nullptr;
+  // GPU backend configs (valid only when GPU backend is active, lifetime: owned by this class)
   QnnGpuBackend_CustomConfig_t gpu_backend_custom_config_{};
-  QnnBackend_Config_t backend_config_wrapper_{};
-  QnnBackend_Config_t* backend_configs_ptr_[2]{nullptr, nullptr};
+  qnn::QnnConfigsBuilder<QnnBackend_Config_t, QnnGpuBackend_CustomConfig_t> gpu_backend_custom_configs_ =
+      qnn::QnnConfigsBuilder<QnnBackend_Config_t, QnnGpuBackend_CustomConfig_t>(QNN_BACKEND_CONFIG_INIT,
+                                                                                QNN_GPU_BACKEND_CUSTOM_CONFIG_INIT);
   Qnn_LogHandle_t log_handle_ = nullptr;
   Qnn_LogHandle_t validator_log_handle_ = nullptr;
   Qnn_DeviceHandle_t device_handle_ = nullptr;
@@ -852,6 +861,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // When true, skip wiring up the target-backend validator during DLC dump so that
   // op validation falls back to the serializer's generic checks (see SetupBackend).
   bool skip_backend_op_validation_ = false;
+  bool virtual_device = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 
