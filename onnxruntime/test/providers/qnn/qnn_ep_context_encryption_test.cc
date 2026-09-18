@@ -449,9 +449,8 @@ TEST_F(QnnHTPBackendTests, Encryption_NewReadWriteCallback_RoundTrip) {
   std::filesystem::remove(kPlaintextQnnBin, ec);
 }
 
-// Baseline: htp_share_resource_optimization=1 WITHOUT encryption; hangs here → pre-existing QAIRT issue, unrelated to this PR.
-// TODO: Option "htp_share_resource_optimization" usage here is incorrect.
-TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) {
+// Baseline: htp_share_resource_optimization=1 WITHOUT encryption.
+TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -504,6 +503,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) 
                          kQnnExecutionProvider, provider_options);
 
     session_options.AddConfigEntry("ep.qnnexecutionprovider.htp_share_resource_optimization", "1");
+    session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
     try {
       Ort::Session session(*ort_env, ORT_TSTR("./vtcm_baseline.onnx"), session_options);
@@ -533,8 +533,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) 
 
 // 2-session shared-context E2E. Session 1 heap-leaked (workaround for a pre-existing
 // QAIRT 2.45 teardown hang, see Encryption_VtcmSharing_Baseline_NoCallback).
-// TODO: Option "htp_share_resource_optimization" usage here is incorrect.
-TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_MultiSession_EndToEnd) {
+TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -640,6 +639,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_MultiSession_EndToEnd
         {Ort::ConstEpDevice(s1_registered_ep_device.get())},
         provider_options);
     session_options.AddConfigEntry("ep.qnnexecutionprovider.htp_share_resource_optimization", "1");
+    session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
     {
       if (auto* set_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
               &Ort::GetApi())) {
@@ -926,6 +926,7 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
     RegisterQnnEpLibrary(registered_ep_device, session_options,
                          kQnnExecutionProvider, provider_options);
     session_options.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+    session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
     try {
       auto* set_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
@@ -943,7 +944,6 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
       FAIL() << "phase B exception: " << e.what();
     }
   }
-
   ASSERT_GT(rs.call_count, 0) << "read callback did not fire with share_ep_contexts enabled";
   ASSERT_EQ(phase_b_output.size(), golden.size())
       << "output size differs from golden (share_ep_contexts + encryption)";

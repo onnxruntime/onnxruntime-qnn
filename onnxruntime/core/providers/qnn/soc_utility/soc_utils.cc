@@ -1,6 +1,8 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#include "core/providers/qnn/soc_utility/soc_utils.h"
+
 #include <climits>
 #include <stdint.h>
 #include <string>
@@ -17,7 +19,7 @@
 #include <sys/system_properties.h>
 #endif
 
-#include "core/providers/qnn/soc_utils.h"
+#include "core/providers/qnn/soc_utility/soc_table.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -195,7 +197,8 @@ bool HasFastRpcCdspDevice() {
 #if defined(__ANDROID__)
   char manufacturer[PROP_VALUE_MAX] = {};
   __system_property_get("ro.soc.manufacturer", manufacturer);
-  return strncasecmp(manufacturer, "QTI", 3) == 0;
+  return strncasecmp(manufacturer, "QTI", 3) == 0 ||
+         strncasecmp(manufacturer, "Qualcomm", 8) == 0;
 #endif
   DIR* d = opendir("/dev");
   if (!d) {
@@ -215,39 +218,28 @@ bool HasFastRpcCdspDevice() {
 #endif
 }
 
-uint32_t SocModelFromName(std::string_view name) {
-  // Lookup table restricted to SoC models whose HTP architecture is supported
-  // by this EP (V68/V69/V73/V75/V79/V81/V85). Values match Qnn_SocModel_t in
-  // QNN/QnnTypes.h where available; entries not yet in the enum use the known
-  // assigned value. This table is best-effort — chips not listed here can still
-  // be targeted by passing the numeric soc_model ID directly.
-  static const std::unordered_map<std::string, uint32_t> kSocModelNameMap = {
-      {"SM8350", 30},
-      {"SM8325", 34},
-      {"SM8450", 36},
-      {"SM8475", 42},
-      {"SM8550", 43},
-      {"SM8650", 57},
-      {"SC8380XP", 60},
-      {"SM8635", 68},
-      {"SM8750", 69},
-      {"SM7675", 70},
-      {"SM8850", 87},
-      {"SC8480XP", 88},
-      {"SM8975", 103},
-  };
-
+uint32_t MapSocModelFromSocName(std::string_view soc_name) {
   // Uppercase input for case-insensitive lookup (ASCII-only, no locale dependency).
   std::string upper;
-  upper.reserve(name.size());
-  for (char c : name) {
+  upper.reserve(soc_name.size());
+  for (char c : soc_name) {
     upper += static_cast<char>(
         (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c);
   }
 
-  auto it = kSocModelNameMap.find(upper);
-  if (it != kSocModelNameMap.end()) {
-    return it->second;
+  for (const SocInfo& soc_info : kSocInfos) {
+    if (soc_info.soc_name == upper) {
+      return soc_info.soc_model;
+    }
+  }
+  return 0;
+}
+
+uint32_t MapHtpArchFromSocModel(uint32_t soc_model) {
+  for (const SocInfo& soc_info : kSocInfos) {
+    if (soc_info.soc_model == soc_model) {
+      return soc_info.htp_arch;
+    }
   }
   return 0;
 }
