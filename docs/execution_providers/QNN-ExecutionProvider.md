@@ -381,6 +381,11 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 |`UINT32_MAX` (default)|Auto-select: `min(max(1, hardware_concurrency), num_splits)`. Only effective when `enable_htp_graph_splitting=1`. Requires QAIRT SDK 2.51+; ignored on older builds.|
 |`N`|Use exactly N threads to prepare split sub-graphs in parallel. Value 0 or 1 means single-threaded. Values > 1 cap the number of splits.|
 
+|`"htp_num_cores"`|Description|
+|---|---|
+|`0` or unset|Default. Do not request a graph core count.|
+|Positive integer|Pass `QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES` when creating the graph. On ARM64 devices, also select the first requested HTP cores reported for `device_id`. On x86 hosts, offline AOT generation uses the requested graph core count without enumerating physical devices. It does not override the graph core count of an already compiled context binary.|
+
 |`"GPE_KWAY_PARTITIONS"`|Description|
 |---|---|
 | `8` | Default |

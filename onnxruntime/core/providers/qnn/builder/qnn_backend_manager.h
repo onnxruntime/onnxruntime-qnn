@@ -129,6 +129,7 @@ struct QnnBackendManagerConfig {
   ContextPriority context_priority;
   std::shared_ptr<QnnSerializerConfig> qnn_serializer_config;
   uint32_t device_id;
+  uint32_t htp_num_cores = 0;
   QnnHtpDevice_Arch_t htp_arch;
   uint32_t soc_model;
   std::vector<OpPackage> op_packages;
@@ -157,6 +158,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return std::make_shared<QnnBackendManager>(config, api_ptrs, logger, PrivateConstructorTag{});
   }
 
+  // Multi-core HTP device selection is only supported for AOT context
+  // generation/load flows. Regular ONNX/JIT setup must reject htp_num_cores.
+  static bool SupportsHtpNumCoresForSetup(bool load_from_cached_context,
+                                          bool need_load_system_lib) {
+    return load_from_cached_context || need_load_system_lib;
+  }
+
   // Note: Creation should be done via Create(). This constructor is public so that it can be called from
   // std::make_shared().
   QnnBackendManager(const QnnBackendManagerConfig& config,
@@ -172,6 +180,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
+        htp_num_cores_(config.htp_num_cores),
         htp_arch_(config.htp_arch),
         soc_model_(config.soc_model),
         op_packages_(config.op_packages),
@@ -845,6 +854,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
   const std::shared_ptr<QnnSerializerConfig> qnn_serializer_config_;
   uint32_t device_id_ = 0;
+  uint32_t htp_num_cores_ = 0;
   QnnHtpDevice_Arch_t htp_arch_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t soc_model_ = QNN_SOC_MODEL_UNKNOWN;
   const std::vector<OpPackage> op_packages_;

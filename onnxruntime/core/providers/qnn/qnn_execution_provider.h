@@ -50,6 +50,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
         const OrtLogger* logger);
   ~QnnEp();
 
+  // Multi-core HTP graph configs are currently limited to AOT context
+  // generation/load flows. Regular ONNX/JIT execution must reject htp_num_cores.
+  static bool SupportsHtpNumCoresForGraphConfigs(bool context_cache_enabled,
+                                                 bool prepare_and_load) {
+    return context_cache_enabled || prepare_and_load;
+  }
+
   OrtStatus* ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice* const* devices,
                                                     size_t num_devices,
                                                     const char* compatibility_info,
@@ -192,7 +199,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // RAII guard to complete backend setup and release resource during exit.
   // This is expected to be used in GetCapability and Compile for multi-SoC EP context.
   struct ScopedPerSocQnnBackendSetup {
-    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {};
+    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {}
     ~ScopedPerSocQnnBackendSetup();
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ScopedPerSocQnnBackendSetup);
 
