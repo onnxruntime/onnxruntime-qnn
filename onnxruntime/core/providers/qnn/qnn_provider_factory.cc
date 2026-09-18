@@ -106,9 +106,9 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   // ops have no CPU fallback and fail during session initialization.
   {
     Ort::CustomOpDomain qti_aisw_domain{kQtiAiswDomain};
-    for (const char* op_name : kQtiAiswBlockOpNames) {
+    for (const char* op_type : kQtiAiswBlockOpTypes) {
       qti_aisw_op_objects_.push_back(
-          std::make_unique<qnn::QtiAiswPlaceholderOp>(op_name, ep_name_));
+          std::make_unique<qnn::QtiAiswPlaceholderOp>(op_type, ep_name_));
       qti_aisw_domain.Add(qti_aisw_op_objects_.back().get());
     }
     custom_op_domains_.push_back(std::move(qti_aisw_domain));

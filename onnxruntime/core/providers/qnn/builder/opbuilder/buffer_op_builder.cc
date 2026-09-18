@@ -5,6 +5,7 @@
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -112,12 +113,12 @@ Ort::Status BufferOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   // in[1]: reset (optional BOOL scalar). Wire it through when present so the QNN Buffer node
   // receives its reset signal; leave it off otherwise (matching the handling of a
   // missing reset input).
-  if (inputs.size() > 1 && inputs[1].Exists()) {
+  if (inputs.size() > kQtiAiswBufferResetInputIndex && inputs[kQtiAiswBufferResetInputIndex].Exists()) {
     TensorInfo reset_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], reset_info));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kQtiAiswBufferResetInputIndex], reset_info));
     RETURN_IF_NOT(reset_info.qnn_data_type == QNN_DATATYPE_BOOL_8,
                   "QNN EP: Buffer reset input must have QNN BOOL_8 data type.");
-    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[1], logger, input_names));
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[kQtiAiswBufferResetInputIndex], logger, input_names));
   }
 
   return Ort::Status();

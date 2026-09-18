@@ -8,6 +8,7 @@
 #include "core/providers/qnn/builder/opbuilder/rnn_op_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -54,8 +55,6 @@ class StatefulGruOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  // ONNX index of the trailing stateful "reset" input.
-  static constexpr size_t kOnnxResetInputIndex = 6;
   // QNN GRU input slot for the reset signal (per QAIRT MasterOpDef Gru in[14]). in[13] = initial_h.
   static constexpr size_t kQnnGruResetInputIndex = 14;
   // QNN GRU input vector size including the reset slot (14 base slots 0..13 + reset at 14).
@@ -111,9 +110,14 @@ Ort::Status StatefulGruOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
               "quantized (INT8/INT16) StatefulGru is forward-only (per HtpOpDefSupplement).");
   }
 
-  if (node_unit.Inputs().size() > kOnnxResetInputIndex && node_unit.Inputs()[kOnnxResetInputIndex].Exists()) {
+  if (node_unit.Inputs().size() > kQtiAiswStatefulGruResetInputIndex &&
+      node_unit.Inputs()[kQtiAiswStatefulGruResetInputIndex].Exists()) {
+    const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
+    RETURN_IF_NOT(IsNpuBackend(backend_type) || IsIrBackend(backend_type),
+                  "QNN EP: StatefulGru reset requires the multi-time-step GRU path; "
+                  "the selected backend does not support the 3D reset input.");
     TensorInfo reset_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[kOnnxResetInputIndex], reset_info));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[kQtiAiswStatefulGruResetInputIndex], reset_info));
     RETURN_IF_NOT(reset_info.qnn_data_type == QNN_DATATYPE_BOOL_8,
                   "QNN EP: StatefulGru reset input must have QNN BOOL_8 data type.");
   }
@@ -150,9 +154,9 @@ Ort::Status StatefulGruOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_
                                                      const bool& use_fp_fallback,
                                                      std::vector<std::string>& uni_gru_output_names) const {
   const auto& onnx_inputs = node_unit.Inputs();
-  const std::string reset_name = (onnx_inputs.size() > kOnnxResetInputIndex &&
-                                  onnx_inputs[kOnnxResetInputIndex].Exists())
-                                     ? input_names[kOnnxResetInputIndex]
+  const std::string reset_name = (onnx_inputs.size() > kQtiAiswStatefulGruResetInputIndex &&
+                                  onnx_inputs[kQtiAiswStatefulGruResetInputIndex].Exists())
+                                     ? input_names[kQtiAiswStatefulGruResetInputIndex]
                                      : "";
   return rnn_details::AddUnidirectionGRU(qnn_model_wrapper, node_unit, direction, input_names,
                                          logger, do_op_validation, is_bidirection,

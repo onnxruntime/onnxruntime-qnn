@@ -255,6 +255,9 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   const uint32_t batch_size = layout == 0 ? input_tensor_infos[0].shape[1] : input_tensor_infos[0].shape[0];
   const uint32_t seq_length = layout == 0 ? input_tensor_infos[0].shape[0] : input_tensor_infos[0].shape[1];
   const int32_t direction_idx = input_tensor_infos[1].shape[0] < 2 || direction == "forward" ? 0 : 1;
+  const bool has_reset = !reset.onnx_name.empty();
+  const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  const bool is_ir_backend = IsIrBackend(qnn_model_wrapper.GetQnnBackendType());
 
   // GRU parameters - shared by all unrolled cells. Direction is the ONNX direction; reverse
   // time-step ordering is handled by the unrolling loop, not by the QNN direction param.
@@ -351,7 +354,7 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     }
   }
   // Optional stateful reset input: wire into the designated QNN slot if provided.
-  if (!reset.onnx_name.empty()) {
+  if (has_reset) {
     RETURN_IF_NOT(reset.qnn_slot < qnn_gru_input_names.size(),
                   "QNN EP: stateful reset slot out of range for GRU input vector.");
     qnn_gru_input_names[reset.qnn_slot] = reset.onnx_name;
@@ -387,7 +390,10 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   // QAIRT lowers StatefulGru with reset as one native multi-time-step QNN GRU.
   // QNN owns the state across inferences, so reset must be connected once to
   // in[14], not copied to each of ORT's per-timestep GRU cells.
-  if (!reset.onnx_name.empty()) {
+  if (has_reset) {
+    RETURN_IF_NOT(is_npu_backend || is_ir_backend,
+                  "QNN EP: StatefulGru reset requires the multi-time-step GRU path; "
+                  "the selected backend does not support the 3D reset input.");
     const std::string y_name = utils::UniqueNameGenerator().New(node_unit, "_Y_" + direction);
     const bool needs_y_h_output = !is_bidirection && onnx_outputs.size() > 1 && onnx_outputs[1].Exists();
     const std::string y_h_name = needs_y_h_output

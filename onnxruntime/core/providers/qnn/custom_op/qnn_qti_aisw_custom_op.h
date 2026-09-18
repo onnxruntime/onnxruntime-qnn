@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -15,12 +16,19 @@ namespace onnxruntime {
 
 // Custom Qualcomm block-op domain.
 inline constexpr const char* kQtiAiswDomain = "qti_aisw";
+inline constexpr const char* kQtiAiswBufferOpType = "Buffer";
+inline constexpr const char* kQtiAiswStatefulLstmOpType = "StatefulLstm";
+inline constexpr const char* kQtiAiswStatefulGruOpType = "StatefulGru";
+
+inline constexpr size_t kQtiAiswBufferResetInputIndex = 1;
+inline constexpr size_t kQtiAiswStatefulLstmResetInputIndex = 8;
+inline constexpr size_t kQtiAiswStatefulGruResetInputIndex = 6;
 
 // The qti_aisw block ops that the QNN EP supports. Extend this list when adding a new block op:
-// the factory registers a QtiAiswPlaceholderOp per name, and the matching op builder must be
+// the factory registers a QtiAiswPlaceholderOp per op type, and the matching op builder must be
 // registered in op_builder_factory.cc.
-inline constexpr std::array<const char*, 3> kQtiAiswBlockOpNames = {
-    "Buffer", "StatefulLstm", "StatefulGru"};
+inline constexpr std::array<const char*, 3> kQtiAiswBlockOpTypes = {
+    kQtiAiswBufferOpType, kQtiAiswStatefulLstmOpType, kQtiAiswStatefulGruOpType};
 
 namespace qnn {
 
@@ -30,10 +38,10 @@ namespace qnn {
 // heterogeneous VARIADIC UDO schema.
 struct QtiAiswPlaceholderOp
     : Ort::CustomOpBase<QtiAiswPlaceholderOp, QnnUdoPlaceholderKernel, /*WithStatus=*/true> {
-  QtiAiswPlaceholderOp(std::string op_name, std::string ep_type)
-      : op_name_(std::move(op_name)), ep_type_(std::move(ep_type)) {}
+  QtiAiswPlaceholderOp(std::string op_type, std::string ep_type)
+      : op_type_(std::move(op_type)), ep_type_(std::move(ep_type)) {}
 
-  const char* GetName() const { return op_name_.c_str(); }
+  const char* GetName() const { return op_type_.c_str(); }
   const char* GetExecutionProviderType() const { return ep_type_.c_str(); }
 
   // OPTIONAL inputs to accept empty interior slots (e.g. sequence_lens, B, initial_h).
@@ -44,11 +52,10 @@ struct QtiAiswPlaceholderOp
 
   size_t GetInputTypeCount() const { return kMaxInputs; }
   // Reset slot is BOOL (single-type) so InferOutputTypes doesn't propagate bool to outputs.
-  //   StatefulGru: in[6], StatefulLstm: in[8], Buffer: in[1]
   ONNXTensorElementDataType GetInputType(size_t index) const {
-    if ((op_name_ == "StatefulGru" && index == 6) ||
-        (op_name_ == "StatefulLstm" && index == 8) ||
-        (op_name_ == "Buffer" && index == 1)) {
+    if ((op_type_ == kQtiAiswStatefulGruOpType && index == kQtiAiswStatefulGruResetInputIndex) ||
+        (op_type_ == kQtiAiswStatefulLstmOpType && index == kQtiAiswStatefulLstmResetInputIndex) ||
+        (op_type_ == kQtiAiswBufferOpType && index == kQtiAiswBufferResetInputIndex)) {
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
     }
     return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
@@ -69,7 +76,7 @@ struct QtiAiswPlaceholderOp
 
   OrtStatusPtr CreateKernelV2(const OrtApi& /*api*/, const OrtKernelInfo* /*info*/,
                               void** op_kernel) const {
-    *op_kernel = std::make_unique<QnnUdoPlaceholderKernel>(op_name_).release();
+    *op_kernel = std::make_unique<QnnUdoPlaceholderKernel>(op_type_).release();
     return nullptr;
   }
 
@@ -78,7 +85,7 @@ struct QtiAiswPlaceholderOp
   }
 
  private:
-  std::string op_name_;
+  std::string op_type_;
   std::string ep_type_;
 };
 

@@ -8,6 +8,7 @@
 #include "core/providers/qnn/builder/opbuilder/rnn_op_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -24,9 +25,9 @@ namespace qnn {
 // vector of size 25) is shared with the standard LSTM builder via rnn_details::AddUnidirectionLSTM
 // in rnn_op_utils.cc. This builder passes a reset ResetInput; the standard LSTM passes kNoReset().
 //
-// Bidirectional is supported for all dtypes (float and quantized) via a forward + reverse unroll
-// joined by Concat, matching HtpOpDefSupplement, which places no direction constraint on
-// the Lstm op.
+// Bidirectional is supported for float Lstm via a forward + reverse unroll joined by Concat,
+// matching HtpOpDefSupplement, which places no direction constraint on the Lstm op. Quantized
+// StatefulLstm models are not selected as native QDQ groups today; they run as DQ -> fp Lstm -> Q.
 class StatefulLstmOpBuilder : public BaseOpBuilder {
  public:
   StatefulLstmOpBuilder() : BaseOpBuilder("StatefulLstmOpBuilder") {}
@@ -50,8 +51,6 @@ class StatefulLstmOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  // ONNX index of the trailing stateful "reset" input.
-  static constexpr size_t kOnnxResetInputIndex = 8;
   // QNN LSTM input slot for the reset signal (per QAIRT MasterOpDef Lstm in[24]).
   static constexpr size_t kQnnLstmResetInputIndex = 24;
 
@@ -100,9 +99,9 @@ Ort::Status StatefulLstmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrap
   RETURN_IF(input_forget != 0,
             "QNN EP doesn't support input_forget=1 for StatefulLstm.");
 
-  // No direction restriction: HtpOpDefSupplement places no direction constraint on the
-  // Lstm op for any dtype, and this builder implements bidirectional codegen (forward + reverse
-  // unroll joined by Concat) for both float and quantized inputs.
+  // No direction restriction for fp Lstm: HtpOpDefSupplement places no direction constraint on
+  // the Lstm op, and this builder implements bidirectional codegen (forward + reverse unroll
+  // joined by Concat). Quantized StatefulLstm is not selected as a native QDQ group today.
   return Ort::Status();
 }
 
@@ -134,9 +133,9 @@ Ort::Status StatefulLstmOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_mode
                                                        const bool& is_bidirection,
                                                        std::vector<std::string>& uni_lstm_output_names) const {
   const auto& onnx_inputs = node_unit.Inputs();
-  const std::string reset_name = (onnx_inputs.size() > kOnnxResetInputIndex &&
-                                  onnx_inputs[kOnnxResetInputIndex].Exists())
-                                     ? input_names[kOnnxResetInputIndex]
+  const std::string reset_name = (onnx_inputs.size() > kQtiAiswStatefulLstmResetInputIndex &&
+                                  onnx_inputs[kQtiAiswStatefulLstmResetInputIndex].Exists())
+                                     ? input_names[kQtiAiswStatefulLstmResetInputIndex]
                                      : "";
   return rnn_details::AddUnidirectionLSTM(qnn_model_wrapper, node_unit, direction, input_names,
                                           logger, do_op_validation, is_bidirection,

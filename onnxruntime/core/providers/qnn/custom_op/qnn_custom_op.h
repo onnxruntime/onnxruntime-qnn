@@ -4,6 +4,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 
 #include "core/providers/qnn/ort_api.h"  // Ort::CustomOpBase, Ort::CustomOpDomain
 
@@ -18,24 +19,24 @@ namespace qnn {
 // an explicit error (rather than a silent no-op) prevents wrong results if a UDO
 // node is accidentally not fused.
 //
-// Used by both env-var UDO ops and the built-in qti_aisw block ops. The optional op name is
+// Used by both env-var UDO ops and the built-in qti_aisw block ops. The optional op type is
 // folded into the error message for diagnostics; the message always contains "fused" for the
 // QNN path.
 struct QnnUdoPlaceholderKernel {
   QnnUdoPlaceholderKernel() = default;
-  explicit QnnUdoPlaceholderKernel(std::string op_name) : op_name_(std::move(op_name)) {}
+  explicit QnnUdoPlaceholderKernel(std::string op_type) : op_type_(std::move(op_type)) {}
 
   OrtStatusPtr ComputeV2(OrtKernelContext* /*context*/) {
     std::string msg = "QnnUdoPlaceholderOp kernel";
-    if (!op_name_.empty()) {
-      msg += " for '" + op_name_ + "'";
+    if (!op_type_.empty()) {
+      msg += " for '" + op_type_ + "'";
     }
     msg += " must never execute; the node should be fused and compiled by QNN EP.";
     return Ort::GetApi().CreateStatus(ORT_FAIL, msg.c_str());
   }
 
  private:
-  std::string op_name_;
+  std::string op_type_;
 };
 
 // A variadic-input/variadic-output placeholder OrtCustomOp used by QnnEpFactory to
