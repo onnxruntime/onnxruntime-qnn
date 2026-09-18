@@ -30,6 +30,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -76,6 +77,24 @@ inline const ClipSpec kClipFp32Spec = {
     {1, 1, 3, 4},
     -5.0f,
     5.0f};
+
+inline const ClipSpec kClipNegativeInfMinSpec = {
+    "Clip_NegativeInfMin",
+    SnapshotBackend::HTP,
+    SnapshotBackend::HTP,  // integration: QnnHTPBackendTests.Clip_NegativeInfMin
+    ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+    {1, 1, 3, 4},
+    -std::numeric_limits<float>::infinity(),
+    5.0f};
+
+inline const ClipSpec kClipPositiveInfMinSpec = {
+    "Clip_PositiveInfMin",
+    SnapshotBackend::HTP,
+    SnapshotBackend::HTP,  // integration: QnnHTPBackendTests.Clip_PositiveInfMin
+    ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+    {1, 1, 3, 4},
+    -5.0f,
+    std::numeric_limits<float>::infinity()};
 
 inline const ClipSpec kClip4DFp32DefaultMinMaxSpec = {
     "Clip_4D_f32_DefaultMinMax",
@@ -359,6 +378,8 @@ inline const std::vector<ClipSpec> kClipSpecs = {
     kClip4DFp32DefaultMinMaxSpec,
     kClip5DFp32Spec,
     kClipFp32Spec,
+    kClipNegativeInfMinSpec,
+    kClipPositiveInfMinSpec,
     kClipInt32Spec,
     kClipFp16Spec};
 
