@@ -82,6 +82,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
 
   // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
   // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
