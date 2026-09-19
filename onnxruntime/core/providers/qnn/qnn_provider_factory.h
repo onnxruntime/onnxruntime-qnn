@@ -67,6 +67,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
 };
 
 }  // namespace onnxruntime

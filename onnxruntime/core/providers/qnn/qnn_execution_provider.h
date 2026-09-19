@@ -225,7 +225,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool stop_share_ep_contexts_ = false;
   bool prepare_only_ = false;
   bool enable_spill_fill_buffer_ = false;
-  bool enable_file_mapped_weights_ = true;
+  bool enable_file_mapped_weights_ = false;
 #if defined(_WIN32)
   uint8_t num_graph_prepare_threads_ = 8;
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
@@ -287,6 +287,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  OrtMemoryInfo* registered_memory_info_ = nullptr;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;

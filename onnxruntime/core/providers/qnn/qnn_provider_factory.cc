@@ -320,9 +320,16 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
+  // Inform EP if a previous EP session has already enabled shared memory of some kind
+  // Note: if the factory's registered allocator type is not None, a new allocator of
+  // the registered type will be created
+  qnn_ep->registered_memory_info_ = factory->host_accessible_memory_info_.get();
+  qnn_ep->registered_allocator_type_ = factory->registered_allocator_type_;
+
   factory->qnn_allocator_type_ = qnn_ep->qnn_allocator_type_;
   if (factory->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
     for (OrtEpDevice* ep_device : factory->ep_devices_) {
+      factory->registered_allocator_type_ = factory->qnn_allocator_type_;
       RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
     }
   }
@@ -345,10 +352,16 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
 void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
-  if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
+  if (allocator == nullptr) {
+    return;
+  }
+
+  // Use registered_allocator_type_ to deallocate any shared allocators created as a result of
+  // previous sessions successfully enabling shared allocator
+  if (qnn::IsHtpSharedMemoryAllocator(factory->registered_allocator_type_)) {
     delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
 #ifdef _WIN32
-  } else if (qnn::IsDx12SharedMemoryAllocator(factory->qnn_allocator_type_)) {
+  } else if (qnn::IsDx12SharedMemoryAllocator(factory->registered_allocator_type_)) {
     delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
 #endif
   } else {
