@@ -2385,6 +2385,336 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 #endif
 }
 
+TEST_F(QnnHTPBackendTests, CCCCC) {
+const ORTCHAR_T* input_model_file = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+ 
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names;
+
+  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  std::vector<const char*> input_names_c;
+
+  std::vector<std::vector<float>> t1;
+  std::vector<std::vector<uint16_t>> t2;
+  std::vector<std::vector<int32_t>> t3;
+  std::vector<std::vector<int8_t>> t4;
+
+  Ort::AllocatorWithDefaultOptions allocator;
+
+  size_t num_inputs = session.session().GetInputCount();
+  input_names.reserve(num_inputs);
+  t1.reserve(num_inputs);
+  t2.reserve(num_inputs);
+  t3.reserve(num_inputs);
+  t4.reserve(num_inputs);
+  for (size_t i = 0; i < num_inputs; i++) {
+    auto input_name = session.session().GetInputNameAllocated(i, allocator);
+    input_names.push_back(std::string(input_name.get()));
+
+    Ort::TypeInfo type_info = session.session().GetInputTypeInfo(i);
+    auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+
+    ONNXTensorElementDataType type = tensor_info.GetElementType();
+    std::vector<int64_t> input_dim = tensor_info.GetShape();
+
+    //std::cerr << ">>> " << input_names[i] << ": ";
+    uint64_t total_vals = 1;
+    for (auto& v : input_dim) {
+      if (v < 0) {
+        v = 1024;
+      }
+
+      //std::cerr << v << ", ";
+      auto t = static_cast<uint64_t>(v);
+      total_vals = total_vals * t;
+    }
+
+    //std::cerr << "\n";
+
+    if (type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      auto& a = t1.emplace_back(total_vals, 0.0f);
+      auto input_tensor = Ort::Value::CreateTensor(info, a.data(), a.size(),
+                                                    input_dim.data(), input_dim.size());
+
+      ort_inputs.push_back(std::move(input_tensor));
+    } else if (type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+      auto& a = t2.emplace_back(total_vals, 0);
+      auto input_tensor = Ort::Value::CreateTensor(info, a.data(), a.size() * sizeof(uint16_t),
+                                                    input_dim.data(), input_dim.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16);
+
+      ort_inputs.push_back(std::move(input_tensor));
+    } else if (type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
+      auto& a = t3.emplace_back(total_vals, 0);
+      auto input_tensor = Ort::Value::CreateTensor(info, a.data(), a.size(),
+                                                    input_dim.data(), input_dim.size());
+
+      ort_inputs.push_back(std::move(input_tensor));
+
+    } else {
+      auto& a = t4.emplace_back(total_vals, 0);
+      auto input_tensor = Ort::Value::CreateTensor(info, a.data(), a.size(),
+                                                    input_dim.data(), input_dim.size());
+
+      ort_inputs.push_back(std::move(input_tensor));
+    }
+    input_names_c.push_back(input_names[i].c_str());
+  }
+
+  std::vector<const char*> output_names_c;
+
+  size_t num_outputs = session.session().GetOutputCount();
+  output_names.reserve(num_outputs);
+  for (size_t i = 0; i < num_outputs; ++i) {
+    auto output_name = session.session().GetOutputNameAllocated(i, allocator);
+    output_names.push_back(std::string(output_name.get()));
+    output_names_c.push_back(output_names[i].c_str());
+  }
+
+  auto ort_outputs1 = session.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                  output_names_c.data(), 1);
+
+}
+
+TEST_F(QnnHTPBackendTests, FFFFF) {
+  const ORTCHAR_T* input_model_file = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode","3"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+}
+
+
+TEST_F(QnnHTPBackendTests, LOAD_COMPILED) {
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  const ORTCHAR_T* compiled2 = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator", "1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);;
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, compiled, so));
+
+  Ort::Session session2(*ort_env, compiled2, so2);
+}
+
+TEST_F(QnnHTPBackendTests, DECODE_COMP) {
+  const ORTCHAR_T* input_model_file = ORT_TSTR("MLVCDecoder_320x192.onnx");
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator", "1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+
+  Ort::Session session2(*ort_env, compiled, so2);
+}
+
+
+TEST_F(QnnHTPBackendTests, SKIP_ENC_COMPILE_DOUBLE_REGISTER) {
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  const ORTCHAR_T* input_model_file2 = ORT_TSTR("MLVCDecoder_320x192.onnx");
+  const ORTCHAR_T* compiled2 = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator", "1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  RegisteredEpDeviceUniquePtr registered_ep_device2;
+  std::string name2("QnnExecutionprovider2");
+  RegisterQnnEpLibrary(registered_ep_device2, so2, name2, provider_options);
+
+
+  Ort::SessionOptions so3;
+  so3.SetLogId("so3");
+  so3.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, compiled, so));
+  Ort::Session session2(*ort_env, input_model_file2, so2);
+  Ort::Session session3(*ort_env, compiled2, so3);
+  std::cout << "END" << std::endl;
+}
+
+TEST_F(QnnHTPBackendTests, SKIP_ENC_COMPILE_DOUBLE_REGISTER2) {
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  const ORTCHAR_T* input_model_file2 = ORT_TSTR("MLVCDecoder_320x192.onnx");
+  const ORTCHAR_T* compiled2 = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator", "1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  RegisteredEpDeviceUniquePtr registered_ep_device2;
+  std::string name2("QnnExecutionprovider2");
+  RegisterQnnEpLibrary(registered_ep_device2, so2, name2, provider_options);
+
+  Ort::SessionOptions so3;
+  so3.SetLogId("so3");
+  so3.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device2.get())}, provider_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, compiled, so));
+  Ort::Session session2(*ort_env, input_model_file2, so2);
+  Ort::Session session3(*ort_env, compiled2, so3);
+  std::cout << "END" << std::endl;
+}
+
+
+TEST_F(QnnHTPBackendTests, SKIP_ENC_COMPILE_REORDER) {
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  const ORTCHAR_T* input_model_file2 = ORT_TSTR("MLVCDecoder_320x192.onnx");
+  const ORTCHAR_T* compiled2 = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator", "1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  Ort::SessionOptions so3;
+  so3.SetLogId("so3");
+  so3.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file2, so2));
+  Ort::Session session2(*ort_env, compiled, so);
+  Ort::Session session3(*ort_env, compiled2, so3);
+}
+
+
+TEST_F(QnnHTPBackendTests, SKIP_ENC_COMPILE) {
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  const ORTCHAR_T* input_model_file2 = ORT_TSTR("MLVCDecoder_320x192.onnx");
+  const ORTCHAR_T* compiled2 = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator", "1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  ProviderOptions no_shared_mem_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}};
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, no_shared_mem_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, compiled, so));
+  Ort::Session session3(*ort_env, input_model_file2, so2);
+}
+
+
+TEST_F(QnnHTPBackendTests, ZZZZ) {
+  const ORTCHAR_T* input_model_file = ORT_TSTR("MLVCEncoder_320x192.onnx");
+  const ORTCHAR_T* compiled = ORT_TSTR("MLVCEncoder_320x192_ctx.onnx");
+  const ORTCHAR_T* input_model_file2 = ORT_TSTR("MLVCDecoder_320x192.onnx");
+  const ORTCHAR_T* compiled2 = ORT_TSTR("MLVCDecoder_320x192_ctx.onnx");
+
+  // Compile a model with QNN. This should succeed.
+  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+  ProviderOptions provider_options = { {"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"htp_performance_mode", "sustained_high_performance"}, {"vtcm", "8"}, {"htp_graph_finalization_optimization_mode", "3"}, {"enable_htp_shared_memory_allocator","1"}};
+
+  Ort::SessionOptions so;
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+  Ort::SessionOptions so2;
+  so2.SetLogId("so2");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so2.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  
+  Ort::SessionOptions so_compiled;
+  so_compiled.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  so_compiled.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+
+  ScopedOrtSession session(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+
+  Ort::Session session2(*ort_env, compiled, so_compiled);
+  Ort::Session session3(*ort_env, input_model_file2, so2);
+}
+
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
