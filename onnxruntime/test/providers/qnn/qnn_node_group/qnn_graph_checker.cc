@@ -11,6 +11,59 @@
 namespace onnxruntime {
 namespace test {
 
+namespace {
+
+bool FindQnnJsonGraph(const std::filesystem::path& dump_dir,
+                      std::filesystem::path& json_path) {
+  json_path.clear();
+  try {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dump_dir, ec);
+    if (ec) {
+      return false;
+    }
+
+    const std::filesystem::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+      if (ec) {
+        return false;
+      }
+
+      try {
+        std::error_code entry_ec;
+        if (it->is_regular_file(entry_ec) && !entry_ec && it->path().extension() == ".json" &&
+            it->path().filename().string().find("_tensor_log") == std::string::npos) {
+          json_path = it->path();
+          return true;
+        }
+      } catch (const std::exception&) {
+        continue;
+      }
+    }
+  } catch (const std::exception&) {
+    return false;
+  }
+
+  return !json_path.empty();
+}
+
+bool ParseQnnJsonGraph(const std::filesystem::path& json_path,
+                       nlohmann::json& root) {
+  try {
+    std::ifstream json_file(json_path);
+    if (!json_file.is_open()) {
+      return false;
+    }
+
+    json_file >> root;
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+}  // namespace
+
 void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
                         const std::string& op,
                         size_t count) {
