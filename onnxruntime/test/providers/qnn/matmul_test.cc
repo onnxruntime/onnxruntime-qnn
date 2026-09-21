@@ -753,20 +753,22 @@ static void RunDynamicInput1QuantErrorTest(const char* test_name,
   }
 }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
-  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 0.2f, QNN_DATATYPE_UFIXED_POINT_8);
-}
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_DynamicInput1ConversionGate) {
+  {
+    SCOPED_TRACE("U16 low quantization error uses asymmetric U8");
+    RunDynamicInput1QuantErrorTest("low_error", 0.0f, 0.2f, QNN_DATATYPE_UFIXED_POINT_8);
+  }
+  {
+    SCOPED_TRACE("U16 high quantization error uses symmetric U16");
+    RunDynamicInput1QuantErrorTest("high_error", 0.0f, 100.0f, QNN_DATATYPE_UFIXED_POINT_16);
+  }
+  {
+    SCOPED_TRACE("symmetric U16 input passes through");
+    RunDynamicInput1QuantErrorTest("symmetric_input", -0.1f, 0.1f, QNN_DATATYPE_UFIXED_POINT_16,
+                                   /*expected_convert_count=*/0);
+  }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
-  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 100.0f, QNN_DATATYPE_UFIXED_POINT_16);
-}
-
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough) {
-  RunDynamicInput1QuantErrorTest("symmetric_input", -0.1f, 0.1f, QNN_DATATYPE_UFIXED_POINT_16,
-                                 /*expected_convert_count=*/0);
-}
-
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate) {
+  SCOPED_TRACE("non-U16 input does not use the U16 conversion gate");
   namespace fs = std::filesystem;
   const fs::path graph_dir = fs::temp_directory_path() / "MatMulOp_QDQ_NonU16Input1";
   fs::remove_all(graph_dir);
