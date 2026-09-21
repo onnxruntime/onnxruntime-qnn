@@ -241,8 +241,8 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      # A maintainer-dispatched run executes from main, so report the real Windows
-      # device result on the reviewed source SHA rather than on the main commit.
+      # The device path runs native ARM64 tests with Python. Publish the stable
+      # pynone check context used by the normal cross-compiled Windows CI path.
       - name: Report Windows device result on reviewed source
         if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.source != '' && inputs.run_tests && inputs.build_test_same_runner }}
         uses: actions/github-script@v8
@@ -349,8 +349,8 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      # Deliberately use the trusted workflow checkout: this stage runs CI scripts
-      # while consuming artifacts selected by BUILD_SOURCEVERSION, not fork code.
+      # The temporary branch pins CI scripts and test artifacts to the same
+      # reviewed commit for maintainer-approved device runs.
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -422,8 +422,8 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      # Deliberately use the trusted workflow checkout: this stage runs CI scripts
-      # while consuming artifacts selected by BUILD_SOURCEVERSION, not fork code.
+      # The temporary branch pins CI scripts and test artifacts to the same
+      # reviewed commit for maintainer-approved device runs.
       - uses: actions/checkout@v6
         with:
           persist-credentials: false

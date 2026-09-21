@@ -21,8 +21,8 @@ on:
       do_device_tests:
         type: boolean
         default: false
-      # Report real device-test results on source_ref when CI was dispatched from
-      # main for a reviewed external PR.
+      # Report real device-test results on the reviewed source_ref for
+      # maintainer-approved external PR runs.
       report_device_result_to_source:
         type: boolean
         default: false

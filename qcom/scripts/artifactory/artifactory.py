@@ -55,9 +55,8 @@ class CiArtifactory(Artifactory):
     def __init__(self, name: str) -> None:
         super().__init__()
         self.__name = name
-        # A maintainer-approved workflow is defined on main but intentionally checks
-        # out a reviewed PR SHA. Let that workflow key artifacts by the source it is
-        # testing while retaining GITHUB_SHA as the default for all existing callers.
+        # Key artifacts by the reviewed source SHA supplied by a maintainer run,
+        # retaining GITHUB_SHA as the default for all existing callers.
         self.__commit_hash = os.environ.get("BUILD_SOURCEVERSION", os.environ["GITHUB_SHA"])
         actor = os.environ["GITHUB_ACTOR"] if os.environ["GITHUB_ACTOR"] != "" else "main"
         run_id = os.environ["GITHUB_RUN_ID"]
