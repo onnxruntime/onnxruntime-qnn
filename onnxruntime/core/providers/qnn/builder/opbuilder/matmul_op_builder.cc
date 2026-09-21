@@ -12,16 +12,6 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
-bool ShouldUseSymmetricU16ForMatMul(float input1_scale) {
-  constexpr float kMaximumValueQuantError = 0.1f;
-
-  // Re-encoding U16 as U8 increases the value-domain quantization step from
-  // input1_scale to input1_scale * 65535 / 255. A value can move
-  // by at most half of that U8 step when it is rounded. Keep symmetric U16
-  // when that error exceeds the 10% value-domain budget.
-  const float u8_half_step = input1_scale * 65535.0f / 255.0f / 2.0f;
-  return u8_half_step > kMaximumValueQuantError;
-}
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
 // Accepts weight rank 2–4: shape [..., K, N] where any leading dims beyond K/N must equal 1
 // (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
@@ -403,12 +393,11 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   //                         |
   //     input_1_uint16 -----+
   //
-  // Dynamic asymmetric U16 input[1] uses the value-domain U16-to-U8 error gate:
-  //     input_0_uint16 ----------------------------------> MatMul ---> output_uint16
-  //                                                        ^
-  //                                                        |
-  //     input_1_uint16_low_error --> Convert(uint8_asym) -+
-  //     input_1_uint16_high_error --> Convert(uint16_sym) -+
+  // For dynamic weights, QNN graph that passes validation:
+  //     input_0_uint16 ---------------------------> MatMul ---> output_uint16
+  //                                                   ^
+  //                                                   |
+  //     input_1_uint16_asym --> Convert(uint16_sym) --+
   //
   // For static weights, QNN graph that passes validation:
   //     input_0_uint16 ---------------------> MatMul ---> output_uint16
@@ -434,18 +423,15 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       // QNN offsets negate ONNX zero points, so symmetric uint16 uses -32768.
       constexpr int32_t kSymmetricU16Offset = -32768;
       if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
-        const bool use_symmetric_u16 =
-            ShouldUseSymmetricU16ForMatMul(quant_param.scaleOffsetEncoding.scale);
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,
                                                convert_output_name,
                                                input_info_1.qnn_data_type,
-                                               use_symmetric_u16 ? QNN_DATATYPE_UFIXED_POINT_16
-                                                                 : QNN_DATATYPE_UFIXED_POINT_8,
+                                               QNN_DATATYPE_UFIXED_POINT_16,
                                                quant_param.scaleOffsetEncoding.offset,
                                                quant_param.scaleOffsetEncoding.scale,
                                                input_1_shape,
-                                               use_symmetric_u16,
+                                               true,  // symmetric
                                                do_op_validation));
         input_names.push_back(convert_output_name);
       } else {
