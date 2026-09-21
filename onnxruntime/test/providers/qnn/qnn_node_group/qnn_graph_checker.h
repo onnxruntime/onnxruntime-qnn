@@ -4,6 +4,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 
 namespace onnxruntime {
@@ -15,6 +16,10 @@ namespace test {
 void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
                         const std::string& op,
                         size_t count = 1);
+
+// Checks the datatype of the tensor produced by the single Convert node.
+void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
+                                 uint32_t expected_data_type);
 
 // Asserts that a node with the exact `node_name` does not appear in
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
