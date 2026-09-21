@@ -1,6 +1,6 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
-"""Generate onnx_test_runner-format data for the MyAdd QDQ model.
+"""Generate protobuf test data for onnxruntime_plugin_ep_onnx_test.
 
 The input matches the standalone samples: 32 float32 values evenly spaced in
 [-1, 1]. The reference is the unquantized mathematical result (input +

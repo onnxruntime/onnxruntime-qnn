@@ -13,7 +13,7 @@ User-Defined Operation (UDO) through the ORT QNN Execution Provider.
 | File | Purpose |
 |------|---------|
 | `gen_myadd_model.py` | Generate `myadd_fp32.onnx` (CPU) and `myadd_qdq.onnx` (HTP) |
-| `gen_myadd_test_data.py` | Generate `onnx_test_runner` protobuf inputs and references for on-device HTP |
+| `gen_myadd_test_data.py` | Generate `onnxruntime_plugin_ep_onnx_test` protobuf inputs and references for on-device HTP |
 | `run_udo_sample.cc` | C++ standalone sample — CPU and HTP modes |
 | `run_udo_sample.py` | Python sample — CPU and HTP modes |
 | `build_op_package.sh` | Build `libMyAddOpPackage_cpu.so` / `libMyAddOpPackage_htp.so` |
@@ -35,7 +35,8 @@ those inputs.
 | Hexagon SDK | 6.5.0.0 | HTP only; set `HEXAGON_SDK_ROOT=<hexagon>/6.5.0.0` |
 | Python | **3.12** | Use 3.12 throughout. The op-package generator supports 3.10/3.12, but the Python sample needs a QNN-EP-compatible host ORT (≥ 1.24), and public PyPI `onnxruntime` has no cp310 wheels past 1.23.2 — too old for the plugin. On 3.12, `pip install onnxruntime` gets a compatible release. |
 | onnx, numpy | any recent | `pip install onnx numpy` |
-| onnxruntime | built from this repo | needed for C++ headers and `libonnxruntime.so`; set `ORT_LIB` |
+| ONNX Runtime C/C++ package | version ABI-compatible with the QNN EP build | Extract the released core ORT package and set `ORT_PREBUILT_ROOT`; it supplies public headers and `libonnxruntime.so`. |
+| QNN EP build | this repo | Set `ORT_BUILD` to its Release directory. It supplies `libonnxruntime_providers_qnn.so` and the test binaries. |
 | onnxruntime (Python) | ≥ 1.24 | In a Python 3.12 venv: `pip install onnxruntime`. QNN EP libraries come from the built `onnxruntime_qnn` wheel (`build/linux-x86_64/Release/dist/`). |
 
 ---
@@ -73,25 +74,34 @@ Individual targets: `./build_op_package.sh cpu` or `htp`.
 Linux shared-library names and `LD_LIBRARY_PATH`.
 
 ```bash
-# Build (the in-tree build stages public headers under _deps/ort_core-src)
-ORT_BUILD=/path/to/ort/build/linux-x86_64/Release
-ORT_HEADERS=${ORT_BUILD}/_deps/ort_core-src/include
+# Use a compatible released core ORT package for headers and libonnxruntime.so.
+# The QNN EP build supplies the plugin.
+ORT_BUILD=/path/to/qnn-ep/build/linux-x86_64/Release
+ORT_PREBUILT_ROOT=/path/to/onnxruntime-linux-x64-<version>
+ORT_HEADERS=${ORT_PREBUILT_ROOT}/include
+ORT_LIB=${ORT_PREBUILT_ROOT}/lib
+
+# This sample registers the QNN plugin by filename. Place a symlink beside the
+# prebuilt libonnxruntime.so so ORT can resolve the plugin. Do not replace an
+# existing plugin in a packaged deployment.
+ln -s ${ORT_BUILD}/libonnxruntime_providers_qnn.so \
+    ${ORT_LIB}/libonnxruntime_providers_qnn.so
+
 g++ -std=c++17 run_udo_sample.cc \
-    -I${ORT_HEADERS}/onnxruntime/core/session \
     -I${ORT_HEADERS} \
-    -L${ORT_BUILD} -lonnxruntime \
-    -Wl,-rpath,${ORT_BUILD} \
+    -L${ORT_LIB} -lonnxruntime \
+    -Wl,-rpath,${ORT_LIB} \
     -o run_udo_sample
 
 # Set env var so the QNN EP factory registers the custom-op domain automatically
 export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 
 # CPU backend (libQnnCpu.so must be on LD_LIBRARY_PATH)
-LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_BUILD} \
+LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
     ./run_udo_sample cpu myadd_fp32.onnx artifacts/libMyAddOpPackage_cpu.so
 
 # HTP backend (libQnnHtp.so must be on LD_LIBRARY_PATH)
-LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_BUILD} \
+LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
     ./run_udo_sample htp myadd_qdq.onnx artifacts/libMyAddOpPackage_htp.so
 ```
 
@@ -118,12 +128,13 @@ Confirm that the CPU model is assigned to QNN rather than falling back to the
 CPU EP:
 
 ```bash
-LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_BUILD} \
+LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
 ORT_LOG_LEVEL=1 ./run_udo_sample cpu myadd_fp32.onnx artifacts/libMyAddOpPackage_cpu.so 2>&1 \
     | grep -i "node.*assign\|partition\|MyAdd"
 ```
 
-The corresponding gtests validate the same CPU and HTP paths:
+The corresponding gtests in the same QNN EP build output validate the CPU and
+HTP paths:
 
 ```bash
 ${ORT_BUILD}/onnxruntime_provider_test \
@@ -211,7 +222,7 @@ deployment. Refer to the QAIRT SDK signing documentation.
 
 Deploy the ARM lib at the top level of `${DEVICE_DIR}` and the DSP skel into a
 separate `${DSP_DIR}` under the **exact same filename**. The test runner consumes
-an onnx_test_runner-style directory (`model.onnx` + `test_data_set_0/`) and treats
+an `onnxruntime_plugin_ep_onnx_test` test-case directory (`model.onnx` + `test_data_set_0/`) and treats
 subdirectories under that root as test cases, so `${DSP_DIR}` must be separate.
 
 ```bash
