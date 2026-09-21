@@ -113,6 +113,9 @@ static void run_htp(const std::string& model_path, const std::string& pkg_path) 
 
   // Register QNN HTP EP.
   // ORT_QNN_CUSTOM_OP_DOMAINS handles schema registration automatically.
+  // The x86 HTP op package is the host-side half, so target it as CPU for
+  // host graph preparation. On-device execution registers the DSP skel
+  // separately with the HTP target (see the README's on-device flow).
   std::string op_packages = "MyAdd:" + pkg_path + ":MyAddOpPackageInterfaceProvider:CPU";
   AppendQnnEp(env, so, {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", op_packages}});
 

@@ -69,6 +69,9 @@ Individual targets: `./build_op_package.sh cpu` or `htp`.
 
 ## Step 3a — Run C++ sample
 
+`run_udo_sample.cc` and the following commands target Linux only. They use
+Linux shared-library names and `LD_LIBRARY_PATH`.
+
 ```bash
 # Build (the in-tree build stages public headers under _deps/ort_core-src)
 ORT_BUILD=/path/to/ort/build/linux-x86_64/Release
@@ -161,7 +164,7 @@ python3 run_udo_sample.py htp myadd_qdq.onnx \
 
 `build_op_package.sh` targets the x86 simulator only.  On-device HTP requires
 **two** separately-built op-package halves (the aarch64-android registration lib
-and the hexagon-v`NN` DSP skel), plus the correct test runner.
+and the hexagon-vNN DSP skel), plus the correct test runner.
 
 ### 4a — Build both op-package halves for the device arch
 
@@ -202,7 +205,7 @@ env QNN_SDK_ROOT="${QNN_SDK_ROOT}" HEXAGON_SDK_ROOT="${HEXAGON_SDK_ROOT}" \
 ### 4b — Sign the DSP skel (if required)
 
 If the device's process domain requires skel signing, sign the DSP skel before
-deployment.  Refer to the `qairt-skel-signing` skill or QAIRT SDK signing docs.
+deployment. Refer to the QAIRT SDK signing documentation.
 
 ### 4c — Deploy artifacts
 
@@ -287,11 +290,11 @@ about `0.0314`.
 
 ## Step 5 — EPContext binary on-device (arm64)
 
-This is QA-UDO-4. It reuses the deployment from Step 4, including both
-op-package halves. Context generation requires the custom-op schema; inference
-from the generated context model intentionally does not. Keep context artifacts
-outside `${DEVICE_DIR}`: the runner discovers every `.onnx` and subdirectory in
-that directory as a model/test case.
+This step reuses the deployment from Step 4, including both op-package halves.
+Context generation requires the custom-op schema; inference from the generated
+context model intentionally does not. Keep context artifacts outside
+`${DEVICE_DIR}`: the runner discovers every `.onnx` and subdirectory in that
+directory as a model/test case.
 
 ```bash
 # Generate an external context ONNX + .bin. Keep ORT_QNN_CUSTOM_OP_DOMAINS for this source-model run.
