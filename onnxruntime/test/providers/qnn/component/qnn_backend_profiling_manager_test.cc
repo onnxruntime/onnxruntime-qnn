@@ -8,9 +8,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
@@ -47,6 +50,11 @@ class ProfileApiRecorder {
   int free_calls = 0;
   QnnProfile_Level_t created_level = static_cast<QnnProfile_Level_t>(0);
   Qnn_ErrorHandle_t create_result = QNN_PROFILE_NO_ERROR;
+  bool block_profile_free = false;
+  bool profile_free_entered = false;
+  bool allow_profile_free = false;
+  std::mutex callback_mutex;
+  std::condition_variable callback_cv;
 
  private:
   static Qnn_ErrorHandle_t ProfileCreate(Qnn_BackendHandle_t /*backend*/, QnnProfile_Level_t level,
@@ -60,7 +68,14 @@ class ProfileApiRecorder {
   }
 
   static Qnn_ErrorHandle_t ProfileFree(Qnn_ProfileHandle_t /*profile*/) {
-    ++current_->free_calls;
+    ProfileApiRecorder* recorder = current_;
+    if (recorder->block_profile_free) {
+      std::unique_lock<std::mutex> lock(recorder->callback_mutex);
+      recorder->profile_free_entered = true;
+      recorder->callback_cv.notify_all();
+      recorder->callback_cv.wait(lock, [recorder] { return recorder->allow_profile_free; });
+    }
+    ++recorder->free_calls;
     return QNN_PROFILE_NO_ERROR;
   }
 
@@ -91,13 +106,12 @@ TEST(QnnUnit_BackendProfilingManagerTest,
 }
 
 TEST(QnnUnit_BackendProfilingManagerTest,
-     InitializeForCurrentConsumers_OrtConsumerOnly_CreatesOneBasicHandle) {
+     AcquireOrtProfilingConsumer_OrtConsumerOnly_CreatesOneBasicHandle) {
   StubApiEnv env;
   ProfileApiRecorder recorder;
   auto manager = recorder.CreateManager(qnn::ProfilingLevel::OFF);
 
-  manager->AcquireOrtProfilingConsumer();
-  ASSERT_TRUE(manager->InitializeProfilingForCurrentConsumers(env.logger).IsOK());
+  ASSERT_TRUE(manager->AcquireOrtProfilingConsumer(env.logger).IsOK());
   ASSERT_TRUE(manager->InitializeProfilingForCurrentConsumers(env.logger).IsOK());
 
   EXPECT_EQ(recorder.create_calls, 1);
@@ -120,28 +134,27 @@ TEST(QnnUnit_BackendProfilingManagerTest,
 }
 
 TEST(QnnUnit_BackendProfilingManagerTest,
-     ReleaseOrtProfilingHandleIfUnused_OnlyOrtConsumer_ReleasesProfileHandle) {
+     ReleaseOrtProfilingConsumer_OnlyOrtConsumer_ReleasesProfileHandle) {
   StubApiEnv env;
   ProfileApiRecorder recorder;
   auto manager = recorder.CreateManager(qnn::ProfilingLevel::OFF);
 
-  manager->AcquireOrtProfilingConsumer();
-  ASSERT_TRUE(manager->InitializeProfilingForCurrentConsumers(env.logger).IsOK());
-  manager->ReleaseOrtProfilingConsumer();
-  ASSERT_TRUE(manager->ReleaseOrtProfilingHandleIfUnused().IsOK());
+  ASSERT_TRUE(manager->AcquireOrtProfilingConsumer(env.logger).IsOK());
+  ASSERT_TRUE(manager->ReleaseOrtProfilingConsumer().IsOK());
 
   EXPECT_EQ(recorder.free_calls, 1);
   EXPECT_FALSE(manager->HasProfileHandle());
 }
 
 TEST(QnnUnit_BackendProfilingManagerTest,
-     ReleaseOrtProfilingHandleIfUnused_ProviderProfiling_KeepsProfileHandle) {
+     ReleaseOrtProfilingConsumer_ProviderProfiling_KeepsProfileHandle) {
   StubApiEnv env;
   ProfileApiRecorder recorder;
   auto manager = recorder.CreateManager(qnn::ProfilingLevel::BASIC);
 
   ASSERT_TRUE(manager->InitializeProfilingForCurrentConsumers(env.logger).IsOK());
-  ASSERT_TRUE(manager->ReleaseOrtProfilingHandleIfUnused().IsOK());
+  ASSERT_TRUE(manager->AcquireOrtProfilingConsumer(env.logger).IsOK());
+  ASSERT_TRUE(manager->ReleaseOrtProfilingConsumer().IsOK());
 
   EXPECT_EQ(recorder.create_calls, 1);
   EXPECT_EQ(recorder.free_calls, 0);
@@ -149,14 +162,65 @@ TEST(QnnUnit_BackendProfilingManagerTest,
 }
 
 TEST(QnnUnit_BackendProfilingManagerTest,
-     CreateGraphProfilingScope_OrtOnly_LazilyCreatesProfileHandle) {
+     ReleaseOrtProfilingConsumer_ConcurrentAcquireRecreatesHandleAfterRelease) {
+  StubApiEnv env;
+  ProfileApiRecorder recorder;
+  auto manager = recorder.CreateManager(qnn::ProfilingLevel::OFF);
+
+  ASSERT_TRUE(manager->AcquireOrtProfilingConsumer(env.logger).IsOK());
+  recorder.block_profile_free = true;
+
+  Ort::Status release_status;
+  std::thread release_thread([&] {
+    release_status = manager->ReleaseOrtProfilingConsumer();
+  });
+
+  {
+    std::unique_lock<std::mutex> lock(recorder.callback_mutex);
+    recorder.callback_cv.wait(lock, [&] { return recorder.profile_free_entered; });
+  }
+
+  bool acquire_started = false;
+  Ort::Status acquire_status;
+  std::thread acquire_thread([&] {
+    {
+      std::lock_guard<std::mutex> lock(recorder.callback_mutex);
+      acquire_started = true;
+      recorder.callback_cv.notify_all();
+    }
+    acquire_status = manager->AcquireOrtProfilingConsumer(env.logger);
+  });
+
+  {
+    std::unique_lock<std::mutex> lock(recorder.callback_mutex);
+    recorder.callback_cv.wait(lock, [&] { return acquire_started; });
+    recorder.allow_profile_free = true;
+    recorder.callback_cv.notify_all();
+  }
+
+  release_thread.join();
+  acquire_thread.join();
+
+  ASSERT_TRUE(release_status.IsOK());
+  ASSERT_TRUE(acquire_status.IsOK());
+  EXPECT_TRUE(manager->HasActiveOrtProfilingConsumer());
+  EXPECT_TRUE(manager->HasProfileHandle());
+  EXPECT_EQ(recorder.create_calls, 2);
+  EXPECT_EQ(recorder.free_calls, 1);
+
+  recorder.block_profile_free = false;
+  ASSERT_TRUE(manager->ReleaseOrtProfilingConsumer().IsOK());
+}
+
+TEST(QnnUnit_BackendProfilingManagerTest,
+     CreateGraphProfilingScope_OrtOnly_UsesActiveProfileHandle) {
   StubApiEnv env;
   ProfileApiRecorder recorder;
   auto manager = recorder.CreateManager(qnn::ProfilingLevel::OFF);
   qnn::QnnProfilingScope profiling_scope;
   qnn::profile::ProfilingInfo profiling_info;
 
-  manager->AcquireOrtProfilingConsumer();
+  ASSERT_TRUE(manager->AcquireOrtProfilingConsumer(env.logger).IsOK());
   auto* ort_profiler = reinterpret_cast<qnn::QnnEpProfiler*>(static_cast<uintptr_t>(1));
   ASSERT_TRUE(manager->CreateGraphProfilingScope(
                          profiling_info, "graph", qnn::OrtProfilingOperation::EXECUTE,
@@ -165,6 +229,27 @@ TEST(QnnUnit_BackendProfilingManagerTest,
 
   EXPECT_TRUE(profiling_scope.Active());
   EXPECT_EQ(recorder.create_calls, 1);
+  EXPECT_EQ(recorder.created_level, QNN_PROFILE_LEVEL_BASIC);
+}
+
+TEST(QnnUnit_BackendProfilingManagerTest,
+     CreateGraphProfilingScope_OrtOnly_LazilyRecreatesMissingProfileHandle) {
+  StubApiEnv env;
+  ProfileApiRecorder recorder;
+  auto manager = recorder.CreateManager(qnn::ProfilingLevel::OFF);
+  qnn::QnnProfilingScope profiling_scope;
+  qnn::profile::ProfilingInfo profiling_info;
+
+  ASSERT_TRUE(manager->AcquireOrtProfilingConsumer(env.logger).IsOK());
+  ASSERT_TRUE(manager->ReleaseProfileHandle().IsOK());
+  auto* ort_profiler = reinterpret_cast<qnn::QnnEpProfiler*>(static_cast<uintptr_t>(1));
+  ASSERT_TRUE(manager->CreateGraphProfilingScope(
+                         profiling_info, "graph", qnn::OrtProfilingOperation::EXECUTE,
+                         qnn::ProfilingMethodType::EXECUTE, ort_profiler, env.logger, profiling_scope)
+                  .IsOK());
+
+  EXPECT_TRUE(profiling_scope.Active());
+  EXPECT_EQ(recorder.create_calls, 2);
   EXPECT_EQ(recorder.created_level, QNN_PROFILE_LEVEL_BASIC);
 }
 

@@ -67,7 +67,10 @@ class QnnBackendProfilingManager {
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnBackendProfilingManager);
 
-  bool HasProfileHandle() const { return profile_handle_ != nullptr; }
+  bool HasProfileHandle() const {
+    std::lock_guard<std::recursive_mutex> lock(profile_handle_mutex_);
+    return profile_handle_ != nullptr;
+  }
   bool IsBackendSetup() const { return backend_setup_completed_; }
   // True when a QAIRT profile handle is currently allocated.
   bool ProfilingEnabled() const { return profiling_enabled_.load(std::memory_order_acquire); }
@@ -86,13 +89,12 @@ class QnnBackendProfilingManager {
   Ort::Status InitializeProfilingForCurrentConsumers(const Ort::Logger& logger);
   Ort::Status ReleaseProfileHandle();
 
-  void AcquireOrtProfilingConsumer() noexcept;
-  void ReleaseOrtProfilingConsumer() noexcept;
+  Ort::Status AcquireOrtProfilingConsumer(const Ort::Logger& logger);
+  Ort::Status ReleaseOrtProfilingConsumer();
   bool HasActiveOrtProfilingConsumer() const {
     return active_ort_profiler_count_.load(std::memory_order_relaxed) != 0;
   }
   bool OrtProfilingActive() const { return HasActiveOrtProfilingConsumer(); }
-  Ort::Status ReleaseOrtProfilingHandleIfUnused();
 
   // ORT profiling is correlated through a thread-local profiler scope. Work without that scope
   // must not be appended to ORT; parallel finalization is intentionally provider-output only.
@@ -173,6 +175,7 @@ class QnnBackendProfilingManager {
                                const profile::ProfilingInfo& profiling_info);
 #endif
   static const char* QnnProfileErrorToString(QnnProfile_Error_t error);
+  void ReleaseOrtProfilingConsumerLocked() noexcept;
 
   QNN_INTERFACE_VER_TYPE& qnn_interface_;
   Qnn_BackendHandle_t& backend_handle_;
@@ -199,7 +202,7 @@ class QnnBackendProfilingManager {
 
   std::atomic<bool> profiling_enabled_{false};
   // Protects the manager-global QAIRT profile handle across use/extract/reset.
-  std::recursive_mutex profile_handle_mutex_;
+  mutable std::recursive_mutex profile_handle_mutex_;
   // Counts ORT profiling consumers so setup and cleanup can preserve the shared QAIRT handle.
   std::atomic<uint32_t> active_ort_profiler_count_{0};
   Qnn_ProfileHandle_t profile_handle_ = nullptr;

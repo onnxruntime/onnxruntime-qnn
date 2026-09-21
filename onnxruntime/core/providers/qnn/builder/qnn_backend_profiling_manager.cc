@@ -174,11 +174,7 @@ Ort::Status QnnBackendProfilingManager::ReleaseProfileHandle() {
   return Ort::Status();
 }
 
-void QnnBackendProfilingManager::AcquireOrtProfilingConsumer() noexcept {
-  active_ort_profiler_count_.fetch_add(1, std::memory_order_relaxed);
-}
-
-void QnnBackendProfilingManager::ReleaseOrtProfilingConsumer() noexcept {
+void QnnBackendProfilingManager::ReleaseOrtProfilingConsumerLocked() noexcept {
   uint32_t current = active_ort_profiler_count_.load(std::memory_order_relaxed);
   while (current != 0 &&
          !active_ort_profiler_count_.compare_exchange_weak(current, current - 1,
@@ -187,7 +183,25 @@ void QnnBackendProfilingManager::ReleaseOrtProfilingConsumer() noexcept {
   }
 }
 
-Ort::Status QnnBackendProfilingManager::ReleaseOrtProfilingHandleIfUnused() {
+Ort::Status QnnBackendProfilingManager::AcquireOrtProfilingConsumer(const Ort::Logger& logger) {
+  std::lock_guard<std::recursive_mutex> lock(profile_handle_mutex_);
+  active_ort_profiler_count_.fetch_add(1, std::memory_order_relaxed);
+  if (backend_setup_completed_ && profile_handle_ == nullptr) {
+    Ort::Status status = InitializeProfilingForCurrentConsumers(logger);
+    if (!status.IsOK()) {
+      ReleaseOrtProfilingConsumerLocked();
+      if (!ProviderProfilingActive() && !HasActiveOrtProfilingConsumer()) {
+        ORT_IGNORE_RETURN_VALUE(ReleaseProfileHandle());
+      }
+      return status;
+    }
+  }
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendProfilingManager::ReleaseOrtProfilingConsumer() {
+  std::lock_guard<std::recursive_mutex> lock(profile_handle_mutex_);
+  ReleaseOrtProfilingConsumerLocked();
   if (ProviderProfilingActive() || HasActiveOrtProfilingConsumer()) {
     return Ort::Status();
   }

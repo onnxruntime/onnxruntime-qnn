@@ -7,8 +7,10 @@
 #include <atomic>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
@@ -54,6 +56,10 @@ int32_t CurrentProcessId() noexcept {
 #endif
 }
 
+int32_t CurrentThreadId() noexcept {
+  return static_cast<int32_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
 const char* OrtProfilingOperationToString(onnxruntime::qnn::OrtProfilingOperation operation) noexcept {
   switch (operation) {
     case onnxruntime::qnn::OrtProfilingOperation::COMPOSE:
@@ -96,11 +102,12 @@ QnnEpProfiler::~QnnEpProfiler() {
   lifetime_token_->profiler.store(nullptr, std::memory_order_release);
 }
 
-void QnnEpProfiler::OrtProfilingConsumer::Activate() noexcept {
+Ort::Status QnnEpProfiler::OrtProfilingConsumer::Activate(const Ort::Logger& logger) {
   if (!active_) {
-    profiling_manager_.AcquireOrtProfilingConsumer();
+    RETURN_IF_ERROR(profiling_manager_.AcquireOrtProfilingConsumer(logger));
     active_ = true;
   }
+  return Ort::Status();
 }
 
 Ort::Status QnnEpProfiler::OrtProfilingConsumer::Reset() {
@@ -108,9 +115,8 @@ Ort::Status QnnEpProfiler::OrtProfilingConsumer::Reset() {
     return Ort::Status();
   }
 
-  profiling_manager_.ReleaseOrtProfilingConsumer();
   active_ = false;
-  return profiling_manager_.ReleaseOrtProfilingHandleIfUnused();
+  return profiling_manager_.ReleaseOrtProfilingConsumer();
 }
 
 void QnnEpProfiler::AppendEvent(EventRecord record) {
@@ -155,7 +161,7 @@ void QnnEpProfiler::AppendQnnEventRecord(EventRecord record,
                                          uint64_t root_qairt_timestamp_us,
                                          const profile::ProfilingInfo& profiling_info) {
   record.process_id = CurrentProcessId();
-  record.thread_id = qnn::CurrentThreadId();
+  record.thread_id = CurrentThreadId();
 
   uint64_t qairt_offset_us = 0;
   if (record.qairt_ts_us >= root_qairt_timestamp_us && root_qairt_timestamp_us != 0) {
@@ -183,7 +189,7 @@ void QnnEpProfiler::AppendHostOperationRecord(uint64_t operation_start_time_us,
   EventRecord record;
   record.category = OrtProfilingEventCategory_KERNEL;
   record.process_id = CurrentProcessId();
-  record.thread_id = qnn::CurrentThreadId();
+  record.thread_id = CurrentThreadId();
   record.name = "QNN " + std::string(operation_name);
 
   const int64_t host_delta_us = operation_start_time_us >= ep_profiling_start_time_us_
@@ -235,21 +241,15 @@ void ORT_API_CALL QnnEpProfiler::ReleaseImpl(OrtEpProfilerImpl* this_ptr) noexce
 OrtStatus* ORT_API_CALL QnnEpProfiler::StartProfilingImpl(OrtEpProfilerImpl* this_ptr,
                                                           int64_t ep_profiling_start_offset_ns) noexcept {
   auto* self = static_cast<QnnEpProfiler*>(this_ptr);
-  self->ort_profiling_consumer_.Activate();
   try {
     self->ep_profiling_start_offset_ns_ = ep_profiling_start_offset_ns;
     self->ep_profiling_start_time_us_ = qnn::utils::GetTimeStampInUs();
     // ORT calls StartProfiling before QNN EP initialization has necessarily reached GetCapability(),
     // where SetupBackend() creates the backend and QAIRT interface. SetupBackend() creates an
     // ORT-only BASIC handle for session-initialization events; if the backend was already set up,
-    // create it here instead. Initializing before either point would call profileCreate on a null backend.
-    if (self->profiling_manager_.IsBackendSetup() && !self->profiling_manager_.ProfilingEnabled()) {
-      Ort::Status status = self->profiling_manager_.InitializeProfilingForCurrentConsumers(self->logger_);
-      if (!status.IsOK()) {
-        ORT_IGNORE_RETURN_VALUE(self->ort_profiling_consumer_.Reset());
-        return status.release();
-      }
-    }
+    // consumer activation creates it here instead. Initializing before either point would call
+    // profileCreate on a null backend.
+    RETURN_IF_NOT_OK(self->ort_profiling_consumer_.Activate(self->logger_));
     return nullptr;
   } catch (const std::exception& e) {
     ORT_IGNORE_RETURN_VALUE(self->ort_profiling_consumer_.Reset());
@@ -322,12 +322,11 @@ OrtStatus* ORT_API_CALL QnnEpProfiler::StopEventImpl(OrtEpProfilerImpl* this_ptr
     std::lock_guard<std::mutex> lock(self->records_mutex_);
     for (size_t i = event_start.index; i < self->event_records_.size(); ++i) {
       EventRecord& record = self->event_records_[i];
-      if (record.thread_id != thread_id || record.ort_event_start_us >= 0) {
+      if (record.thread_id != thread_id || record.parent_ort_event_assigned) {
         continue;
       }
 
-      record.ort_event_start_us = ort_start_us;
-
+      record.parent_ort_event_assigned = true;
       record.args.push_back({"parent_ort_node", ort_event_name});
     }
     return nullptr;
@@ -359,7 +358,7 @@ OrtStatus* ORT_API_CALL QnnEpProfiler::EndProfilingImpl(OrtEpProfilerImpl* this_
     std::vector<const char*> keys;
     std::vector<const char*> values;
     for (const EventRecord& record : records) {
-      if (record.ort_event_start_us < 0) {
+      if (!record.parent_ort_event_assigned) {
         continue;
       }
 

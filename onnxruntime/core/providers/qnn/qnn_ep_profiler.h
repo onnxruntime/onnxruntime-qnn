@@ -23,11 +23,9 @@ enum class OrtProfilingOperation : uint8_t {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
 
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -42,10 +40,6 @@ namespace profile {
 struct ProfilingInfo;
 }  // namespace profile
 
-inline int32_t CurrentThreadId() noexcept {
-  return static_cast<int32_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-}
-
 // Raw QAIRT profiling event. QAIRT timestamps are converted to the ORT timeline when extracted.
 struct EventRecord {
   OrtProfilingEventCategory category = OrtProfilingEventCategory_KERNEL;
@@ -57,7 +51,7 @@ struct EventRecord {
   uint64_t qairt_ts_us = 0;       // device-clock timestamp (0 for basic events)
   int64_t qairt_duration_us = 0;  // duration for MICROSEC events; 0 otherwise
 
-  int64_t ort_event_start_us = -1;  // set by StopEvent; -1 means unanchored
+  bool parent_ort_event_assigned = false;
 
   int64_t final_ts_us = 0;  // ORT-timeline placement, computed during extraction
   int64_t final_duration_us = 0;
@@ -119,7 +113,7 @@ class QnnEpProfiler : public OrtEpProfilerImpl {
 
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OrtProfilingConsumer);
 
-    void Activate() noexcept;
+    Ort::Status Activate(const Ort::Logger& logger);
     Ort::Status Reset();
 
    private:
