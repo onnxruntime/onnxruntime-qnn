@@ -13,3 +13,6 @@
 
 leak:libQnnHtp.so
 leak:libQnnCpu.so
+# cpp_client_telemetry v3.10.173.1 leaks SQLite's temp_store_directory
+# allocation during process shutdown.
+leak:OfflineStorage_SQLite::initializeDatabase
