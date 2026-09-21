@@ -3,31 +3,34 @@
 
 # Lets developers trigger CI on a draft PR by commenting "/ci" on the PR.
 # After reviewing a fork contributor's code, maintainers can comment "/device-test"
-# to test its immutable SHA on device runners. That workflow is dispatched from main so an
-# unreviewed fork cannot change its credential handling.
+# to test its immutable SHA on device runners through a temporary upstream branch.
+# Approval covers the entire commit, including its workflows, actions, and scripts:
+# the reviewed code will execute with repository secrets and access to internal runners.
 #
-# Any collaborator with write access (COLLABORATOR, MEMBER, OWNER) may trigger.
-# Fork contributors (CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, etc.) are rejected to
-# prevent unprivileged access to internal runners and secrets.
+# Only direct repository collaborators may trigger. Organization membership or
+# ownership alone does not authorize CI.
 
 name: Qualcomm Internal CI Trigger
 
 permissions:
-  contents: read
+  contents: write       # to create and clean up temporary device-test branches
   pull-requests: write  # to post the acknowledgement comment
-  actions: write        # to dispatch a trusted workflow via createWorkflowDispatch
+  actions: write        # to dispatch the reviewed workflow via createWorkflowDispatch
 
 on:
   issue_comment:
     types: [created]
+  workflow_run:
+    workflows: ["Qualcomm Internal PR Workflow"]
+    types: [completed]
 
 jobs:
   trigger:
     name: Trigger CI from PR comment
     # Only act on PR comments whose body is exactly "/ci" or "/device-test",
-    # with optional arguments. Require write-level association so fork contributors
-    # cannot trigger privileged workflows.
+    # with optional arguments. Require a direct repository collaboration.
     if: |
+      github.event_name == 'issue_comment' &&
       github.event.issue.pull_request != null &&
       (github.event.comment.body == '/ci' ||
        startsWith(github.event.comment.body, '/ci ') ||
@@ -35,15 +38,20 @@ jobs:
        github.event.comment.body == '/device-test' ||
        startsWith(github.event.comment.body, '/device-test ') ||
        startsWith(github.event.comment.body, '/device-test\n')) &&
-      contains(fromJSON('["COLLABORATOR", "MEMBER", "OWNER"]'),
-               github.event.comment.author_association)
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+      github.event.comment.author_association == 'COLLABORATOR'
+    # Unprivileged comments must not schedule work on an internal runner.
+    runs-on: ubuntu-latest
     steps:
       - name: Dispatch requested workflow
         uses: actions/github-script@v8
         with:
           script: |
             const command = context.payload.comment.body.trim().split(/\s+/, 1)[0];
+            if (!['/ci', '/device-test'].includes(command)) {
+              return;
+            }
+
+            const commenter = context.payload.comment.user.login;
 
             // Fetch the PR rather than trusting comment-controlled data. In particular,
             // device tests must use an immutable reviewed commit, never a fork branch name.
@@ -52,11 +60,16 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
+            if (pr.data.state !== 'open' || !pr.data.head.repo) {
+              core.setFailed('CI requires an open PR with an available source repository.');
+              return;
+            }
 
             let workflowId;
             let dispatchRef;
             let inputs;
             let message;
+            let temporaryBranch;
             if (command === '/ci') {
               // /ci remains the draft-CI escape hatch for branches in this repository.
               // A fork branch is not a ref in context.repo, so do not dispatch it here.
@@ -76,30 +89,93 @@ jobs:
               message = `🔄 CI triggered on \`${pr.data.head.ref}\`${pr.data.draft ? ' (draft PR — CI was skipped on push)' : ''}`;
             } else {
               workflowId = 'qualcomm-internal-ci.yml';
-              dispatchRef = 'main';
+              // A unique branch per approval attempt prevents a later approval
+              // from moving the ref while an earlier run is queued or checking out.
+              temporaryBranch = `ci/device-test/${pr.data.number}/${pr.data.head.sha}/${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`;
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/heads/${temporaryBranch}`,
+                sha: pr.data.head.sha,
+              });
+              dispatchRef = temporaryBranch;
               inputs = {
-                source_repository: pr.data.head.repo.full_name,
+                source_repository: `${context.repo.owner}/${context.repo.repo}`,
                 source_ref: pr.data.head.sha,
                 device_tests_only: 'true',
               };
-              message = `📱 Maintainer-approved device test triggered for PR #${pr.data.number} at \`${pr.data.head.sha}\``;
+              message = `📱 Maintainer-approved device test triggered for PR #${pr.data.number} at \`${pr.data.head.sha}\` using \`${temporaryBranch}\`. This approval includes the commit's workflows and scripts`;
             }
 
-            // The device-test workflow always comes from main. This prevents a fork from
-            // changing its credential handling; it explicitly checks out the reviewed
-            // source SHA where it needs to build and test it. /ci retains its historical
-            // behavior of dispatching the internal PR branch.
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: workflowId,
-              ref: dispatchRef,
-              inputs,
-            });
+            // Workflow definitions, helper code, and build/test source all come
+            // from the reviewed commit. /ci keeps dispatching the internal branch.
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: workflowId,
+                ref: dispatchRef,
+                inputs,
+              });
+            } catch (error) {
+              // A definite API rejection leaves no run to perform cleanup.
+              // On network/server errors the dispatch may have succeeded; retain
+              // the ref so that a queued run can still check out its source.
+              if (temporaryBranch && error.status >= 400 && error.status < 500) {
+                const { data: ref } = await github.rest.git.getRef({
+                  ...context.repo, ref: `heads/${temporaryBranch}`,
+                });
+                if (ref.object.sha === pr.data.head.sha) {
+                  await github.rest.git.deleteRef({
+                    ...context.repo, ref: `heads/${temporaryBranch}`,
+                  });
+                }
+              }
+              throw error;
+            }
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `${message} by @${context.actor}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
+              body: `${message} by @${commenter}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
             });
+
+  cleanup-device-test-branch:
+    name: Clean up completed device-test branch
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      startsWith(github.event.workflow_run.head_branch, 'ci/device-test/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # This handler runs from the default branch and never checks out PR code.
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const branch = run.head_branch;
+            const match = /^ci\/device-test\/\d+\/([0-9a-f]{40})\/\d+-\d+$/.exec(branch);
+            if (!match || match[1] !== run.head_sha ||
+                run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                run.path !== '.github/workflows/qualcomm-internal-ci.yml') {
+              core.info('Not a matching temporary device-test branch; no cleanup needed.');
+              return;
+            }
+            try {
+              const { data: ref } = await github.rest.git.getRef({
+                ...context.repo, ref: `heads/${branch}`,
+              });
+              if (ref.object.sha !== run.head_sha) {
+                core.warning(`Branch ${branch} has moved; leaving it untouched.`);
+                return;
+              }
+              await github.rest.git.deleteRef({
+                ...context.repo, ref: `heads/${branch}`,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info('Temporary branch was already removed.');
+            }

@@ -143,8 +143,7 @@ jobs:
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.txt
 
-      # workflow_dispatch runs from main, so GitHub associates its regular job
-      # check with main. Publish the real QDC result on the reviewed PR SHA too.
+      # Publish the stable QDC check context on the reviewed PR SHA.
       - name: Report QDC result on reviewed source
         if: ${{ always() && inputs.report_result_to_source && inputs.source_ref != '' }}
         uses: actions/github-script@v8
