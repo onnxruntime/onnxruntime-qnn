@@ -780,6 +780,7 @@ static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor, bool include_
         break;
       }
       default:
+        quant_params_json["payload_status"] = "unsupported_quantization_encoding";
         break;
     }
   }
