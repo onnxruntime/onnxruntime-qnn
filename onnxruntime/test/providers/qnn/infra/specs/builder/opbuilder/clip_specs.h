@@ -48,7 +48,7 @@ namespace test {
 // FP16-config section).
 enum class SnapshotBackend { HTP };
 
-// ---------- Group A: plain dtype data, optional float min/max ----------
+// ---------- Plain dtype data, optional float min/max ----------
 //
 // min/max stored as float regardless of `dtype` — the snapshot helper and
 // accuracy builder cast to the actual dtype when registering the scalar
@@ -132,11 +132,12 @@ inline const ClipSpec kClipFp16Spec = {
     1.2f,
     std::nullopt};
 
-// ---------- Group B+C: QDQ data + optional float min/max scalars ----------
+// ---------- QDQ data + optional float min/max scalars ----------
 //
 // Mirrors integration `RunQDQClipTestOnHTP<QType>(input_def, min_max_defs, ...)`
 // pattern: input data + Q/DQ around input + optional float min/max scalar
-// initializers passed direct to Clip op (NOT Q/DQ-wrapped — that's Group D).
+// initializers passed direct to Clip op (NOT Q/DQ-wrapped; those use
+// ClipQDQQuantSpec).
 //
 // Per-case `qdq_dtype` (U8 vs U16) and `use_contrib_qdq` mirror integration
 // (U16 needs com.microsoft Q/DQ ops because native U16 QDQ requires opset 21+).
@@ -162,8 +163,8 @@ struct ClipQDQFloatSpec {
   bool use_contrib_qdq;
 };
 
-// Group B — default (no) min/max. These two cases live in the session-snapshot
-// tier, NOT the op-builder snapshot tier: the QDQ-around
+// Default min/max cases. These two cases live in the session-snapshot tier,
+// NOT the op-builder snapshot tier: the QDQ-around
 // -Clip pattern only becomes observable after the ORT session runs L1/partition
 // transforms. Accuracy still covers them (kClipQDQFloatAccuracySpecs below).
 inline const ClipQDQFloatSpec kClipU8DefaultMinMaxRank4Spec = {
@@ -190,7 +191,7 @@ inline const ClipQDQFloatSpec kClipU16DefaultMinMaxRank4Spec = {
     /*opset=*/13,
     /*use_contrib_qdq=*/true};
 
-// Group C — explicit float min/max
+// Explicit float min/max.
 inline const ClipQDQFloatSpec kClipU8Rank4Spec = {
     "Clip_U8_Rank4",
     SnapshotBackend::HTP,
@@ -229,7 +230,7 @@ inline const ClipQDQFloatSpec kClipU8Rank5Spec = {
     /*opset=*/13,
     /*use_contrib_qdq=*/false};
 
-// ---------- Group D: QDQ data + Q+DQ-wrapped quantized min/max scalars ----------
+// ---------- QDQ data + Q+DQ-wrapped quantized min/max scalars ----------
 //
 // Each min/max input is a quantized scalar with its own (scale, zp), wrapped
 // by a DequantizeLinear node before reaching Clip. Integration tier hand-rolls
@@ -303,7 +304,7 @@ inline const ClipQDQQuantSpec kClipU8QuantizedMinMaxSpec = {
     QuantScalarSpec{0.001f, 128, 178},
     /*opset=*/13};
 
-// ---------- Group E: bare-float data + Q+DQ-const-wrapped min/max ----------
+// ---------- Bare-float data + Q+DQ-const-wrapped min/max ----------
 //
 // Data input is bare float (NOT Q/DQ-wrapped). Min/max are quantized initializers
 // (each with own scale/zp) wrapped by DequantizeLinear. Output is bare float
@@ -314,12 +315,12 @@ inline const ClipQDQQuantSpec kClipU8QuantizedMinMaxSpec = {
 // (simple_op_builder.cc:320 → qdq_constant_folding.cc:TryFoldConstantQDQ)
 // then folds each DQ(const) into a folded fp32 STATIC tensor, and Clip
 // builder reads it via the folded-constant fallback branch
-// (clip_op_builder.cc:45-52, "Path A").
+// (clip_op_builder.cc:45-52).
 //
-// This is the ONLY known code path that hits Path A. Group D (QDQ NodeUnit
-// with initializer + quant_param) exercises Path B (QUANT switch); Groups A/C
-// exercise Path C (non-QUANT switch). Verified empirically via gcov —
-// removing these cases zeros out Path A coverage.
+// This is the only known code path that hits the folded-constant fallback.
+// QDQ quantized min/max cases exercise the QUANT switch; plain and QDQ float
+// min/max cases exercise the non-QUANT switch. Verified empirically via gcov:
+// removing these cases zeros out folded-constant fallback coverage.
 //
 // Integration-tier peers:
 //   * Clip_U8_FloatData_QDQConstMinMax  (clip_test.cc:407)
@@ -367,7 +368,7 @@ inline const ClipFoldedConstSpec kClipU16FloatDataQDQConstMinMaxSpec = {
 // hold by construction:
 //   * op-builder snapshot: kClipSpecs + kClipQDQFloatOpBuilderSpecs
 //                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
-//   * session snapshot   : kClipQDQFloatSessionSpecs (Group B only)
+//   * session snapshot   : kClipQDQFloatSessionSpecs (default min/max only)
 //   * accuracy           : kClipSpecs + kClipQDQFloatAccuracySpecs
 //                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
 // Adding a case = add one literal to the right list; every consuming tier
@@ -383,13 +384,13 @@ inline const std::vector<ClipSpec> kClipSpecs = {
     kClipInt32Spec,
     kClipFp16Spec};
 
-// Group C float-min/max cases — exercised by the op-builder snapshot tier.
+// Explicit float-min/max QDQ cases — exercised by the op-builder snapshot tier.
 inline const std::vector<ClipQDQFloatSpec> kClipQDQFloatOpBuilderSpecs = {
     kClipU8Rank4Spec,
     kClipU16Rank4Spec,
     kClipU8Rank5Spec};
 
-// Group B default-min/max cases — exercised by the session-snapshot tier.
+// Default-min/max QDQ cases — exercised by the session-snapshot tier.
 inline const std::vector<ClipQDQFloatSpec> kClipQDQFloatSessionSpecs = {
     kClipU8DefaultMinMaxRank4Spec,
     kClipU16DefaultMinMaxRank4Spec};
@@ -409,8 +410,8 @@ inline const std::vector<ClipQDQQuantSpec> kClipQDQQuantSpecs = {
     kClipU16QuantizedMaxSpec,
     kClipU8QuantizedMinMaxSpec};
 
-// Group E — bare-float data + Q+DQ-const-wrapped min/max. Only path that
-// exercises the folded-constant fallback in ClipOpBuilder (Path A).
+// Bare-float data + Q+DQ-const-wrapped min/max. Only path that exercises the
+// folded-constant fallback in ClipOpBuilder.
 inline const std::vector<ClipFoldedConstSpec> kClipFoldedConstSpecs = {
     kClipU8FloatDataQDQConstMinMaxSpec,
     kClipU16FloatDataQDQConstMinMaxSpec};

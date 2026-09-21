@@ -152,7 +152,7 @@ void RunClipAccuracy(const ClipSpec& spec) {
   }
 }
 
-// ---------- Group B+C: QDQ data + optional float min/max scalars ----------
+// ---------- QDQ data + optional float min/max scalars ----------
 
 // Float-data input + min/max for the f32 reference / qdq input pre-quant.
 // Mirrors integration `RunQDQClipTestOnHTP` line 109-110.
@@ -232,7 +232,7 @@ void RunClipQDQFloatAccuracy(const ClipQDQFloatSpec& spec) {
   }
 }
 
-// ---------- Group D: QDQ data + Q+DQ-wrapped quantized min/max scalars ----------
+// ---------- QDQ data + Q+DQ-wrapped quantized min/max scalars ----------
 //
 // Hand-rolled — integration tier doesn't have a helper for "Q+DQ-wrapped
 // scalar min/max". Each builder mirrors the corresponding integration tier
@@ -289,7 +289,7 @@ GetTestModelFn BuildClipU8QDQQuantHandRolled(const ClipQDQQuantSpec& spec,
 }
 
 GetTestModelFn BuildClipQDQQuantOnnxFromSpec(const ClipQDQQuantSpec& spec) {
-  // Each Group D case has a specific input data pattern mirroring its
+  // Each QDQ quantized-min/max case has a specific input data pattern mirroring its
   // integration-tier counterpart's hand-rolled model_fn. We dispatch on
   // (qdq_dtype, shape, scale/zp) — practical to encode per-case.
   switch (spec.qdq_dtype) {
@@ -337,14 +337,14 @@ void RunClipQDQQuantAccuracy(const ClipQDQQuantSpec& spec) {
                   spec.opset, EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-// ---------- Group E: bare-float data + Q+DQ-const-wrapped min/max ----------
+// ---------- Bare-float data + Q+DQ-const-wrapped min/max ----------
 //
 // Mirrors integration `Clip_U*_FloatData_QDQConstMinMax` (clip_test.cc:375, 407):
 // bare-float MakeInput → Clip → bare-float MakeOutput; min/max are u*_scalar
 // initializers wrapped by DequantizeLinear. QDQ selector rejects (no output Q),
 // so both DQ nodes remain standalone and are folded by QNN EP's
 // qdq_constant_folding pass. Clip builder consumes them via the folded-constant
-// fallback branch (Path A, clip_op_builder.cc:45-52).
+// fallback branch (clip_op_builder.cc:45-52).
 
 GetTestModelFn BuildClipFoldedConstOnnx(const ClipFoldedConstSpec& spec) {
   const int64_t total = std::accumulate(spec.shape.begin(), spec.shape.end(),
@@ -399,8 +399,9 @@ void RunClipFoldedConstAccuracy(const ClipFoldedConstSpec& spec) {
 // session-snapshot cases — a rename in the spec propagates to every tier.
 //
 // QDQFloat is instantiated over kClipQDQFloatAccuracySpecs = the union of the
-// op-builder-snapshot set (Group C) and the session-snapshot set (Group B),
-// so accuracy = snapshot ∪ session holds by construction (see clip_specs.h).
+// op-builder-snapshot explicit-min/max set and the session-snapshot
+// default-min/max set, so accuracy = snapshot ∪ session holds by construction
+// (see clip_specs.h).
 class QnnUnit_Clip_AccuracyTest
     : public ::testing::TestWithParam<ClipSpec> {};
 class QnnUnit_Clip_Accuracy_QDQFloatTest

@@ -49,17 +49,17 @@ namespace test {
 
 // ---------------------------------------------------------------------------
 // Snapshot tests — value-parameterized, one suite per spec kind:
-//   QnnUnit_Clip_SnapshotTest             (ClipSpec, Group A: plain)
-//   QnnUnit_Clip_Snapshot_QDQFloatTest     (ClipQDQFloatSpec, Group C)
-//   QnnUnit_Clip_Snapshot_QDQQuantTest     (ClipQDQQuantSpec, Group D)
-//   QnnUnit_Clip_Snapshot_FoldedConstTest  (ClipFoldedConstSpec, Group E)
+//   QnnUnit_Clip_SnapshotTest             (plain Clip inputs)
+//   QnnUnit_Clip_Snapshot_QDQFloatTest     (QDQ data + float min/max)
+//   QnnUnit_Clip_Snapshot_QDQQuantTest     (QDQ data + quantized min/max)
+//   QnnUnit_Clip_Snapshot_FoldedConstTest  (folded-constant min/max)
 //
 // Four helpers cover the test patterns:
 //   RunClipSnapshot               — Plain dtype data, optional float min/max
 //   RunClipSnapshotQDQFloatMinMax — QDQ data + optional float min/max scalars
 //   RunClipSnapshotQDQQuantMinMax — QDQ data + optional quantized min/max scalars
 //   RunClipSnapshotFoldedConst    — bare-float data + pre-folded fp32 min/max
-//                                   (only path that exercises Path A —
+//                                   (only path that exercises the
 //                                   clip_op_builder.cc:45-52 folded fallback)
 //
 // Every case runs on HTP — QnnCpu is no longer shipped with the QNN EP
@@ -67,8 +67,9 @@ namespace test {
 // per-spec `snapshot_backend` / `accuracy_backend` fields stay in place for
 // future backend flexibility.
 //
-// Group B (default-min/max QDQ) is covered by the session-snapshot tier
-// (session_snapshot/builder/opbuilder/clip_test.cc), not here.
+// QDQ data with default min/max is covered by the session-snapshot tier
+// (session_snapshot/builder/opbuilder/clip_test.cc), not this op-builder
+// snapshot tier.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -123,7 +124,7 @@ void RegisterQuantScalar(const std::string& name,
 //   auto wrapper = MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
 //   ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph";
 
-// Group A: Plain dtype data, optional float min/max scalar input(s).
+// Plain dtype data with optional float min/max scalar input(s).
 //
 // min/max stored in spec as `std::optional<float>` regardless of dtype; this
 // helper casts to the actual dtype when registering the scalar initializer
@@ -195,8 +196,8 @@ void RunClipSnapshot([[maybe_unused]] SnapshotBackend backend,
   AssertSnapshotJson(*wrapper, golden_basename);
 }
 
-// Group B+C: QDQ data + optional float min/max scalars.
-// Pass nullopt for both min_val and max_val to test default min/max (Group B).
+// QDQ data with optional float min/max scalars. Pass nullopt for both min_val
+// and max_val to test default min/max.
 void RunClipSnapshotQDQFloatMinMax([[maybe_unused]] SnapshotBackend backend,
                                    ONNXTensorElementDataType qdq_dtype,
                                    QdqDataSpec data,
@@ -242,7 +243,7 @@ void RunClipSnapshotQDQFloatMinMax([[maybe_unused]] SnapshotBackend backend,
   AssertSnapshotJson(*wrapper, golden_basename);
 }
 
-// Group D: QDQ data + quantized min/max scalars (each with own scale/zp).
+// QDQ data with quantized min/max scalars, each with its own scale/zp.
 void RunClipSnapshotQDQQuantMinMax([[maybe_unused]] SnapshotBackend backend,
                                    ONNXTensorElementDataType qdq_dtype,
                                    QdqDataSpec data,
@@ -302,7 +303,7 @@ void RunClipSnapshotQDQQuantMinMax([[maybe_unused]] SnapshotBackend backend,
   AssertSnapshotJson(*wrapper, golden_basename);
 }
 
-// Group E: bare-float data + folded-constant min/max (Path A).
+// Bare-float data with folded-constant min/max.
 //
 // The min/max inputs enter Clip as FOLDED static fp32 scalars, not as graph
 // initializers — in production this state comes from QNN EP's own
@@ -399,8 +400,8 @@ INSTANTIATE_TEST_SUITE_P(
     , QnnUnit_Clip_SnapshotTest, ::testing::ValuesIn(kClipSpecs),
     [](const ::testing::TestParamInfo<ClipSpec>& i) { return std::string(i.param.name); });
 
-// Op-builder snapshot exercises the Group C (explicit float min/max) cases.
-// Group B (default min/max) is a session-snapshot-only sentinel.
+// Op-builder snapshot exercises the explicit float min/max QDQ cases.
+// Default-min/max QDQ cases are session-snapshot-only sentinels.
 INSTANTIATE_TEST_SUITE_P(
     , QnnUnit_Clip_Snapshot_QDQFloatTest, ::testing::ValuesIn(kClipQDQFloatOpBuilderSpecs),
     [](const ::testing::TestParamInfo<ClipQDQFloatSpec>& i) { return std::string(i.param.name); });
