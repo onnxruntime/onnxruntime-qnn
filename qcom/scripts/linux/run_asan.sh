@@ -122,5 +122,4 @@ export LSAN_OPTIONS="exitcode=1:suppressions=${REPO_ROOT}/tools/ci_build/lsan_su
 log_info "--- Running onnxruntime_provider_test under ASan ---"
 "${REPO_ROOT}/qcom/scripts/linux/asan_filter_leaks.sh" \
     "./onnxruntime_provider_test" \
-    "--gtest_filter=QnnHTPBackendTests.MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8"
-    # "--gtest_filter=-QnnCPUBackendTests.UDO_Op_MyAdd*:QnnHTPBackendTests.MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8:QnnHTPBackendTests.MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16:QnnHTPBackendTests.MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough:QnnHTPBackendTests.MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate"
+    "--gtest_filter=-QnnCPUBackendTests.UDO_Op_MyAdd*:QnnHTPBackendTests.MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8:QnnHTPBackendTests.MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16:QnnHTPBackendTests.MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough:QnnHTPBackendTests.MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate"
