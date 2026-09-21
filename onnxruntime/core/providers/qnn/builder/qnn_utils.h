@@ -163,6 +163,16 @@ class UniqueNameGeneratorImpl {
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
 
+// Returns a stable, non-empty base name for a node unit.
+// Uses node_unit.Name() when non-empty; falls back to OpType()+Index() for unnamed nodes,
+// matching the behaviour of UniqueNameGeneratorImpl::New(const OrtNodeUnit&, suffix).
+// Use this instead of node_unit.Name() when constructing intermediate tensor names that
+// must be deterministic and collision-free across GetCapability and Compile passes.
+inline std::string NodeUnitBaseName(const OrtNodeUnit& node_unit) {
+  const std::string& name = node_unit.Name();
+  return name.empty() ? node_unit.OpType() + std::to_string(node_unit.Index()) : name;
+}
+
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized = false,
@@ -673,6 +683,14 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint8_t>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
+
+// Transposes a [rows, cols] buffer of `elem_byte_size`-wide elements into a [cols, rows] buffer.
+// Both buffers must hold exactly rows * cols * elem_byte_size bytes.
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer);
 
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,

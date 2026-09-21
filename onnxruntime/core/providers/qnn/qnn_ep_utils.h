@@ -63,7 +63,11 @@ class OrtNodeGroupSelector {
                      const std::vector<const OrtNode*>& q_nodes) const = 0;
 
  protected:
-  // Helper function to check if a node has the expected number of DQ inputs and Q outputs
+  // Helper function to check if a node has the expected number of DQ inputs and Q outputs.
+  // An absent (nullptr) output slot is skipped (not declined) so ops with genuinely-optional
+  // outputs (e.g. GRU's Y / Y_h) still form a QDQ group; the graph-output and consumer-count guards
+  // still apply to the present slots. Any op-semantic / backend-specific decision about a missing
+  // output (e.g. fp-degrade) lives in that op's builder, not here.
   bool CheckQDQNodes(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                      const OrtNode* redundant_clip_node,
                      const std::vector<const OrtNode*>& dq_nodes,
@@ -313,6 +317,18 @@ class OrtMatMulNBitsNodeGroupSelector : public OrtNodeGroupSelector {
   bool Check(const OrtGraph* graph,
              const OrtApi& ort_api,
              const OrtNode* node,
+             const OrtNode* redundant_clip_node,
+             const std::vector<const OrtNode*>& dq_nodes,
+             const std::vector<const OrtNode*>& q_nodes) const override;
+};
+
+// GRU: DQ nodes for X, W, R, optional B and initial_h -> GRU -> Q nodes for Y and/or Y_h
+class OrtGRUNodeGroupSelector : public OrtNodeGroupSelector {
+ public:
+  OrtGRUNodeGroupSelector() = default;
+
+ private:
+  bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;

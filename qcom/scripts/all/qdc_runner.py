@@ -269,7 +269,7 @@ class TestRuns:
 
 
 class QdcClient:
-    _QDC_PROD_API_URL = "https://apigwx-aws.qualcomm.com/saga/v1/public/qdc"
+    _QDC_PROD_API_URL = "https://api.qualcomm.com/devicecloud/v2"
 
     def __init__(self, api_url: str | None, on_behalf_of: str | None):
         api_token = os.environ["QDC_API_TOKEN"]

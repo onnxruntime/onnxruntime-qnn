@@ -331,6 +331,27 @@ struct MallocAllocator : OrtAllocator {
   }
 };
 
+std::string GetInfoFromModelMetadata(const ORTCHAR_T* output_model_file) {
+  ONNX_NAMESPACE::ModelProto model;
+
+  std::ifstream in(output_model_file, std::ios::binary);
+  if (!in.is_open()) {
+    return "";
+  } else {
+    if (!model.ParseFromIstream(&in)) {
+      return "";
+    }
+  }
+  std::string key = std::string(kOrtModelMetadata_EpCompatibilityInfoPrefix) + kQnnExecutionProvider;
+  for (const auto& prop : model.metadata_props()) {
+    if (prop.key() == key) {
+      return prop.value();
+    }
+  }
+
+  return "";
+}
+
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
@@ -368,23 +389,6 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
   }
 
   {
-    Ort::SessionOptions so;
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
-
-    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file, so));
-    auto& session = scoped.session();
-
-    // Extract generated compatibility info from model metadata.
-    OrtModelMetadata* model_metadata = nullptr;
-    ASSERT_EQ(nullptr, Ort::GetApi().SessionGetModelMetadata(session, &model_metadata));
-
-    MallocAllocator allocator;
-    std::string key = std::string(kOrtModelMetadata_EpCompatibilityInfoPrefix) + kQnnExecutionProvider;
-    char* val = nullptr;
-    ASSERT_EQ(nullptr,
-              Ort::GetApi().ModelMetadataLookupCustomMetadataMap(model_metadata, &allocator, key.c_str(), &val));
-
     CompatibilityTestInfoV2 expected_info;
     // Override SDK-dependent fields from runtime SDK.
     expected_info.sdk_build_id = platform_attrs.sdk_version;
@@ -396,14 +400,193 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
     expected_info.soc_models.push_back(0);
     expected_info.vtcm_mbs.push_back(8);
 
-    ASSERT_TRUE(val != nullptr && expected_info.ToString() == val);
-
-    free(val);
-    Ort::GetApi().ReleaseModelMetadata(model_metadata);
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
   }
 
   std::filesystem::remove(output_model_file);
 }
+
+#if !defined(_M_ARM64) && !defined(__aarch64__)
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MapHtpArchFromSocModel) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"soc_model", "60"}, {"vtcm_mb", "8"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  {
+    CompatibilityTestInfoV2 expected_info;
+    // Override SDK-dependent fields from runtime SDK.
+    expected_info.sdk_build_id = platform_attrs.sdk_version;
+    expected_info.backend_api_version_major = platform_attrs.backend_api_version.major;
+    expected_info.backend_api_version_minor = platform_attrs.backend_api_version.minor;
+    expected_info.backend_api_version_patch = platform_attrs.backend_api_version.patch;
+    // Set platform related fields.
+    expected_info.htp_archs.push_back(73);
+    expected_info.soc_models.push_back(60);
+    expected_info.vtcm_mbs.push_back(8);
+
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_OverrideUnmatchedHtpArchFromSocModel) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"htp_arch", "81"}, {"soc_model", "60"}, {"vtcm_mb", "8"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  {
+    CompatibilityTestInfoV2 expected_info;
+    // Override SDK-dependent fields from runtime SDK.
+    expected_info.sdk_build_id = platform_attrs.sdk_version;
+    expected_info.backend_api_version_major = platform_attrs.backend_api_version.major;
+    expected_info.backend_api_version_minor = platform_attrs.backend_api_version.minor;
+    expected_info.backend_api_version_patch = platform_attrs.backend_api_version.patch;
+    // Set platform related fields.
+    expected_info.htp_archs.push_back(73);
+    expected_info.soc_models.push_back(60);
+    expected_info.vtcm_mbs.push_back(8);
+
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_MapHtpArchFromSocModel) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"soc_model", "60,88"}, {"vtcm_mb", "8"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  {
+    CompatibilityTestInfoV2 expected_info;
+    // Override SDK-dependent fields from runtime SDK.
+    expected_info.sdk_build_id = platform_attrs.sdk_version;
+    expected_info.backend_api_version_major = platform_attrs.backend_api_version.major;
+    expected_info.backend_api_version_minor = platform_attrs.backend_api_version.minor;
+    expected_info.backend_api_version_patch = platform_attrs.backend_api_version.patch;
+    // Set platform related fields.
+    expected_info.htp_archs.push_back(73);
+    expected_info.htp_archs.push_back(81);
+    expected_info.soc_models.push_back(60);
+    expected_info.soc_models.push_back(88);
+    expected_info.vtcm_mbs.push_back(8);
+    expected_info.vtcm_mbs.push_back(8);
+
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_OverrideUnmatchedHtpArchFromSocModel) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions qnn_options = {{"backend_type", "htp"},
+                                 {"htp_arch", "81,73"},
+                                 {"soc_model", "60,88"},
+                                 {"vtcm_mb", "8"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  {
+    CompatibilityTestInfoV2 expected_info;
+    // Override SDK-dependent fields from runtime SDK.
+    expected_info.sdk_build_id = platform_attrs.sdk_version;
+    expected_info.backend_api_version_major = platform_attrs.backend_api_version.major;
+    expected_info.backend_api_version_minor = platform_attrs.backend_api_version.minor;
+    expected_info.backend_api_version_patch = platform_attrs.backend_api_version.patch;
+    // Set platform related fields.
+    expected_info.htp_archs.push_back(73);
+    expected_info.htp_archs.push_back(81);
+    expected_info.soc_models.push_back(60);
+    expected_info.soc_models.push_back(88);
+    expected_info.vtcm_mbs.push_back(8);
+    expected_info.vtcm_mbs.push_back(8);
+
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
+#endif  // !defined(_M_ARM64) && !defined(__aarch64__)
 
 #if defined(_WIN32) && defined(_M_ARM64)
 template <typename INFO_VER>
@@ -630,7 +813,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_V2_ApiValidate_CbHnrdRtHn
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbHtpArchLessThan73_RtHtpArchAtLeast73) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbUnspecifiedHtpArch_RtHtpArchAtLeast73) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   if (QnnHTPBackendTests::GetPlatformAttributes().htp_arch < 73) {
     GTEST_SKIP() << "Skip as this testcase requires runtime HTP arch >= 73.";
@@ -639,6 +822,19 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbHtpArchLessThan73
   CompatibilityTestInfoV2 test_info;
   test_info.FillPlatformInfo();
   test_info.htp_archs[0] = 0;
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_PREFER_RECOMPILATION);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbHtpArchLessThan73_RtHtpArchAtLeast73) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  if (QnnHTPBackendTests::GetPlatformAttributes().htp_arch < 73) {
+    GTEST_SKIP() << "Skip as this testcase requires runtime HTP arch >= 73.";
+  }
+
+  CompatibilityTestInfoV2 test_info;
+  test_info.FillPlatformInfo();
+  test_info.htp_archs[0] = 72;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
