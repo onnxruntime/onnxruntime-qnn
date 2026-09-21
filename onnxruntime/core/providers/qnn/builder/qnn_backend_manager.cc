@@ -1854,11 +1854,17 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
         enable_memory_limit ? &persistent_binary_config : nullptr;
 
     // Build config array without nullptr gaps — QNN treats nullptr as terminator
-    std::vector<const QnnContext_Config_t*> context_configs_vec;
+    onnxruntime::InlinedVector<const QnnContext_Config_t*, 4> context_configs_vec;
     context_configs_vec.push_back(&qnn_context_config);
-    if (spill_fill_config_pointer) context_configs_vec.push_back(spill_fill_config_pointer);
-    if (memory_limit_config_pointer) context_configs_vec.push_back(memory_limit_config_pointer);
-    if (persistent_binary_config_pointer) context_configs_vec.push_back(persistent_binary_config_pointer);
+    if (spill_fill_config_pointer) {
+      context_configs_vec.push_back(spill_fill_config_pointer);
+    }
+    if (memory_limit_config_pointer) {
+      context_configs_vec.push_back(memory_limit_config_pointer);
+    }
+    if (persistent_binary_config_pointer) {
+      context_configs_vec.push_back(persistent_binary_config_pointer);
+    }
     context_configs_vec.push_back(nullptr);
     const QnnContext_Config_t** context_configs = context_configs_vec.data();
 

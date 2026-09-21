@@ -1151,6 +1151,61 @@ TEST_F(QnnUnit_ExecutionProviderHtpTest, GetHardwareDeviceIncompatibilityDetails
   EXPECT_EQ(ctx_.last_incompatibility_reason, OrtDeviceEpIncompatibility_NONE);
 }
 
+// ---------------------------------------------------------------------------
+// context_memory_limit_hint_mb (graph switching) option parsing
+// ---------------------------------------------------------------------------
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextMemoryLimitHintMb_ValidPositive_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("context_memory_limit_hint_mb")] = "512";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE, "context_memory_limit_hint_mb: 512");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextMemoryLimitHintMb_InvalidString_LogsError) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("context_memory_limit_hint_mb")] = "abc";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Invalid value for context_memory_limit_hint_mb: abc");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextMemoryLimitHintMb_TrailingChars_LogsError) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("context_memory_limit_hint_mb")] = "512xyz";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Invalid value for context_memory_limit_hint_mb: 512xyz");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextMemoryLimitHintMb_WithShareResource_DisablesGraphSwitching) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("context_memory_limit_hint_mb")] = "512";
+  ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "context_memory_limit_hint_mb (graph switching) cannot be combined with");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextMemoryLimitHintMb_WithShareEpContexts_DisablesGraphSwitching) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("context_memory_limit_hint_mb")] = "512";
+  ctx.session_config[EPKey("share_ep_contexts")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "context_memory_limit_hint_mb (graph switching) cannot be combined with");
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

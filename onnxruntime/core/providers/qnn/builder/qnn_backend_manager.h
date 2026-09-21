@@ -21,6 +21,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/providers/qnn/common/inlined_containers_fwd.h"
+
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
 #include "GPU/QnnGpuBackend.h"
@@ -188,6 +190,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                      /*out*/ unsigned char** context_buffer,
                                      /*out*/ uint64_t& buffer_size);
 
+  // REQUIRES: When graph switching is enabled (context_memory_limit_hint_mb_ > 0) and
+  // context_bin_filepath is empty, `buffer` MUST remain valid for the lifetime of the
+  // QNN context — QNN will read from it during graph reloads.
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
@@ -805,7 +810,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Keeps context binary buffers alive for graph-switching (persistent binary).
   // QNN requires the binary buffer to remain valid for the lifetime of the context
   // so it can reload graphs on demand.
-  std::vector<std::vector<char>> persistent_context_buffers_;
+  onnxruntime::InlinedVector<std::vector<char>, 1> persistent_context_buffers_;
   std::string sdk_build_version_ = "";
 #ifdef _WIN32
   std::set<HMODULE> mod_handles_;

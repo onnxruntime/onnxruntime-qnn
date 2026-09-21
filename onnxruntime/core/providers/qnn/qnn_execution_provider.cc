@@ -855,9 +855,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   // Context memory limit hint (MB) — triggers graph-switching for large multi-graph contexts
+  static constexpr const char* kContextMemoryLimitHintMb = "context_memory_limit_hint_mb";
   std::string context_memory_limit_hint_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                 FormatEPConfigKey("context_memory_limit_hint_mb"), "0",
+                                 FormatEPConfigKey(kContextMemoryLimitHintMb), "0",
                                  context_memory_limit_hint_str);
   if (!context_memory_limit_hint_str.empty() && context_memory_limit_hint_str != "0") {
     try {
@@ -870,14 +871,23 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     } catch (const std::exception&) {
       context_memory_limit_hint_mb_ = 0;
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
-                  ("Invalid value for context_memory_limit_hint_mb: " + context_memory_limit_hint_str +
+                  ("Invalid value for " + std::string(kContextMemoryLimitHintMb) + ": " +
+                   context_memory_limit_hint_str +
                    ", expected a non-negative integer. Graph switching disabled.")
                       .c_str());
     }
     if (context_memory_limit_hint_mb_ > 0) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("context_memory_limit_hint_mb: " + context_memory_limit_hint_str).c_str());
+                  (std::string(kContextMemoryLimitHintMb) + ": " +
+                   std::to_string(context_memory_limit_hint_mb_))
+                      .c_str());
     }
+  }
+
+  if (context_memory_limit_hint_mb_ > 0 && InferBackendTypeFromPath(backend_path) != qnn::QnnBackendType::HTP) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "context_memory_limit_hint_mb is only effective on HTP backend. Graph switching disabled.");
+    context_memory_limit_hint_mb_ = 0;
   }
 
   // HTP share resource optimization
@@ -907,13 +917,15 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     htp_share_resource_optimization_ = 1;
   }
 
-  // Graph switching cannot be combined with SHARE_RESOURCES: that path reuses a
-  // shared context handle and never applies the memory-limit config, so graph
-  // switching would silently no-op. Disable it and warn.
-  if (context_memory_limit_hint_mb_ > 0 && htp_share_resource_optimization_ == 1) {
+  // Graph switching cannot be combined with SHARE_RESOURCES or share_ep_contexts:
+  // the shared-resource path reuses a shared context handle and never applies the
+  // memory-limit config; share_ep_contexts passes a short-lived .c_str() buffer
+  // that goes out of scope before graph reloads can reference it (use-after-free).
+  if (context_memory_limit_hint_mb_ > 0 &&
+      (htp_share_resource_optimization_ == 1 || share_ep_contexts_)) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
                 "context_memory_limit_hint_mb (graph switching) cannot be combined with "
-                "htp_share_resource_optimization / enable_vtcm_backup_buffer_sharing. "
+                "htp_share_resource_optimization / enable_vtcm_backup_buffer_sharing / share_ep_contexts. "
                 "Graph switching disabled.");
     context_memory_limit_hint_mb_ = 0;
   }
