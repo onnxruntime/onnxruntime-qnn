@@ -22,6 +22,9 @@
 #include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/shared_context.h"
+#ifdef _WIN32
+#include "core/providers/qnn/qnn_external_resource_importer.h"
+#endif
 
 namespace onnxruntime {
 namespace qnn {
@@ -511,9 +514,22 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_DEFAULT;
   const QnnAllocatorType qnn_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
-  const bool can_use_shared_memory = uses_shared_memory && qnn_allocator_type != QnnAllocatorType::NONE;
+  bool has_matching_shared_allocation = false;
+  if (IsHtpSharedMemoryAllocator(qnn_allocator_type)) {
+    has_matching_shared_allocation = HtpSharedMemoryAllocator::IsAllocationTracked(ort_value_data);
+  }
+#ifdef _WIN32
+  else if (IsDx12SharedMemoryAllocator(qnn_allocator_type)) {
+    has_matching_shared_allocation = Dx12SharedMemoryAllocator::IsAllocationTracked(ort_value_data);
+  }
+  const bool can_use_imported_memory =
+      uses_imported_memory && QnnExternalResourceImporterImpl::FindImportMemory(ort_value_data);
+#else
+  const bool can_use_imported_memory = false;
+#endif
+  const bool can_use_shared_memory = uses_shared_memory && has_matching_shared_allocation;
 
-  if (can_use_shared_memory || uses_imported_memory) {
+  if (can_use_shared_memory || can_use_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
     RETURN_IF_ERROR(qnn_backend_manager_->GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
@@ -524,12 +540,21 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
     SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
-    if (!zero_copy_fallback_warned_ && (uses_shared_memory || qnn_allocator_type != QnnAllocatorType::NONE)) {
+    if (!zero_copy_fallback_warned_ &&
+        (uses_shared_memory || uses_imported_memory || qnn_allocator_type != QnnAllocatorType::NONE)) {
       zero_copy_fallback_warned_ = true;
-      if (uses_shared_memory) {
+      if (uses_shared_memory && qnn_allocator_type == QnnAllocatorType::NONE) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                     "a shared-memory tensor was bound but no QNN shared-memory allocator is enabled; "
                     "falling back to clientBuf. Enable the corresponding QNN shared-memory allocator for zero-copy.");
+      } else if (uses_shared_memory) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    "a HOST_ACCESSIBLE tensor was bound, but its allocation is not tracked by the QNN shared-memory "
+                    "allocator enabled for this session; falling back to clientBuf.");
+      } else if (uses_imported_memory) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    "a GPU tensor was bound, but it is not backed by a QNN-imported resource; "
+                    "falling back to clientBuf.");
       } else {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                     "zero-copy shared memory was requested but a CPU-backed tensor was bound; "

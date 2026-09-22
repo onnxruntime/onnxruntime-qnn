@@ -81,6 +81,10 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   static Ort::Status GetAllocationSharedMemoryInfo(void* address_within_allocation,
                                                    SharedMemoryInfo& allocation_info);
 
+  // Returns true if the address belongs to a live allocation created by any
+  // HtpSharedMemoryAllocator instance.
+  static bool IsAllocationTracked(void* address_within_allocation);
+
   // Allocation clean up callback signature.
   // For a given allocation, any added clean up callbacks will be called with the allocation's base address when the
   // allocation is freed.
@@ -162,6 +166,10 @@ class Dx12SharedMemoryAllocator : public OrtAllocator {
   // `address_within_allocation` must be an address within an allocation returned by Alloc() that has not been freed.
   static Ort::Status GetAllocationDx12Info(void* address_within_allocation,
                                            Dx12AllocationInfo& allocation_info);
+
+  // Returns true if the address belongs to a live allocation created by any
+  // Dx12SharedMemoryAllocator instance.
+  static bool IsAllocationTracked(void* address_within_allocation);
 
   // Allocation clean up callback signature.
   using AllocationCleanUpFn = std::function<void(void* allocation_base_address)>;

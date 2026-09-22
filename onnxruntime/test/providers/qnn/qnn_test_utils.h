@@ -830,12 +830,14 @@ inline void QuantizeValuesBlockQuant<float, UInt4x2>(
 // Refer to test_autoep_utils.h for leveraging unique pointer to unregister plugin EP.
 using RegisteredEpDeviceUniquePtr = std::unique_ptr<const OrtEpDevice, std::function<void(const OrtEpDevice*)>>;
 
-// Register QnnEP as plugin EP.
+// Register QnnEP as plugin EP. Tests that require a specific advertised
+// hardware device may provide target_hw_device_type_override.
 void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                           Ort::SessionOptions& session_options,
                           const std::string& registration_name,
                           const std::unordered_map<std::string, std::string>& ep_options,
-                          bool simulated = false);
+                          bool simulated = false,
+                          std::optional<OrtHardwareDeviceType> target_hw_device_type_override = std::nullopt);
 
 // RAII holder that ensures Ort::Session is destroyed before RegisteredEpDeviceUniquePtr.
 // Construct after registering the EP and creating the session:

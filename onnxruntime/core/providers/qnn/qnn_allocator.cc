@@ -286,6 +286,10 @@ Ort::Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(void* addres
   return Ort::Status();
 }
 
+bool HtpSharedMemoryAllocator::IsAllocationTracked(void* address_within_allocation) {
+  return GlobalHtpSharedMemoryAllocationTracker().LookUp(address_within_allocation).has_value();
+}
+
 Ort::Status HtpSharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,
                                                            AllocationCleanUpFn&& allocation_clean_up) {
   const auto tracked_record = GlobalHtpSharedMemoryAllocationTracker().LookUp(address_within_allocation);
@@ -505,6 +509,10 @@ Ort::Status Dx12SharedMemoryAllocator::GetAllocationDx12Info(void* address_withi
 
   allocation_info_out = std::move(dx12_info);
   return Ort::Status();
+}
+
+bool Dx12SharedMemoryAllocator::IsAllocationTracked(void* address_within_allocation) {
+  return GlobalDx12SharedMemoryAllocationTracker().LookUp(address_within_allocation).has_value();
 }
 
 Ort::Status Dx12SharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,

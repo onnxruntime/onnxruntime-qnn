@@ -78,6 +78,8 @@ constexpr std::string_view kLogSubstrClientBuf = "Setting Qnn_Tensor_t clientBuf
 // requested but a CPU-backed OrtValue is bound.
 constexpr std::string_view kLogSubstrFallbackWarning =
     "zero-copy shared memory was requested";
+constexpr std::string_view kLogSubstrUntrackedFallbackWarning =
+    "allocation is not tracked by the QNN shared-memory allocator";
 
 ProviderOptions MakeHtpOptions(bool enable_shared_memory = true) {
   ProviderOptions options;
@@ -91,6 +93,13 @@ ProviderOptions MakeHtpOptions(bool enable_shared_memory = true) {
     options["enable_htp_shared_memory_allocator"] = "1";
   }
   return options;
+}
+
+void RegisterQnnHtpSharedMemoryEp(RegisteredEpDeviceUniquePtr& registered_ep_device,
+                                  Ort::SessionOptions& session_options,
+                                  const ProviderOptions& options) {
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options,
+                       /*simulated*/ false, OrtHardwareDeviceType_NPU);
 }
 
 bool IsRpcMemUnavailable(const Ort::Exception& exception) {
@@ -133,7 +142,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -188,7 +197,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_input_uses_memhandle_branch) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -232,7 +241,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_silent_fallback_warning) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -279,7 +288,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_with_context_generation) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -324,7 +333,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_factory_allocator_pre_session) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
   ASSERT_NE(registered_ep_device.get(), nullptr);
 
   // BEFORE any session: create the shared allocator via the factory path.
@@ -395,7 +404,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_env_auto_register) {
 
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   // GetSharedAllocator matches on OrtMemoryInfo::device (type+mem_type+vendor+device_id)
   // AND OrtMemoryInfo::mem_type. Get the exact memory info the factory registered for
@@ -420,7 +429,7 @@ TEST_F(QnnHTPBackendTests, env_allocator_survives_multiple_session_lifetimes) {
   Ort::SessionOptions so;
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   const OrtMemoryInfo* host_accessible_mem_info = Ort::GetApi().EpDevice_MemoryInfo(
       registered_ep_device.get(), OrtDeviceMemoryType_HOST_ACCESSIBLE);
@@ -491,7 +500,7 @@ TEST_F(QnnHTPBackendTests, session_allocator_survives_env_allocator_release) {
   Ort::SessionOptions so;
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -540,7 +549,7 @@ TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   const OrtMemoryInfo* host_accessible_mem_info = Ort::GetApi().EpDevice_MemoryInfo(
       registered_ep_device.get(), OrtDeviceMemoryType_HOST_ACCESSIBLE);
@@ -627,6 +636,50 @@ TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_
   EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
 }
 
+// HOST_ACCESSIBLE describes how memory may be accessed; it does not prove that
+// the pointer came from QnnHtpShared. A foreign pointer carrying that metadata
+// must safely use clientBuf instead of failing HTP allocation lookup.
+TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_clientbuf) {
+  ProviderOptions options = MakeHtpOptions();
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+
+  Ort::Session session{nullptr};
+  if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
+    GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+  }
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  std::array<float, 6> input = {1, 2, 3, 4, 5, 6};
+  std::array<float, 6> output{};
+  const std::array<float, 6> expected = {1, 4, 9, 16, 25, 36};
+
+  // Deliberately attach QnnHtpShared/HOST_ACCESSIBLE metadata to ordinary
+  // process memory. The allocation tracker remains the source of truth.
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Value bound_x = Ort::Value::CreateTensor(
+      info_shared, input.data(), input.size(), shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(
+      info_shared, output.data(), output.size(), shape.data(), shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  ASSERT_NO_THROW(session.Run(Ort::RunOptions{}, binding));
+
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_NEAR(output[i], expected[i], 0.5f) << " at index " << i;
+  }
+  EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 2u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrUntrackedFallbackWarning), 1u);
+}
+
 // ---------------------------------------------------------------------------
 // Cross-partition zero-copy: shared memory at CPU EP ↔ QNN EP boundaries.
 //   htp_shared_memory_cross_partition_inference_correct — functional correctness.
@@ -644,7 +697,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) 
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -699,7 +752,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -771,7 +824,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "alloc_tensor_reuse.onnx", so, session)) {
@@ -850,7 +903,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "alloc_tensor_reuse.onnx", so, session)) {
@@ -919,7 +972,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
   AttachLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
@@ -970,7 +1023,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
 
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
   Ort::Session session{nullptr};
   if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
