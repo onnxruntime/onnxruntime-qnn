@@ -24,6 +24,8 @@ class QnnModelWrapper;
 /// </summary>
 class ChannelShuffleFusion : public IQnnNodeGroup {
  public:
+  struct NoHeadTransposeTag {};
+
   // Full 5-node pattern: T_head, Reshape1, T_mid, Reshape2, T_tail
   explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units) {
     if (node_units.size() != 5) {
@@ -37,11 +39,11 @@ class ChannelShuffleFusion : public IQnnNodeGroup {
     has_head_transpose_ = true;
   }
   // 4-node pattern (no head transpose): Reshape1, T_mid, Reshape2, T_tail
-  explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units, bool /*no_head_transpose_tag*/) {
+  explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units, NoHeadTransposeTag) {
     if (node_units.size() != 4) {
       ORT_CXX_API_THROW("No-head-transpose pattern expects exactly 4 NodeUnits.", ORT_EP_FAIL);
     }
-    node_units_[0] = nullptr;  // no T_head
+    node_units_[0] = nullptr;        // no T_head
     node_units_[1] = node_units[0];  // Reshape1
     node_units_[2] = node_units[1];  // T_mid
     node_units_[3] = node_units[2];  // Reshape2
