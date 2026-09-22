@@ -50,13 +50,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
         const OrtLogger* logger);
   ~QnnEp();
 
-  // Multi-core HTP graph configs are currently limited to AOT context
-  // generation/load flows. Regular ONNX/JIT execution must reject htp_num_cores.
-  static bool SupportsHtpNumCoresForGraphConfigs(bool context_cache_enabled,
-                                                 bool prepare_and_load) {
-    return context_cache_enabled || prepare_and_load;
-  }
-
   OrtStatus* ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice* const* devices,
                                                     size_t num_devices,
                                                     const char* compatibility_info,

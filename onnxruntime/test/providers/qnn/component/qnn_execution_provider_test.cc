@@ -1078,17 +1078,6 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresOverflow_Succeeds) {
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: 4294967296 will be skipped");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, HtpNumCoresGraphConfigPolicy_AllowsOnlyAotContextFlows) {
-  EXPECT_FALSE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
-      false /*context_cache_enabled*/, false /*prepare_and_load*/));
-  EXPECT_TRUE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
-      true /*context_cache_enabled*/, false /*prepare_and_load*/));
-  EXPECT_TRUE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
-      false /*context_cache_enabled*/, true /*prepare_and_load*/));
-  EXPECT_TRUE(QnnEp::SupportsHtpNumCoresForGraphConfigs(
-      true /*context_cache_enabled*/, true /*prepare_and_load*/));
-}
-
 // ===========================================================================
 // Group 8: Constructor — early throws
 // ===========================================================================

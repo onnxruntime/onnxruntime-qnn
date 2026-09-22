@@ -543,7 +543,7 @@ void QnnEp::ParsePerSocHtpConfigs() {
                                   htp_graph_configs_.enable_htp_monolithic_lstm,
                                   htp_graph_configs_.enable_htp_fp16_clamp_overflow,
                                   htp_graph_configs_.enable_htp_matmul_lut,
-                                  htp_graph_configs_.num_cores};
+                                  htp_graph_configs_.htp_num_cores};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -1059,21 +1059,15 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 #endif
 
   // HTP num cores — parsed before ParsePerSocHtpConfigs so the value is available for per-SoC config construction.
-  std::string htp_num_cores_str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("htp_num_cores"), "0", htp_num_cores_str);
-  if (!htp_num_cores_str.empty() && htp_num_cores_str != "0") {
-    uint32_t num_cores = 0;
-    const char* begin = htp_num_cores_str.data();
-    const char* end = begin + htp_num_cores_str.size();
-    const auto [ptr, ec] = std::from_chars(begin, end, num_cores);
-    if (ec == std::errc{} && ptr == end && num_cores > 0) {
-      htp_graph_configs_.num_cores = num_cores;
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("User specified htp_num_cores: " + htp_num_cores_str).c_str());
-    } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                  ("Invalid htp_num_cores: " + htp_num_cores_str + " will be skipped").c_str());
-    }
+  ParseIntegerOption(ort_api, session_options_, FormatEPConfigKey("htp_num_cores"),
+                     uint32_t{0}, htp_graph_configs_.htp_num_cores, logger_);
+
+  if (htp_graph_configs_.htp_num_cores > 0 && !(context_cache_enabled_ || prepare_and_load_)) {
+    LOG_AND_THROW_ERROR(logger_,
+                        "htp_num_cores is currently supported only for QNN EP AOT context generation/load. "
+                        "Use context_enable=1 for AOT context generation, or enable_htp_prepare_and_load=1 "
+                        "to prepare and load the compiled context in the same session. "
+                        "Regular ONNX/JIT model execution with htp_num_cores is not supported.");
   }
 
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
@@ -1553,7 +1547,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      context_priority,
                                      std::move(qnn_serializer_config),
                                      device_id_,
-                                     htp_graph_configs_.num_cores,
+                                     htp_graph_configs_.htp_num_cores,
                                      htp_arch,
                                      soc_model,
                                      op_packages,
@@ -1951,10 +1945,10 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_opt_config_vtcm->customConfig = htp_graph_opt_config_vtcm;
     }
 
-    if (configs.num_cores > 0) {
+    if (configs.htp_num_cores > 0) {
       gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_num_cores_config = configs_builder.PushCustomConfig();
       htp_num_cores_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES;
-      htp_num_cores_config->numCores = configs.num_cores;
+      htp_num_cores_config->numCores = configs.htp_num_cores;
 
       gsl::not_null<QnnGraph_Config_t*> graph_num_cores_config = configs_builder.PushConfig();
       graph_num_cores_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
@@ -2567,14 +2561,6 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
     InitQnnHtpGraphConfigs(htp_graph_configs, htp_graph_configs_builder);
-
-    if (htp_graph_configs.num_cores > 0) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_INFO,
-                  ("Creating QNN graph " + fused_node_name +
-                   " with compile-time HTP num_cores=" + std::to_string(htp_graph_configs.num_cores))
-                      .c_str());
-    }
 
     std::vector<const QnnGraph_Config_t*> all_graph_configs;
     const QnnGraph_Config_t** htp_configs = htp_graph_configs_builder.GetQnnConfigs();
@@ -3217,16 +3203,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // ScopedPerSocQnnBackendSetup::Init), not at this point.
   OrtStatus* compile_status = nullptr;
   if (!ep->enable_multi_soc_ep_context_) {
-    if (ep->htp_graph_configs_.num_cores > 0 &&
-        !SupportsHtpNumCoresForGraphConfigs(ep->context_cache_enabled_, ep->prepare_and_load_)) {
-      return ep->ort_api.CreateStatus(
-          ORT_EP_FAIL,
-          "htp_num_cores is currently supported only for QNN EP AOT context generation/load. "
-          "Use context_enable=1 for AOT context generation, or enable_htp_prepare_and_load=1 "
-          "to prepare and load the compiled context in the same session. "
-          "Regular ONNX/JIT model execution with htp_num_cores is not supported.");
-    }
-
     compile_status = ep->CompileOnnxModel(graphs,
                                           fused_nodes,
                                           count,

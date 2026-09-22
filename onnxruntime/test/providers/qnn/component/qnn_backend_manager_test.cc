@@ -137,17 +137,6 @@ TEST(QnnUnit_BackendManagerTest, SetupBackend_InvalidPath_ReturnsError) {
             std::string::npos);
 }
 
-TEST(QnnUnit_BackendManagerTest, HtpNumCoresSetupPolicy_AllowsOnlyAotContextFlows) {
-  EXPECT_FALSE(qnn::QnnBackendManager::SupportsHtpNumCoresForSetup(
-      false /*load_from_cached_context*/, false /*need_load_system_lib*/));
-  EXPECT_TRUE(qnn::QnnBackendManager::SupportsHtpNumCoresForSetup(
-      true /*load_from_cached_context*/, false /*need_load_system_lib*/));
-  EXPECT_TRUE(qnn::QnnBackendManager::SupportsHtpNumCoresForSetup(
-      false /*load_from_cached_context*/, true /*need_load_system_lib*/));
-  EXPECT_TRUE(qnn::QnnBackendManager::SupportsHtpNumCoresForSetup(
-      true /*load_from_cached_context*/, true /*need_load_system_lib*/));
-}
-
 // ---------------------------------------------------------------------------
 // Group 3: ResetQnnLogLevel — before SetupBackend (early-return path)
 // ---------------------------------------------------------------------------

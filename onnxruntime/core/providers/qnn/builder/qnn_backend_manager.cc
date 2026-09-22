@@ -927,7 +927,7 @@ Ort::Status QnnBackendManager::CreateDevice() {
   // Offline HTP preparation on x86 targets a SoC/architecture but does not have
   // physical device cores to enumerate. The requested core count is still sent
   // as a graph config so it is compiled into the generated context binary.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
+#if QNN_ARCH_ARM64
   constexpr bool allow_hw_device_enumeration = true;
 #else
   constexpr bool allow_hw_device_enumeration = false;
@@ -2231,18 +2231,6 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK()) {
-    // Multi-core HTP device selection is only supported for AOT context
-    // generation/load flows. Leave regular ONNX/JIT execution on the default
-    // path by rejecting htp_num_cores for unsupported flows.
-    const bool allow_htp_num_cores = SupportsHtpNumCoresForSetup(load_from_cached_context, need_load_system_lib);
-    if (!allow_htp_num_cores && htp_num_cores_ > 0) {
-      return MAKE_EP_FAIL(
-          "htp_num_cores is currently supported only for QNN EP AOT context generation/load. "
-          "Use context_enable=1 for AOT context generation, or enable_htp_prepare_and_load=1 "
-          "to prepare and load the compiled context in the same session. "
-          "Regular ONNX/JIT model execution with htp_num_cores is not supported.");
-    }
-
     status = CreateDevice();
   }
   if (status.IsOK()) {

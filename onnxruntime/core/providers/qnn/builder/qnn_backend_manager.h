@@ -158,13 +158,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return std::make_shared<QnnBackendManager>(config, api_ptrs, logger, PrivateConstructorTag{});
   }
 
-  // Multi-core HTP device selection is only supported for AOT context
-  // generation/load flows. Regular ONNX/JIT setup must reject htp_num_cores.
-  static bool SupportsHtpNumCoresForSetup(bool load_from_cached_context,
-                                          bool need_load_system_lib) {
-    return load_from_cached_context || need_load_system_lib;
-  }
-
   // Note: Creation should be done via Create(). This constructor is public so that it can be called from
   // std::make_shared().
   QnnBackendManager(const QnnBackendManagerConfig& config,
