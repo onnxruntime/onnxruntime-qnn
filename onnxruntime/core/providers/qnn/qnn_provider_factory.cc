@@ -124,8 +124,9 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 
   // Keep this available before session creation so OrtEnv can create a shared
-  // allocator for Python I/O binding. RPCMEM itself is loaded lazily because this
-  // factory is also used on hosts where it is unavailable (for example x86).
+  // allocator for Python I/O binding. ORT creates advertised allocators while
+  // registering the EP library, so the allocator defers loading RPCMEM until
+  // its first allocation.
   CreateAllocator = CreateAllocatorImpl;
 }
 
@@ -413,15 +414,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(_In_ OrtEpFactory* thi
     return nullptr;
   }
 
-  std::string rpcmem_error;
-  auto rpcmem_library = factory->GetOrCreateRpcMemLibrary(rpcmem_error);
-  if (rpcmem_library == nullptr) {
-    return factory->ort_api.CreateStatus(
-        ORT_FAIL, ("Unable to load RPCMEM for QnnHtpShared allocator: " + rpcmem_error).c_str());
-  }
-
   try {
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::move(rpcmem_library));
+    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
+        memory_info,
+        [factory](std::string& error_message) {
+          return factory->GetOrCreateRpcMemLibrary(error_message);
+        });
     *allocator = htp_allocator.release();
   } catch (const std::exception& e) {
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());

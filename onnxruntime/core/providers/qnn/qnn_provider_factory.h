@@ -88,8 +88,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
   MemoryInfoUniquePtr host_accessible_memory_info_;
 
-  // Created on first allocator/session request. A factory must be usable on hosts
-  // without RPCMEM (for example, offline context generation on x86).
+  // Created on the first allocation or opted-in session request. Merely
+  // registering the factory and its environment allocator must remain usable on
+  // hosts without RPCMEM (for example, offline context generation on x86).
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_;
   std::mutex rpcmem_library_mutex_;
 

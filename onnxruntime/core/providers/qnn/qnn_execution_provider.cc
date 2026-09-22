@@ -3638,14 +3638,13 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     // session exists. A session that did not opt into zero-copy may still ask
     // for that allocator explicitly; create it without changing this session's
     // default memory device or QNN memhandle binding policy.
-    std::string rpcmem_error;
-    auto rpcmem_library = ep->factory_.GetOrCreateRpcMemLibrary(rpcmem_error);
-    if (rpcmem_library == nullptr) {
-      return ep->ort_api.CreateStatus(
-          ORT_FAIL, ("Unable to load RPCMEM for QnnHtpShared allocator: " + rpcmem_error).c_str());
-    }
     try {
-      auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::move(rpcmem_library));
+      auto* factory = &ep->factory_;
+      auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
+          memory_info,
+          [factory](std::string& error_message) {
+            return factory->GetOrCreateRpcMemLibrary(error_message);
+          });
       *allocator = htp_allocator.release();
     } catch (const std::exception& e) {
       return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
