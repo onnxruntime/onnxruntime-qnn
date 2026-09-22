@@ -12,7 +12,6 @@
 #include "HTP/QnnHtpCommon.h"
 #include "QnnSdkBuildId.h"
 #include "gtest/gtest.h"
-#include <onnx/onnx_pb.h>
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"

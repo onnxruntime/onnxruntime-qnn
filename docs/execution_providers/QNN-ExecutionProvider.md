@@ -226,7 +226,7 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"enable_htp_matmul_lut"`|Description|
 |---|---|
 |`"0"`|Disable the HTP MatMul LUT kernel optimization.|
-|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available only with QAIRT 2.51 or later.|
+|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available only on Windows with QAIRT 2.51 or later.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
@@ -1732,6 +1732,9 @@ To enable new operator support in EP, areas to visit:
 ## QNN User-Defined Operation (UDO)
 
 A **User-Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are not natively supported in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
+
+For an end-to-end MyAdd UDO reference, including CPU, HTP, and on-device
+commands, see the [QNN UDO sample](../../qcom/samples/qnn_udo_myadd/README.md).
 
 ### Overview
 
