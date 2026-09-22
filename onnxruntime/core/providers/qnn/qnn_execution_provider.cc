@@ -1545,8 +1545,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // So that all graphs from later sessions will be compiled into the same QNN context
   const bool use_shared_backend_mgr =
       ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
-  if (use_shared_backend_mgr && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
-    qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
+  const auto shared_qnn_backend_manager = use_shared_backend_mgr
+                                              ? SharedContext::GetInstance().GetSharedQnnBackendManager()
+                                              : nullptr;
+  const bool reusing_shared_backend_manager = shared_qnn_backend_manager != nullptr;
+  if (reusing_shared_backend_manager) {
+    qnn_backend_manager_ = shared_qnn_backend_manager;
     // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
     // previous session.
     qnn_backend_manager_->ResetLogger(logger_);
@@ -1568,13 +1572,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      reused_io_limit_mb,
                                      enable_htp_cross_device_prepare},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
-    // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
-    // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
-    // all sharing paths is deferred to after SetupBackend completes (in GetCapabilityImpl).
-    if (htp_share_resource_optimization_ == 1) {
-      SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
-    }
   }
   // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
   // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
@@ -1646,7 +1643,31 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+  if (reusing_shared_backend_manager) {
+    const auto shared_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
+    if (shared_allocator_type != qnn_allocator_type_) {
+      const std::string message =
+          "Cannot share QNN backend manager with a different shared-memory allocator mode. "
+          "The existing shared manager uses '" +
+          std::string{qnn::QnnAllocatorTypeToString(shared_allocator_type)} +
+          "', but this session requested '" +
+          std::string{qnn::QnnAllocatorTypeToString(qnn_allocator_type_)} + "'.";
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+      throw std::runtime_error(message);
+    }
+  } else {
+    // An allocator mode belongs to the QNN context. A manager that is later
+    // shared must retain this first session's mode instead of allowing a
+    // subsequent session to overwrite it.
+    qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+
+    // Publish only after fixing the allocator mode. ContextCreateAsyncCallback
+    // retrieves this manager during SetupBackend (GetCapability), so it is
+    // still available before any context work starts.
+    if (htp_share_resource_optimization_ == 1) {
+      SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
+    }
+  }
   if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
     ORT_CXX_LOGF(logger_,
                  ORT_LOGGING_LEVEL_VERBOSE,

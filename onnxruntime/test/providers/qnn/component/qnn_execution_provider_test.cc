@@ -36,6 +36,7 @@
 #include "gtest/gtest.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
@@ -618,6 +619,31 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextGenerationWithoutRpcmem_Preser
   EXPECT_EQ(default_device, nullptr);
 }
 #endif
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllocatorMode_Throws) {
+  EpStubContext owner_ctx;
+  owner_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
+  auto owner_factory = MakeFactory(owner_ctx);
+  auto owner_ep = MakeEp(*owner_factory, owner_ctx);
+
+  // The host-only test cannot load RPCMEM to create a real HTP_SHARED owner.
+  // Set the shared manager's mode directly to emulate an existing opted-in
+  // session before constructing a second session that requests NONE.
+  auto shared_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
+  ASSERT_NE(shared_manager, nullptr);
+  shared_manager->SetQnnAllocatorType(qnn::QnnAllocatorType::HTP_SHARED);
+
+  EpStubContext consumer_ctx;
+  consumer_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
+  auto consumer_factory = MakeFactory(consumer_ctx);
+
+  try {
+    auto consumer_ep = MakeEp(*consumer_factory, consumer_ctx);
+    FAIL() << "Expected an incompatible shared allocator mode to be rejected.";
+  } catch (const std::runtime_error& e) {
+    EXPECT_NE(std::string{e.what()}.find("Cannot share QNN backend manager"), std::string::npos);
+  }
+}
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError) {
   EpStubContext ctx;
