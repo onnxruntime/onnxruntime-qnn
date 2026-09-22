@@ -163,11 +163,11 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   // Detect the variant by checking if the first node is a Transpose (5-node) or Reshape (4-node).
   const bool has_head_transpose = (node_units[0]->OpType() == kOpTranspose);
   const OrtNodeUnit* transpose_head = has_head_transpose ? node_units[0] : nullptr;
-  const OrtNodeUnit* reshape1      = has_head_transpose ? node_units[1] : node_units[0];
+  const OrtNodeUnit* reshape1 = has_head_transpose ? node_units[1] : node_units[0];
   const OrtNodeUnit* transpose_tail = has_head_transpose ? node_units[4] : node_units[3];
   // IO boundaries: T_head's input (if present) else Reshape1's input; T_tail's output.
-  const OrtNodeUnitIODef& cs_input_def  = has_head_transpose ? transpose_head->Inputs()[0]
-                                                              : reshape1->Inputs()[0];
+  const OrtNodeUnitIODef& cs_input_def = has_head_transpose ? transpose_head->Inputs()[0]
+                                                            : reshape1->Inputs()[0];
   const OrtNodeUnitIODef& cs_output_def = transpose_tail->Outputs()[0];
 
   std::vector<std::string> param_tensor_names;
@@ -249,7 +249,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
       // In NHWC, input is {N,H,W,C} and output is {N,H,W,G,C/G} where C at index 3 → G+C/G.
       // Check if input[3] == output[3] * output[4] (NHWC groups split).
       if (r1_in_dims.size() == 4 && reshape1_output_dims.size() == 5 &&
-          r1_in_dims[0] == reshape1_output_dims[0] &&    // N matches
+          r1_in_dims[0] == reshape1_output_dims[0] &&                            // N matches
           r1_in_dims[3] == reshape1_output_dims[3] * reshape1_output_dims[4]) {  // C = G * C/G
         // NHWC format: num_groups is at output index 3.
         RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
@@ -266,20 +266,18 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
       // For NHWC input {N,H,W,C}: num_groups = output[3] = G (after {N,H,W,G,C/G} split).
       // Detect format: NCHW has input[1]==C matched by output[1]*output[2]; NHWC has input[3]==C.
       int64_t num_groups_val = 0;
-      if (!r1_in_dims.empty() && !reshape1_output_dims.empty() &&
-          r1_in_dims.size() >= 4 && reshape1_output_dims.size() >= 3 &&
-          r1_in_dims[3] == reshape1_output_dims[reshape1_output_dims.size() - 2] *
-                           reshape1_output_dims[reshape1_output_dims.size() - 1]) {
-        // NHWC: last two dims of output are G and C/G; G is at output[-2].
+      if (r1_in_dims.size() >= 4 && reshape1_output_dims.size() >= 5 &&
+          r1_in_dims[1] == reshape1_output_dims[1] * reshape1_output_dims[2]) {
+        // NCHW: {N, C, ...} -> {N, G, C/G, ...}.
+        num_groups_val = reshape1_output_dims[1];
+      } else if (r1_in_dims.size() >= 4 && reshape1_output_dims.size() >= 5 &&
+                 r1_in_dims[3] == reshape1_output_dims[reshape1_output_dims.size() - 2] *
+                                      reshape1_output_dims[reshape1_output_dims.size() - 1]) {
+        // NHWC: {N, ..., C} -> {N, ..., G, C/G}.
         num_groups_val = reshape1_output_dims[reshape1_output_dims.size() - 2];
       } else {
-        // NCHW: G is at output[1].
-        num_groups_val = reshape1_output_dims[1];
+        RETURN_IF_NOT(false, "ChannelShuffleFusion: reshape1 does not split the channel dimension.");
       }
-      fprintf(stderr, "CSDBG: NCHW/else branch, num_groups=%ld\n", (long)num_groups_val);
-      // NCHW/normalized: num_groups is G; detect NHWC vs NCHW to find correct G index.
-      // NHWC output {N,H,W,G,C/G}: C = G × C/G, so input[3] == output[-2] × output[-1] → G = output[-2].
-      // NCHW output {N,G,C/G,H,W}: G is at output[1].
       RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
                                              transpose_tail->Name(),
                                              static_cast<uint32_t>(num_groups_val),
@@ -558,8 +556,10 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusionFromReshape(
   t_tail_outs.resize(t_tail_out_count);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose_tail->GetNode(), t_tail_outs.data(), t_tail_out_count), ort_api, nullptr);
 
-  const OrtTypeInfo* r1_in_ti = nullptr; const OrtTensorTypeAndShapeInfo* r1_in_tsi = nullptr;
-  const OrtTypeInfo* t_tail_out_ti = nullptr; const OrtTensorTypeAndShapeInfo* t_tail_out_tsi = nullptr;
+  const OrtTypeInfo* r1_in_ti = nullptr;
+  const OrtTensorTypeAndShapeInfo* r1_in_tsi = nullptr;
+  const OrtTypeInfo* t_tail_out_ti = nullptr;
+  const OrtTensorTypeAndShapeInfo* t_tail_out_tsi = nullptr;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(r1_ins[0], &r1_in_ti), ort_api, nullptr);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(r1_in_ti, &r1_in_tsi), ort_api, nullptr);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(t_tail_outs[0], &t_tail_out_ti), ort_api, nullptr);
@@ -589,7 +589,7 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusionFromReshape(
   if (!CreateOrValidateOnQnn(qnn_model_wrapper, four_span, /*validate=*/true).IsOK()) {
     return nullptr;
   }
-  return std::make_unique<ChannelShuffleFusion>(four_span, false /*no_head_transpose_tag*/);
+  return std::make_unique<ChannelShuffleFusion>(four_span, ChannelShuffleFusion::NoHeadTransposeTag{});
 }
 
 gsl::span<const OrtNodeUnit* const> ChannelShuffleFusion::GetNodeUnits() const {

@@ -252,29 +252,27 @@ bool HasSpaceToDepthCoreSignature(
   bool is_nhwc_decomp = false;
   if (static_cast<int64_t>(input_shape[1]) == static_cast<int64_t>(shape_6d[1])) {
     // NCHW decomposition: {N, C, H/b0, b0, W/b1, b1}
-    c    = static_cast<int64_t>(shape_6d[1]);
-    h_div= static_cast<int64_t>(shape_6d[2]);
-    b0   = static_cast<int64_t>(shape_6d[3]);
-    w_div= static_cast<int64_t>(shape_6d[4]);
-    b1   = static_cast<int64_t>(shape_6d[5]);
-    h    = static_cast<int64_t>(input_shape[2]);
-    w    = static_cast<int64_t>(input_shape[3]);
+    c = static_cast<int64_t>(shape_6d[1]);
+    h_div = static_cast<int64_t>(shape_6d[2]);
+    b0 = static_cast<int64_t>(shape_6d[3]);
+    w_div = static_cast<int64_t>(shape_6d[4]);
+    b1 = static_cast<int64_t>(shape_6d[5]);
+    h = static_cast<int64_t>(input_shape[2]);
+    w = static_cast<int64_t>(input_shape[3]);
   } else if (static_cast<int64_t>(input_shape[3]) == static_cast<int64_t>(shape_6d[5])) {
     // NHWC decomposition: {N, H/b0, b0, W/b1, b1, C}
     // (ORT's TransposeOptimizer absorbed NHWC->NCHW into the Reshape shape and core perm)
-    h_div= static_cast<int64_t>(shape_6d[1]);
-    b0   = static_cast<int64_t>(shape_6d[2]);
-    w_div= static_cast<int64_t>(shape_6d[3]);
-    b1   = static_cast<int64_t>(shape_6d[4]);
-    c    = static_cast<int64_t>(shape_6d[5]);
-    h    = static_cast<int64_t>(input_shape[1]);
-    w    = static_cast<int64_t>(input_shape[2]);
+    h_div = static_cast<int64_t>(shape_6d[1]);
+    b0 = static_cast<int64_t>(shape_6d[2]);
+    w_div = static_cast<int64_t>(shape_6d[3]);
+    b1 = static_cast<int64_t>(shape_6d[4]);
+    c = static_cast<int64_t>(shape_6d[5]);
+    h = static_cast<int64_t>(input_shape[1]);
+    w = static_cast<int64_t>(input_shape[2]);
     is_nhwc_decomp = true;
   } else {
     return false;
   }
-  ORT_UNUSED_PARAMETER(is_nhwc_decomp);
-
   // r_n must match input N, b0/b1 must be positive.
   if (r_n != n || b0 < 1 || b1 < 1) {
     return false;
@@ -288,9 +286,11 @@ bool HasSpaceToDepthCoreSignature(
     return false;
   }
 
-  // Expected output shape: {N, C*b0*b1, H/b0, W/b1} (NCHW SpaceToDepth output)
+  // Expected output shape follows the decomposition layout.
   const int64_t expected_c = c * b0 * b1;
-  const std::array<int64_t, 4> expected_output_shape = {n, expected_c, h / b0, w / b1};
+  const std::array<int64_t, 4> expected_output_shape = is_nhwc_decomp
+                                                           ? std::array<int64_t, 4>{n, h / b0, w / b1, expected_c}
+                                                           : std::array<int64_t, 4>{n, expected_c, h / b0, w / b1};
   for (size_t i = 0; i < 4; ++i) {
     if (static_cast<int64_t>(output_shape[i]) != expected_output_shape[i]) {
       return false;
@@ -537,7 +537,7 @@ Ort::Status CreateOrValidateOnQnn(
         // Input is NHWC when C is at input_shape[3] and the intermediate is NHWC-decomposed.
         const bool is_nchw_decomp = (static_cast<int64_t>(input_shape[1]) == static_cast<int64_t>(shape_6d[1]));
         const bool is_nhwc_decomp = !is_nchw_decomp &&
-                                     (static_cast<int64_t>(input_shape[3]) == static_cast<int64_t>(shape_6d[5]));
+                                    (static_cast<int64_t>(input_shape[3]) == static_cast<int64_t>(shape_6d[5]));
         input_already_nhwc = is_nhwc_decomp;
       }
     }
