@@ -286,15 +286,18 @@ bool HasSpaceToDepthCoreSignature(
     return false;
   }
 
-  // Expected output shape follows the decomposition layout.
+  // Layout optimization can absorb the head and tail layout transposes independently.
+  // Therefore, an NHWC-decomposed intermediate may still reshape to the original NCHW
+  // SpaceToDepth output, or directly to NHWC when the tail transpose is also absorbed.
   const int64_t expected_c = c * b0 * b1;
-  const std::array<int64_t, 4> expected_output_shape = is_nhwc_decomp
-                                                           ? std::array<int64_t, 4>{n, h / b0, w / b1, expected_c}
-                                                           : std::array<int64_t, 4>{n, expected_c, h / b0, w / b1};
-  for (size_t i = 0; i < 4; ++i) {
-    if (static_cast<int64_t>(output_shape[i]) != expected_output_shape[i]) {
-      return false;
-    }
+  const std::array<int64_t, 4> expected_nchw_output = {n, expected_c, h / b0, w / b1};
+  const std::array<int64_t, 4> expected_nhwc_output = {n, h / b0, w / b1, expected_c};
+  const auto output_matches = [&output_shape](const std::array<int64_t, 4>& expected_shape) {
+    return std::equal(output_shape.begin(), output_shape.end(), expected_shape.begin());
+  };
+  if (!output_matches(expected_nchw_output) &&
+      !(is_nhwc_decomp && output_matches(expected_nhwc_output))) {
+    return false;
   }
 
   // check transpose perm.
