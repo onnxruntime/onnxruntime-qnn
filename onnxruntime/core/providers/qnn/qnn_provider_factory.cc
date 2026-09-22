@@ -144,6 +144,32 @@ std::shared_ptr<qnn::RpcMemLibrary> QnnEpFactory::GetOrCreateRpcMemLibrary(std::
   return rpcmem_library_;
 }
 
+OrtStatus* QnnEpFactory::CreateHtpSharedMemoryAllocator(
+    const OrtMemoryInfo* memory_info,
+    std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
+    OrtAllocator** allocator) noexcept {
+  *allocator = nullptr;
+
+  try {
+    std::unique_ptr<qnn::HtpSharedMemoryAllocator> htp_allocator;
+    if (rpcmem_library != nullptr) {
+      htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::move(rpcmem_library));
+    } else {
+      htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
+          memory_info,
+          [this](std::string& error_message) {
+            return GetOrCreateRpcMemLibrary(error_message);
+          });
+    }
+
+    *allocator = htp_allocator.release();
+  } catch (const std::exception& e) {
+    return ort_api.CreateStatus(ORT_FAIL, e.what());
+  }
+
+  return nullptr;
+}
+
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
 // Ex: a factory that supports NPU should have a different than a factory that supports GPU.
 const char* ORT_API_CALL QnnEpFactory::GetNameImpl(const OrtEpFactory* this_ptr) noexcept {
@@ -414,18 +440,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(_In_ OrtEpFactory* thi
     return nullptr;
   }
 
-  try {
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
-        memory_info,
-        [factory](std::string& error_message) {
-          return factory->GetOrCreateRpcMemLibrary(error_message);
-        });
-    *allocator = htp_allocator.release();
-  } catch (const std::exception& e) {
-    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
-  }
-
-  return nullptr;
+  return factory->CreateHtpSharedMemoryAllocator(memory_info, nullptr, allocator);
 }
 
 void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {

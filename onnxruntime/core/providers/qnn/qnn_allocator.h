@@ -104,6 +104,8 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   struct AllocationRecord {
     SharedMemoryInfo shared_memory_info;
     InlinedVector<AllocationCleanUpFn, 1> clean_up_fns;
+    // Keep the dynamic library loaded until this allocation has been freed,
+    // independently of any session that may have consumed the buffer.
     std::shared_ptr<RpcMemLibrary> rpcmem_library;
   };
 

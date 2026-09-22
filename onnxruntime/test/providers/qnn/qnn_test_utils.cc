@@ -233,7 +233,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                                   "libQnnHtp.so"
 #endif
        )) {
-#if defined(__linux__) || (defined(_WIN32) && defined(_M_X64))
+#if (defined(__linux__) && !defined(__aarch64__)) || (defined(_WIN32) && defined(_M_X64))
     target_hw_device_type = OrtHardwareDeviceType_CPU;
 #else
     target_hw_device_type = OrtHardwareDeviceType_NPU;

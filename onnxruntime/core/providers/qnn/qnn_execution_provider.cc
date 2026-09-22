@@ -3608,16 +3608,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
 
   if (qnn::IsHtpSharedMemoryAllocator(allocator_type)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
-    if (ep->rpcmem_library_ == nullptr) {
-      try {  // RpcMemLibrary throws; this function is noexcept
-        ep->rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-      } catch (const std::exception& e) {
-        return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
-      }
-    }
-
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
-    *allocator = htp_allocator.release();
+    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, ep->rpcmem_library_, allocator);
   }
 #ifdef _WIN32
   else if (qnn::IsDx12SharedMemoryAllocator(allocator_type)) {
@@ -3638,17 +3629,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     // session exists. A session that did not opt into zero-copy may still ask
     // for that allocator explicitly; create it without changing this session's
     // default memory device or QNN memhandle binding policy.
-    try {
-      auto* factory = &ep->factory_;
-      auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
-          memory_info,
-          [factory](std::string& error_message) {
-            return factory->GetOrCreateRpcMemLibrary(error_message);
-          });
-      *allocator = htp_allocator.release();
-    } catch (const std::exception& e) {
-      return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
-    }
+    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, nullptr, allocator);
   }
   return nullptr;
 }
