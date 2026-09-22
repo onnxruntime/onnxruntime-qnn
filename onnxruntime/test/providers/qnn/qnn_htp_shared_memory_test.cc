@@ -123,12 +123,10 @@ bool TryCreateHtpSession(const ORTCHAR_T* model_path,
 
 }  // namespace
 
-class QnnHtpSharedMemoryTests : public QnnHTPBackendTests {};
-
 // Regression guard: output tensor uses MEMHANDLE (zero-copy) when allocated
 // from QnnHtpShared. Tests that only check output correctness would still pass
 // if the runtime silently fell back to copies.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_output_uses_memhandle_branch) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -183,7 +181,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_output_uses_memhandle_branch) 
 }
 
 // Verifies input tensors also take the MEMHANDLE path when allocated from QnnHtpShared.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_input_uses_memhandle_branch) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_input_uses_memhandle_branch) {
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -227,7 +225,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_input_uses_memhandle_branch) {
 
 // Verifies a WARNING is emitted when the shared-memory option is set but the
 // bound OrtValue is CPU-backed (fallback to per-frame copy).
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_silent_fallback_warning) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_silent_fallback_warning) {
   ProviderOptions options = MakeHtpOptions();  // opt-in requested...
 
   LogCapture capture;
@@ -267,7 +265,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_silent_fallback_warning) {
 }
 
 // Verifies enable_htp_shared_memory_allocator=1 coexists with ep.context_enable=1.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_with_context_generation) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_with_context_generation) {
   ProviderOptions options = MakeHtpOptions();
 
   // Set up a temp ctx path so context generation has somewhere to write.
@@ -319,7 +317,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_with_context_generation) {
 // Verifies OrtApi::CreateSharedAllocator returns an RPCMEM-backed allocator
 // before any session exists, and that inference from a factory-allocated OrtValue
 // takes the MEMHANDLE branch.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_factory_allocator_pre_session) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_factory_allocator_pre_session) {
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -391,7 +389,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_factory_allocator_pre_session)
 
 // Verifies OrtApi::GetSharedAllocator returns the auto-registered shared allocator
 // without any session having been created.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_env_auto_register) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_env_auto_register) {
   ProviderOptions options = MakeHtpOptions(/*enable_shared_memory*/ false);
   // env-level shared allocator is advertised at library-load time, independent
   // of session-level options.
@@ -418,7 +416,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_env_auto_register) {
 // The environment allocator and its RPCMEM library are factory-owned and may
 // span multiple QNN sessions. Destroying either session must not invalidate the
 // allocator or buffers still used by the other session.
-TEST_F(QnnHtpSharedMemoryTests, env_allocator_survives_multiple_session_lifetimes) {
+TEST_F(QnnHTPBackendTests, env_allocator_survives_multiple_session_lifetimes) {
   ProviderOptions options = MakeHtpOptions();
   Ort::SessionOptions so;
 
@@ -489,7 +487,7 @@ TEST_F(QnnHtpSharedMemoryTests, env_allocator_survives_multiple_session_lifetime
 
 // Releasing the environment's allocator registration must not invalidate an
 // allocator already retained by a live session.
-TEST_F(QnnHtpSharedMemoryTests, session_allocator_survives_env_allocator_release) {
+TEST_F(QnnHTPBackendTests, session_allocator_survives_env_allocator_release) {
   ProviderOptions options = MakeHtpOptions();
   Ort::SessionOptions so;
 
@@ -534,7 +532,7 @@ TEST_F(QnnHtpSharedMemoryTests, session_allocator_survives_env_allocator_release
 // A shared OrtValue may be created from the env-level allocator even when the
 // session does not opt in to zero-copy. In that case, use clientBuf instead of
 // trying to register a QNN memHandle with an allocator type of NONE.
-TEST_F(QnnHtpSharedMemoryTests, shared_ortvalue_without_session_allocator_falls_back_to_clientbuf) {
+TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_to_clientbuf) {
   ProviderOptions options = MakeHtpOptions(/*enable_shared_memory*/ false);
 
   LogCapture capture;
@@ -638,7 +636,7 @@ TEST_F(QnnHtpSharedMemoryTests, shared_ortvalue_without_session_allocator_falls_
 
 // Verifies inference correctness with shared memory enabled and offload_graph_io_quantization=0
 // (ensures CPU↔QNN EP partition boundary is exercised).
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_cross_partition_inference_correct) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) {
   ProviderOptions options = MakeHtpOptions();
   options["offload_graph_io_quantization"] = "0";  // ensures any quant/dequant stays on CPU
 
@@ -693,7 +691,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_cross_partition_inference_corr
   }
 }
 
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_cross_partition_zero_copy) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
   ProviderOptions options = MakeHtpOptions();
   options["offload_graph_io_quantization"] = "0";
 
@@ -766,7 +764,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_cross_partition_zero_copy) {
 
 // Uses alloc_tensor_reuse.onnx (2 float32 inputs [10], 2 float32 outputs [10]).
 // Graph: outp0 = -(inp0 + inp1); outp1 = -(inp0 - inp1).
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_multi_io) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -845,7 +843,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_multi_io) {
 // info. Only CPU-backed *outputs* still hit the RAW/clientBuf branch (outputs
 // are written directly to the user's bound buffer). This test therefore mixes
 // shared inputs with a CPU output to exercise the fallback path.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_mixed_bindings) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -914,7 +912,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_mixed_bindings) {
 // fallback; CPU inputs are transparently promoted to HOST_ACCESSIBLE by ORT
 // Core's memory planner. mul_1 has one output (Y), so exactly one WARNING is
 // expected regardless of the number of Runs.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_fallback_warning_once) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -968,7 +966,7 @@ TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_fallback_warning_once) {
 // Note: The QNN HTP backend serializes graphExecute via graph_exec_mutex_; only
 // one thread actually executes at a time. This test verifies correct results and
 // no crashes under that contention pattern.
-TEST_F(QnnHtpSharedMemoryTests, htp_shared_memory_concurrent_run) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
   ProviderOptions options = MakeHtpOptions();
 
   Ort::SessionOptions so;
