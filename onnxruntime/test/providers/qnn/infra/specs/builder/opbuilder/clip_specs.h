@@ -363,9 +363,9 @@ inline const ClipFoldedConstSpec kClipU16FloatDataQDQConstMinMaxSpec = {
     /*opset=*/21};
 
 // ---------------------------------------------------------------------------
-// Grouped spec lists — the parameter sources each tier's TEST_P instantiates
-// over. Splitting by (kind, tier) is what makes accuracy = snapshot ∪ session
-// hold by construction:
+// Tier spec lists: each tier's TEST_P instantiates over these parameter
+// sources. Splitting by (kind, tier) keeps accuracy = snapshot + session by
+// construction:
 //   * op-builder snapshot: kClipSpecs + kClipQDQFloatOpBuilderSpecs
 //                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
 //   * session snapshot   : kClipQDQFloatSessionSpecs (default min/max only)

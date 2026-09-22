@@ -297,17 +297,13 @@ GetTestModelFn BuildClipQDQQuantOnnxFromSpec(const ClipQDQQuantSpec& spec) {
       if (spec.shape == std::vector<int64_t>{1, 3, 4, 4}) {
         // Clip_U8_IndependentQDQ_MinMaxQDQ: input data = 0..47 (48 elems)
         std::vector<uint8_t> input_data(48);
-        for (size_t i = 0; i < input_data.size(); ++i) {
-          input_data[i] = static_cast<uint8_t>(i);
-        }
+        std::iota(input_data.begin(), input_data.end(), uint8_t{0});
         return BuildClipU8QDQQuantHandRolled<uint8_t>(spec, std::move(input_data));
       }
       if (spec.shape == std::vector<int64_t>{200}) {
         // Clip_U8_QuantizedMin / Clip_U8_QuantizedMinMax: input data = 28..227 (200 elems)
         std::vector<uint8_t> input_data(200);
-        for (size_t i = 0; i < 200; ++i) {
-          input_data[i] = static_cast<uint8_t>(28 + i);
-        }
+        std::iota(input_data.begin(), input_data.end(), uint8_t{28});
         return BuildClipU8QDQQuantHandRolled<uint8_t>(spec, std::move(input_data));
       }
       break;
@@ -316,9 +312,7 @@ GetTestModelFn BuildClipQDQQuantOnnxFromSpec(const ClipQDQQuantSpec& spec) {
       if (spec.shape == std::vector<int64_t>{200}) {
         // Clip_U16_QuantizedMax: input data = 32668..32867 (200 elems centered around zp)
         std::vector<uint16_t> input_data(200);
-        for (size_t i = 0; i < 200; ++i) {
-          input_data[i] = static_cast<uint16_t>(32768 - 100 + i);
-        }
+        std::iota(input_data.begin(), input_data.end(), uint16_t{32768 - 100});
         return BuildClipU8QDQQuantHandRolled<uint16_t>(spec, std::move(input_data));
       }
       break;
