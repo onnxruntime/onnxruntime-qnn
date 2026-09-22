@@ -60,6 +60,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   friend struct GenieNodeComputeInfo;
   friend class QnnEpFactory;
 
+#if defined(QNN_EP_INTERNAL_SYMBOL_ACCESS)
+  bool HtpSharedMemoryGraphIoEnabledForTesting() const { return model_settings_.htp_shared_memory; }
+  qnn::QnnAllocatorType GetQnnAllocatorTypeForTesting() const { return qnn_allocator_type_; }
+#endif
+
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
   static OrtStatus* ORT_API_CALL GetCapabilityImpl(OrtEp* this_ptr,

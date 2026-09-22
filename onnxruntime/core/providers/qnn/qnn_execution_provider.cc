@@ -1589,12 +1589,25 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
                       false,
                       logger_)) {
+    // Context generation must preserve the MEMHANDLE graph I/O contract even on
+    // hosts that cannot load RPCMEM (for example, offline generation on x86).
+    // RPCMEM availability only controls whether this session can allocate and
+    // bind HTP shared memory locally.
+    model_settings_.htp_shared_memory = context_cache_enabled_;
+
     std::string rpcmem_error;
     rpcmem_library_ = factory.GetOrCreateRpcMemLibrary(rpcmem_error);
     if (rpcmem_library_ == nullptr) {
-      ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_WARNING,
-                   "Unable to load RPCMEM; disabling HTP shared memory allocator: %s",
-                   rpcmem_error.c_str());
+      if (context_cache_enabled_) {
+        ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_WARNING,
+                     "Unable to load RPCMEM; the local HTP shared memory allocator is disabled, "
+                     "but the generated context will retain the shared-memory graph I/O contract: %s",
+                     rpcmem_error.c_str());
+      } else {
+        ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_WARNING,
+                     "Unable to load RPCMEM; disabling HTP shared memory allocator: %s",
+                     rpcmem_error.c_str());
+      }
     } else {
       // Enable shared allocator regardless of context-generation mode; a session that
       // generates a context binary may still run inference in the same session.

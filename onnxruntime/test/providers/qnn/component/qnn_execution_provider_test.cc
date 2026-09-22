@@ -600,6 +600,25 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_RpcControlLatencyNonZero_Succeeds) {
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+#if defined(__linux__) && !defined(__aarch64__)
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextGenerationWithoutRpcmem_PreservesSharedMemoryGraphContract) {
+  EpStubContext ctx;
+  ctx.session_config["ep.context_enable"] = "1";
+  ctx.session_config[EPKey("enable_htp_shared_memory_allocator")] = "1";
+  auto factory = MakeFactory(ctx);
+
+  auto ep = MakeEp(*factory, ctx);
+
+  EXPECT_TRUE(ep->HtpSharedMemoryGraphIoEnabledForTesting());
+  EXPECT_EQ(ep->GetQnnAllocatorTypeForTesting(), qnn::QnnAllocatorType::NONE);
+
+  const OrtMemoryDevice* default_device = reinterpret_cast<const OrtMemoryDevice*>(kFakeToken);
+  auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+  EXPECT_EQ(ep_ptr->GetDefaultMemoryDevice(ep_ptr, &default_device), nullptr);
+  EXPECT_EQ(default_device, nullptr);
+}
+#endif
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
