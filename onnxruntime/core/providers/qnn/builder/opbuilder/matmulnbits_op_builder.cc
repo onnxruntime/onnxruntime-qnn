@@ -33,7 +33,7 @@ namespace qnn {
  *                                fp16/fp32/uint16/int16 (HTP)
  *     B              init        uint8 (packed)                  [N, K / block_size, (block_size * bits) / 8]
  *     scales         init        fp16/fp32                       [N, K / block_size]
- *     zero_points    init (opt)  uint8 (packed)                  [N, (K / block_size) * bits / 8]
+ *     zero_points    init (opt)  uint8 (packed)                  [N, ceil((K / block_size) * bits / 8)]
  *   Outputs
  *     Y              output      same as A                       [batch_size, sequence_len, N]
  *
@@ -125,11 +125,10 @@ const std::unordered_set<int64_t> kGpuSupportedBlockSize{32};
 // HTP expects block size to be multiple of a value according to bits.
 const std::unordered_map<int64_t, int64_t> kHtpSupportedBitsAndBlockSizeMultipliers{{2, 16}, {4, 8}, {8, 4}};
 
-template <typename T>
-void UnpackDataToDatatype(const std::vector<uint8_t>& packed_data,
-                          const int64_t bits,
-                          const int64_t num_elements_per_uint8,
-                          std::vector<T>& unpacked_data) {
+void UnpackWeightData(const std::vector<uint8_t>& packed_data,
+                      const int64_t bits,
+                      const int64_t num_elements_per_uint8,
+                      std::vector<uint8_t>& unpacked_data) {
   unpacked_data.clear();
   unpacked_data.reserve(packed_data.size() * num_elements_per_uint8);
 
@@ -139,9 +138,35 @@ void UnpackDataToDatatype(const std::vector<uint8_t>& packed_data,
     for (int64_t idx = 0; idx < num_elements_per_uint8; ++idx) {
       int64_t shift = bits * idx;
       uint8_t masked_val = (value >> shift) & mask;
-      unpacked_data.push_back(static_cast<T>(masked_val));
+      unpacked_data.push_back(static_cast<uint8_t>(masked_val));
     }
   }
+}
+
+void UnpackZeroPointData(const std::vector<uint8_t>& packed_data,
+                         const int64_t bits,
+                         const int64_t N,
+                         const int64_t k_blocks,
+                         std::vector<float>& unpacked_data) {
+  unpacked_data.clear();
+  unpacked_data.reserve(N * k_blocks);
+
+  const int64_t zp_blob_size = (k_blocks * bits + kByteBits - 1) / kByteBits;
+  const uint8_t mask = static_cast<uint8_t>((1u << bits) - 1);
+
+  for (int64_t n_idx = 0; n_idx < N; ++n_idx) {
+    for (int64_t k_block_idx = 0; k_block_idx < k_blocks; ++k_block_idx) {
+      const int64_t bit_position = k_block_idx * bits;
+      const int64_t packed_idx = n_idx * zp_blob_size + bit_position / kByteBits;
+      const int64_t bit_offset = bit_position % kByteBits;
+      uint8_t masked_val = (packed_data[packed_idx] >> bit_offset) & mask;
+      unpacked_data.push_back(static_cast<float>(masked_val));
+    }
+  }
+}
+
+bool AreZeroPointsSymmetric(const std::vector<float>& zero_points) {
+  return std::all_of(zero_points.begin(), zero_points.end(), [](float zp) { return zp == 0.0f; });
 }
 
 }  // namespace
@@ -174,11 +199,12 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
   }
   RETURN_IF_NOT((K % block_size) == 0, "K must be divisible by block_size.");
 
-  const int64_t total_blocks = (N * K) / block_size;
+  const int64_t k_blocks = K / block_size;
+  const int64_t total_blocks = N * k_blocks;
   RETURN_IF_NOT(total_blocks > 0, "(N * K) / block_size must be > 0");
 
   const int64_t num_elements_per_uint8 = kByteBits / bits;
-  const int64_t num_zp_per_uint8 = K / block_size < num_elements_per_uint8 ? K / block_size : num_elements_per_uint8;
+  const int64_t zp_blob_size = (k_blocks * bits + kByteBits - 1) / kByteBits;
 
   const auto& inputs = node_unit.Inputs();
   // 1. A: Input datatype should be:
@@ -258,16 +284,9 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
                                                            SafeInt<int64_t>{1},
                                                            std::multiplies<>());
     const int64_t total_elements = static_cast<int64_t>(safe_total_elements);
-    RETURN_IF_NOT((total_elements * num_zp_per_uint8) == total_blocks,
-                  ("Unexpected input zero_points size, expecting " +
-                   std::to_string(total_blocks / num_zp_per_uint8))
-                      .c_str());
-
-    // QNN GPU expects symmetric quantization.
-    if (is_gpu_backend) {
-      RETURN_IF_NOT(utils::AreZeroPointsSymmetricConstant(qnn_model_wrapper, zp_tensor.name, bits),
-                    ("Unsupported input zero_points value, expecting symmetric zero_points for bits=" + std::to_string(bits)).c_str());
-    }
+    const int64_t expected_total_elements = N * zp_blob_size;
+    RETURN_IF_NOT(total_elements == expected_total_elements,
+                  ("Unexpected input zero_points size, expecting " + std::to_string(expected_total_elements)).c_str());
   }
 
   RETURN_IF((inputs.size() > 4 && inputs[4].Exists()) || (inputs.size() > 5 && inputs[5].Exists()),
@@ -298,11 +317,11 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
   // Should already be guaranteed in IsOpSupported.
   RETURN_IF_NOT(K > 0 && N > 0 && bits > 0 && block_size > 0, "Unexpected MatMulNbits attribute values.");
 
-  const int64_t num_elements_per_uint8 = kByteBits / bits;
-  const int64_t num_zp_per_uint8 = K / block_size < num_elements_per_uint8 ? K / block_size : num_elements_per_uint8;
-
   // Prepare essential parameters
-  const int64_t total_blocks = (N * K) / block_size;
+  const int64_t k_blocks = K / block_size;
+  const int64_t total_blocks = N * k_blocks;
+  const int64_t num_elements_per_uint8 = kByteBits / bits;
+
   const auto& inputs = node_unit.Inputs();
   bool is_act_16bitquant = false;
 
@@ -401,12 +420,38 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         }
       }
 
+      // 2.3 Block-quantized offsets.
+      std::vector<float> per_block_float_zp;
+      bool zp_is_symmetric = false;
+      if (inputs.size() > 3 && inputs[3].Exists()) {
+        // Unpack block-quantized offsets to float each.
+        std::vector<uint8_t> per_block_uint8_zp;
+        const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
+        RETURN_IF_NOT(zp_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
+        UnpackZeroPointData(per_block_uint8_zp, bits, N, k_blocks, per_block_float_zp);
+
+        // Shift offsets for transformation from unsigned to signed fixed point and negate the values to align with
+        // QNN definition for offsets.
+        const float offset_shift = static_cast<float>(1 << (bits - 1));
+        for (size_t idx = 0; idx < per_block_float_zp.size(); ++idx) {
+          per_block_float_zp[idx] = -(per_block_float_zp[idx] - offset_shift);
+        }
+
+        zp_is_symmetric = AreZeroPointsSymmetric(per_block_float_zp);
+      } else {
+        // Default to 0.
+        per_block_float_zp.assign(total_blocks, 0);
+        zp_is_symmetric = true;
+      }
+
       QnnQuantParamsWrapper quantize_param;
 
       if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
         // 2.3 Block-quantized offsets
-        // QNN GPU only supports symmetric quantization. Since block-quantized data is transformed to signed fixed
-        // point 4 below, the value should be 0.
+        // QNN GPU only supports symmetric quantization.
+        RETURN_IF_NOT(zp_is_symmetric, "QNN GPU backend only supports symmetric zero points.");
+        // Since block-quantized data is transformed to signed fixed point 4 below, the value should be 0.
         std::vector<int32_t> per_block_int32_offset(total_blocks, 0);
 
         // 2.4 Create quant params.
@@ -419,10 +464,10 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         weight_datatype = QNN_DATATYPE_SFIXED_POINT_4;
         weight_data = std::move(quant_data);
       } else {
-        // 2.3 Unpack data to one byte per element,
+        // 2.4 Unpack data to one byte per element,
         // and transpose [N,K] -> [K,N] (= [1,1,K,N] in HWCN Conv2D layout).
         std::vector<uint8_t> unpacked_quant_data;
-        UnpackDataToDatatype<uint8_t>(quant_data, bits, num_elements_per_uint8, unpacked_quant_data);
+        UnpackWeightData(quant_data, bits, num_elements_per_uint8, unpacked_quant_data);
 
         std::vector<uint8_t> transposed_unpacked_quant_data;
         RETURN_IF_ERROR(utils::TwoDimensionTranspose<uint8_t>(
@@ -436,10 +481,8 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         weight_datatype = QNN_DATATYPE_SFIXED_POINT_8;
         weight_data = std::move(transposed_unpacked_quant_data);
 
-        // 2.4 Compute quant params: try LPBQ (BLOCKWISE_EXPANSION) first, otherwise fall back to BwFloatBlock.
+        // 2.5 Compute quant params: try LPBQ (BLOCKWISE_EXPANSION) first, otherwise fall back to BwFloatBlock.
         bool used_lpbq = false;
-        const bool zp_is_symmetric = !(inputs.size() > 3 && inputs[3].Exists()) ||
-                                     utils::AreZeroPointsSymmetricConstant(qnn_model_wrapper, inputs[3].name, bits);
 
         if (bits == 4 && is_act_16bitquant && zp_is_symmetric) {
           // Build a synthetic OrtNodeUnitIODef to drive QnnQuantParamsWrapper::Init's
@@ -448,8 +491,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           // The weight tensor's quant_param does not carry block-quantization info in
           // the standard ONNX format, so we construct a synthetic def with:
           //   - scale  = the real scale initializer (provides the BQ scales)
-          //   - zero_point = nullptr  ← ZP symmetry has already been verified above via
-          //                             AreZeroPointsSymmetricConstant, so re-checking is redundant
+          //   - zero_point = nullptr  ← ZP symmetry has already been verified above so re-checking is redundant
           //   - axis   = std::nullopt ← uses Init's DEFAULT_QDQ_AXIS=1, which matches
           //                             the MatMulNBits scale tensor layout [N, K/block_size]
           //   - block_size = block_size
@@ -495,27 +537,6 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
                       ("MatMulNBits weight encoding: non-LPBQ block-quant path for " + weight_tensor_name +
                        " [LPBQ skipped: " + reason + "]")
                           .c_str());
-
-          // 2.5 Block-quantized offsets.
-          std::vector<float> per_block_float_zp;
-          if (inputs.size() > 3 && inputs[3].Exists()) {
-            // Unpack block-quantized offsets to float each.
-            std::vector<uint8_t> per_block_uint8_zp;
-            const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
-            RETURN_IF_NOT(zp_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
-            RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
-            UnpackDataToDatatype<float>(per_block_uint8_zp, bits, num_zp_per_uint8, per_block_float_zp);
-
-            // Shift offsets for transformation from unsigned to signed fixed point and negate the values to align with
-            // QNN definition for offsets.
-            const float offset_shift = static_cast<float>(1 << (bits - 1));
-            for (size_t idx = 0; idx < per_block_float_zp.size(); ++idx) {
-              per_block_float_zp[idx] = -(per_block_float_zp[idx] - offset_shift);
-            }
-          } else {
-            // Default to 0.
-            per_block_float_zp.assign(total_blocks, 0);
-          }
 
           // Note that unlike weights requiring transpose, scales/offsets are expected in original ONNX shape.
           const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
