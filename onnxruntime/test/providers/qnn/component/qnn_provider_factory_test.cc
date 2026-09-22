@@ -999,10 +999,10 @@ TEST_F(QnnUnit_ProviderFactoryTest, ReleaseAllocator_UnknownType_NoCrash) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  // Default qnn_allocator_type_ is NONE → neither HTP-shared nor DX12 → the
-  // "unknown type" warning branch runs. Must not crash.
-  auto* allocator = reinterpret_cast<OrtAllocator*>(kFakeToken);
-  factory.ReleaseAllocator(&factory, allocator);
+  // An allocator with no recognized callback takes the warning branch and is
+  // not deleted. Use a valid object because release dispatch reads Alloc.
+  OrtAllocator allocator{};
+  factory.ReleaseAllocator(&factory, &allocator);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEpFactory_NullPointer_ReturnsNull) {
