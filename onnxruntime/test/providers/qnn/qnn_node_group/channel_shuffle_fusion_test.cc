@@ -17,10 +17,11 @@ namespace test {
 
 namespace {
 
-GetTestModelFn BuildTestCase() {
-  return [](ModelTestBuilder& builder) -> void {
+GetTestModelFn BuildTestCase(int64_t height = 8, int64_t width = 8) {
+  return [=](ModelTestBuilder& builder) -> void {
     const int64_t num_channels = 12;
-    const std::vector<int64_t> input_shape{1, num_channels, 8, 8};
+    const int64_t conv2_kernel_height = height == 1 ? 1 : 3;
+    const std::vector<int64_t> input_shape{1, num_channels, height, width};
     const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
 
     // input
@@ -70,14 +71,14 @@ GetTestModelFn BuildTestCase() {
                     {"reshape2_out"});
 
     // Conv2 weights
-    const std::vector<int64_t> conv2_weight_shape = {num_channels, 1, 3, 1};
+    const std::vector<int64_t> conv2_weight_shape = {num_channels, 1, conv2_kernel_height, 1};
     builder.MakeInitializer<float>("conv2_weight", conv2_weight_shape, -2.f, 2.f);
 
     // Conv2: reshape2_out + conv2_weight -> Y
     {
       std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
       attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(num_channels)));
-      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 1}));
+      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{conv2_kernel_height, 1}));
       builder.MakeOutput("Y");
       builder.AddNode("Conv2",
                       "Conv",
@@ -110,6 +111,27 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   RunQnnModelTest(BuildTestCase(),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+}
+
+// Regression test for NCHW input with H=1. An NHWC-first channel-layout check
+// misclassified this shape because W == H*W and emitted num_groups=1.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_NchwHeightOne) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_NchwHeightOne";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/1, /*width=*/8),
                   provider_options,
                   /*opset_version=*/10,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
