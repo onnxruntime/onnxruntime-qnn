@@ -3556,8 +3556,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
       try {  // RpcMemLibrary throws; this function is noexcept
         ep->rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
       } catch (const std::exception& e) {
-        ORT_UNUSED_PARAMETER(e);
-        return ep->ort_api.CreateStatus(ORT_FAIL, "Failed to load RpcMemLibrary");
+        return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
       }
     }
 
