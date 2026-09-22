@@ -185,11 +185,11 @@ class QnnModel {
                                   QnnEpProfiler* ort_profiler);
 
   Ort::Status BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
-                                                   const OrtMemoryInfo* ort_value_memory_info,
-                                                   void* ort_value_data,
-                                                   uint32_t ort_value_data_size,
-                                                   Qnn_ContextHandle_t qnn_context,
-                                                   Qnn_Tensor_t& qnn_tensor);
+                                                  const OrtMemoryInfo* ort_value_memory_info,
+                                                  void* ort_value_data,
+                                                  uint32_t ort_value_data_size,
+                                                  Qnn_ContextHandle_t qnn_context,
+                                                  Qnn_Tensor_t& qnn_tensor);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);

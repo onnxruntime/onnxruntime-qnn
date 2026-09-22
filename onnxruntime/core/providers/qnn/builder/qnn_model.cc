@@ -494,11 +494,11 @@ Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
 }
 
 Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
-                                                           const OrtMemoryInfo* ort_value_memory_info,
-                                                           void* ort_value_data,
-                                                           uint32_t ort_value_data_size,
-                                                           Qnn_ContextHandle_t qnn_context,
-                                                           Qnn_Tensor_t& qnn_tensor) {
+                                                          const OrtMemoryInfo* ort_value_memory_info,
+                                                          void* ort_value_data,
+                                                          uint32_t ort_value_data_size,
+                                                          Qnn_ContextHandle_t qnn_context,
+                                                          Qnn_Tensor_t& qnn_tensor) {
   // either set qnn_tensor memHandle or clientBuf
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
   api_ptrs_.ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
@@ -517,7 +517,7 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
     RETURN_IF_ERROR(qnn_backend_manager_->GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
-                                                                         qnn_mem_handle));
+                                                                        qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
   } else {

@@ -54,7 +54,6 @@ struct LogCapture {
     }
     return n;
   }
-
 };
 
 extern "C" void ORT_API_CALL LogCaptureCallback(void* param,
