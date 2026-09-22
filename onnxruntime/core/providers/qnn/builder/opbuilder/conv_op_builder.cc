@@ -213,14 +213,10 @@ static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint8_t> fp16_bias_bytes;
   RETURN_IF_ERROR(utils::DequantizeInt32BiasToFp16(raw_bias_bytes, bias_scale_vals, fp16_bias_bytes));
 
-  const std::string fp16_bias_name = utils::UniqueNameGenerator().New(bias_def.name, "_fp16");
-  QnnTensorWrapper fp16_bias_wrapper(fp16_bias_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_16,
-                                     QnnQuantParamsWrapper(), std::vector<uint32_t>(bias_info.shape),
-                                     std::move(fp16_bias_bytes));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_bias_wrapper)),
-                "Failed to add FP16 bias tensor.");
-  input_names.push_back(fp16_bias_name);
-  return Ort::Status();
+  const std::string fp16_bias_name = bias_def.name + "_fp16";
+  return utils::AddStaticBiasTensor(qnn_model_wrapper, fp16_bias_name, bias_info.shape,
+                                    QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                                    std::move(fp16_bias_bytes), input_names);
 }
 
 Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
@@ -249,7 +245,7 @@ Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
     return Ort::Status();
   }
 
-  // Process bias normally: non-initializer, or activation/weight not quantized, or scales already match.
+  // Process bias normally: non-initializer, or activation/weight not quantized.
   return ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names);
 }
 
