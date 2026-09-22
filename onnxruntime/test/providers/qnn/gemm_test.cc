@@ -818,6 +818,80 @@ TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
+// ─── LPBQ Gemm tests ──────────────────────────────────────────────────────────────────────────
+// Same model as BQ Gemm but with enable_block_quant_weight_optimization=1.
+// The QNN EP converts the BQ INT4 weight to LPBQ (BLOCKWISE_EXPANSION) encoding and lowers
+// the Gemm to a QNN Conv2D with 1x1 filters.
+// LPBQ requires: INT4 weight, symmetric zero-points (all zero), INT16 activation.
+
+namespace {
+ProviderOptions GetLPBQGemmProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["enable_block_quant_weight_optimization"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+}  // namespace
+
+// INT4 weight transB=0, [K,N]=[16,4], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_NoBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 weight transB=1, [N,K]=[4,16], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB1_NoBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// transA=1: ONNX activation is [K, M];
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransA1_TransB0) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// transA=1 with transB=1: both A and B transposed.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransA1_TransB1) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=0 with INT32-quantized bias (per-tensor scale).
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_WithBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=1 with INT32-quantized bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB1_WithBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/true),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=0, larger K with multiple blocks.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_MultiBlock) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8, /*transB=*/0),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
 // MatMulAddFusion (Gemm sandwiched by Reshapes) supergroup tests. The QDQ selector absorbs
 // the trailing Reshape (and Relu when Q's encoding is bounded to [0, +inf)) into the Gemm
 // unit; the op-builder emits FC (rank-2, encoded) + QNN Reshape (rank-N, same encoding).
