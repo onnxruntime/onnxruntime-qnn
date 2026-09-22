@@ -3097,7 +3097,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   // registered_memory_info_ and registered_allocator_type_ are set by the QNN EP factory
   // All allocators are destroyed/freed by the QNN EP factiry
   if (allocator_type == qnn::QnnAllocatorType::NONE && memory_info != nullptr &&
-    memory_info == ep->registered_memory_info_) {
+      memory_info == ep->registered_memory_info_) {
     allocator_type = ep->registered_allocator_type_;
   }
 
