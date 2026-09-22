@@ -989,11 +989,21 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
                                       gsl::span<const float> scales,
                                       std::vector<uint8_t>& fp16_bytes);
 
+// Registers a static bias initializer tensor with the given shape and quant params.
+// Used when bias data is already correctly quantized and only needs to be registered.
+Ort::Status AddStaticBiasTensor(QnnModelWrapper& qnn_model_wrapper,
+                                const std::string& bias_name,
+                                const std::vector<uint32_t>& bias_shape,
+                                Qnn_DataType_t data_type,
+                                QnnQuantParamsWrapper quant_params,
+                                std::vector<uint8_t> bias_data,
+                                std::vector<std::string>& input_names);
+
 // Processes a bias tensor for quantized ops (LPBQ Conv2D, etc.).
 // Handles: INT32 quantized (check/requantize if mismatch), float (quantize).
 // Sets was_handled=true if the bias was added to input_names.
 // Sets was_handled=false if the bias should be processed normally by the caller
-// (e.g., non-initializer, or activation/weight not quantized, or scales already match).
+// (e.g., non-initializer, or activation/weight not quantized).
 Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
                                       const Ort::Logger& logger,
                                       const OrtNodeUnitIODef& bias_def,
