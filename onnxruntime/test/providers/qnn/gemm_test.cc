@@ -929,6 +929,7 @@ struct DirectGemmReshapeQConfig {
   int64_t N = 6;
   int64_t trans_b = 0;                  // 0 → weight [K,N]; 1 → weight [N,K]
   bool include_bias = true;             // rank-1 bias by default
+  bool bias_is_initializer = true;
   bool bias_from_intermediate = false;  // if true, bias is produced by an intermediate MatMul (NATIVE bias)
   std::optional<std::vector<int64_t>> bias_shape;
 };
@@ -974,7 +975,7 @@ GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& c
         gemm_inputs.push_back("bias_native");
       } else {
         const std::vector<int64_t> bias_shape = cfg.bias_shape.value_or(std::vector<int64_t>{cfg.N});
-        TestInputDef<float> bias_def(bias_shape, /*is_initializer=*/true,
+        TestInputDef<float> bias_def(bias_shape, cfg.bias_is_initializer,
                                      GetFloatDataInRange(-0.2f, 0.2f, SizeOfShape(bias_shape)));
         const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
                                                          act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
@@ -1032,6 +1033,15 @@ TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransB1_NotAbsorbed) {
 TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_NativeBias_NotAbsorbed) {
   DirectGemmReshapeQConfig cfg;
   cfg.bias_from_intermediate = true;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Negative gate (M-3): direct Gemm with a dynamic QDQ bias must NOT be absorbed
+// as FullyConnected bias. The regular QDQ Gemm path can still handle the graph.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_DynamicQDQBias_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.bias_is_initializer = false;
   RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
