@@ -449,9 +449,15 @@ TEST_F(QnnHTPBackendTests, Encryption_NewReadWriteCallback_RoundTrip) {
   std::filesystem::remove(kPlaintextQnnBin, ec);
 }
 
-// Baseline: htp_share_resource_optimization=1 WITHOUT encryption; hangs here → pre-existing QAIRT issue, unrelated to this PR.
+// Baseline: htp_share_resource_optimization=1 WITHOUT encryption.
 TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  // The x86 HTP CPU emulator does not support shared-resource context-binary reload
+  // (QNN_COMMON_ERROR_NOT_SUPPORTED from QnnBackendManager::SetupBackend on reload).
+  // This is a pre-existing QAIRT limitation unrelated to the ORT Core uplevel.
+  GTEST_SKIP() << "htp_share_resource_optimization context reload not supported on x86 HTP emulator.";
+#endif
 
   {
     TestModel test_model;
@@ -497,6 +503,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
                          kQnnExecutionProvider, provider_options);
 
     session_options.AddConfigEntry("ep.qnnexecutionprovider.htp_share_resource_optimization", "1");
+    session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
     try {
       Ort::Session session(*ort_env, ORT_TSTR("./vtcm_baseline.onnx"), session_options);
@@ -528,6 +535,12 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
 // QAIRT 2.45 teardown hang, see Encryption_VtcmSharing_Baseline_NoCallback).
 TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#if defined(__linux__) && !defined(__aarch64__)
+  // The x86 HTP CPU emulator does not support shared-resource context-binary reload
+  // (QNN_COMMON_ERROR_NOT_SUPPORTED from QnnBackendManager::SetupBackend on reload).
+  // This is a pre-existing QAIRT limitation unrelated to the ORT Core uplevel.
+  GTEST_SKIP() << "htp_share_resource_optimization context reload not supported on x86 HTP emulator.";
+#endif
 
   constexpr uint8_t kKey = 0x5A;
   constexpr const char* kCipherPath = "./vtcm_multi_qnn_cipher.bin";
@@ -626,6 +639,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
         {Ort::ConstEpDevice(s1_registered_ep_device.get())},
         provider_options);
     session_options.AddConfigEntry("ep.qnnexecutionprovider.htp_share_resource_optimization", "1");
+    session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
     {
       if (auto* set_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
               &Ort::GetApi())) {
@@ -776,7 +790,12 @@ TEST_F(QnnHTPBackendTests, Encryption_ReadCallback_ReturnsError_SessionCtorSurfa
 // carry a write callback in ORT 1.28); it isolates the interaction of the two feature flags.
 TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if defined(__linux__) && !defined(__aarch64__)
+  // The x86 HTP CPU emulator does not support shared-resource context-binary reload
+  // (QNN_COMMON_ERROR_NOT_SUPPORTED from QnnBackendManager::SetupBackend on reload).
+  // This is a pre-existing QAIRT limitation unrelated to the ORT Core uplevel.
+  GTEST_SKIP() << "share_ep_contexts context reload not supported on x86 HTP emulator.";
+#elif (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -907,6 +926,7 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
     RegisterQnnEpLibrary(registered_ep_device, session_options,
                          kQnnExecutionProvider, provider_options);
     session_options.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+    session_options.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
     try {
       auto* set_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
@@ -924,7 +944,6 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
       FAIL() << "phase B exception: " << e.what();
     }
   }
-
   ASSERT_GT(rs.call_count, 0) << "read callback did not fire with share_ep_contexts enabled";
   ASSERT_EQ(phase_b_output.size(), golden.size())
       << "output size differs from golden (share_ep_contexts + encryption)";

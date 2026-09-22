@@ -21,6 +21,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
+- [Compiled Model Encryption (ORT API v28+)](#compiled-model-encryption-ort-api-v28)
 - [QNN EP Framework Op Tracing](#qnn-ep-framework-op-tracing)
 - [QNN EP Input Graph Dump](#qnn-ep-input-graph-dump)
 - [QNN EP Profiling](#qnn-ep-profiling)
@@ -221,6 +222,11 @@ Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10
 |'1'|Run the monolithic LSTM kernel on HTP (single graph node).|
 
 Warning: Enabling HTP Monolithic LSTM may improve session creation time, but this improvement may come with a regression in inference performance.
+
+|`"enable_htp_matmul_lut"`|Description|
+|---|---|
+|`"0"`|Disable the HTP MatMul LUT kernel optimization.|
+|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available only on Windows with QAIRT 2.51 or later.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
@@ -1243,34 +1249,105 @@ g_ort->AddSessionConfigEntry(session_options, kOrtSessionOptionEpContextEmbedMod
 options.add_session_config_entry("ep.context_embed_mode", "1")
 ```
 
-### At-rest encryption of the context binary (ORT API v28+)
+## Compiled Model Encryption (ORT API v28+)
 
 By default the QNN context binary is written to / read from disk in plaintext (as an external
 file when `ep.context_embed_mode` is `"0"`, or embedded in the EPContext model when `"1"`). ORT
 API v28 adds a write/read callback pair so an application can encrypt the binary before it is
 persisted and decrypt it before QNN consumes it, without either version of ONNX Runtime having
-any built-in cipher.
+any built-in cipher. This maps to the ORT core feature added in
+[microsoft/onnxruntime#28624](https://github.com/microsoft/onnxruntime/pull/28624) — see its
+[design doc](https://github.com/microsoft/onnxruntime/blob/main/docs/design/Compiled_Model_Encryption.md)
+for the full API rationale.
 
-The callback-based encryption/decryption path described here applies only when
-`ep.context_embed_mode` is `"0"`. When `ep.context_embed_mode` is `"1"` (embedded), the context
-binary is stored within the EPContext model and applications should use ONNX Runtime model
-protection mechanisms (for example, `SetOutputModelWriteFunc`) to protect the generated ONNX
-model. If no callback is registered while `ep.context_embed_mode` is `"0"`, the EP uses the
-legacy plaintext behavior.
+**Scope: these callbacks only apply when `ep.context_embed_mode` is `"0"`.** When
+`ep.context_embed_mode` is `"1"` (embedded), the context binary is stored inside the EPContext
+ONNX model itself, and there is no separate context-binary file for these callbacks to intercept.
+To protect the model in that mode, use ONNX Runtime's model protection mechanisms instead (for
+example, `SetOutputModelWriteFunc`) to encrypt the generated ONNX model. **The rest of this
+section assumes `ep.context_embed_mode` is `"0"`.**
 
-- **Write callback** (`SetEpContextDataWriteFunc`) is set on `Ort::ModelCompilationOptions`
-  during a compile session. The EP hands the plaintext context bytes to the callback instead of
-  writing them to disk; the callback is responsible for encrypting and persisting them itself.
-- **Read callback** (`SetEpContextDataReadFunc`) is set on `Ort::SessionOptions` for a later
-  inference session. The EP asks the callback for the plaintext bytes (by name) instead of
-  reading the on-disk file directly; the callback decrypts and returns them.
-- Registering **no callback** is fully backward compatible — the EP falls back to the original
-  plaintext disk read/write, unchanged.
+**Encrypt (write callback)** — set on `Ort::ModelCompilationOptions` during compile. ORT hands
+the plaintext context bytes to the callback instead of writing them to disk. The example below
+uses a single-byte XOR so the callback mechanism is easy to follow — replace the body of
+`WriteCb` with your own cipher (AES-GCM, a KMS/TEE-backed cipher, etc.); everything else about
+how ORT calls the callback stays the same:
+
+```cpp
+// C++
+constexpr uint8_t g_key = 0x5A;  // must match the key ReadCb uses below
+
+OrtStatus* WriteCb(void* state, const char* name, const void* buffer, size_t n) noexcept {
+  // >>> Replace this block with your own encryption. <<<
+  std::ofstream out(name, std::ios::binary);
+  if (!out.is_open()) return Ort::GetApi().CreateStatus(ORT_FAIL, "open failed");
+  for (size_t i = 0; i < n; ++i) {
+    out.put(static_cast<const uint8_t*>(buffer)[i] ^ g_key);
+  }
+  return out ? nullptr : Ort::GetApi().CreateStatus(ORT_FAIL, "write failed");
+}
+
+Ort::ModelCompilationOptions compile_options(env, session_options);
+compile_options.SetEpContextEmbedMode(false);
+auto write_fn = Ort::Experimental::Get_OrtCompileApi_ModelCompilationOptions_SetEpContextDataWriteFunc_SinceV28_Fn(
+    &Ort::GetApi());
+if (write_fn == nullptr) {
+  // ORT core predates API v28; this feature is unavailable.
+  return;
+}
+Ort::ThrowOnError(write_fn(compile_options, WriteCb, /*state=*/nullptr));
+Ort::CompileModel(env, compile_options);
+```
+
+**Decrypt (read callback)** — set on `Ort::SessionOptions` before creating the inference session.
+ORT asks the callback for the plaintext bytes (by name) instead of reading the file directly.
+Replace the body of `ReadCb` with the matching decryption for whatever cipher `WriteCb` used:
+
+```cpp
+// C++
+constexpr uint8_t g_key = 0x5A;  // must match the key WriteCb used above
+
+OrtStatus* ReadCb(void* state, const char* name, OrtAllocator* allocator,
+                  void** buffer, size_t* size) noexcept {
+  // >>> Replace this block with your own decryption. <<<
+  std::ifstream in(name, std::ios::binary | std::ios::ate);
+  if (!in) return Ort::GetApi().CreateStatus(ORT_FAIL, "open failed");
+  std::streamoff n_signed = in.tellg();
+  if (n_signed < 0) return Ort::GetApi().CreateStatus(ORT_FAIL, "tellg failed");
+  size_t n = static_cast<size_t>(n_signed);
+  in.seekg(0);
+  if (!in) return Ort::GetApi().CreateStatus(ORT_FAIL, "seekg failed");
+  void* mem = allocator->Alloc(allocator, n);
+  if (mem == nullptr) return Ort::GetApi().CreateStatus(ORT_FAIL, "alloc failed");
+  in.read(static_cast<char*>(mem), static_cast<std::streamsize>(n));
+  if (static_cast<size_t>(in.gcount()) != n) {
+    allocator->Free(allocator, mem);
+    return Ort::GetApi().CreateStatus(ORT_FAIL, "read failed");
+  }
+  for (size_t i = 0; i < n; ++i) static_cast<uint8_t*>(mem)[i] ^= g_key;
+  *buffer = mem;
+  *size = n;
+  return nullptr;
+}
+
+Ort::SessionOptions inference_session_options;
+auto read_fn = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(
+    &Ort::GetApi());
+if (read_fn == nullptr) {
+  // ORT core predates API v28; this feature is unavailable.
+  return;
+}
+Ort::ThrowOnError(read_fn(inference_session_options, ReadCb, /*state=*/nullptr));
+Ort::Session session(env, ctx_model_path, inference_session_options);
+```
+
+If no callback is registered, the EP uses the legacy plaintext behavior.
+
 - File-mapped weights and this feature are mutually exclusive for a given session: registering a
   read callback disables file mapping for that session, since file mapping requires reading the
   on-disk bytes directly.
 
-**Scope — what is (and isn't) covered:**
+**What is (and isn't) covered:**
 
 - Only the standard EPContext artifact is encrypted: the external `_qnn.bin` (or the
   `EP_CACHE_CONTEXT`-referenced buffer) and the context-binary-list buffers used by multi-SoC /
@@ -1650,6 +1727,9 @@ To enable new operator support in EP, areas to visit:
 ## QNN User-Defined Operation (UDO)
 
 A **User-Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are not natively supported in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
+
+For an end-to-end MyAdd UDO reference, including CPU, HTP, and on-device
+commands, see the [QNN UDO sample](../../qcom/samples/qnn_udo_myadd/README.md).
 
 ### Overview
 

@@ -374,6 +374,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       std::vector<uint8_t> quant_data, weight_data;
       Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
       const OrtValueInfo* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+      RETURN_IF_NOT(weight_tensor_proto != nullptr, "MatMulNBits weight must be a constant initializer.");
       std::vector<uint32_t> weight_shape = {};
       Qnn_DataType_t weight_datatype = QNN_DATATYPE_UNDEFINED;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_tensor_proto, quant_data, false));
@@ -382,6 +383,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       // 2.2 Block-quantized scales.
       std::vector<uint8_t> per_block_uint8_scale;
       const OrtValueInfo* scale_tensor_proto = qnn_model_wrapper.GetConstantTensor(scales_tensor.name);
+      RETURN_IF_NOT(scale_tensor_proto != nullptr, "MatMulNBits scales must be a constant initializer.");
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_tensor_proto, per_block_uint8_scale));
 
       const size_t elem_byte_size = utils::GetElementSizeByType(scales_tensor.type);
@@ -500,6 +502,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
             // Unpack block-quantized offsets to float each.
             std::vector<uint8_t> per_block_uint8_zp;
             const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
+            RETURN_IF_NOT(zp_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
             RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
             UnpackDataToDatatype<float>(per_block_uint8_zp, bits, num_zp_per_uint8, per_block_float_zp);
 

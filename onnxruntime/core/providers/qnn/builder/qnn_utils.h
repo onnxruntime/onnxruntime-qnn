@@ -163,6 +163,16 @@ class UniqueNameGeneratorImpl {
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
 
+// Returns a stable, non-empty base name for a node unit.
+// Uses node_unit.Name() when non-empty; falls back to OpType()+Index() for unnamed nodes,
+// matching the behaviour of UniqueNameGeneratorImpl::New(const OrtNodeUnit&, suffix).
+// Use this instead of node_unit.Name() when constructing intermediate tensor names that
+// must be deterministic and collision-free across GetCapability and Compile passes.
+inline std::string NodeUnitBaseName(const OrtNodeUnit& node_unit) {
+  const std::string& name = node_unit.Name();
+  return name.empty() ? node_unit.OpType() + std::to_string(node_unit.Index()) : name;
+}
+
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized = false,

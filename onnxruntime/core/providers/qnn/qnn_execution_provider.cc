@@ -48,7 +48,7 @@
 #include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
-#include "core/providers/qnn/soc_utils.h"
+#include "core/providers/qnn/soc_utility/soc_utils.h"
 
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
@@ -293,7 +293,7 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string,
 
 static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_model, const Ort::Logger& logger) {
   // First try a chip-family name lookup (e.g. "SM8750", case-insensitive).
-  uint32_t name_value = qnn::soc::SocModelFromName(soc_model_string);
+  uint32_t name_value = qnn::soc::MapSocModelFromSocName(soc_model_string);
   if (name_value != 0) {
     soc_model = name_value;
     return;
@@ -321,6 +321,36 @@ static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_mod
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid soc_model: " + soc_model_string).c_str());
   } else {
     soc_model = static_cast<uint32_t>(value);
+  }
+}
+
+static void MatchSocModelAndHtpArch(const uint32_t soc_model,
+                                    QnnHtpDevice_Arch_t& htp_arch,
+                                    const Ort::Logger& logger) {
+  uint32_t mapped_htp_arch = qnn::soc::MapHtpArchFromSocModel(soc_model);
+  if (mapped_htp_arch == 0) {
+    ORT_CXX_LOG(logger,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Unrecognized SoC model " + std::to_string(soc_model) + ". Skip matching with HTP arch.").c_str());
+    return;
+  }
+
+  if (htp_arch == QNN_HTP_DEVICE_ARCH_NONE) {
+    ORT_CXX_LOG(logger,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Setting HTP arch to " + std::to_string(mapped_htp_arch) + " according to given SoC model.").c_str());
+    htp_arch = static_cast<QnnHtpDevice_Arch_t>(mapped_htp_arch);
+  } else {
+    uint32_t given_htp_arch = static_cast<uint32_t>(htp_arch);
+    if (given_htp_arch != mapped_htp_arch) {
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Given HTP arch " + std::to_string(given_htp_arch) +
+                   " did not match the given SoC model. Setting to " +
+                   std::to_string(mapped_htp_arch) + " instead.")
+                      .c_str());
+      htp_arch = static_cast<QnnHtpDevice_Arch_t>(mapped_htp_arch);
+    }
   }
 }
 
@@ -442,17 +472,18 @@ void QnnEp::ParsePerSocHtpConfigs() {
     }
   }
 
-  if (!soc_model_per_soc_.empty() && !htp_arch_per_soc_.empty()) {
-    if (soc_model_per_soc_.size() == htp_arch_per_soc_.size()) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  "Both soc_model and htp_arch are given but soc_model has higher priority if they do not match.");
-    } else {
+  if (!soc_model_per_soc_.empty()) {
+    if (htp_arch_per_soc_.empty()) {
+      htp_arch_per_soc_.assign(soc_model_per_soc_.size(), QNN_HTP_DEVICE_ARCH_NONE);
+    }
+    if (htp_arch_per_soc_.size() != soc_model_per_soc_.size()) {
       LOG_AND_THROW_ERROR(logger_,
                           "Expecting soc_model and htp_arch having equal number of values in multi-SoC EP context.");
+    } else {
+      for (size_t soc_idx = 0; soc_idx < soc_model_per_soc_.size(); ++soc_idx) {
+        MatchSocModelAndHtpArch(soc_model_per_soc_[soc_idx], htp_arch_per_soc_[soc_idx], logger_);
+      }
     }
-  } else if (htp_arch_per_soc_.empty()) {
-    htp_arch_per_soc_.assign(soc_model_per_soc_.size(), QNN_HTP_DEVICE_ARCH_NONE);
   } else {
     soc_model_per_soc_.assign(htp_arch_per_soc_.size(), QNN_SOC_MODEL_UNKNOWN);
   }
@@ -510,7 +541,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
                                   htp_graph_configs_.htp_graph_finalization_opt_mode,
                                   htp_graph_configs_.enable_htp_fp16_precision,
                                   htp_graph_configs_.enable_htp_monolithic_lstm,
-                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow};
+                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow,
+                                  htp_graph_configs_.enable_htp_matmul_lut};
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -1017,6 +1049,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+  htp_graph_configs_.enable_htp_matmul_lut = ParseBoolOption(ort_api,
+                                                             session_options_,
+                                                             FormatEPConfigKey("enable_htp_matmul_lut"),
+                                                             true,
+                                                             logger_);
+#endif
+
   // Try to parse multi-SoC HTP options first. If not multi-SoC htp_arch/soc_model is given, fallback to normal parsing.
   ParsePerSocHtpConfigs();
   // Declare outside the if scope since there are users later. They may be overwritten in the else branch.
@@ -1054,6 +1094,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!soc_model_str.empty()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("User specified soc_model: " + soc_model_str).c_str());
       ParseSocModel(soc_model_str, soc_model, logger_);
+      MatchSocModelAndHtpArch(soc_model, htp_arch, logger_);
     }
 
     // VTCM MB
@@ -1477,17 +1518,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
-  if (
-      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1) &&
-      SharedContext::GetInstance().GetSharedQnnBackendManager()) {
+  const bool use_shared_backend_mgr =
+      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
+  if (use_shared_backend_mgr && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
     // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
     // previous session.
     qnn_backend_manager_->ResetLogger(logger_);
-    // Clear the QnnBackendManager from singleton to stop the resource share
-    if (stop_share_ep_contexts_) {
-      SharedContext::GetInstance().ResetSharedQnnBackendManager();
-    }
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
@@ -1505,10 +1542,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
+    // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
+    // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
+    // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
+    // all sharing paths is deferred to after SetupBackend completes (in GetCapabilityImpl).
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
+  // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
+  // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -1919,6 +1962,20 @@ void QnnEp::InitQnnHtpGraphConfigs(
       graph_config->customConfig = htp_fp16_clamp_config;
 #endif
     }
+
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+    if (configs.enable_htp_matmul_lut) {
+      gsl::not_null<QnnHtpGraph_CustomConfig_t*> matmul_lut_config = configs_builder.PushCustomConfig();
+      matmul_lut_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG;
+      matmul_lut_config->finalizeConfig.key = "enable_matmul_lut";
+      matmul_lut_config->finalizeConfig.value.dataType = QNN_DATATYPE_BOOL_8;
+      matmul_lut_config->finalizeConfig.value.bool8Value = 1;
+
+      gsl::not_null<QnnGraph_Config_t*> graph_config = configs_builder.PushConfig();
+      graph_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+      graph_config->customConfig = matmul_lut_config;
+    }
+#endif
   }
 }
 
@@ -2248,6 +2305,14 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   context_bin_map.clear();
+
+  // Deferred terminator reset for both htp_share_resource_optimization and share_ep_contexts:
+  // the singleton must remain populated during SetupBackend because ContextCreateAsyncCallback
+  // retrieves the backend manager from it. Now that SetupBackend has completed it is safe to
+  // clear the slot, regardless of whether setup succeeded.
+  if (ep->stop_share_ep_contexts_) {
+    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+  }
 
   if (!rt.IsOK()) {
     const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
@@ -2976,7 +3041,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   }
 
   if (share_ep_contexts_ &&
-      !stop_share_ep_contexts_ &&
+      !stop_share_ep_contexts_ &&  // load-bearing: prevents re-publishing after the ctor terminator reset
       nullptr == SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     if (!SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_)) {
       return ort_api.CreateStatus(ORT_EP_FAIL, "Failed to set shared QnnBackendManager.");
