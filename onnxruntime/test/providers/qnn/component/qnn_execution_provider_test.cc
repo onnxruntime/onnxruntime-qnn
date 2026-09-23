@@ -1493,12 +1493,12 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
 
   // Aggregate init - same order as struct definition.
   qnn::HtpGraphConfigs_t copy{source.vtcm_size_in_mb,
-                               source.htp_graph_finalization_opt_mode,
-                               source.enable_htp_fp16_precision,
-                               source.enable_htp_monolithic_lstm,
-                               source.enable_htp_fp16_clamp_overflow,
-                               source.enable_htp_matmul_lut,
-                               source.htp_num_cores};
+                              source.htp_graph_finalization_opt_mode,
+                              source.enable_htp_fp16_precision,
+                              source.enable_htp_monolithic_lstm,
+                              source.enable_htp_fp16_clamp_overflow,
+                              source.enable_htp_matmul_lut,
+                              source.htp_num_cores};
 
   EXPECT_EQ(copy.htp_num_cores, 3u);
   EXPECT_EQ(copy.vtcm_size_in_mb, 4);
@@ -1517,9 +1517,9 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
 TEST(QnnUnit_PopulateHtpGraphConfigsTest, StructLayout_FieldCountGuard) {
   // All 7 fields via aggregate init - compile error if field count changes.
   qnn::HtpGraphConfigs_t full_init{0,
-                                    qnn::HtpGraphFinalizationOptimizationMode::kDefault,
-                                    false, false, false, false,
-                                    0u};
+                                   qnn::HtpGraphFinalizationOptimizationMode::kDefault,
+                                   false, false, false, false,
+                                   0u};
   (void)full_init;
   static_assert(sizeof(qnn::HtpGraphConfigs_t) <= 16,
                 "HtpGraphConfigs_t size changed - update all aggregate init sites and this test");
