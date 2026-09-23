@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -42,6 +41,13 @@ void AssertFp32StaticBytesAbove(const std::filesystem::path& dump_dir, size_t mi
 void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
                                  const std::string& tensor_name,
                                  const std::vector<uint32_t>& expected_dims);
+
+// Asserts that no two nodes of type `op` in the compiled QNN graph read the same tensor at
+// `input_index`. Use this where the EP derives a static input per consuming node: each consumer must
+// end up with its own tensor instead of all of them collapsing onto one shared name.
+void AssertNodeInputsDistinctInQnnGraph(const std::filesystem::path& dump_dir,
+                                        const std::string& op,
+                                        size_t input_index);
 
 }  // namespace test
 }  // namespace onnxruntime
