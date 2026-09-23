@@ -1247,6 +1247,19 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
   }
 #endif
 
+  if (context_memory_limit_hint_mb_ > 0) {
+    gsl::not_null<QnnContext_Config_t*> memory_limit_cfg = configs_builder.PushConfig();
+    memory_limit_cfg->option = QNN_CONTEXT_CONFIG_MEMORY_LIMIT_HINT;
+    memory_limit_cfg->memoryLimitHint = context_memory_limit_hint_mb_;
+
+    gsl::not_null<QnnContext_Config_t*> persistent_binary_cfg = configs_builder.PushConfig();
+    persistent_binary_cfg->option = QNN_CONTEXT_CONFIG_PERSISTENT_BINARY;
+    persistent_binary_cfg->isPersistentBinary = 1;
+
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Context memory limit hint: " + std::to_string(context_memory_limit_hint_mb_) + " MB").c_str());
+  }
+
   return Ort::Status();
 }
 
@@ -1746,6 +1759,7 @@ Ort::Status QnnBackendManager::ReleaseContext() {
   ep_context_handle_map_.clear();
 
   context_created_ = false;
+  persistent_context_buffers_.clear();
   return Ort::Status();
 }
 
@@ -1946,6 +1960,28 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
         QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
     RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
+
+    // Graph switching requires a persistent in-memory buffer that QNN can reload
+    // graphs from during execution. Read the binary into persistent_context_buffers_
+    // so it outlives the context. File-mapped weights are already disabled upstream
+    // (QnnEp constructor) when graph switching is active.
+    bool enable_memory_limit = context_memory_limit_hint_mb_ > 0;
+    if (enable_memory_limit) {
+      if (!context_bin_filepath.empty()) {
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
+                        "Graph switching enabled — bypassing file mapping, using persistent buffer.");
+        persistent_context_buffers_.emplace_back();
+        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, persistent_context_buffers_.back(), io_dispatch));
+        bin_buffer = static_cast<void*>(persistent_context_buffers_.back().data());
+        buffer_length = persistent_context_buffers_.back().size();
+      } else {
+        // No file to read from — the caller-provided bin_buffer is used as the
+        // persistent binary. It MUST outlive this context or graph reloads are UB.
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                        "Graph switching enabled but context binary path is empty; relying on the "
+                        "caller-provided buffer remaining valid for the context lifetime.");
+      }
+    }
 
     qnn::profile::ProfilingInfo profiling_info;
     qnn::QnnProfilingScope profiling_scope;

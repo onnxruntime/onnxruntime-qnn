@@ -21,6 +21,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/providers/qnn/common/inlined_containers_fwd.h"
+
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpDevice.h"
@@ -140,6 +142,7 @@ struct QnnBackendManagerConfig {
   // remains constant for the manager's lifetime.
   bool enable_framework_op_trace = false;
   bool skip_backend_op_validation = false;
+  uint64_t context_memory_limit_hint_mb = 0;
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
 };
@@ -169,6 +172,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       : backend_path_(config.backend_path),
         reused_io_limit_mb_(config.reused_io_limit_mb),
         context_priority_(config.context_priority),
+        context_memory_limit_hint_mb_(config.context_memory_limit_hint_mb),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
         htp_arch_(config.htp_arch),
@@ -189,6 +193,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                      /*out*/ unsigned char** context_buffer,
                                      /*out*/ uint64_t& buffer_size);
 
+  // REQUIRES: When graph switching is enabled (context_memory_limit_hint_mb_ > 0) and
+  // context_bin_filepath is empty, `buffer` MUST remain valid for the lifetime of the
+  // QNN context — QNN will read from it during graph reloads.
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
@@ -775,6 +782,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::optional<bool> dx12_shared_memory_allocator_supported_ = std::nullopt;
   std::unique_ptr<QnnBackendProfilingManager> profiling_manager_;
   ContextPriority context_priority_;
+  uint64_t context_memory_limit_hint_mb_ = 0;
+  // Keeps context binary buffers alive for graph-switching (persistent binary).
+  // QNN requires the binary buffer to remain valid for the lifetime of the context
+  // so it can reload graphs on demand.
+  onnxruntime::InlinedVector<std::vector<char>, 1> persistent_context_buffers_;
   std::string sdk_build_version_ = "";
 #ifdef _WIN32
   std::set<HMODULE> mod_handles_;

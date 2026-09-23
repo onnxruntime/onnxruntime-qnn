@@ -916,6 +916,42 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ParseQnnContextPriority(context_priority_str, context_priority, logger_);
   }
 
+  // Context memory limit hint (MB) — triggers graph-switching for large multi-graph contexts
+  static constexpr const char* kContextMemoryLimitHintMb = "context_memory_limit_hint_mb";
+  std::string context_memory_limit_hint_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey(kContextMemoryLimitHintMb), "0",
+                                 context_memory_limit_hint_str);
+  if (!context_memory_limit_hint_str.empty() && context_memory_limit_hint_str != "0") {
+    try {
+      size_t pos = 0;
+      uint64_t val = std::stoull(context_memory_limit_hint_str, &pos);
+      if (pos != context_memory_limit_hint_str.size()) {
+        throw std::invalid_argument("trailing characters");
+      }
+      context_memory_limit_hint_mb_ = val;
+    } catch (const std::exception&) {
+      context_memory_limit_hint_mb_ = 0;
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  ("Invalid value for " + std::string(kContextMemoryLimitHintMb) + ": " +
+                   context_memory_limit_hint_str +
+                   ", expected a non-negative integer. Graph switching disabled.")
+                      .c_str());
+    }
+    if (context_memory_limit_hint_mb_ > 0) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                  (std::string(kContextMemoryLimitHintMb) + ": " +
+                   std::to_string(context_memory_limit_hint_mb_))
+                      .c_str());
+    }
+  }
+
+  if (context_memory_limit_hint_mb_ > 0 && InferBackendTypeFromPath(backend_path) != qnn::QnnBackendType::HTP) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "context_memory_limit_hint_mb is only effective on HTP backend. Graph switching disabled.");
+    context_memory_limit_hint_mb_ = 0;
+  }
+
   // HTP share resource optimization
   std::string htp_share_resource_optimization_str;
   GetSessionConfigEntryOrDefault(ort_api,
@@ -941,6 +977,19 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
     // htp_share_resource_optimization not set, fall back to enable_vtcm_backup_buffer_sharing
     htp_share_resource_optimization_ = 1;
+  }
+
+  // Graph switching cannot be combined with SHARE_RESOURCES or share_ep_contexts:
+  // the shared-resource path reuses a shared context handle and never applies the
+  // memory-limit config; share_ep_contexts passes a short-lived .c_str() buffer
+  // that goes out of scope before graph reloads can reference it (use-after-free).
+  if (context_memory_limit_hint_mb_ > 0 &&
+      (htp_share_resource_optimization_ == 1 || share_ep_contexts_)) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "context_memory_limit_hint_mb (graph switching) cannot be combined with "
+                "htp_share_resource_optimization / enable_vtcm_backup_buffer_sharing / share_ep_contexts. "
+                "Graph switching disabled.");
+    context_memory_limit_hint_mb_ = 0;
   }
 
   ORT_CXX_LOG(logger_,
@@ -972,6 +1021,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_file_mapped_weights_ = false;
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is incompatible with embedded EP contexts. Feature will be disabled by default.");
+  }
+  if (context_memory_limit_hint_mb_ > 0 && enable_file_mapped_weights_) {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "File mapped weights disabled — incompatible with graph switching (persistent binary).");
   }
 #endif
 
@@ -1544,6 +1599,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      skip_qnn_version_check,
                                      enable_framework_op_trace_,
                                      skip_backend_op_validation,
+                                     context_memory_limit_hint_mb_,
                                      reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
