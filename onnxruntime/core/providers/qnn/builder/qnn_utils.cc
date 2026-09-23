@@ -737,10 +737,54 @@ static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor, bool include_
   tensor_json["axis_format"] = "NOT_YET_DEFINED";
 
   const Qnn_QuantizeParams_t& quant_params = GetQnnTensorQParams(tensor);
-  tensor_json["quant_params"] = {
-      {"definition", quant_params.encodingDefinition},
-      {"encoding", quant_params.quantizationEncoding},
-      {"scale_offset", {{"scale", quant_params.scaleOffsetEncoding.scale}, {"offset", quant_params.scaleOffsetEncoding.offset}}}};
+  // quant_params JSON layout matches the QAIRT official qairt-dlc-to-json schema.
+  // Always serialize the definition and encoding fields. Only serialize the
+  // encoding-specific union payload when the definition says those fields are valid.
+  nlohmann::json quant_params_json = {{"definition", quant_params.encodingDefinition},
+                                      {"encoding", quant_params.quantizationEncoding}};
+  if (quant_params.encodingDefinition == QNN_DEFINITION_IMPL_GENERATED ||
+      quant_params.encodingDefinition == QNN_DEFINITION_DEFINED) {
+    switch (quant_params.quantizationEncoding) {
+      case QNN_QUANTIZATION_ENCODING_SCALE_OFFSET:
+        quant_params_json["scale_offset"] = {{"scale", quant_params.scaleOffsetEncoding.scale},
+                                             {"offset", quant_params.scaleOffsetEncoding.offset}};
+        break;
+      case QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET:
+        quant_params_json["bw_scale_offset"] = {{"bitwidth", quant_params.bwScaleOffsetEncoding.bitwidth},
+                                                {"scale", quant_params.bwScaleOffsetEncoding.scale},
+                                                {"offset", quant_params.bwScaleOffsetEncoding.offset}};
+        break;
+      case QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: {
+        const auto& enc = quant_params.axisScaleOffsetEncoding;
+        nlohmann::json scale_offsets = nlohmann::json::array();
+        for (uint32_t i = 0; i < enc.numScaleOffsets; ++i) {
+          scale_offsets.push_back({{"scale", enc.scaleOffset[i].scale}, {"offset", enc.scaleOffset[i].offset}});
+        }
+        quant_params_json["axis_scale_offset"] = {{"axis", enc.axis},
+                                                  {"num_scale_offsets", enc.numScaleOffsets},
+                                                  {"scale_offsets", std::move(scale_offsets)}};
+        break;
+      }
+      case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET: {
+        const auto& enc = quant_params.bwAxisScaleOffsetEncoding;
+        nlohmann::json scale_offsets = nlohmann::json::array();
+        // offsets may be NULL for symmetric quantization (all offsets implicitly 0).
+        for (uint32_t i = 0; i < enc.numElements; ++i) {
+          scale_offsets.push_back({{"scale", enc.scales[i]},
+                                   {"offset", enc.offsets ? enc.offsets[i] : 0}});
+        }
+        quant_params_json["bw_axis_scale_offset"] = {{"bitwidth", enc.bitwidth},
+                                                     {"axis", enc.axis},
+                                                     {"num_elements", enc.numElements},
+                                                     {"scale_offsets", std::move(scale_offsets)}};
+        break;
+      }
+      default:
+        quant_params_json["payload_status"] = "unsupported_quantization_encoding";
+        break;
+    }
+  }
+  tensor_json["quant_params"] = std::move(quant_params_json);
 
   gsl::span<const uint32_t> dims{GetQnnTensorDims(tensor), GetQnnTensorRank(tensor)};
   tensor_json["dims"] = JSONFromSpan(dims);
@@ -2102,31 +2146,6 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   }
 
   return Ort::Status();
-}
-
-bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
-                                    int64_t bits) {
-  std::vector<uint8_t> per_block_uint8_zp;
-  const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
-  if (zp_tensor_proto == nullptr) {
-    return false;  // zero_points tensor exists but is not a constant initializer.
-  }
-  auto status = qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp);
-  if (!status.IsOK()) {
-    return false;
-  }
-  // Build the expected packed byte: pack (8/bits) copies of 2^(bits-1) into one byte.
-  // e.g., bits=2: sym_zp=2 (0b10),   elems_per_byte=4 -> expected=0b10101010
-  //       bits=4: sym_zp=8 (0b1000), elems_per_byte=2 -> expected=0b10001000
-  //       bits=8: sym_zp=128,        elems_per_byte=1 -> expected=0b10000000
-  const int64_t elems_per_byte = 8 / bits;
-  const uint8_t sym_zp = static_cast<uint8_t>(1u << (bits - 1));
-  uint8_t expected_packed = 0;
-  for (int64_t i = 0; i < elems_per_byte; ++i) {
-    expected_packed |= static_cast<uint8_t>(sym_zp << (bits * i));
-  }
-  return std::all_of(per_block_uint8_zp.begin(), per_block_uint8_zp.end(),
-                     [expected_packed](uint8_t zp) { return zp == expected_packed; });
 }
 
 }  // namespace utils

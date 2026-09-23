@@ -82,6 +82,12 @@ jobs:
         run: |
           # Python version does not affect C++ code coverage results.
           # Defaults to 3.10 to match DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
+          # This runs generate_coverage.sh's three-phase split in one binary run:
+          # component (gating) -> snapshot (non-gating) -> accuracy (gating),
+          # then a single lcov capture. The accuracy tier is embedded here (not a
+          # separate step) so its .gcda joins the same capture and the phase order
+          # feeds the accuracy-routing gate. Reproduce locally with:
+          #   bash qcom/scripts/linux/generate_coverage.sh --build-dir=build/linux-x86_64
           python3 qcom/build_and_test.py \
             --target-py-version ${{ inputs.target_py_vsn }} \
             diff_coverage_linux_x86_64
