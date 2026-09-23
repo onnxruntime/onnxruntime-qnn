@@ -6,11 +6,8 @@
                     "repo": "${repo}",
                     "$and": [
                         {
-                            "created": { "$before": "1d" },
-                            "path": { "$match": "ci/*" }
-                        },
-                        {
-                            "path": { "$nmatch": "ci/qnn-ep-test-store/*" }
+                            "created": { "$before": "7d" },
+                            "path": { "$match": "ci/qnn-ep-test-store/*/archive/*" }
                         }
                     ]
                 }

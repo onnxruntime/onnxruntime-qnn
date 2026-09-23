@@ -1,0 +1,112 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Snapshot Golden Publish
+
+permissions:
+  contents: read
+  checks: write
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      filter:
+        description: "Comma-separated op groups to scope (e.g. Clip,Conv). Empty = all."
+        type: string
+        default: ''
+      repo_subpath:
+        description: "Artifactory path prefix under BUILD_ARTIFACTORY_REPO."
+        type: string
+        default: 'ci/qnn-ep-test-store/snapshot-goldens'
+      dry_run:
+        description: "Do everything except the actual Artifactory upload. Defaults true so a manual dispatch never clobbers the shared store by accident; the scheduled producer passes false explicitly."
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs: *common_inputs
+
+jobs:
+  publish-snapshot-goldens:
+    name: "Publish Snapshot Golden Files"
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    env:
+      BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+      # Ephemeral golden store: regen writes goldens here, publish_goldens.sh
+      # zips + uploads them. Not persisted across runs — the uploaded zip is the
+      # source of truth, this is just staging.
+      QNN_UT_SNAPSHOT_GOLDEN_DIR: "${{ github.workspace }}/build/linux-x86_64/golden_store"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Initialize submodules
+        run: git submodule update --init --recursive
+
+      - name: Build coverage-instrumented test binary
+        run: |
+          # Snapshot/accuracy tiers are only compiled into the binary under
+          # --enable-coverage. publish_goldens.sh regenerates goldens + verifies
+          # accuracy itself, so we build the instrumented binary only (no report).
+          python3 qcom/build_and_test.py \
+            --config RelWithDebInfo \
+            coverage_build_linux_x86_64
+
+      - name: Prepare golden store
+        run: mkdir -p "${QNN_UT_SNAPSHOT_GOLDEN_DIR}"
+
+      - name: Set up JFrog CLI
+        if: ${{ !inputs.dry_run }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Publish goldens
+        env:
+          FILTER_INPUT: ${{ inputs.filter }}
+          REPO_SUBPATH_INPUT: ${{ inputs.repo_subpath }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          build_dir="build/linux-x86_64"
+
+          args=(--build-dir="${build_dir}")
+
+          if [ -n "${FILTER_INPUT}" ]; then
+            args+=(--filter="${FILTER_INPUT}")
+          fi
+
+          if [ -n "${REPO_SUBPATH_INPUT}" ]; then
+            if [[ ! "${REPO_SUBPATH_INPUT}" =~ ^ci/qnn-ep-test-store/[A-Za-z0-9._/-]+$ ]] ||
+               [[ "${REPO_SUBPATH_INPUT}" == *..* ]] ||
+               [[ "${REPO_SUBPATH_INPUT}" == */ ]]; then
+              echo "Invalid repo_subpath: ${REPO_SUBPATH_INPUT}" >&2
+              exit 1
+            fi
+            args+=(--repo-subpath="${REPO_SUBPATH_INPUT}")
+          fi
+
+          if [ "${DRY_RUN_INPUT}" = "true" ]; then
+            args+=(--dry-run)
+          else
+            args+=(--publish)
+          fi
+
+          bash qcom/scripts/linux/publish_goldens.sh "${args[@]}"
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          echo "### Snapshot Golden Publish" >> "${GITHUB_STEP_SUMMARY}"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Mode: **dry-run** (no upload)" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "Mode: **publish** (uploaded to Artifactory)" >> "${GITHUB_STEP_SUMMARY}"
+          fi
