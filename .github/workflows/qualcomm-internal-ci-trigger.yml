@@ -7,8 +7,7 @@
 # Approval covers the entire commit, including its workflows, actions, and scripts:
 # the reviewed code will execute with repository secrets and access to internal runners.
 #
-# Only direct repository collaborators may trigger. Organization membership or
-# ownership alone does not authorize CI.
+# Only users with write, maintain, or admin repository permission may trigger.
 
 name: Qualcomm Internal CI Trigger
 
@@ -28,7 +27,8 @@ jobs:
   trigger:
     name: Trigger CI from PR comment
     # Only act on PR comments whose body is exactly "/ci" or "/device-test",
-    # with optional arguments. Require a direct repository collaboration.
+    # with optional arguments. Repository permission is verified in the
+    # GitHub-hosted step before any privileged workflow is dispatched.
     if: |
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request != null &&
@@ -37,8 +37,7 @@ jobs:
        startsWith(github.event.comment.body, '/ci\n') ||
        github.event.comment.body == '/device-test' ||
        startsWith(github.event.comment.body, '/device-test ') ||
-       startsWith(github.event.comment.body, '/device-test\n')) &&
-      github.event.comment.author_association == 'COLLABORATOR'
+       startsWith(github.event.comment.body, '/device-test\n'))
     # Unprivileged comments must not schedule work on an internal runner.
     runs-on: ubuntu-latest
     steps:
@@ -52,6 +51,26 @@ jobs:
             }
 
             const commenter = context.payload.comment.user.login;
+
+            // author_association describes the commenter's relationship to the
+            // repository, not their effective permission. Fail closed unless
+            // GitHub confirms that the commenter can write to the repository.
+            let permission;
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commenter,
+              });
+              permission = response.data.permission;
+            } catch (error) {
+              core.setFailed(`Unable to verify repository permission for @${commenter}: ${error.message}`);
+              return;
+            }
+            if (!['write', 'maintain', 'admin'].includes(permission)) {
+              core.setFailed(`@${commenter} needs write, maintain, or admin repository permission to trigger ${command}.`);
+              return;
+            }
 
             // Fetch the PR rather than trusting comment-controlled data. In particular,
             // device tests must use an immutable reviewed commit, never a fork branch name.
