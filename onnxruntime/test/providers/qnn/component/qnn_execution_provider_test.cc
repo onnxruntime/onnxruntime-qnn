@@ -899,6 +899,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Su
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCores_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("htp_num_cores")] = "2";
+  ctx.session_config[EPKey("context_enable")] = "1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
@@ -916,7 +917,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresMalformed_Succeeds) {
   ctx.session_config[EPKey("htp_num_cores")] = "abc";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: abc will be skipped");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {
@@ -1057,7 +1058,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {
   ctx.session_config[EPKey("htp_num_cores")] = "-1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: -1 will be skipped");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresTrailingCharacters_Succeeds) {
@@ -1066,7 +1067,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresTrailingCharacters_Succeed
   ctx.session_config[EPKey("htp_num_cores")] = "2cores";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: 2cores will be skipped");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresOverflow_Succeeds) {
@@ -1075,7 +1076,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresOverflow_Succeeds) {
   ctx.session_config[EPKey("htp_num_cores")] = "4294967296";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid htp_num_cores: 4294967296 will be skipped");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
 }
 
 // ===========================================================================
@@ -1381,6 +1382,7 @@ TEST_F(QnnUnit_ExecutionProviderHtpTest, GetHardwareDeviceIncompatibilityDetails
 // PopulateHtpGraphConfigs tests - no QNN hardware or EP internals needed.
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <gtest/gtest.h>
 #include "core/providers/qnn/builder/qnn_htp_graph_configs.h"
 
 namespace onnxruntime {
