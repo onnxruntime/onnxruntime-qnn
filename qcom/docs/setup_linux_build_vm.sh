@@ -6,6 +6,7 @@ set -euo pipefail
 
 runner_root=/local/mnt/workspace/actions-runner
 runner_home="${runner_root}/_ort-cache"
+qcom_root=$(realpath "$(dirname "${BASH_SOURCE[0]}")/..")
 
 if [ ! -d "${runner_root}" ]; then
     echo "Install (but do not enable) the GitHub Actions runner before running this script."
@@ -63,10 +64,13 @@ LANG=en_US.UTF-8
 HOME=${runner_home}
 TMPDIR=${runner_root}/tmp
 JFROG_CLI_HOME_DIR=${runner_root}/jfrog-home
+ORT_RUNNER_ROOT=${runner_root}
 
 ORT_BUILD_DOCKER_CCACHE_ROOT=${runner_home}/docker-ccache
 ORT_BUILD_PACKAGE_CACHE_PATH=${runner_home}/ort-package-cache
 ORT_BUILD_TOOLS_PATH=${runner_home}/ort-build-tools
+ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/sbin/ort-runner-job-started
+ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/usr/local/sbin/ort-runner-job-completed
 EOF
 
 chmod 644 "${env_tmpfile}"
@@ -98,6 +102,26 @@ EOF
 
 chmod 755 "${docker_prune_tmpfile}"
 sudo mv "${docker_prune_tmpfile}" /etc/cron.daily/docker-prune
+
+##############################################
+# Clean stale runner workspaces when runner idle
+sudo install -m 755 \
+    "${qcom_root}/scripts/linux/cleanup_runner_workspaces.sh" \
+    /usr/local/sbin/ort-runner-workspace-cleanup
+sudo install -m 755 \
+    "${qcom_root}/scripts/linux/runner_workspace_job_hook.sh" \
+    /usr/local/sbin/ort-runner-job-started
+sudo install -m 755 \
+    "${qcom_root}/scripts/linux/runner_workspace_job_hook.sh" \
+    /usr/local/sbin/ort-runner-job-completed
+sudo install -m 644 \
+    "${qcom_root}/scripts/linux/ort-runner-workspace-cleanup.service" \
+    /etc/systemd/system/ort-runner-workspace-cleanup.service
+sudo install -m 644 \
+    "${qcom_root}/scripts/linux/ort-runner-workspace-cleanup.timer" \
+    /etc/systemd/system/ort-runner-workspace-cleanup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now ort-runner-workspace-cleanup.timer
 
 set +x
 echo
