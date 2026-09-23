@@ -305,6 +305,19 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   PrepareForComputeMetadata compute_metadata(input_dimensions);
   RETURN_IF_ERROR(PrepareForComputeHelper(raw_starts, raw_ends, raw_axes, raw_steps, compute_metadata));
 
+  // QNN HTP's StridedSlice rejects any config whose computed output has a zero-sized dimension
+  // (backendValidateOpConfig fails with QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE). This shows up in
+  // partial-rotary (RoPE) exports where the "pass-through" (non-rotary) slice is empty because
+  // rotary_dim == head_dim, and its only consumer is Concat, which already excludes zero-dim
+  // inputs (see ConcatOpBuilder::ProcessInputs). Skip building this Slice node entirely so it's
+  // treated as supported (no CPU fallback) instead of being handed to a backend that always
+  // rejects it.
+  for (const int64_t dim : compute_metadata.output_dims_) {
+    if (dim == 0) {
+      return Ort::Status();
+    }
+  }
+
   const size_t input_rank = input_dimensions.size();
   std::vector<uint32_t> ranges_dims{static_cast<uint32_t>(input_rank), 3};
   std::vector<uint32_t> ranges_data;
