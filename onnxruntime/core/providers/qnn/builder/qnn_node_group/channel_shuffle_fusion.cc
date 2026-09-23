@@ -156,9 +156,10 @@ std::optional<std::array<const OrtNodeUnit*, 5>> MatchChannelShufflePattern(
 Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                   gsl::span<const OrtNodeUnit* const> node_units,
                                   bool validate) {
-  // node_units layout (always 5 elements in the backing array, accessed via the outer ChannelShuffleFusion):
+  // node_units layout:
   //   Full 5-node: [T_head, Reshape1, T_mid, Reshape2, T_tail]
-  //   4-node (no head): node_units passed here starts at index 1: [Reshape1, T_mid, Reshape2, T_tail]
+  //   4-node (no head): a fresh 4-element span [Reshape1, T_mid, Reshape2, T_tail]
+  //                     (index 0 = Reshape1)
   //
   // Detect the variant by checking if the first node is a Transpose (5-node) or Reshape (4-node).
   const bool has_head_transpose = (node_units[0]->OpType() == kOpTranspose);
