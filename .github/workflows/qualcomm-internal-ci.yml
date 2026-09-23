@@ -29,7 +29,7 @@ on:
         required: false
         type: string
       device_tests_only:
-        description: Run only the Android and Qualcomm Linux QDC paths plus Windows ARM64 device tests
+        description: Run full merge-required CI plus Qualcomm Linux QDC and Windows ARM64 device tests
         required: false
         default: false
         type: boolean
@@ -50,10 +50,10 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
-      # github.event.inputs is empty for push/PR events, which preserves the
-      # normal full-CI path. workflow_dispatch provides strings, including the
-      # explicit "true" set by the maintainer-only /device-test trigger.
-      do_all: ${{ github.event.inputs.device_tests_only != 'true' }}
+      # The approved fork path must run the complete required CI set after the
+      # fork stubs are removed; otherwise required Linux test/wheel contexts
+      # would be missing. It additionally enables the real device-only paths.
+      do_all: true
       do_device_tests: ${{ github.event.inputs.device_tests_only == 'true' }}
       report_device_result_to_source: ${{ github.event.inputs.device_tests_only == 'true' }}
       source_repository: ${{ github.event.inputs.source_repository }}
