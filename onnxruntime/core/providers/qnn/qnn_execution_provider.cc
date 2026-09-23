@@ -1610,7 +1610,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
       // generates a context binary may still run inference in the same session.
       qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
       model_settings_.htp_shared_memory = true;
-      default_memory_device_ = ep_api.MemoryInfo_GetMemoryDevice(factory.GetHostAccessibleMemoryInfo());
       if (context_cache_enabled_) {
         ORT_CXX_LOGF(logger_,
                      ORT_LOGGING_LEVEL_VERBOSE,
@@ -3670,7 +3669,10 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
 
 OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
     _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
-  *device = static_cast<const QnnEp*>(this_ptr)->default_memory_device_;
+  const auto* ep = static_cast<const QnnEp*>(this_ptr);
+  *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
+                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
+                : nullptr;
   return nullptr;
 }
 

@@ -224,10 +224,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   const QnnEpFactory& factory_;
 
-  // Non-null only when enable_htp_shared_memory_allocator is enabled for this
-  // session. The factory still exposes QnnHtpShared before session creation.
-  const OrtMemoryDevice* default_memory_device_ = nullptr;
-
   std::string name_;
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
