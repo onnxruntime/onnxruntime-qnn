@@ -1,0 +1,35 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+#
+# TEMPORARY — DELETE BEFORE MERGE.
+#
+# Pre-merge sanity check for the golden pipeline. On every push to the PR2
+# branch, publish Clip goldens to an isolated formal-like Artifactory test path,
+# then validate both archive/ and latest/ can be downloaded and unzipped.
+#
+# The test path intentionally avoids the real shared golden store:
+# ci/qnn-ep-test-store/snapshot-goldens-pr703-test
+
+name: TEMP Golden Publish Validation (PR2)
+
+# Must match/exceed what the reusable golden-publish.yml requests, else the
+# reusable call fails at startup (callee permissions can't exceed caller's).
+permissions:
+  contents: read
+  checks: write
+
+on:
+  push:
+    branches:
+      - dev/yuhuchua/qnn-ut-golden-publish
+
+jobs:
+  dryrun:
+    uses: ./.github/workflows/qualcomm-internal-snapshot-golden-publish.yml
+    secrets: inherit
+    with:
+      dry_run: false
+      filter: Clip
+      repo_subpath: ci/qnn-ep-test-store/snapshot-goldens-pr703-test
+      keep_zip_artifact: true
+      temp_verify_publish_outputs: true
