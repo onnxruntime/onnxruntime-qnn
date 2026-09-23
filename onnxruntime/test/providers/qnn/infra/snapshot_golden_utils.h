@@ -13,6 +13,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
@@ -29,14 +30,30 @@ inline std::string GetGoldenRootDir() {
 // Remove fields that are not stable across test runs.
 inline nlohmann::json& NormalizeQnnJSONGraph(nlohmann::json& graph) {
   auto graph_it = graph.find("graph");
-  if (graph_it == graph.end() || !graph_it->is_object()) return graph;
-  auto tensors_it = graph_it->find("tensors");
-  if (tensors_it == graph_it->end() || !tensors_it->is_object()) return graph;
-  for (auto& tensor : tensors_it->items()) {
-    if (tensor.value().is_object()) {
-      tensor.value().erase("id");
+  if (graph_it != graph.end() && graph_it->is_object()) {
+    auto tensors_it = graph_it->find("tensors");
+    if (tensors_it != graph_it->end() && tensors_it->is_object()) {
+      for (auto& tensor : tensors_it->items()) {
+        if (tensor.value().is_object()) {
+          tensor.value().erase("id");
+        }
+      }
     }
   }
+
+  auto op_types_it = graph.find("op_types");
+  if (op_types_it != graph.end() && op_types_it->is_array()) {
+    std::vector<std::string> op_types;
+    op_types.reserve(op_types_it->size());
+    for (const auto& op_type : *op_types_it) {
+      if (op_type.is_string()) {
+        op_types.push_back(op_type.get<std::string>());
+      }
+    }
+    std::sort(op_types.begin(), op_types.end());
+    *op_types_it = std::move(op_types);
+  }
+
   return graph;
 }
 
