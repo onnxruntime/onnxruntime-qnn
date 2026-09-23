@@ -139,6 +139,28 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_NchwHeightOne) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
 }
 
+// Layout Transform converts the Conv boundaries to NHWC. TransposeOptimizer
+// then absorbs the leading transpose into Reshape1, leaving the four-node
+// Reshape1 -> T_mid -> Reshape2 -> T_tail pattern handled by TryFusionFromReshape.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_FromReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_FromReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/4, /*width=*/4),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
