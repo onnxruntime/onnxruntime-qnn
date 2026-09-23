@@ -636,7 +636,7 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
   return nullptr;
 }
 
-QnnEp::QnnEp(QnnEpFactory& factory,
+QnnEp::QnnEp(const QnnEpFactory& factory,
              const std::string& name,
              const OrtSessionOptions& session_options,
              const OrtLogger* logger)

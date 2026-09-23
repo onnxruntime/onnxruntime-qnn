@@ -86,6 +86,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   GetSupportedDevices = GetSupportedDevicesImpl;
   CreateEp = CreateEpImpl;
   ReleaseEp = ReleaseEpImpl;
+  CreateAllocator = CreateAllocatorImpl;
   ReleaseAllocator = ReleaseAllocatorImpl;
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
@@ -122,15 +123,9 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
     ort_api.ReleaseStatus(status);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
-
-  // Keep this available before session creation so OrtEnv can create a shared
-  // allocator for Python I/O binding. ORT creates advertised allocators while
-  // registering the EP library, so the allocator defers loading RPCMEM until
-  // its first allocation.
-  CreateAllocator = CreateAllocatorImpl;
 }
 
-std::shared_ptr<qnn::RpcMemLibrary> QnnEpFactory::GetOrCreateRpcMemLibrary(std::string& error_message) {
+std::shared_ptr<qnn::RpcMemLibrary> QnnEpFactory::GetOrCreateRpcMemLibrary(std::string& error_message) const {
   std::lock_guard<std::mutex> lock(rpcmem_library_mutex_);
   if (rpcmem_library_ != nullptr) {
     return rpcmem_library_;
@@ -147,7 +142,7 @@ std::shared_ptr<qnn::RpcMemLibrary> QnnEpFactory::GetOrCreateRpcMemLibrary(std::
 OrtStatus* QnnEpFactory::CreateHtpSharedMemoryAllocator(
     const OrtMemoryInfo* memory_info,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
-    OrtAllocator** allocator) noexcept {
+    OrtAllocator** allocator) const noexcept {
   *allocator = nullptr;
 
   try {

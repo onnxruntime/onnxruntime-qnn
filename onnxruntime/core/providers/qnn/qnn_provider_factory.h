@@ -25,14 +25,14 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // created through OrtEnv before session creation and a QnnEp share one library handle.
   // ORT releases environment allocators before unloading their EP factory, so a
   // deferred allocator may safely retain a callback to this factory.
-  std::shared_ptr<qnn::RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message);
+  std::shared_ptr<qnn::RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message) const;
 
   // Creates the HTP allocator used by both the factory and QnnEp ABI
   // callbacks. If rpcmem_library is null, RPCMEM loading is deferred until the
   // first allocation.
   OrtStatus* CreateHtpSharedMemoryAllocator(const OrtMemoryInfo* memory_info,
                                             std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
-                                            OrtAllocator** allocator) noexcept;
+                                            OrtAllocator** allocator) const noexcept;
 
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
@@ -100,8 +100,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Created on the first allocation or opted-in session request. Merely
   // registering the factory and its environment allocator must remain usable on
   // hosts without RPCMEM (for example, offline context generation on x86).
-  std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_;
-  std::mutex rpcmem_library_mutex_;
+  mutable std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_;
+  mutable std::mutex rpcmem_library_mutex_;
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;

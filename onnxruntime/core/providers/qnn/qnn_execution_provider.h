@@ -44,7 +44,7 @@ class GenieBackendManager;
 
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
-  QnnEp(QnnEpFactory& factory,
+  QnnEp(const QnnEpFactory& factory,
         const std::string& name,
         const OrtSessionOptions& session_options,
         const OrtLogger* logger);
@@ -59,11 +59,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   friend struct GenieNodeComputeInfo;
   friend class QnnEpFactory;
-
-#if defined(QNN_EP_INTERNAL_SYMBOL_ACCESS)
-  bool HtpSharedMemoryGraphIoEnabledForTesting() const { return model_settings_.htp_shared_memory; }
-  qnn::QnnAllocatorType GetQnnAllocatorTypeForTesting() const { return qnn_allocator_type_; }
-#endif
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -227,13 +222,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::optional<uint32_t> htp_power_config_id_;
   mutable std::mutex config_id_mutex_;
 
-  QnnEpFactory& factory_;
+  const QnnEpFactory& factory_;
 
   // Non-null only when enable_htp_shared_memory_allocator is enabled for this
   // session. The factory still exposes QnnHtpShared before session creation.
   const OrtMemoryDevice* default_memory_device_ = nullptr;
 
-  // const QnnEpFactory& factory_;
   std::string name_;
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
