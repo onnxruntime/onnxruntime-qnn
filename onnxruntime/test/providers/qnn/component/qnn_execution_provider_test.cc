@@ -899,7 +899,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Su
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCores_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("htp_num_cores")] = "2";
-  ctx.session_config[EPKey("context_enable")] = "1";
+  ctx.session_config["ep.context_enable"] = "1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
