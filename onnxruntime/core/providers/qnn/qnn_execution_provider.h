@@ -31,6 +31,7 @@
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
 
 namespace onnxruntime {
@@ -106,12 +107,16 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
                                std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<utils::QnnNodeGroupInfo>& groups,
+                               std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id,
                                std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   OrtStatus* GetMultiSocSupportedNodes(const OrtGraph* graph,
                                        const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                        const size_t node_unit_size,
                                        std::vector<const OrtNode*>& supported_nodes,
+                                       std::vector<utils::QnnNodeGroupInfo>& groups,
+                                       std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id,
                                        std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
