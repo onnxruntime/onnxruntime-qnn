@@ -455,7 +455,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
     RETURN_IF(scale_names.empty(), "Failed to materialize broadcast RMSNorm scale.");
     const std::string& scale_name = scale_names.back();
 
-    // MEMHANDLE intermediates when the model uses shared memory (cf. AddBinaryOpNode).
+    // MEMHANDLE intermediates when the model uses shared memory, as BaseOpBuilder::ProcessOutputs does.
     auto rms_mem_type = QNN_TENSORMEMTYPE_RAW;
     if (qnn_model_wrapper.GetModelSettings().htp_shared_memory) {
       rms_mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
