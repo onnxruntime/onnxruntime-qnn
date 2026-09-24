@@ -1063,6 +1063,24 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                              logger_);
 #endif
 
+  // Option to enable cross device prepare. Requires QAIRT >= 2.51.
+  static constexpr const char* ENABLE_HTP_CROSS_DEVICE_PREPARE = "enable_htp_cross_device_prepare";
+  auto enable_htp_cross_device_prepare = ParseBoolOption(ort_api,
+                                                         session_options_,
+                                                         FormatEPConfigKey(ENABLE_HTP_CROSS_DEVICE_PREPARE),
+                                                         false,
+                                                         logger_);
+#ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  if (enable_htp_cross_device_prepare) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "HTP cross device prepare is not available in current build.");
+    enable_htp_cross_device_prepare = false;
+  }
+#endif  // QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("enable_htp_cross_device_prepare effective value: " + std::to_string(enable_htp_cross_device_prepare))
+                  .c_str());
+
   // HTP num cores — parsed before ParsePerSocHtpConfigs so the value is available for per-SoC config construction.
   ParseIntegerOption(ort_api, session_options_, FormatEPConfigKey("htp_num_cores"),
                      uint32_t{0}, htp_graph_configs_.htp_num_cores, logger_);
@@ -1081,10 +1099,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t soc_model = QNN_SOC_MODEL_UNKNOWN;
   if (enable_multi_soc_ep_context_) {
-#if defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
-    // Only enable on x86 platforms.
-    LOG_AND_THROW_ERROR(logger_, "Multi-SoC EP context is only supported on x86 platforms and offline preparation.");
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || (defined(_M_ARM64EC))
+#if QNN_ARCH_ARM64
+    if (!enable_htp_cross_device_prepare) {
+      // Only enable on x86 platforms.
+      LOG_AND_THROW_ERROR(logger_, "Multi-SoC EP context is only supported on x86 platforms and offline preparation.");
+    }
+#endif  // QNN_ARCH_ARM64
     if (!context_cache_enabled_) {
       LOG_AND_THROW_ERROR(logger_, "Per-SoC configurations are only supported for EP context enabled.");
     }
@@ -1559,7 +1579,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      skip_qnn_version_check,
                                      enable_framework_op_trace_,
                                      skip_backend_op_validation,
-                                     reused_io_limit_mb},
+                                     reused_io_limit_mb,
+                                     enable_htp_cross_device_prepare},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
     // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
     // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
@@ -2307,7 +2328,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
     // Create the HTP power config id (and its release timer) for the main thread.
     // The perf mode itself is not voted here: it is applied around graph compile
     // via the INIT_START/INIT_DONE power guard in CompileImpl, and per run via
@@ -3770,6 +3791,11 @@ void QnnEp::CreateHtpPowerConfigId() const {
 }
 
 void QnnEp::WarnIfHnrdPathActive() {
+  // Skip checking whether HNRD is active if backend is configured to host mode.
+  if (qnn_backend_manager_->IsBackendHostMode()) {
+    return;
+  }
+
   if (hnrd_warning_emitted_) {
     return;
   }
