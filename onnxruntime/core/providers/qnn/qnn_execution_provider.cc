@@ -1950,7 +1950,6 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
   return nullptr;
 }
 
-
 static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& ort_api, const Ort::Logger& logger) {
   size_t num_nodes = 0;
   if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
