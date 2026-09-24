@@ -208,10 +208,27 @@ log_info "Accuracy report: ${accuracy_json}"
 # Select PASSING groups from the accuracy report.
 # ---------------------------------------------------------------------------
 filter_script="${REPO_ROOT}/qcom/scripts/linux/filter_accuracy_pass_groups.py"
-mapfile -t pass_groups < <(python3 "${filter_script}" "${accuracy_json}")
-filter_exit=$?
-if [ "${filter_exit}" -eq 2 ]; then
-    die "Failed to parse accuracy report ${accuracy_json}."
+filter_output=""
+if filter_output="$(python3 "${filter_script}" "${accuracy_json}")"; then
+    :
+else
+    filter_exit=$?
+    case "${filter_exit}" in
+        1)
+            # The filter found no passing groups. Keep the existing error below.
+            ;;
+        2)
+            die "Failed to read or parse accuracy report ${accuracy_json}."
+            ;;
+        *)
+            die "Failed to filter passing groups from ${accuracy_json} (exit ${filter_exit})."
+            ;;
+    esac
+fi
+
+pass_groups=()
+if [ -n "${filter_output}" ]; then
+    mapfile -t pass_groups <<< "${filter_output}"
 fi
 
 if [ "${#pass_groups[@]}" -eq 0 ]; then
