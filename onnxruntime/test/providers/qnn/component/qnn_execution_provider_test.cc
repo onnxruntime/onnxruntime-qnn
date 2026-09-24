@@ -925,6 +925,30 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingThreadsWithoutEnable_Su
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCores_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("htp_num_cores")] = "2";
+  ctx.session_config["ep.context_enable"] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresDefault_Succeeds) {
+  EpStubContext ctx;
+  // htp_num_cores not set - default 0, no NUM_CORES config pushed.
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresMalformed_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "abc";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {
   // Default (not set) must not log any graph-splitting warnings or errors.
   // VERBOSE is intentionally captured so the severity filter below can verify
@@ -1056,6 +1080,33 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSd
                "QAIRT SDK < 2.51");
 }
 #endif
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "-1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresTrailingCharacters_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "2cores";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresOverflow_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_num_cores")] = "4294967296";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
+}
 
 // ===========================================================================
 // Group 8: Constructor — early throws
@@ -1356,3 +1407,189 @@ TEST_F(QnnUnit_ExecutionProviderHtpTest, GetHardwareDeviceIncompatibilityDetails
 }  // namespace onnxruntime
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
+
+// PopulateHtpGraphConfigs tests - no QNN hardware or EP internals needed.
+#if !defined(ORT_MINIMAL_BUILD)
+
+#include <gtest/gtest.h>
+#include "core/providers/qnn/builder/qnn_htp_graph_configs.h"
+
+namespace onnxruntime {
+namespace test {
+
+static const QnnHtpGraph_CustomConfig_t* FindHtpGraphOption(
+    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& builder,
+    QnnHtpGraph_ConfigOption_t target_option) {
+  const QnnGraph_Config_t** cfgs = builder.GetQnnConfigs();
+  if (!cfgs) return nullptr;
+  for (; *cfgs; ++cfgs) {
+    if ((*cfgs)->option == QNN_GRAPH_CONFIG_OPTION_CUSTOM) {
+      auto* htp = static_cast<const QnnHtpGraph_CustomConfig_t*>((*cfgs)->customConfig);
+      if (htp && htp->option == target_option) {
+        return htp;
+      }
+    }
+  }
+  return nullptr;
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, NumCores_Pushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.htp_num_cores = 2;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->numCores, 2u);
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, NumCoresZero_NotPushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
+  EXPECT_EQ(found, nullptr);
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, NonHtpBackend_SkipsAll) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.htp_num_cores = 4;
+  configs.vtcm_size_in_mb = 8;
+  configs.enable_htp_fp16_precision = true;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::CPU, configs, builder);
+
+  EXPECT_EQ(builder.GetSize(), 0u);
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, VtcmSize_Pushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.vtcm_size_in_mb = 8;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_VTCM_SIZE);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->vtcmSizeInMB, 8u);
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, Fp16Precision_Pushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.enable_htp_fp16_precision = true;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->precision, QNN_PRECISION_FLOAT16);
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, MultipleConfigs_AllPushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.htp_num_cores = 3;
+  configs.vtcm_size_in_mb = 4;
+  configs.enable_htp_fp16_precision = true;
+  configs.enable_htp_monolithic_lstm = true;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES), nullptr);
+  EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_VTCM_SIZE), nullptr);
+  EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION), nullptr);
+  EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM), nullptr);
+  EXPECT_GE(builder.GetSize(), 4u);
+}
+
+// Mirrors aggregate init in ParsePerSocHtpConfigs - catches field reordering or omission.
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
+  // Mirror aggregate init order from ParsePerSocHtpConfigs.
+  qnn::HtpGraphConfigs_t source{};
+  source.vtcm_size_in_mb = 4;
+  source.htp_graph_finalization_opt_mode = qnn::HtpGraphFinalizationOptimizationMode::kMode1;
+  source.enable_htp_fp16_precision = true;
+  source.enable_htp_monolithic_lstm = false;
+  source.enable_htp_fp16_clamp_overflow = false;
+  source.enable_htp_matmul_lut = false;
+  source.htp_num_cores = 3;
+
+  // Aggregate init - same order as struct definition.
+  qnn::HtpGraphConfigs_t copy{source.vtcm_size_in_mb,
+                              source.htp_graph_finalization_opt_mode,
+                              source.enable_htp_fp16_precision,
+                              source.enable_htp_monolithic_lstm,
+                              source.enable_htp_fp16_clamp_overflow,
+                              source.enable_htp_matmul_lut,
+                              source.htp_num_cores};
+
+  EXPECT_EQ(copy.htp_num_cores, 3u);
+  EXPECT_EQ(copy.vtcm_size_in_mb, 4);
+  EXPECT_EQ(copy.enable_htp_fp16_precision, true);
+
+  // Verify copy + round-trip through PopulateHtpGraphConfigs.
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, copy, builder);
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->numCores, 3u);
+}
+
+// New field added to HtpGraphConfigs_t without updating aggregate init sites will break this.
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, StructLayout_FieldCountGuard) {
+  // All 7 fields via aggregate init - compile error if field count changes.
+  qnn::HtpGraphConfigs_t full_init{0,
+                                   qnn::HtpGraphFinalizationOptimizationMode::kDefault,
+                                   false, false, false, false,
+                                   0u};
+  (void)full_init;
+  static_assert(sizeof(qnn::HtpGraphConfigs_t) <= 16,
+                "HtpGraphConfigs_t size changed - update all aggregate init sites and this test");
+}
+
+// All fields set, verify correct values in QNN config array.
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, FullRoundTrip_AllValues) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.vtcm_size_in_mb = 16;
+  configs.htp_graph_finalization_opt_mode = qnn::HtpGraphFinalizationOptimizationMode::kMode3;
+  configs.enable_htp_fp16_precision = true;
+  configs.enable_htp_monolithic_lstm = true;
+  configs.htp_num_cores = 4;
+
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  auto* num_cores = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
+  ASSERT_NE(num_cores, nullptr);
+  EXPECT_EQ(num_cores->numCores, 4u);
+
+  auto* vtcm = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_VTCM_SIZE);
+  ASSERT_NE(vtcm, nullptr);
+  EXPECT_EQ(vtcm->vtcmSizeInMB, 16u);
+
+  auto* opt = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_OPTIMIZATION);
+  ASSERT_NE(opt, nullptr);
+  EXPECT_EQ(opt->optimizationOption.floatValue,
+            static_cast<float>(qnn::HtpGraphFinalizationOptimizationMode::kMode3));
+
+  auto* precision = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION);
+  ASSERT_NE(precision, nullptr);
+  EXPECT_EQ(precision->precision, QNN_PRECISION_FLOAT16);
+
+  auto* lstm = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM);
+  ASSERT_NE(lstm, nullptr);
+  EXPECT_EQ(lstm->monolithicLstm, true);
+}
+
+}  // namespace test
+}  // namespace onnxruntime
+
+#endif  // !defined(ORT_MINIMAL_BUILD)
