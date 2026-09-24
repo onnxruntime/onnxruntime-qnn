@@ -99,7 +99,16 @@ const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi&
 }
 
 bool IsInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
-  return value_info != nullptr && GetInitializerFromValueInfo(graph, ort_api, value_info) != nullptr;
+  if (value_info == nullptr || GetInitializerFromValueInfo(graph, ort_api, value_info) == nullptr) {
+    return false;
+  }
+
+  // An overridable initializer (ONNX IR version >= 4, default value for a matching graph
+  // input) can be overridden with a dynamic feed at inference time, so it is not truly
+  // static. Only a constant initializer is safe to hand to FullyConnected as a static bias.
+  bool is_constant_initializer = false;
+  return ort_api.ValueInfo_IsConstantInitializer(value_info, &is_constant_initializer) == nullptr &&
+         is_constant_initializer;
 }
 
 bool IsConstantOrInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
@@ -368,6 +377,7 @@ bool IsGemmWeightBlockQuantized(const OrtApi& ort_api, const OrtValueInfo* weigh
 // transposed B, non-FC bias shapes, NATIVE bias, and BQ weight.
 bool IsGemmSafeForAbsorbedReshape(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* gemm_node) {
   OrtNodeAttrHelper attrs(*gemm_node);
+  if (attrs.Get("transA", static_cast<int64_t>(0)) != 0) return false;
   if (attrs.Get("transB", static_cast<int64_t>(0)) != 0) return false;
 
   size_t num_inputs = 0;
