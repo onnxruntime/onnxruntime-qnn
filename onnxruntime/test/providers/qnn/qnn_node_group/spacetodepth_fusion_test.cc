@@ -266,7 +266,8 @@ GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& inpu
                                                 int64_t block_height,
                                                 int64_t block_width,
                                                 const std::vector<int64_t>& perm,
-                                                bool add_side_conv = true) {
+                                                bool add_side_conv = true,
+                                                bool collapse_unit_batch = false) {
   return [=](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("spacetodepth_bare_rtr_graph");
 
@@ -281,7 +282,10 @@ GetTestModelFn BuildBareRTRSpaceToDepthTestCase(const std::vector<int64_t>& inpu
     const int64_t w_div = w / block_width;
 
     // Reshape1: [N, C, H, W] -> [N, C, H/bh, bh, W/bw, bw]
-    builder.Make1DInitializer<int64_t>("reshape1_shape", {n, c, h_div, block_height, w_div, block_width});
+    const std::vector<int64_t> reshape1_shape = collapse_unit_batch
+                                                    ? std::vector<int64_t>{c, h_div, block_height, w_div, block_width}
+                                                    : std::vector<int64_t>{n, c, h_div, block_height, w_div, block_width};
+    builder.Make1DInitializer<int64_t>("reshape1_shape", reshape1_shape);
     builder.AddNode("Reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
 
     // Transpose: 6D permutation (CRD or DCR)
@@ -744,6 +748,30 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_Float_CRD) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", 1);
   // 4 = side-Conv NCHW<->NHWC pair (LT) + fused S2D NCHW<->NHWC pre/post pair.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 4);
+}
+
+// Regression test for ORT 1.29's unit-batch collapse. The rank-5 intermediate
+// shape and permutation are normalized back to the rank-6 SpaceToDepth form.
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_CollapsedBatch_Float_CRD) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "SpaceToDepthFusion_BareRTR_CollapsedBatch_Float_CRD_HTP";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions("htp");
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 3, 4, 4}, 2, 2,
+                                                   /*rank-5 CRD perm=*/{0, 2, 4, 1, 3},
+                                                   /*add_side_conv=*/true,
+                                                   /*collapse_unit_batch=*/true),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
 }
 
 // Tripwire: truly-bare RTR (no side layout-sensitive op) is currently unreachable
