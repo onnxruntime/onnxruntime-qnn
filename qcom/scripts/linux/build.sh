@@ -40,6 +40,8 @@ warnings_as_errors=1
 build_java=
 build_archive=
 enable_coverage=
+enable_qnn_internal_ut_symbols=
+enable_qnn_accuracy_ut=
 enable_asan=
 for i in "$@"; do
   case $i in
@@ -73,6 +75,14 @@ for i in "$@"; do
       ;;
     --enable-coverage)
       enable_coverage=1
+      shift
+      ;;
+    --enable-qnn-internal-ut-symbols)
+      enable_qnn_internal_ut_symbols=1
+      shift
+      ;;
+    --enable-qnn-accuracy-ut)
+      enable_qnn_accuracy_ut=1
       shift
       ;;
     --ort-home=*)
@@ -336,6 +346,14 @@ else
 
     if [ -n "${enable_coverage}" ]; then
       common_args+=(--cmake_extra_defines "ENABLE_COVERAGE:BOOL=ON")
+    fi
+
+    if [ -n "${enable_qnn_internal_ut_symbols}" ]; then
+      common_args+=(--cmake_extra_defines "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL=ON")
+    fi
+
+    if [ -n "${enable_qnn_accuracy_ut}" ]; then
+      common_args+=(--cmake_extra_defines "onnxruntime_QNN_ENABLE_ACCURACY_UT:BOOL=ON")
     fi
 
     if [ -n "${enable_asan}" ]; then

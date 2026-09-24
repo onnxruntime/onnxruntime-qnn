@@ -302,7 +302,15 @@ TEST_F(QnnHTPBackendTests, TopK_QDQ_U8_FoldsQDQIntoQuantizedTopK) {
                        BuildQDQTopKTestCase<uint8_t>(input_def, k_def, {}),
                        provider_options,
                        /*opset_version=*/19,
-                       ExpectedEPNodeAssignment::All);
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       {},
+                       std::nullopt,
+                       nullptr,
+                       nullptr,
+                       /*skip_v68_qdq=*/false);
 
   // TestQDQModelAccuracy issues GTEST_SKIP() internally on HTP arch <= 68 (see
   // CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64 in qnn_test_utils.h). GTEST_SKIP in a
