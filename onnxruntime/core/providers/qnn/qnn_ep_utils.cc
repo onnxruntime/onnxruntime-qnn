@@ -98,22 +98,26 @@ const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi&
   return GetConstantInitializer(graph, ort_api, name);
 }
 
-bool IsInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
+bool IsConstantInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
   if (value_info == nullptr || GetInitializerFromValueInfo(graph, ort_api, value_info) == nullptr) {
     return false;
   }
 
-  // An overridable initializer (ONNX IR version >= 4, default value for a matching graph
-  // input) can be overridden with a dynamic feed at inference time, so it is not truly
-  // static. Only a constant initializer is safe to hand to FullyConnected as a static bias.
+  // Graph_GetInitializers also returns overridable initializers (ONNX IR version >= 4, default
+  // value for a matching graph input); those can be overridden with a dynamic feed at inference
+  // time, so only a true constant initializer is safe to hand to FullyConnected as a static bias.
   bool is_constant_initializer = false;
-  return ort_api.ValueInfo_IsConstantInitializer(value_info, &is_constant_initializer) == nullptr &&
-         is_constant_initializer;
+  OrtStatus* status = ort_api.ValueInfo_IsConstantInitializer(value_info, &is_constant_initializer);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+  return is_constant_initializer;
 }
 
 bool IsConstantOrInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
   if (value_info == nullptr) return false;
-  if (IsInitializerValueInfo(graph, ort_api, value_info)) return true;
+  if (IsConstantInitializerValueInfo(graph, ort_api, value_info)) return true;
 
   const OrtNode* producer = nullptr;
   if (ort_api.ValueInfo_GetValueProducer(value_info, &producer, nullptr) != nullptr || producer == nullptr) {

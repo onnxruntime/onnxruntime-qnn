@@ -977,24 +977,27 @@ GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& c
                                                                   act_qp.zero_point, /*use_contrib_qdq=*/true);
         builder.AddNode("bias_mm", "MatMul", {bias_mm_dq_a, "bias_mm_w"}, {"bias_native"}, kOnnxDomain);
         gemm_inputs.push_back("bias_native");
+      } else if (cfg.bias_is_overridable_initializer) {
+        // Build an overridable initializer: the same tensor name appears as both a graph input and
+        // an initializer. The runtime feed, not the initializer default, must determine the bias.
+        const std::vector<int64_t> bias_shape = cfg.bias_shape.value_or(std::vector<int64_t>{cfg.N});
+        const size_t num_bias_elems = SizeOfShape(bias_shape);
+        const std::vector<int32_t> default_bias(num_bias_elems, 0);
+        std::vector<int32_t> override_bias(num_bias_elems);
+        for (size_t i = 0; i < num_bias_elems; ++i) {
+          override_bias[i] = static_cast<int32_t>(1000 + i);
+        }
+        builder.MakeInitializer<int32_t>("bias", bias_shape, default_bias);
+        builder.MakeInput<int32_t>("bias", bias_shape, override_bias);
+        builder.AddDequantizeLinearNode<int32_t>("bias_dq", "bias", act_qp.scale * wt_qp.scale, 0,
+                                                 "bias_dq_out", /*use_contrib_qdq=*/true);
+        gemm_inputs.push_back("bias_dq_out");
       } else {
         const std::vector<int64_t> bias_shape = cfg.bias_shape.value_or(std::vector<int64_t>{cfg.N});
         TestInputDef<float> bias_def(bias_shape, cfg.bias_is_initializer,
                                      GetFloatDataInRange(-0.2f, 0.2f, SizeOfShape(bias_shape)));
         const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
                                                          act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
-        if (cfg.bias_is_overridable_initializer) {
-          // ONNX IR version >= 4: an initializer that also appears as a graph input can be
-          // overridden with a dynamic feed at runtime, so it is not a constant initializer.
-          ONNX_NAMESPACE::ValueInfoProto* bias_input = builder.graph_->add_input();
-          bias_input->set_name("bias");
-          ONNX_NAMESPACE::TypeProto* type_proto = bias_input->mutable_type();
-          type_proto->mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_INT32);
-          ONNX_NAMESPACE::TensorShapeProto* shape_proto = type_proto->mutable_tensor_type()->mutable_shape();
-          for (int64_t dim : bias_shape) {
-            shape_proto->add_dim()->set_dim_value(dim);
-          }
-        }
         gemm_inputs.push_back(bias_dq);
       }
     }
@@ -1063,10 +1066,10 @@ TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_DynamicQDQBias_NotAbsorbed) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
-// Negative gate: an overridable initializer (ONNX IR>=4 initializer that also appears as a
-// graph input) is not a constant initializer and can be overridden with a dynamic feed at
-// runtime, so it must NOT be absorbed as FullyConnected bias.
-TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_OverridableInitializerBias_NotAbsorbed) {
+// Negative gate: direct Gemm with an overridable QDQ bias must NOT be absorbed as
+// FullyConnected bias. Although the bias has an initializer default, its matching graph
+// input can override the value at runtime. The regular QDQ Gemm path can still handle it.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_OverridableQDQBias_NotAbsorbed) {
   DirectGemmReshapeQConfig cfg;
   cfg.bias_is_overridable_initializer = true;
   RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
