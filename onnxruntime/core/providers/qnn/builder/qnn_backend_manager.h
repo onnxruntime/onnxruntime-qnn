@@ -49,6 +49,10 @@
 #endif
 
 namespace onnxruntime {
+namespace test {
+class QnnBackendManagerTestPeer;
+}  // namespace test
+
 namespace qnn {
 
 // Sets the QNN context priority config from a ContextPriority enum value.
@@ -147,6 +151,7 @@ struct QnnBackendManagerConfig {
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
   friend class QnnBackendSystemDlcPlugin;
+  friend class ::onnxruntime::test::QnnBackendManagerTestPeer;
 
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally

@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -1068,6 +1069,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
 
   std::vector<std::thread> threads;
   std::atomic<int> run_exceptions{0};
+  std::atomic<int> output_mismatches{0};
   threads.reserve(kNumThreads);
   for (int t = 0; t < kNumThreads; ++t) {
     threads.emplace_back([&, t]() {
@@ -1075,6 +1077,10 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
       try {
         for (int r = 0; r < kRunsPerThread; ++r) {
           memcpy(tb.x_data.get(), tb.x_values.data(), sizeof(float) * tb.x_values.size());
+          auto* y_values = reinterpret_cast<float*>(tb.y_data.get());
+          for (size_t i = 0; i < tb.expected_y.size(); ++i) {
+            y_values[i] = -1.0f;
+          }
 
           Ort::Value bound_x = Ort::Value::CreateTensor(
               info_shared, reinterpret_cast<float*>(tb.x_data.get()),
@@ -1087,6 +1093,14 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
           binding.BindInput("X", bound_x);
           binding.BindOutput("Y", bound_y);
           session.Run(Ort::RunOptions{}, binding);
+
+          for (size_t i = 0; i < tb.expected_y.size(); ++i) {
+            if (!std::isfinite(y_values[i]) ||
+                std::abs(y_values[i] - tb.expected_y[i]) > y_max_abs_err) {
+              output_mismatches.fetch_add(1);
+              break;
+            }
+          }
         }
       } catch (const std::exception&) {
         run_exceptions.fetch_add(1);
@@ -1098,18 +1112,11 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_concurrent_run) {
     th.join();
   }
 
-  // Primary assertion: no crashes or exceptions under contention. Each Run
-  // must complete without throwing; the QNN HTP backend serializes
-  // graphExecute via graph_exec_mutex_, and the mem-handle manager is
-  // protected by mem_handles_mutex_, so neither should deadlock or throw.
-  //
-  // Note: output correctness is not asserted here because the QNN HTP
-  // backend may not re-compute when the same compiled graph is invoked with
-  // new mem-handles from back-to-back serialized calls — this is a QNN
-  // backend behaviour, not an ORT EP correctness issue.
   EXPECT_EQ(run_exceptions.load(), 0)
       << "Run() threw an exception in one or more threads; "
          "possible crash, deadlock, or assertion failure under concurrent access.";
+  EXPECT_EQ(output_mismatches.load(), 0)
+      << "One or more concurrent runs returned incorrect output.";
 }
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && !BUILD_QNN_EP_STATIC_LIB && ARM64

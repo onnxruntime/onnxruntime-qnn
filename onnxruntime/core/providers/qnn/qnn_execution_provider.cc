@@ -1551,9 +1551,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   const bool reusing_shared_backend_manager = shared_qnn_backend_manager != nullptr;
   if (reusing_shared_backend_manager) {
     qnn_backend_manager_ = shared_qnn_backend_manager;
-    // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
-    // previous session.
-    qnn_backend_manager_->ResetLogger(logger_);
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
@@ -1654,6 +1651,10 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
       throw std::runtime_error(message);
     }
+
+    // Update the shared manager only after all compatibility checks pass. If
+    // construction fails, it must keep the logger owned by the existing session.
+    qnn_backend_manager_->ResetLogger(logger_);
   } else {
     // An allocator mode belongs to the QNN context. A manager that is later
     // shared must retain this first session's mode instead of allowing a

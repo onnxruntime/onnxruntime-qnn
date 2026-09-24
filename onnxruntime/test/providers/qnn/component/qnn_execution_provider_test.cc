@@ -45,6 +45,13 @@
 namespace onnxruntime {
 namespace test {
 
+class QnnBackendManagerTestPeer {
+ public:
+  static const Ort::Logger* GetLogger(const qnn::QnnBackendManager& manager) {
+    return manager.logger_ptr_;
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -632,6 +639,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllo
   // session before constructing a second session that requests NONE.
   auto shared_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
   ASSERT_NE(shared_manager, nullptr);
+  const Ort::Logger* const owner_logger = QnnBackendManagerTestPeer::GetLogger(*shared_manager);
   shared_manager->SetQnnAllocatorType(qnn::QnnAllocatorType::HTP_SHARED);
 
   EpStubContext consumer_ctx;
@@ -644,6 +652,9 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllo
   } catch (const std::runtime_error& e) {
     EXPECT_NE(std::string{e.what()}.find("Cannot share QNN backend manager"), std::string::npos);
   }
+
+  EXPECT_EQ(QnnBackendManagerTestPeer::GetLogger(*shared_manager), owner_logger)
+      << "A rejected session must not replace the shared manager's valid logger.";
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError) {
