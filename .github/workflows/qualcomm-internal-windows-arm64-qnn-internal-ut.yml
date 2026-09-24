@@ -1,0 +1,97 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Windows ARM64 QNN Unit Tests
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      golden_source_run_id:
+        description: "Optional Actions run ID containing a snapshot-goldens artifact"
+        required: false
+        type: string
+      golden_artifact_name:
+        description: "Artifact name for the optional snapshot golden archive"
+        required: false
+        default: "goldens-zip-bca30fd7d793c9ac8fcc2b4baa99bb9c0c33ddf8"
+        type: string
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  build:
+    if: ${{ github.event_name != 'pull_request' || github.head_ref == 'dev/tzuhwei/windows-arm64-qnn-ut-internal-symbols' }}
+    name: Build Windows ARM64 QNN internal-symbol tests
+    runs-on: ["self-hosted", "X64", "Windows", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build and archive
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version None
+          build_ort_windows_arm64_internal_symbols
+      - name: Upload Windows ARM64 test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-unit-windows-arm64-inputs
+          path: build/windows-arm64-internal-symbols/Release/Release/
+          if-no-files-found: error
+
+  test:
+    name: Test Windows ARM64 QNN internal-symbol tests
+    needs: build
+    runs-on: ["self-hosted", "ARM64", "Windows", "Test"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Download Windows ARM64 test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-unit-windows-arm64-inputs
+          path: build/windows-arm64/Release/Release
+      - name: Download snapshot goldens
+        if: ${{ inputs.golden_source_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: onnxruntime/onnxruntime-qnn
+          run-id: ${{ inputs.golden_source_run_id }}
+          name: ${{ inputs.golden_artifact_name }}
+          path: snapshot-golden-artifact
+      - name: Run QNN unit tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testBin = Get-ChildItem 'build/windows-arm64/Release' -Recurse -Filter onnxruntime_provider_test.exe |
+            Select-Object -First 1
+          if ($null -eq $testBin) { throw 'onnxruntime_provider_test.exe not found' }
+
+          $env:PATH = "$($testBin.DirectoryName);$env:PATH"
+          if ('${{ inputs.golden_source_run_id }}' -ne '') {
+            Expand-Archive snapshot-golden-artifact/goldens.zip -DestinationPath snapshot-goldens
+            $env:QNN_UT_SNAPSHOT_GOLDEN_DIR = Join-Path $PWD 'snapshot-goldens'
+          }
+          Push-Location $testBin.DirectoryName
+          try {
+            $accuracyTests = & $testBin.FullName '--gtest_list_tests' '--gtest_filter=*Accuracy*'
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($accuracyTests -join "`n"))) {
+              throw 'No QNN Accuracy-tier tests were listed'
+            }
+            $accuracyTests
+
+            if ($env:QNN_UT_SNAPSHOT_GOLDEN_DIR) {
+              & $testBin.FullName '--gtest_filter=QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*' '--gtest_brief=1'
+              if ($LASTEXITCODE -ne 0) { throw 'QNN snapshot tests failed against the supplied golden store' }
+            }
+
+            & $testBin.FullName '--gtest_filter=QnnUnit_*:QnnInteg_*' '--gtest_brief=1'
+            if ($LASTEXITCODE -ne 0) { throw 'QNN unit and integration tests failed' }
+          }
+          finally { Pop-Location }
