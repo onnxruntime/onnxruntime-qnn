@@ -296,7 +296,9 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   if (!validate) {
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_input)), "Failed to add input");
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_output)), "Failed to add output");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(onnxruntime::qnn::utils::UniqueNameGenerator().New(*transpose_tail),
+    const std::string_view node_name_suffix = has_head_transpose ? "" : "_from_reshape";
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(onnxruntime::qnn::utils::UniqueNameGenerator().New(
+                                                      *transpose_tail, node_name_suffix),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_CHANNEL_SHUFFLE,
                                                   {cs_input_def.name},
