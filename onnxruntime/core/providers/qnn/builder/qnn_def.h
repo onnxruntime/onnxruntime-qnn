@@ -30,15 +30,16 @@ namespace qnn {
 #define QNN_SYSTEM_DLC_API_ENABLED
 #endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
 
-// HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
+// HTP MatMul LUT is currently enabled only on Windows with QAIRT SDK 2.51+.
 // QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+#if defined(_WIN32) && defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 1
 #else
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 0
 #endif
 
+// HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
 #if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49))
 #define QNN_HTP_GRAPH_SPLITTING_AVAILABLE
@@ -88,6 +89,13 @@ namespace qnn {
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 #define QNN_HTP_NATIVE_BQ_AVAILABLE
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+
+// Cross device prepare is only available on WoS starting from QAIRT 2.51 (or QNN API 2.40).
+#if defined(_WIN32) && QNN_ARCH_ARM64
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
 
 // QNN only support subset of POSIX of dlopen/dlsym/dladdr/dlerror/dlclose
 // except the following flags for dlopen, others should be done only
