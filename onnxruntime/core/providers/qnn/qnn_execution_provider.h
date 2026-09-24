@@ -296,6 +296,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  OrtMemoryInfo* registered_memory_info_ = nullptr;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;

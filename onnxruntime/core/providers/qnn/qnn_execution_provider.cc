@@ -1486,17 +1486,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
-  if (
-      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1) &&
-      SharedContext::GetInstance().GetSharedQnnBackendManager()) {
+  const bool use_shared_backend_mgr =
+      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
+  if (use_shared_backend_mgr && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
     // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
     // previous session.
     qnn_backend_manager_->ResetLogger(logger_);
-    // Clear the QnnBackendManager from singleton to stop the resource share
-    if (stop_share_ep_contexts_) {
-      SharedContext::GetInstance().ResetSharedQnnBackendManager();
-    }
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
@@ -1514,10 +1510,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
+    // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
+    // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
+    // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
+    // all sharing paths is deferred to after SetupBackend completes (in GetCapabilityImpl).
     if (htp_share_resource_optimization_ == 1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
+  // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
+  // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -2266,6 +2268,14 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   context_bin_map.clear();
 
+  // Deferred terminator reset for both htp_share_resource_optimization and share_ep_contexts:
+  // the singleton must remain populated during SetupBackend because ContextCreateAsyncCallback
+  // retrieves the backend manager from it. Now that SetupBackend has completed it is safe to
+  // clear the slot, regardless of whether setup succeeded.
+  if (ep->stop_share_ep_contexts_) {
+    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+  }
+
   if (!rt.IsOK()) {
     const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
@@ -2942,7 +2952,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   }
 
   if (share_ep_contexts_ &&
-      !stop_share_ep_contexts_ &&
+      !stop_share_ep_contexts_ &&  // load-bearing: prevents re-publishing after the ctor terminator reset
       nullptr == SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     if (!SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_)) {
       return ort_api.CreateStatus(ORT_EP_FAIL, "Failed to set shared QnnBackendManager.");
@@ -3390,14 +3400,33 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
+  auto allocator_type = ep->qnn_allocator_type_;
+
+  // If previous EP session with same device was initialized with shared memory allocator,
+  // then create and return an allocator of the same type. Returning nullptr in this
+  // situation will result in a seg fault.
+  // registered_memory_info_ and registered_allocator_type_ are set by the QNN EP factory
+  // All allocators are destroyed/freed by the QNN EP factory
+  if (allocator_type == qnn::QnnAllocatorType::NONE && memory_info != nullptr &&
+      memory_info == ep->registered_memory_info_) {
+    allocator_type = ep->registered_allocator_type_;
+  }
+
+  if (qnn::IsHtpSharedMemoryAllocator(allocator_type)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
+    if (ep->rpcmem_library_ == nullptr) {
+      try {  // RpcMemLibrary throws; this function is noexcept
+        ep->rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+      } catch (const std::exception& e) {
+        return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
+      }
+    }
 
     auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
 #ifdef _WIN32
-  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+  else if (qnn::IsDx12SharedMemoryAllocator(allocator_type)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
 
     OrtStatus* status = nullptr;
