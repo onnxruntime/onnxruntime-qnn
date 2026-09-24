@@ -3627,24 +3627,8 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  auto allocator_type = ep->qnn_allocator_type_;
-
-  // If previous EP session with same device was initialized with shared memory allocator,
-  // then create and return an allocator of the same type. Returning nullptr in this
-  // situation will result in a seg fault.
-  // registered_memory_info_ and registered_allocator_type_ are set by the QNN EP factory
-  // All allocators are destroyed/freed by the QNN EP factory
-  if (allocator_type == qnn::QnnAllocatorType::NONE && memory_info != nullptr &&
-      memory_info == ep->registered_memory_info_) {
-    allocator_type = ep->registered_allocator_type_;
-  }
-
-  if (qnn::IsHtpSharedMemoryAllocator(allocator_type)) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
-    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, ep->rpcmem_library_, allocator);
-  }
 #ifdef _WIN32
-  else if (qnn::IsDx12SharedMemoryAllocator(allocator_type)) {
+  const auto create_dx12_allocator = [&]() -> OrtStatus* {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
 
     OrtStatus* status = nullptr;
@@ -3655,9 +3639,27 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     }
 
     *allocator = dx12_allocator.release();
+    return nullptr;
+  };
+#endif
+
+  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
+    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, ep->rpcmem_library_, allocator);
+  }
+#ifdef _WIN32
+  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+    return create_dx12_allocator();
   }
 #endif  // _WIN32
   else if (ep->ort_api.MemoryInfoGetDeviceMemType(memory_info) == OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+#ifdef _WIN32
+    // Allocator metadata remains on an OrtEpDevice after the first opted-in
+    // session. Keep later GPU sessions backend-correct without enabling binding.
+    if (ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::GPU) {
+      return create_dx12_allocator();
+    }
+#endif
     // The factory advertises QnnHtpShared so OrtEnv can create it before a
     // session exists. A session that did not opt into zero-copy may still ask
     // for that allocator explicitly; create it without changing this session's

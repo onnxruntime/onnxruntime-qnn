@@ -213,6 +213,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
         factory->host_accessible_memory_info_ != nullptr) {
       RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
           ep_device, factory->host_accessible_memory_info_.get()));
+    } else if (device_type == OrtHardwareDeviceType_GPU) {
+      factory->gpu_ep_devices_.push_back(ep_device);
     }
 
     return status;
@@ -393,19 +395,15 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
-  if (qnn_ep->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
-    for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+  // Preserve the existing session-level DX12 allocator path. Unlike HTP, GPU
+  // does not advertise this memory info before session creation because the
+  // factory cannot distinguish the two allocators while they share it.
+  if (qnn::IsDx12SharedMemoryAllocator(qnn_ep->qnn_allocator_type_) &&
+      factory->host_accessible_memory_info_ != nullptr) {
+    for (OrtEpDevice* ep_device : factory->gpu_ep_devices_) {
+      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
+          ep_device, factory->host_accessible_memory_info_.get()));
     }
-    factory->registered_allocator_type_ = qnn_ep->qnn_allocator_type_;
-  }
-
-  if (factory->registered_allocator_type_ != qnn::QnnAllocatorType::NONE) {
-    // Inform EP if a previous EP session has already enabled shared memory of some kind
-    // Note: if the factory's registered allocator type is not None, a new allocator of
-    // the registered type will be created
-    qnn_ep->registered_allocator_type_ = factory->registered_allocator_type_;
-    qnn_ep->registered_memory_info_ = factory->host_accessible_memory_info_.get();
   }
 
   factory->qnn_ep_ = qnn_ep.get();

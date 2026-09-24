@@ -105,13 +105,12 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+  std::vector<OrtEpDevice*> gpu_ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // Actual NPU hardware that ORT Core did not enumerate (e.g. Makena without DXCore).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
 
-  // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
-  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
   // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
   // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
   // domain.Add(op*) does NOT transfer ownership; op objects must be kept alive here.
