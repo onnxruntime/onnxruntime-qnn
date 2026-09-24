@@ -411,8 +411,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
     return nullptr;
   }
@@ -460,8 +458,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
     return nullptr;
   }
@@ -514,8 +510,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
     return nullptr;
   }

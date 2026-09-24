@@ -1028,6 +1028,23 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSd
 }
 #endif
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableMatmulToFcEnabled_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("disable_matmul_to_fc")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DisableMatmulToFcInvalidValue_LogsVerbose) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("disable_matmul_to_fc")] = "x";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.disable_matmul_to_fc");
+}
+
 // ===========================================================================
 // Group 8: Constructor — early throws
 // ===========================================================================

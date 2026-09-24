@@ -4,10 +4,12 @@
 #include "qnn_test_utils.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <unordered_map>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "gtest/gtest.h"
 
@@ -363,6 +365,71 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
+
+// Tests for the `disable_matmul_to_fc` session config option on QLinearMatMul (AISW-202299).
+// When set to "1", the QNN EP routes static-weight QLinearMatMul to QNN_OP_MAT_MUL instead
+// of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type.
+
+// Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
+// disable_matmul_to_fc flag is set.
+TEST_F(QnnCPUBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "QLinearMatMulDisableFC_2D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildQLinearMatMulTestCase<uint8_t, uint8_t, uint8_t>(
+          {4, 8}, {8, 3}, /*b_is_initializer=*/true),
+      provider_options, /*opset=*/10,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.04f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Regression guard: without the flag, the default behaviour (FullyConnected) is preserved.
+TEST_F(QnnCPUBackendTests, QLinearMatMulDefaultUsesFC) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "QLinearMatMulDefaultUsesFC";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+  // disable_matmul_to_fc is intentionally NOT set; default is false (FullyConnected).
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // Same shapes as QLinearMatMulDisableFC_2D_StaticWeight.
+  RunQnnModelTest(
+      BuildQLinearMatMulTestCase<uint8_t, uint8_t, uint8_t>(
+          {4, 8}, {8, 3}, /*b_is_initializer=*/true),
+      provider_options, /*opset=*/10,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.04f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "MatMul", 0);
+}
 
 }  // namespace test
 }  // namespace onnxruntime

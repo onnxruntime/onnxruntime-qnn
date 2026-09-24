@@ -196,10 +196,13 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
                                                      Qnn_DataType_t qnn_dtype_a,
                                                      Qnn_DataType_t qnn_dtype_b,
                                                      const QnnQuantParamsWrapper& quant_a) {
+  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
+    return false;
+  }
+
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
   // Validation crashes if QNN FullyConnected is used in QNN SDK versions 2.26 - 2.27.
   // Just use QNN MatMul for these older QNN SDK versions.
-  ORT_UNUSED_PARAMETER(qnn_model_wrapper);
   ORT_UNUSED_PARAMETER(node_unit);
   ORT_UNUSED_PARAMETER(shape_a);
   ORT_UNUSED_PARAMETER(shape_b);
@@ -220,9 +223,6 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
   // Don't use FullyConnected if both inputs are dynamic and 16-bit quantized (QNN validation fails).
   use_fully_connected = use_fully_connected && !(utils::IsQuant16bit(qnn_dtype_a) && !a_is_initializer &&
                                                  utils::IsQuant16bit(qnn_dtype_b) && !b_is_initializer);
-  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
-    return false;
-  }
   return use_fully_connected;
 #endif
 }

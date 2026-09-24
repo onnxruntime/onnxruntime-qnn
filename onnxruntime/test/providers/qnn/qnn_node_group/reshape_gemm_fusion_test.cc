@@ -858,6 +858,34 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_QDQ_NoFusion) {
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
 }
 
+// Test: Fusion should NOT happen when disable_matmul_to_fc=1.
+// Verifies that TryFusion2/3/4 all respect the session option and fall back to
+// the standalone Gemm builder (which also checks the flag and routes to MatMul).
+TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DisableFC) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmFusion_Negative_DisableFC";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // Same graph as ReshapeGemmFusion_3D but with the flag set.
+  RunQnnModelTest(BuildReshapeGemmTestCase({1, 32, 64}, 64, 128),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  // Fusion must not fire: no FullyConnected, standalone Reshape + MatMul instead.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 0);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
