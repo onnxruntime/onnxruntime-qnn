@@ -104,6 +104,12 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                input_info_0.shape.size() >= 2 &&
                utils::IsQuant16bit(input_info_0.qnn_data_type);
 
+  // Suppress FullyConnected lowering if disabled by session options.
+  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
+    use_fully_connected = false;
+    return Ort::Status();
+  }
+
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
   // Validation crashes if use QNN FullyConnected in QNN SDK versions 2.26 - 2.27
   // Just use QNN MatMul for these older QNN SDK versions.

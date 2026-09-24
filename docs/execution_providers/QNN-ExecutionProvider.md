@@ -243,6 +243,11 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
 |`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
 
+|`"disable_matmul_to_fc"`|Description|
+|---|---|
+|`"0"`|Default. MatMul and Gemm operators are translated to QNN FullyConnected (weight transposed from [K,N] to [N,K] at session creation time).|
+|`"1"`|Enabled. MatMul and Gemm operators are kept as native QNN MatMul, eliminating host-side weight transposition. Reduces session creation time and peak host memory for large GenAI/MoE models.|
+
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
