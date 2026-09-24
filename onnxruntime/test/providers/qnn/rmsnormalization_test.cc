@@ -267,6 +267,21 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank4Scale_LeadingOnes) {
                      ExpectedEPNodeAssignment::All);
 }
 
+// FP32 model at FP16 precision: covers the FLOAT_32 ones-gamma that the FP16-model test does not.
+TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_StaticScale) {
+  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                     TestInputDef<float>({2, 1, 8}, true, GetFloatDataInRange(0.9f, 1.1f, 16)),
+                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                     ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_DynamicScale) {
+  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                     TestInputDef<float>({2, 1, 8}, false, GetFloatDataInRange(0.9f, 1.1f, 16)),
+                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                     ExpectedEPNodeAssignment::All);
+}
+
 // Quantized squeeze: exercises the scale's quant params being carried onto the squeezed tensor and
 // the dummy beta (SDK < 2.49) inheriting the post-squeeze rank.
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_QDQ_StaticScale) {

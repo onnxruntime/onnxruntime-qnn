@@ -42,6 +42,8 @@ std::optional<std::vector<uint32_t>> TrySqueezeLeadingOnesTo(const std::vector<u
 // RmsNorm(ones) * scale instead of rejecting the node.
 struct BroadcastScaleDecomposition {
   bool enabled = false;
+  Qnn_DataType_t data_type = QNN_DATATYPE_UNDEFINED;
+  std::vector<uint32_t> x_shape;
   std::vector<uint32_t> ones_shape;
 };
 
@@ -49,10 +51,10 @@ bool IsFloat32Or16(Qnn_DataType_t dtype) {
   return dtype == QNN_DATATYPE_FLOAT_32 || dtype == QNN_DATATYPE_FLOAT_16;
 }
 
-BroadcastScaleDecomposition GetBroadcastScaleDecomposition(const std::vector<uint32_t>& x_shape,
-                                                           const TensorInfo& x_info,
-                                                           const TensorInfo& scale_info,
-                                                           size_t axes_rank) {
+BroadcastScaleDecomposition PlanBroadcastScaleDecomposition(const std::vector<uint32_t>& x_shape,
+                                                            const TensorInfo& x_info,
+                                                            const TensorInfo& scale_info,
+                                                            size_t axes_rank) {
   BroadcastScaleDecomposition decomposition;
   if (TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank).has_value()) {
     return decomposition;
@@ -75,6 +77,8 @@ BroadcastScaleDecomposition GetBroadcastScaleDecomposition(const std::vector<uin
     return decomposition;
   }
   decomposition.enabled = true;
+  decomposition.data_type = x_info.qnn_data_type;
+  decomposition.x_shape = x_shape;
   return decomposition;
 }
 
@@ -106,6 +110,10 @@ class RMSNormalizationOpBuilder : public BaseOpBuilder {
   Ort::Status GetAxesRank(const QnnModelWrapper& qnn_model_wrapper,
                           const OrtNodeUnit& node_unit,
                           size_t& axes_rank) const ORT_MUST_USE_RESULT;
+  // Shared by ProcessInputs and ProcessAttributesAndOutputs so both halves agree on the node's form.
+  Ort::Status GetBroadcastScaleDecomposition(const QnnModelWrapper& qnn_model_wrapper,
+                                             const OrtNodeUnit& node_unit,
+                                             BroadcastScaleDecomposition& decomposition) const ORT_MUST_USE_RESULT;
 };
 
 Ort::Status RMSNormalizationOpBuilder::GetAxesRank(const QnnModelWrapper& qnn_model_wrapper,
@@ -117,6 +125,23 @@ Ort::Status RMSNormalizationOpBuilder::GetAxesRank(const QnnModelWrapper& qnn_mo
   int32_t axis = 0;
   RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, axis));
   axes_rank = input_shape.size() - static_cast<size_t>(axis);
+  return Ort::Status();
+}
+
+Ort::Status RMSNormalizationOpBuilder::GetBroadcastScaleDecomposition(
+    const QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnit& node_unit,
+    BroadcastScaleDecomposition& decomposition) const {
+  const auto& inputs = node_unit.Inputs();
+  TensorInfo x_info = {};
+  TensorInfo scale_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], x_info));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
+  size_t axes_rank = 0;
+  RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
+  std::vector<uint32_t> x_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, x_shape), "Cannot get shape of input 0");
+  decomposition = PlanBroadcastScaleDecomposition(x_shape, x_info, scale_info, axes_rank);
   return Ort::Status();
 }
 
@@ -184,14 +209,8 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   const std::optional<std::vector<uint32_t>> squeezed_shape =
       TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank);
 
-  TensorInfo x_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[X_IDX], x_info));
-  std::vector<uint32_t> x_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[X_IDX].shape, x_shape), "Cannot get shape of input 0");
-  const BroadcastScaleDecomposition decomposition =
-      squeezed_shape.has_value()
-          ? BroadcastScaleDecomposition{}
-          : GetBroadcastScaleDecomposition(x_shape, x_info, scale_info, axes_rank);
+  BroadcastScaleDecomposition decomposition;
+  RETURN_IF_ERROR(GetBroadcastScaleDecomposition(qnn_model_wrapper, node_unit, decomposition));
   RETURN_IF_NOT(squeezed_shape.has_value() || decomposition.enabled,
                 "QNN RMSNorm requires the scale rank to equal the number of normalized axes; this scale has "
                 "non-1 leading dimensions and cannot be squeezed to match.");
@@ -224,7 +243,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
       num_gamma_elems *= dim;
     }
     std::vector<uint8_t> ones_bytes;
-    if (x_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+    if (decomposition.data_type == QNN_DATATYPE_FLOAT_32) {
       constexpr float kOne = 1.0f;
       ones_bytes.resize(num_gamma_elems * sizeof(float));
       for (size_t i = 0; i < num_gamma_elems; ++i) {
@@ -241,7 +260,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
     const std::string ones_gamma_name = utils::UniqueNameGenerator().New(scale_name, "_ones");
     QnnTensorWrapper ones_gamma(ones_gamma_name,
                                 QNN_TENSOR_TYPE_STATIC,
-                                x_info.qnn_data_type,
+                                decomposition.data_type,
                                 QnnQuantParamsWrapper(),
                                 std::vector<uint32_t>(gamma_shape),
                                 std::move(ones_bytes));
@@ -428,54 +447,45 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   param_tensor_names.push_back(axes_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
 
-  {
-    const auto& fb_inputs = node_unit.Inputs();
-    TensorInfo fb_x_info = {}, fb_scale_info = {};
-    size_t fb_axes_rank = 0;
-    std::vector<uint32_t> fb_x_shape;
-    if (fb_inputs.size() > 1 &&
-        qnn_model_wrapper.GetTensorInfo(fb_inputs[0], fb_x_info).IsOK() &&
-        qnn_model_wrapper.GetTensorInfo(fb_inputs[1], fb_scale_info).IsOK() &&
-        GetAxesRank(qnn_model_wrapper, node_unit, fb_axes_rank).IsOK() &&
-        qnn_model_wrapper.GetOnnxShape(fb_inputs[0].shape, fb_x_shape) &&
-        GetBroadcastScaleDecomposition(fb_x_shape, fb_x_info, fb_scale_info, fb_axes_rank).enabled) {
-      std::vector<std::string> fb_scale_names;
-      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, fb_inputs[1], logger, fb_scale_names));
-      RETURN_IF(fb_scale_names.empty(), "Failed to materialize broadcast RMSNorm scale.");
-      const std::string& fb_scale_name = fb_scale_names.back();
+  BroadcastScaleDecomposition decomposition;
+  RETURN_IF_ERROR(GetBroadcastScaleDecomposition(qnn_model_wrapper, node_unit, decomposition));
+  if (decomposition.enabled) {
+    std::vector<std::string> scale_names;
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, node_unit.Inputs()[1], logger, scale_names));
+    RETURN_IF(scale_names.empty(), "Failed to materialize broadcast RMSNorm scale.");
+    const std::string& scale_name = scale_names.back();
 
-      // MEMHANDLE intermediates when the model uses shared memory (cf. AddBinaryOpNode).
-      auto rms_mem_type = QNN_TENSORMEMTYPE_RAW;
-      if (qnn_model_wrapper.GetModelSettings().htp_shared_memory) {
-        rms_mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
-      }
-
-      const std::string rms_out_name = utils::UniqueNameGenerator().New(node_unit, "_rms_ones");
-      QnnTensorWrapper rms_intermediate(rms_out_name,
-                                        QNN_TENSOR_TYPE_NATIVE,
-                                        fb_x_info.qnn_data_type,
-                                        fb_x_info.quant_param.Copy(),
-                                        std::vector<uint32_t>(fb_x_shape),
-                                        {},
-                                        rms_mem_type);
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(rms_intermediate)),
-                    "Failed to add intermediate tensor for QNN RMSNorm broadcast-scale decomposition.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_rmsnorm_ones"),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    GetQnnOpType(node_unit.OpType()),
-                                                    std::move(input_names),
-                                                    {rms_out_name},
-                                                    std::move(param_tensor_names),
-                                                    do_op_validation),
-                    "Failed to add RmsNorm node for broadcast-scale decomposition.");
-      RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
-                                     {rms_out_name, fb_scale_name},
-                                     {},
-                                     logger,
-                                     do_op_validation,
-                                     QNN_OP_ELEMENT_WISE_MULTIPLY));
-      return Ort::Status();
+    // MEMHANDLE intermediates when the model uses shared memory (cf. AddBinaryOpNode).
+    auto rms_mem_type = QNN_TENSORMEMTYPE_RAW;
+    if (qnn_model_wrapper.GetModelSettings().htp_shared_memory) {
+      rms_mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
     }
+
+    const std::string rms_out_name = utils::UniqueNameGenerator().New(node_unit, "_rms_ones");
+    QnnTensorWrapper rms_intermediate(rms_out_name,
+                                      QNN_TENSOR_TYPE_NATIVE,
+                                      decomposition.data_type,
+                                      QnnQuantParamsWrapper(),
+                                      std::vector<uint32_t>(decomposition.x_shape),
+                                      {},
+                                      rms_mem_type);
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(rms_intermediate)),
+                  "Failed to add intermediate tensor for QNN RMSNorm broadcast-scale decomposition.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_rmsnorm_ones"),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  GetQnnOpType(node_unit.OpType()),
+                                                  std::move(input_names),
+                                                  {rms_out_name},
+                                                  std::move(param_tensor_names),
+                                                  do_op_validation),
+                  "Failed to add RmsNorm node for broadcast-scale decomposition.");
+    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
+                                   {rms_out_name, scale_name},
+                                   {},
+                                   logger,
+                                   do_op_validation,
+                                   QNN_OP_ELEMENT_WISE_MULTIPLY));
+    return Ort::Status();
   }
 
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
