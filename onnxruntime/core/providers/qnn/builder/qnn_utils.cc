@@ -900,7 +900,7 @@ QnnJSONGraph::QnnJSONGraph() {
       {"model.cpp", "N/A"},
       {"model.bin", "N/A"},
       {"converter_command", ""},
-      {"copyright_str", "Copyright (c) Microsoft Corporation. All rights reserved."},
+      {"copyright_str", "Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries."},
       {"op_types", json::array()},
       {"Total parameters", ""},
       {"Total MACs per inference", ""},
