@@ -12,7 +12,7 @@
 #   4. Upload to Artifactory: a write-once dated/sha archive, then the mutable
 #      latest/ pointer the gate reads.
 #
-# A group is published iff every one of its QnnUnit_<Group>_Accuracy[_<Variant>]Test
+# A group is published iff every one of its QnnAcc_<Group>_Accuracy[_<Variant>]Test
 # cases PASSED (result COMPLETED, no failures). A group with any DRIFT/SKIPPED case is
 # excluded and logged — we never stamp a golden as "known good at version X"
 # unless the numerical gate agreed at that version.

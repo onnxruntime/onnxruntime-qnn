@@ -29,32 +29,32 @@ def completed_case(**overrides):
     "testsuites, expected",
     [
         (
-            [suite("QnnUnit_Clip_AccuracyTest", completed_case())],
+            [suite("QnnAcc_Clip_AccuracyTest", completed_case())],
             ["Clip"],
         ),
         (
-            [suite("QnnUnit_Conv_AccuracyTest", completed_case(failures=[{}]))],
+            [suite("QnnAcc_Conv_AccuracyTest", completed_case(failures=[{}]))],
             [],
         ),
         (
-            [suite("QnnUnit_Gelu_AccuracyTest", completed_case(result="SKIPPED"))],
+            [suite("QnnAcc_Gelu_AccuracyTest", completed_case(result="SKIPPED"))],
             [],
         ),
         (
-            [suite("QnnUnit_Gelu_AccuracyTest", completed_case(status="NOTRUN"))],
+            [suite("QnnAcc_Gelu_AccuracyTest", completed_case(status="NOTRUN"))],
             [],
         ),
         (
             [
-                suite("QnnUnit_Resize_AccuracyTest", completed_case()),
-                suite("QnnUnit_Resize_Accuracy_Fp16Test", completed_case(failures=[{}])),
+                suite("QnnAcc_Resize_AccuracyTest", completed_case()),
+                suite("QnnAcc_Resize_Accuracy_Fp16Test", completed_case(failures=[{}])),
                 suite("UnrelatedSuite", completed_case()),
             ],
             [],
         ),
         (
             [
-                suite("QnnUnit_Clip_AccuracyTest", completed_case()),
+                suite("QnnAcc_Clip_AccuracyTest", completed_case()),
                 suite("UnrelatedSuite", completed_case(failures=[{}])),
             ],
             ["Clip"],
