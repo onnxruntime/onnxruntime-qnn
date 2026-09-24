@@ -3573,14 +3573,33 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
+  auto allocator_type = ep->qnn_allocator_type_;
+
+  // If previous EP session with same device was initialized with shared memory allocator,
+  // then create and return an allocator of the same type. Returning nullptr in this
+  // situation will result in a seg fault.
+  // registered_memory_info_ and registered_allocator_type_ are set by the QNN EP factory
+  // All allocators are destroyed/freed by the QNN EP factory
+  if (allocator_type == qnn::QnnAllocatorType::NONE && memory_info != nullptr &&
+      memory_info == ep->registered_memory_info_) {
+    allocator_type = ep->registered_allocator_type_;
+  }
+
+  if (qnn::IsHtpSharedMemoryAllocator(allocator_type)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
+    if (ep->rpcmem_library_ == nullptr) {
+      try {  // RpcMemLibrary throws; this function is noexcept
+        ep->rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+      } catch (const std::exception& e) {
+        return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
+      }
+    }
 
     auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
 #ifdef _WIN32
-  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+  else if (qnn::IsDx12SharedMemoryAllocator(allocator_type)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
 
     OrtStatus* status = nullptr;
