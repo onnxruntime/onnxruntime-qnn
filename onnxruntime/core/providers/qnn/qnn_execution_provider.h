@@ -162,10 +162,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
-  void InitQnnHtpGraphConfigs(
-      const qnn::HtpGraphConfigs_t& configs,
-      qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
-
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
 
   std::string FormatEPConfigKey(const std::string& key) const {

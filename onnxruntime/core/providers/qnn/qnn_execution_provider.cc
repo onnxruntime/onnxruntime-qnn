@@ -2,7 +2,6 @@
 // Licensed under the MIT License
 
 #include "core/providers/qnn/qnn_execution_provider.h"
-#include "core/providers/qnn/builder/qnn_htp_graph_configs.h"
 
 #include <algorithm>
 #include <cctype>
@@ -40,6 +39,7 @@
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_htp_graph_configs.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
@@ -1950,11 +1950,6 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
   return nullptr;
 }
 
-void QnnEp::InitQnnHtpGraphConfigs(
-    const qnn::HtpGraphConfigs_t& configs,
-    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const {
-  PopulateHtpGraphConfigs(qnn_backend_manager_->GetQnnBackendType(), configs, configs_builder);
-}
 
 static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& ort_api, const Ort::Logger& logger) {
   size_t num_nodes = 0;
@@ -2513,7 +2508,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-    InitQnnHtpGraphConfigs(htp_graph_configs, htp_graph_configs_builder);
+    qnn::PopulateHtpGraphConfigs(qnn_backend_manager_->GetQnnBackendType(), htp_graph_configs, htp_graph_configs_builder);
 
     std::vector<const QnnGraph_Config_t*> all_graph_configs;
     const QnnGraph_Config_t** htp_configs = htp_graph_configs_builder.GetQnnConfigs();

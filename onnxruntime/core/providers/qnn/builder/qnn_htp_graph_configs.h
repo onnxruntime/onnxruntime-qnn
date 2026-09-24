@@ -11,16 +11,17 @@
 #include <gsl/gsl>
 
 namespace onnxruntime {
+namespace qnn {
 
 inline void PopulateHtpGraphConfigs(
-    qnn::QnnBackendType backend_type,
-    const qnn::HtpGraphConfigs_t& configs,
-    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) {
-  if (backend_type != qnn::QnnBackendType::HTP) {
+    QnnBackendType backend_type,
+    const HtpGraphConfigs_t& configs,
+    QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) {
+  if (backend_type != QnnBackendType::HTP) {
     return;
   }
 
-  if (configs.htp_graph_finalization_opt_mode != qnn::HtpGraphFinalizationOptimizationMode::kDefault) {
+  if (configs.htp_graph_finalization_opt_mode != HtpGraphFinalizationOptimizationMode::kDefault) {
     gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_opt_config = configs_builder.PushCustomConfig();
     htp_graph_opt_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_OPTIMIZATION;
     htp_graph_opt_config->optimizationOption.type = QNN_HTP_GRAPH_OPTIMIZATION_TYPE_FINALIZE_OPTIMIZATION_FLAG;
@@ -98,4 +99,5 @@ inline void PopulateHtpGraphConfigs(
 #endif
 }
 
+}  // namespace qnn
 }  // namespace onnxruntime

@@ -1409,7 +1409,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, NumCores_Pushed) {
   configs.htp_num_cores = 2;
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
 
   auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
   ASSERT_NE(found, nullptr);
@@ -1420,7 +1420,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, NumCoresZero_NotPushed) {
   qnn::HtpGraphConfigs_t configs{};
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
 
   auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
   EXPECT_EQ(found, nullptr);
@@ -1433,7 +1433,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, NonHtpBackend_SkipsAll) {
   configs.enable_htp_fp16_precision = true;
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::CPU, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::CPU, configs, builder);
 
   EXPECT_EQ(builder.GetSize(), 0u);
 }
@@ -1443,7 +1443,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, VtcmSize_Pushed) {
   configs.vtcm_size_in_mb = 8;
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
 
   auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_VTCM_SIZE);
   ASSERT_NE(found, nullptr);
@@ -1455,7 +1455,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, Fp16Precision_Pushed) {
   configs.enable_htp_fp16_precision = true;
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
 
   auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION);
   ASSERT_NE(found, nullptr);
@@ -1470,7 +1470,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, MultipleConfigs_AllPushed) {
   configs.enable_htp_monolithic_lstm = true;
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
 
   EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES), nullptr);
   EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_VTCM_SIZE), nullptr);
@@ -1507,7 +1507,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
   // Verify copy + round-trip through PopulateHtpGraphConfigs.
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, copy, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, copy, builder);
   auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->numCores, 3u);
@@ -1536,7 +1536,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, FullRoundTrip_AllValues) {
 
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
 
   auto* num_cores = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
   ASSERT_NE(num_cores, nullptr);
