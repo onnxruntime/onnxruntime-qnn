@@ -17,7 +17,8 @@ namespace test {
 
 namespace {
 
-GetTestModelFn BuildTestCase(int64_t height = 8, int64_t width = 8) {
+GetTestModelFn BuildTestCase(int64_t height = 8, int64_t width = 8,
+                             std::vector<int64_t> channel_shuffle_perm = {0, 2, 1, 3, 4}) {
   return [=](ModelTestBuilder& builder) -> void {
     const int64_t num_channels = 12;
     const int64_t conv2_kernel_height = height == 1 ? 1 : 3;
@@ -54,7 +55,7 @@ GetTestModelFn BuildTestCase(int64_t height = 8, int64_t width = 8) {
     // Transpose: reshape1_out -> transpose_out
     {
       std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-      attrs.push_back(test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 1, 3, 4}));
+      attrs.push_back(test::MakeAttribute("perm", channel_shuffle_perm));
       builder.AddNode("Transpose1",
                       "Transpose",
                       {"reshape1_out"},
@@ -140,6 +141,45 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_NchwHeightOne) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_NchwWidthOne) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_NchwWidthOne";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/8, /*width=*/1),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+}
+
+// A generic shape-preserving RTRT chain must not be claimed as ChannelShuffle.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_FromReshape_InvalidMiddlePerm) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_FromReshape_InvalidMiddlePerm";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/8, /*width=*/8, /*channel_shuffle_perm=*/{0, 1, 2, 3, 4}),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
