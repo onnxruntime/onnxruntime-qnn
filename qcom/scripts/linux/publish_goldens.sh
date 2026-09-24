@@ -349,14 +349,17 @@ latest_dest="${dest_base}/latest/goldens.zip"
 
 if [ "${publish}" = true ]; then
     log_info "--- Uploading (archive, then latest) ---"
-    jf rt upload --flat "${zip_path}" "${archive_dest}"
+    # Conditional PUT makes the archive write-once. If it already exists,
+    # Artifactory returns 412; -f makes that a command failure, and strict mode
+    # stops before the mutable latest pointer can be changed.
+    jf rt curl -f -XPUT -H "If-None-Match: *" -T "${zip_path}" "/${archive_dest}"
     jf rt upload --flat "${zip_path}" "${latest_dest}"
     log_info "=== Published ==="
     log_info "archive: ${archive_dest}"
     log_info "latest : ${latest_dest}"
 else
     log_info "--- DRY-RUN: would upload with these commands ---"
-    log_info "jf rt upload --flat \"${zip_path}\" \"${archive_dest}\""
+    log_info "jf rt curl -f -XPUT -H \"If-None-Match: *\" -T \"${zip_path}\" \"/${archive_dest}\""
     log_info "jf rt upload --flat \"${zip_path}\" \"${latest_dest}\""
     log_warn "Dry-run: nothing uploaded. Re-run with --publish to upload."
 fi
