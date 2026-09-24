@@ -15,7 +15,7 @@
 //
 // To generate / update goldens, point the harness at a golden tree and set
 // the update toggle (both env vars on one line):
-//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter="QnnUnit_*_Snapshot*"
+//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter="QnnSnapshot_*"
 //
 // Golden files live under $QNN_UT_SNAPSHOT_GOLDEN_DIR (which points directly at
 // the goldens root):

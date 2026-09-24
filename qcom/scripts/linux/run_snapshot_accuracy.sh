@@ -4,17 +4,20 @@
 #
 # Two-pass snapshot+accuracy test runner for QNN EP unit tests.
 #
-# Pass 1: Run all snapshot tests (QnnUnit_<Op>_Snapshot* + QnnUnit_<Op>_SessionSnapshot*).
+# Pass 1: Run all snapshot tests (QnnSnapshot_<Op>_OpBuilder* + QnnSnapshot_<Op>_Session*).
 #          If all pass -> done (exit 0). Graph structure unchanged, so this
 #          runner can skip the paired accuracy rerun.
 # Pass 2: For any ops whose snapshot tests drifted or could not compare because
-#          goldens are absent, run their QnnUnit_<Op>_Accuracy* tests to verify
+#          goldens are absent, run their QnnAcc_<Op>_Accuracy* tests to verify
 #          numerical correctness.
 #
-# Suite naming is op-first: QnnUnit_<Op>_<Tier>[_<Variant>]Test, where <Tier> is
-# one of Component/Snapshot/SessionSnapshot/Accuracy. The op is recovered as the
-# segment(s) between "QnnUnit_" and the first tier token, so op names may
-# themselves contain underscores (e.g. Gelu_Fusion) without ambiguity.
+# Suite naming is tier-first with an explicit delimiter token:
+#   QnnSnapshot_<Op>_OpBuilder[_<Variant>]Test
+#   QnnSnapshot_<Op>_Session[_<Variant>]Test
+#   QnnAcc_<Op>_Accuracy[_<Variant>]Test
+# The op is recovered as the segment(s) between the prefix and the delimiter
+# token, so op names may themselves contain underscores (e.g. Gelu_Fusion)
+# without ambiguity.
 #
 # Exit codes:
 #   0  — All good (snapshots pass; OR drift detected + accuracy pass)
@@ -71,7 +74,7 @@ Options:
   --force-accuracy          Always run accuracy tests regardless of snapshot outcome.
   --filter=<group1,group2,...>
                             Scope both passes to these test groups only.
-                            Group name = op segment, i.e. QnnUnit_<Group>_Snapshot...Test.
+                            Group name = op segment, i.e. QnnSnapshot_<Group>_OpBuilder...Test.
                             Examples: Clip, Conv, GeluFusion (case-sensitive).
 EOF
             exit 0
@@ -123,9 +126,9 @@ run_provider_test() {
 }
 
 # Verify this is a coverage build: probe for snapshot tests.
-snapshot_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnUnit_*_Snapshot*" 2>/dev/null || true)
+snapshot_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnSnapshot_*" 2>/dev/null || true)
 if [ -z "${snapshot_probe}" ]; then
-    die "No QnnUnit_*_Snapshot* tests found in binary. This is not a coverage build (requires --enable-coverage)."
+    die "No QnnSnapshot_* tests found in binary. This is not a coverage build (requires --enable-coverage)."
 fi
 
 extract_snapshot_groups() {
@@ -138,7 +141,7 @@ import sys
 
 snapshot_json = sys.argv[1]
 mode = sys.argv[2]
-pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
 
 with open(snapshot_json, encoding="utf-8") as f:
     data = json.load(f)
@@ -205,7 +208,7 @@ import re
 import sys
 
 list_file = sys.argv[1]
-pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
 
 ops = set()
 with open(list_file, encoding="utf-8") as f:
@@ -254,10 +257,10 @@ if [ -n "${filter_groups}" ]; then
         if [ -n "${snapshot_filter}" ]; then
             snapshot_filter+=":"
         fi
-        snapshot_filter+="QnnUnit_${g}_Snapshot*Test.*:QnnUnit_${g}_SessionSnapshot*Test.*"
+        snapshot_filter+="QnnSnapshot_${g}_OpBuilder*Test.*:QnnSnapshot_${g}_Session*Test.*"
     done
 else
-    snapshot_filter="QnnUnit_*_Snapshot*Test.*:QnnUnit_*_SessionSnapshot*Test.*"
+    snapshot_filter="QnnSnapshot_*_OpBuilder*Test.*:QnnSnapshot_*_Session*Test.*"
 fi
 
 # ---------------------------------------------------------------------------
@@ -300,13 +303,13 @@ fi
 #     only the QNN graph JSON changed.
 #   - [QNN_GOLDEN_ABSENT] means no golden comparison happened for that case.
 #   - Both markers leave the snapshot result unverified for that op group, so
-#     route only the affected QnnUnit_<Op>_Accuracy* tests.
+#     route only the affected QnnAcc_<Op>_Accuracy* tests.
 #   - Other snapshot failures also leave the snapshot result unverified. Route
 #     the affected op to accuracy instead of blocking on graph-diff enforcement.
 #   - If no snapshot JSON is produced, treat the in-scope snapshot groups as
 #     unverified, same as missing goldens, and verify them through accuracy.
 #   - The setup failure is an unverified snapshot group without a matching
-#     QnnUnit_<Op>_Accuracy* test, because then correctness is not gated.
+#     QnnAcc_<Op>_Accuracy* test, because then correctness is not gated.
 target_ops=""
 
 if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
@@ -360,11 +363,11 @@ log_info "Accuracy targets: ${target_ops}"
 
 # Build gtest filter from group list and verify every unverified snapshot group
 # has a matching accuracy suite. This is the only setup failure for an
-# unverified snapshot: without QnnUnit_<Op>_Accuracy*, correctness is not gated.
+# unverified snapshot: without QnnAcc_<Op>_Accuracy*, correctness is not gated.
 IFS=',' read -ra op_array <<< "${target_ops}"
 missing_accuracy=""
 for op in "${op_array[@]}"; do
-    accuracy_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnUnit_${op}_Accuracy*Test.*" 2>/dev/null || true)
+    accuracy_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnAcc_${op}_Accuracy*Test.*" 2>/dev/null || true)
     if [ -z "${accuracy_probe}" ]; then
         if [ -n "${missing_accuracy}" ]; then
             missing_accuracy+=","
@@ -373,7 +376,7 @@ for op in "${op_array[@]}"; do
     fi
 done
 if [ -n "${missing_accuracy}" ]; then
-    die "No matching QnnUnit_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing_accuracy}."
+    die "No matching QnnAcc_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing_accuracy}."
 fi
 
 accuracy_filter=""
@@ -381,7 +384,7 @@ for op in "${op_array[@]}"; do
     if [ -n "${accuracy_filter}" ]; then
         accuracy_filter+=":"
     fi
-    accuracy_filter+="QnnUnit_${op}_Accuracy*Test.*"
+    accuracy_filter+="QnnAcc_${op}_Accuracy*Test.*"
 done
 
 log_info "--- Pass 2: Running accuracy tests ---"
