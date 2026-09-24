@@ -111,6 +111,40 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
       << " occurrence(s), found " << actual_count << " in " << json_path;
 }
 
+void AssertOpNameContainsInQnnGraph(const std::filesystem::path& dump_dir,
+                                    const std::string& op,
+                                    const std::string& name_substring) {
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("nodes") && root["graph"]["nodes"].is_object())
+      << "JSON missing 'graph.nodes' object in: " << json_path;
+
+  bool found = false;
+  try {
+    for (const auto& [node_name, node_json] : root["graph"]["nodes"].items()) {
+      if (node_json.is_object() && node_json.value("type", "") == op &&
+          node_name.find(name_substring) != std::string::npos) {
+        found = true;
+        break;
+      }
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to inspect QNN graph nodes in " << json_path << ": " << ex.what();
+  }
+
+  EXPECT_TRUE(found) << "No QNN op '" << op << "' has a name containing '"
+                     << name_substring << "' in " << json_path;
+}
+
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type) {
   std::filesystem::path json_path;
