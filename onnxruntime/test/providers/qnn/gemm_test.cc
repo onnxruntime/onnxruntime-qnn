@@ -932,7 +932,7 @@ struct DirectGemmReshapeQConfig {
   bool include_bias = true;  // rank-1 bias by default
   bool bias_is_initializer = true;
   bool bias_is_overridable_initializer = false;  // bias initializer also declared as a graph input (IR>=4)
-  bool bias_from_intermediate = false;  // if true, bias is produced by an intermediate MatMul (NATIVE bias)
+  bool bias_from_intermediate = false;           // if true, bias is produced by an intermediate MatMul (NATIVE bias)
   std::optional<std::vector<int64_t>> bias_shape;
 };
 
