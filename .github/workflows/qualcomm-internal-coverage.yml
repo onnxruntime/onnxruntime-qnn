@@ -39,9 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           # submodules omitted here; initialized below only when coverage is needed.
-
       - name: Clean previous build directory
         run: rm -rf "${{ github.workspace }}/build/linux-x86_64/RelWithDebInfo"
 
@@ -62,8 +61,16 @@ jobs:
             exit 1
           fi
 
-          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
-            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          if [ -z "${base_sha}" ]; then
+            echo "::error::pull_request.base.sha is empty (base_ref=${base_ref})"
+            exit 1
+          fi
+
+          # Fetch only the PR target-branch snapshot, not every remote branch and tag.
+          git fetch --no-tags --depth=1 origin "${base_sha}"
+          if ! changed=$(git diff --name-only "${base_sha}" HEAD); then
+            echo "::error::git diff against ${base_ref} (${base_sha}) failed"
             exit 1
           fi
 
@@ -78,7 +85,7 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: Run Coverage and Diff Coverage (Linux x86_64, always RelWithDebInfo)
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request'
         run: |
           # Python version does not affect C++ code coverage results.
           # Defaults to 3.10 to match DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
@@ -91,6 +98,15 @@ jobs:
           python3 qcom/build_and_test.py \
             --target-py-version ${{ inputs.target_py_vsn }} \
             diff_coverage_linux_x86_64
+
+      - name: Run Coverage (non-PR, Linux x86_64, always RelWithDebInfo)
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'pull_request'
+        run: |
+          # A non-PR run has no exact PR base SHA. Generate full coverage only rather
+          # than producing an inaccurate diff from a shallow checkout.
+          python3 qcom/build_and_test.py \
+            --target-py-version ${{ inputs.target_py_vsn }} \
+            coverage_linux_x86_64
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7

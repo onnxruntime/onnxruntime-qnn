@@ -1,0 +1,8 @@
+[Unit]
+Description=Clean stale GitHub Actions runner workspaces
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=ortqnnepci
+ExecStart=/usr/local/sbin/ort-runner-workspace-cleanup
