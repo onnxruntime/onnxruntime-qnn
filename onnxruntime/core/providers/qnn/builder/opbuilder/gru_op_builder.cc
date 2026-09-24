@@ -119,6 +119,10 @@ Ort::Status GRUOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                         const OrtNodeUnit& node_unit,
                                         const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
+  std::vector<uint32_t> input_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape),
+                "QNN EP: dynamic GRU input shape is not supported.");
+
   if (node_unit.Inputs().size() > 4 && node_unit.Inputs()[4].Exists()) {
     TensorInfo tensor_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[4], tensor_info));
