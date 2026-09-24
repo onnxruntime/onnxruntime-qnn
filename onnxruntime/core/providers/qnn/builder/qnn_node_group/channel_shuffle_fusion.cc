@@ -6,6 +6,7 @@
 #include <array>
 #include <gsl/gsl>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -73,8 +74,8 @@ bool IsCancelingTransposePermPair(
 // post-Layout-Transform pass, dropping rank by 1. Re-inserting a unit dim at index 0
 // restores the expected shape. Returns false if the shape cannot be interpreted as a valid
 // channel-split, and sets was_collapsed=true if a unit dim was actually re-inserted.
-bool NormalizeChannelShuffleIntermediateShape(const std::vector<int64_t>& input_dims,
-                                              std::vector<int64_t>& reshape1_output_dims,
+bool NormalizeChannelShuffleIntermediateShape(const std::vector<uint32_t>& input_dims,
+                                              std::vector<uint32_t>& reshape1_output_dims,
                                               bool& was_collapsed) {
   was_collapsed = false;
   const size_t in_rank = input_dims.size();
@@ -83,14 +84,99 @@ bool NormalizeChannelShuffleIntermediateShape(const std::vector<int64_t>& input_
   if (out_rank == in_rank + 1) {
     return true;
   }
-  // Collapsed case: output rank == input rank, input[0]==1, and input[1] == out[0]*out[1].
-  if (out_rank == in_rank && in_rank >= 2 && input_dims[0] == 1 &&
-      out_rank >= 2 && input_dims[1] == reshape1_output_dims[0] * reshape1_output_dims[1]) {
+  // Collapsed case: output rank == input rank and the leading unit batch was removed.
+  // The layout-specific channel split is validated after restoring the batch dimension.
+  if (out_rank == in_rank && input_dims[0] == 1) {
     reshape1_output_dims.insert(reshape1_output_dims.begin(), 1);
     was_collapsed = true;
     return true;
   }
   return false;
+}
+
+struct ChannelShuffleCoreInfo {
+  uint32_t num_groups = 0;
+};
+
+std::optional<ChannelShuffleCoreInfo> GetChannelShuffleCoreInfo(
+    const QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnit& reshape1,
+    const OrtNodeUnit& transpose,
+    const OrtNodeUnit& reshape2) {
+  std::vector<uint32_t> input_shape;
+  std::vector<uint32_t> intermediate_shape;
+  std::vector<uint32_t> output_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(reshape1.Inputs()[0].shape, input_shape) || input_shape.size() < 3 ||
+      !qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, intermediate_shape) ||
+      !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) ||
+      output_shape.size() != input_shape.size()) {
+    return std::nullopt;
+  }
+
+  bool was_collapsed = false;
+  if (!NormalizeChannelShuffleIntermediateShape(input_shape, intermediate_shape, was_collapsed) ||
+      intermediate_shape.size() != input_shape.size() + 1 ||
+      intermediate_shape[0] != input_shape[0]) {
+    return std::nullopt;
+  }
+
+  std::optional<std::vector<int64_t>> raw_perm = GetTransposePerm(transpose);
+  if (!raw_perm.has_value()) {
+    return std::nullopt;
+  }
+  std::vector<int64_t> perm = std::move(raw_perm.value());
+  if (was_collapsed) {
+    if (perm.size() + 1 != intermediate_shape.size()) {
+      return std::nullopt;
+    }
+    std::vector<int64_t> lifted_perm;
+    lifted_perm.reserve(intermediate_shape.size());
+    lifted_perm.push_back(0);
+    for (int64_t axis : perm) {
+      lifted_perm.push_back(axis + 1);
+    }
+    perm = std::move(lifted_perm);
+  }
+  std::vector<int64_t> nchw_perm(intermediate_shape.size());
+  std::iota(nchw_perm.begin(), nchw_perm.end(), 0);
+  std::swap(nchw_perm[1], nchw_perm[2]);
+
+  // When the leading NHWC->NCHW transpose is absorbed, the middle transpose both
+  // swaps the split channel dimensions and moves them ahead of the spatial dimensions:
+  // [N, spatial..., G, C/G] -> [N, C/G, G, spatial...].
+  std::vector<int64_t> nhwc_to_nchw_perm;
+  nhwc_to_nchw_perm.reserve(intermediate_shape.size());
+  nhwc_to_nchw_perm.push_back(0);
+  nhwc_to_nchw_perm.push_back(gsl::narrow_cast<int64_t>(intermediate_shape.size() - 1));
+  nhwc_to_nchw_perm.push_back(gsl::narrow_cast<int64_t>(intermediate_shape.size() - 2));
+  for (size_t axis = 1; axis + 2 < intermediate_shape.size(); ++axis) {
+    nhwc_to_nchw_perm.push_back(gsl::narrow_cast<int64_t>(axis));
+  }
+
+  if (perm == nchw_perm) {
+    if (output_shape != input_shape || input_shape[1] != intermediate_shape[1] * intermediate_shape[2] ||
+        !std::equal(input_shape.begin() + 2, input_shape.end(), intermediate_shape.begin() + 3)) {
+      return std::nullopt;
+    }
+    return ChannelShuffleCoreInfo{intermediate_shape[1]};
+  }
+
+  if (perm == nhwc_to_nchw_perm) {
+    const size_t split_axis = intermediate_shape.size() - 2;
+    std::vector<uint32_t> expected_nchw_output;
+    expected_nchw_output.reserve(input_shape.size());
+    expected_nchw_output.push_back(input_shape[0]);
+    expected_nchw_output.push_back(input_shape.back());
+    expected_nchw_output.insert(expected_nchw_output.end(), input_shape.begin() + 1, input_shape.end() - 1);
+    if (input_shape.back() != intermediate_shape[split_axis] * intermediate_shape[split_axis + 1] ||
+        !std::equal(input_shape.begin() + 1, input_shape.end() - 1, intermediate_shape.begin() + 1) ||
+        output_shape != expected_nchw_output) {
+      return std::nullopt;
+    }
+    return ChannelShuffleCoreInfo{intermediate_shape[split_axis]};
+  }
+
+  return std::nullopt;
 }
 
 /// @brief Match pattern: Transpose -> ChannelShuffle (Reshape -> Transpose -> Reshape) -> Transpose
@@ -165,6 +251,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   const bool has_head_transpose = (node_units[0]->OpType() == kOpTranspose);
   const OrtNodeUnit* transpose_head = has_head_transpose ? node_units[0] : nullptr;
   const OrtNodeUnit* reshape1 = has_head_transpose ? node_units[1] : node_units[0];
+  const OrtNodeUnit* transpose = has_head_transpose ? node_units[2] : node_units[1];
+  const OrtNodeUnit* reshape2 = has_head_transpose ? node_units[3] : node_units[2];
   const OrtNodeUnit* transpose_tail = has_head_transpose ? node_units[4] : node_units[3];
   // IO boundaries: T_head's input (if present) else Reshape1's input; T_tail's output.
   const OrtNodeUnitIODef& cs_input_def = has_head_transpose ? transpose_head->Inputs()[0]
@@ -202,89 +290,11 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                            QNN_OP_CHANNEL_SHUFFLE_PARAM_AXIS, param_tensor_names));
   }
 
-  // Extract number of groups from reshape1 output shape
-  {
-    // Get reshape1 input shape (needed to detect the collapsed unit-batch case)
-    // reshape1 is already determined above as the Reshape starting the RTR pattern.
-    size_t num_reshape1_inputs = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumInputs(&reshape1->GetNode(), &num_reshape1_inputs));
-    std::vector<const OrtValueInfo*> reshape1_inputs_list(num_reshape1_inputs);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetInputs(&reshape1->GetNode(),
-                                                      reshape1_inputs_list.data(),
-                                                      reshape1_inputs_list.size()));
-    const OrtTypeInfo* r1_in_type_info = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_inputs_list[0], &r1_in_type_info));
-    const OrtTensorTypeAndShapeInfo* r1_in_tensor_info = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(r1_in_type_info, &r1_in_tensor_info));
-    size_t r1_in_dims_count = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensionsCount(r1_in_tensor_info, &r1_in_dims_count));
-    std::vector<int64_t> r1_in_dims(r1_in_dims_count);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensions(r1_in_tensor_info, r1_in_dims.data(), r1_in_dims_count));
-
-    // Get reshape1 output shape
-    size_t num_reshape1_outputs = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs));
-    std::vector<const OrtValueInfo*> reshape1_outputs(num_reshape1_outputs);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOutputs(&reshape1->GetNode(),
-                                                       reshape1_outputs.data(),
-                                                       reshape1_outputs.size()));
-    const OrtValueInfo* reshape1_output_info = reshape1_outputs[0];
-    const OrtTypeInfo* reshape1_output_type_info = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info));
-    const OrtTensorTypeAndShapeInfo* reshape1_output_tensor_info = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info,
-                                                                &reshape1_output_tensor_info));
-
-    // Get dimensions
-    size_t reshape1_output_dims_count = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensionsCount(reshape1_output_tensor_info, &reshape1_output_dims_count));
-    std::vector<int64_t> reshape1_output_dims(reshape1_output_dims_count);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensions(reshape1_output_tensor_info,
-                                                     reshape1_output_dims.data(),
-                                                     reshape1_output_dims_count));
-
-    // Normalize the intermediate shape to handle ORT 1.29 unit-batch-dim collapse.
-    bool was_collapsed = false;
-    if (!NormalizeChannelShuffleIntermediateShape(r1_in_dims, reshape1_output_dims, was_collapsed)) {
-      // NCHW normalization failed; try NHWC detection.
-      // In NHWC, input is {N,H,W,C} and output is {N,H,W,G,C/G} where C at index 3 → G+C/G.
-      // Check if input[3] == output[3] * output[4] (NHWC groups split).
-      if (r1_in_dims.size() == 4 && reshape1_output_dims.size() == 5 &&
-          r1_in_dims[0] == reshape1_output_dims[0] &&                            // N matches
-          r1_in_dims[3] == reshape1_output_dims[3] * reshape1_output_dims[4]) {  // C = G * C/G
-        // NHWC format: num_groups is at output index 3.
-        RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
-                                               transpose_tail->Name(),
-                                               static_cast<uint32_t>(reshape1_output_dims[3]),
-                                               QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS, param_tensor_names));
-        // Done with num_groups extraction for NHWC.
-      } else {
-        RETURN_IF_NOT(false, "ChannelShuffleFusion: unexpected reshape1 output shape during CreateOrValidate.");
-      }
-    } else {
-      // NormalizeChannelShuffleIntermediateShape succeeded.
-      // For NCHW input {N,C,H,W}: num_groups = output[1] = G.
-      // For NHWC input {N,H,W,C}: num_groups = output[3] = G (after {N,H,W,G,C/G} split).
-      // Detect format: NCHW has input[1]==C matched by output[1]*output[2]; NHWC has input[3]==C.
-      int64_t num_groups_val = 0;
-      if (r1_in_dims.size() >= 4 && reshape1_output_dims.size() >= 5 &&
-          r1_in_dims[1] == reshape1_output_dims[1] * reshape1_output_dims[2]) {
-        // NCHW: {N, C, ...} -> {N, G, C/G, ...}.
-        num_groups_val = reshape1_output_dims[1];
-      } else if (r1_in_dims.size() >= 4 && reshape1_output_dims.size() >= 5 &&
-                 r1_in_dims[3] == reshape1_output_dims[reshape1_output_dims.size() - 2] *
-                                      reshape1_output_dims[reshape1_output_dims.size() - 1]) {
-        // NHWC: {N, ..., C} -> {N, ..., G, C/G}.
-        num_groups_val = reshape1_output_dims[reshape1_output_dims.size() - 2];
-      } else {
-        RETURN_IF_NOT(false, "ChannelShuffleFusion: reshape1 does not split the channel dimension.");
-      }
-      RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
-                                             transpose_tail->Name(),
-                                             static_cast<uint32_t>(num_groups_val),
-                                             QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS, param_tensor_names));
-    }
-  }
+  const auto core_info = GetChannelShuffleCoreInfo(qnn_model_wrapper, *reshape1, *transpose, *reshape2);
+  RETURN_IF_NOT(core_info.has_value(), "ChannelShuffleFusion: invalid reshape/transpose core signature.");
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, transpose_tail->Index(),
+                                         transpose_tail->Name(), core_info->num_groups,
+                                         QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS, param_tensor_names));
 
   // Create tensor wrappers for input and output
   QnnTensorWrapper channel_shuffle_input;
@@ -328,162 +338,7 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   const OrtNodeUnit* transpose = pattern->at(2);
   const OrtNodeUnit* reshape2 = pattern->at(3);
   const OrtNodeUnit* transpose_tail = pattern->at(4);
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-
-  // Input shape to reshape1 must equal output shape of reshape2; and has rank > 2
-  // Get reshape1 input shape
-  size_t num_reshape1_inputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&reshape1->GetNode(), &num_reshape1_inputs),
-                             ort_api,
-                             nullptr);
-  std::vector<const OrtValueInfo*> reshape1_inputs(num_reshape1_inputs);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.Node_GetInputs(&reshape1->GetNode(), reshape1_inputs.data(), reshape1_inputs.size()),
-      ort_api,
-      nullptr);
-  const OrtValueInfo* reshape1_input_info = reshape1_inputs[0];
-  const OrtTypeInfo* reshape1_input_type_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_input_info, &reshape1_input_type_info),
-                             ort_api,
-                             nullptr);
-  const OrtTensorTypeAndShapeInfo* reshape1_input_tensor_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(reshape1_input_type_info, &reshape1_input_tensor_info),
-                             ort_api,
-                             nullptr);
-
-  // Get reshape2 output shape
-  size_t num_reshape2_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape2->GetNode(), &num_reshape2_outputs),
-                             ort_api,
-                             nullptr);
-  std::vector<const OrtValueInfo*> reshape2_outputs(num_reshape2_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.Node_GetOutputs(&reshape2->GetNode(), reshape2_outputs.data(), reshape2_outputs.size()),
-      ort_api, nullptr);
-  const OrtValueInfo* reshape2_output_info = reshape2_outputs[0];
-  const OrtTypeInfo* reshape2_output_type_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape2_output_info, &reshape2_output_type_info),
-                             ort_api,
-                             nullptr);
-  const OrtTensorTypeAndShapeInfo* reshape2_output_tensor_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.CastTypeInfoToTensorInfo(reshape2_output_type_info, &reshape2_output_tensor_info),
-      ort_api,
-      nullptr);
-
-  // Compare dimensions
-  size_t reshape1_input_dims_count = 0;
-  size_t reshape2_output_dims_count = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(reshape1_input_tensor_info, &reshape1_input_dims_count),
-                             ort_api,
-                             nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(reshape2_output_tensor_info, &reshape2_output_dims_count),
-                             ort_api,
-                             nullptr);
-
-  if (reshape1_input_dims_count != reshape2_output_dims_count) {
-    return nullptr;
-  }
-
-  std::vector<int64_t> reshape1_input_dims(reshape1_input_dims_count);
-  std::vector<int64_t> reshape2_output_dims(reshape2_output_dims_count);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.GetDimensions(reshape1_input_tensor_info, reshape1_input_dims.data(), reshape1_input_dims_count),
-      ort_api,
-      nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.GetDimensions(reshape2_output_tensor_info, reshape2_output_dims.data(), reshape2_output_dims_count),
-      ort_api,
-      nullptr);
-
-  // Check if reshape1 input dims equal reshape2 output dims
-  if (!std::equal(reshape1_input_dims.begin(), reshape1_input_dims.end(), reshape2_output_dims.begin())) {
-    return nullptr;
-  }
-
-  // Get reshape1 output shape
-  size_t num_reshape1_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs),
-                             ort_api,
-                             nullptr);
-  std::vector<const OrtValueInfo*> reshape1_outputs(num_reshape1_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()),
-      ort_api,
-      nullptr);
-  const OrtValueInfo* reshape1_output_info = reshape1_outputs[0];
-  const OrtTypeInfo* reshape1_output_type_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info),
-                             ort_api,
-                             nullptr);
-  const OrtTensorTypeAndShapeInfo* reshape1_output_tensor_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info, &reshape1_output_tensor_info),
-                             ort_api,
-                             nullptr);
-
-  size_t reshape1_output_dims_count = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(reshape1_output_tensor_info, &reshape1_output_dims_count),
-                             ort_api,
-                             nullptr);
-  std::vector<int64_t> reshape1_output_dims(reshape1_output_dims_count);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.GetDimensions(reshape1_output_tensor_info, reshape1_output_dims.data(), reshape1_output_dims_count),
-      ort_api,
-      nullptr);
-
-  // Intermediate shape must split channels in groups only.
-  // Normalize to handle ORT 1.29's unit-batch-dim collapse in post-Layout-Transform.
-  bool was_collapsed = false;
-  if (!NormalizeChannelShuffleIntermediateShape(reshape1_input_dims, reshape1_output_dims, was_collapsed)) {
-    return nullptr;
-  }
-  reshape1_output_dims_count = reshape1_output_dims.size();
-
-  if (reshape1_input_dims[0] != reshape1_output_dims[0]) {
-    return nullptr;
-  }
-  if (reshape1_output_dims_count < 3) {
-    return nullptr;
-  }
-  if (reshape1_input_dims[1] != (reshape1_output_dims[1] * reshape1_output_dims[2])) {
-    return nullptr;
-  }
-  if (reshape1_output_dims_count != reshape1_input_dims_count + 1) {
-    return nullptr;
-  }
-  size_t remaining_dims = reshape1_input_dims_count - 2;
-  if (reshape1_output_dims_count < remaining_dims + 3) {
-    return nullptr;
-  }
-  for (size_t i = 0; i < remaining_dims; ++i) {
-    if (reshape1_input_dims[i + 2] != reshape1_output_dims[i + 3]) {
-      return nullptr;
-    }
-  }
-
-  // Intermediate transpose must only permute channels
-  std::optional<std::vector<int64_t>> perm = GetTransposePerm(*transpose);
-  if (!perm.has_value()) {
-    return nullptr;
-  }
-  // If ORT collapsed the unit batch dim, the mid-transpose perm is also rank-reduced.
-  // Lift it back to match the normalized reshape1 output rank by prepending 0 and shifting.
-  std::vector<int64_t> perm_to_check = perm.value();
-  if (was_collapsed && perm_to_check.size() + 1 == reshape1_output_dims_count) {
-    std::vector<int64_t> lifted;
-    lifted.reserve(reshape1_output_dims_count);
-    lifted.push_back(0);
-    for (int64_t p : perm_to_check) {
-      lifted.push_back(p + 1);
-    }
-    perm_to_check = std::move(lifted);
-  }
-  std::swap(perm_to_check[1], perm_to_check[2]);
-  std::vector<int64_t> perm_expected(perm_to_check.size());
-  for (size_t i = 0; i < perm_expected.size(); ++i) {
-    perm_expected[i] = static_cast<int64_t>(i);
-  }
-  if (perm_to_check != perm_expected) {
+  if (!GetChannelShuffleCoreInfo(qnn_model_wrapper, *reshape1, *transpose, *reshape2).has_value()) {
     return nullptr;
   }
 
@@ -547,6 +402,19 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusionFromReshape(
 
   const OrtNodeUnit* transpose_tail = GetChildOfTypeCS(*reshape2, kOpTranspose);
   if (transpose_tail == nullptr) return nullptr;
+
+  // Validate the complete ChannelShuffle core before claiming the Reshape. In particular,
+  // use the middle transpose permutation to identify NCHW vs NHWC and then require the
+  // corresponding channel split, spatial dimensions, and Reshape2 output shape.
+  if (!GetChannelShuffleCoreInfo(qnn_model_wrapper, reshape1_node_unit, *transpose_mid, *reshape2).has_value()) {
+    return nullptr;
+  }
+  const std::optional<std::vector<int64_t>> tail_perm = GetTransposePerm(*transpose_tail);
+  constexpr std::array<int64_t, 4> kNchwToNhwcPerm{0, 2, 3, 1};
+  if (!tail_perm.has_value() || tail_perm->size() != kNchwToNhwcPerm.size() ||
+      !std::equal(tail_perm->begin(), tail_perm->end(), kNchwToNhwcPerm.begin())) {
+    return nullptr;
+  }
 
   // Validate shape: Reshape1 input must equal T_tail output (ChannelShuffle is shape-preserving at group boundaries).
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
