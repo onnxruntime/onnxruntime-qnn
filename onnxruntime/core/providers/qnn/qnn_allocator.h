@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
@@ -19,6 +21,8 @@ namespace onnxruntime::qnn {
 
 class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
+  using RpcMemLibraryProvider = std::function<std::shared_ptr<RpcMemLibrary>(std::string& error_message)>;
+
   HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
                            std::shared_ptr<RpcMemLibrary> rpcmem_lib)
       : memory_info_(mem_info),
@@ -26,6 +30,25 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
         logger_(OrtLoggingManager::GetDefaultLogger()) {
     if (rpcmem_lib_ == nullptr) {
       ORT_CXX_API_THROW("rpcmem_lib should not be nullptr.", ORT_EP_FAIL);
+    }
+
+    Alloc = AllocImpl;
+    Free = FreeImpl;
+    Info = InfoImpl;
+    Reserve = AllocImpl;
+  }
+
+  // Creates an allocator without loading RPCMEM. The provider is invoked on
+  // the first allocation and the resulting library handle is cached. This is
+  // required for environment-level allocators because ORT creates advertised
+  // allocators while registering the EP library.
+  HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
+                           RpcMemLibraryProvider rpcmem_library_provider)
+      : memory_info_(mem_info),
+        rpcmem_library_provider_{std::move(rpcmem_library_provider)},
+        logger_(OrtLoggingManager::GetDefaultLogger()) {
+    if (rpcmem_library_provider_ == nullptr) {
+      ORT_CXX_API_THROW("rpcmem_library_provider should not be empty.", ORT_EP_FAIL);
     }
 
     Alloc = AllocImpl;
@@ -58,6 +81,10 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   static Ort::Status GetAllocationSharedMemoryInfo(void* address_within_allocation,
                                                    SharedMemoryInfo& allocation_info);
 
+  // Returns true if the address belongs to a live allocation created by any
+  // HtpSharedMemoryAllocator instance.
+  static bool IsAllocationTracked(void* address_within_allocation);
+
   // Allocation clean up callback signature.
   // For a given allocation, any added clean up callbacks will be called with the allocation's base address when the
   // allocation is freed.
@@ -70,6 +97,8 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   static Ort::Status AddAllocationCleanUp(void* address_within_allocation, AllocationCleanUpFn&& allocation_clean_up);
 
  private:
+  std::shared_ptr<RpcMemLibrary> GetOrCreateRpcMemLibrary();
+
   Ort::Status GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
                                                             SharedMemoryInfo& allocation_info);
 
@@ -79,6 +108,9 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   struct AllocationRecord {
     SharedMemoryInfo shared_memory_info;
     InlinedVector<AllocationCleanUpFn, 1> clean_up_fns;
+    // Keep the dynamic library loaded until this allocation has been freed,
+    // independently of any session that may have consumed the buffer.
+    std::shared_ptr<RpcMemLibrary> rpcmem_library;
   };
 
   // allocation address -> corresponding allocation record
@@ -87,6 +119,8 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
 
   const OrtMemoryInfo* memory_info_;
   std::shared_ptr<RpcMemLibrary> rpcmem_lib_;
+  RpcMemLibraryProvider rpcmem_library_provider_;
+  std::mutex rpcmem_library_mutex_;
   const Ort::Logger& logger_;
 };
 
@@ -132,6 +166,10 @@ class Dx12SharedMemoryAllocator : public OrtAllocator {
   // `address_within_allocation` must be an address within an allocation returned by Alloc() that has not been freed.
   static Ort::Status GetAllocationDx12Info(void* address_within_allocation,
                                            Dx12AllocationInfo& allocation_info);
+
+  // Returns true if the address belongs to a live allocation created by any
+  // Dx12SharedMemoryAllocator instance.
+  static bool IsAllocationTracked(void* address_within_allocation);
 
   // Allocation clean up callback signature.
   using AllocationCleanUpFn = std::function<void(void* allocation_base_address)>;

@@ -34,6 +34,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | File | Test suite | Source file covered |
 |---|---|---|
 | `qnn_def_test.cc` | `QnnUnit_DefTest` | `builder/qnn_def.cc` |
+| `qnn_allocator_test.cc` | `QnnUnit_AllocatorTest` | `qnn_allocator.cc` |
 | `qnn_model_wrapper_test.cc` | `QnnUnit_ModelWrapperTest` | `builder/qnn_model_wrapper.cc` |
 | `qnn_quant_params_wrapper_test.cc` | `QnnUnit_QuantParamsWrapperTest` | `builder/qnn_quant_params_wrapper.cc` |
 | `qnn_model_test.cc` | `QnnUnit_ModelTest` | `builder/qnn_model.cc` |

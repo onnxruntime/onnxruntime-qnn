@@ -44,7 +44,7 @@ class GenieBackendManager;
 
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
-  QnnEp(QnnEpFactory& factory,
+  QnnEp(const QnnEpFactory& factory,
         const std::string& name,
         const OrtSessionOptions& session_options,
         const OrtLogger* logger);
@@ -91,6 +91,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL CreateAllocatorImpl(_In_ OrtEp* this_ptr,
                                                      _In_ const OrtMemoryInfo* memory_info,
                                                      _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept;
+  static OrtStatus* ORT_API_CALL GetDefaultMemoryDeviceImpl(
+      _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept;
   static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                        _In_reads_(num_options) const char* const* option_keys,
                                                        _In_reads_(num_options) const char* const* option_values,
@@ -220,7 +222,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::optional<uint32_t> htp_power_config_id_;
   mutable std::mutex config_id_mutex_;
 
-  // const QnnEpFactory& factory_;
+  const QnnEpFactory& factory_;
+
   std::string name_;
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
@@ -303,8 +306,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
-  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
-  OrtMemoryInfo* registered_memory_info_ = nullptr;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;

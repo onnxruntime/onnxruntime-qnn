@@ -36,6 +36,7 @@
 #include "gtest/gtest.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -190,6 +191,10 @@ class FactoryStubContext {
       return nullptr;
     };
     stub_ort_api.ReleaseMemoryInfo = [](OrtMemoryInfo*) noexcept {};
+    stub_ort_api.MemoryInfoGetDeviceMemType =
+        [](const OrtMemoryInfo*) noexcept -> OrtDeviceMemoryType {
+      return OrtDeviceMemoryType_HOST_ACCESSIBLE;
+    };
 
     stub_ort_api.CreateKeyValuePairs = [](OrtKeyValuePairs** out) noexcept {
       *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
@@ -454,6 +459,24 @@ TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_SetsNullAndReturnsOk) {
   OrtDataTransferImpl* transfer = reinterpret_cast<OrtDataTransferImpl*>(0xDEAD);
   EXPECT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
   EXPECT_EQ(transfer, nullptr);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRpcMem) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // ORT calls the factory allocator callback while registering every
+  // advertised allocator. Creating that allocator must not load RPCMEM, which
+  // is intentionally unavailable in this host-only unit test.
+  OrtAllocator* allocator = nullptr;
+  OrtStatus* status = factory.CreateAllocator(
+      &factory, reinterpret_cast<const OrtMemoryInfo*>(kFakeToken), nullptr, &allocator);
+
+  EXPECT_EQ(status, nullptr);
+  ASSERT_NE(allocator, nullptr);
+  EXPECT_EQ(allocator->Alloc, qnn::HtpSharedMemoryAllocator::AllocImpl);
+  factory.ReleaseAllocator(&factory, allocator);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEp_NullPointer_NoCrash) {
@@ -976,10 +999,10 @@ TEST_F(QnnUnit_ProviderFactoryTest, ReleaseAllocator_UnknownType_NoCrash) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  // Default qnn_allocator_type_ is NONE → neither HTP-shared nor DX12 → the
-  // "unknown type" warning branch runs. Must not crash.
-  auto* allocator = reinterpret_cast<OrtAllocator*>(kFakeToken);
-  factory.ReleaseAllocator(&factory, allocator);
+  // An allocator with no recognized callback takes the warning branch and is
+  // not deleted. Use a valid object because release dispatch reads Alloc.
+  OrtAllocator allocator{};
+  factory.ReleaseAllocator(&factory, &allocator);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEpFactory_NullPointer_ReturnsNull) {
