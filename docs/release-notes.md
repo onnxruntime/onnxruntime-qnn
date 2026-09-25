@@ -15,7 +15,6 @@ pip install onnxruntime-qnn==2.7.0
 - **QLinearConv** ([#494](https://github.com/onnxruntime/onnxruntime-qnn/pull/494))
 - **Swish** ([#777](https://github.com/onnxruntime/onnxruntime-qnn/pull/777))
 - **MatMul+Add+Relu QDQ node group fusion** ([#694](https://github.com/onnxruntime/onnxruntime-qnn/pull/694))
-- **GRU QDQ selector** — Enables genuine quantized (uint8 / native uint16) GRU execution on HTP, with fp32 fallback on QNN for unsupported configs instead of a hard CPU fallback. ([#721](https://github.com/onnxruntime/onnxruntime-qnn/pull/721))
 
 For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
 
@@ -29,6 +28,7 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - **Automatic UDO custom-op domain registration** — Domains are registered via factory hooks from the `ORT_QNN_CUSTOM_OP_DOMAINS` environment variable, no manual `Ort::CustomOpDomain` needed. ([#770](https://github.com/onnxruntime/onnxruntime-qnn/pull/770))
 - **Native QNN RoPE op** — RotaryEmbedding now lowers to the native HTP `QNN_OP_ROTARY_EMBEDDING` kernel instead of a multi-op decomposition. ([#659](https://github.com/onnxruntime/onnxruntime-qnn/pull/659))
 - **Variadic Sum/Max/Min** — Now accept more than 2 inputs instead of falling back to CPU EP. ([#687](https://github.com/onnxruntime/onnxruntime-qnn/pull/687))
+- **GRU quantized execution on HTP** — Genuine quantized (uint8 / native uint16) GRU now runs on HTP, with fp32 fallback on QNN for unsupported configs instead of a hard CPU fallback. ([#721](https://github.com/onnxruntime/onnxruntime-qnn/pull/721))
 - **HTP native block quantization (BQ) for Conv and MatMulNBits** — Routes block-quantized weights to the HTP native BQ kernel when supported (QAIRT SDK 2.51+), avoiding an extra activation convert step. ([#604](https://github.com/onnxruntime/onnxruntime-qnn/pull/604))
 - **Faster 2D initializer transpose** — Cache-tiled transposition speeds up ONNX→QNN lowering of weights; reduces LLM session creation time by up to ~33%. ([#791](https://github.com/onnxruntime/onnxruntime-qnn/pull/791))
 - **Constant-only graphs on GPU** — QNN GPU backend now accepts graphs with zero runtime inputs, fixing several WebNN conformance failures. ([#795](https://github.com/onnxruntime/onnxruntime-qnn/pull/795))
