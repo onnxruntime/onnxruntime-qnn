@@ -1248,6 +1248,9 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, output_type, qnn_data_type));
 
+  const Qnn_DataType_t activation_qnn_data_type =
+      qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+
   // Detect the non-native BQ Conv from the weight tensor's quant encoding.
   // native BQ (BLOCK)             : Conv outputs INT16 → standard quantized output path.
   // non-native BQ (BW_FLOAT_BLOCK): Conv outputs FP16 → need FP16 intermediate + Quantize(FP16→INT16).
@@ -1271,17 +1274,13 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
         output_shape[2],  // C
     };
     const std::string conv_output_name = utils::UniqueNameGenerator().New(output_name, "_conv");
-    QnnTensorWrapper output_tensorwrapper(conv_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
-                                          output_quantize_param.Copy(), std::vector<uint32_t>(output_shape_2d));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  output_node_type,
-                                                  std::move(input_names),
-                                                  {conv_output_name},
-                                                  std::move(param_tensor_names),
-                                                  do_op_validation),
-                  "Failed to add node.");
+    RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                    output_node_type, std::move(input_names),
+                                                    std::move(param_tensor_names), conv_output_name,
+                                                    QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
+                                                    output_quantize_param.Copy(),
+                                                    std::vector<uint32_t>(output_shape_2d),
+                                                    activation_qnn_data_type, do_op_validation));
 
     // Add Reshape to convert QNN Conv2d/TransposeConv2d/DepthWiseConv2d output back to 1D.
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(conv_output_name,
@@ -1322,17 +1321,12 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        std::move(output_quantize_param),
                                                        std::move(output_shape), do_op_validation));
     } else {
-      QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
-                                            std::move(output_quantize_param), std::move(output_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    output_node_type,
-                                                    std::move(input_names),
-                                                    {output_name},
-                                                    std::move(param_tensor_names),
-                                                    do_op_validation),
-                    "Failed to add node.");
+      RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                      output_node_type, std::move(input_names),
+                                                      std::move(param_tensor_names), output_name, tensor_type,
+                                                      qnn_data_type, std::move(output_quantize_param),
+                                                      std::move(output_shape), activation_qnn_data_type,
+                                                      do_op_validation));
     }
   }
 

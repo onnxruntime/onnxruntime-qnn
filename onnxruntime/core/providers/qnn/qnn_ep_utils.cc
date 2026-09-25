@@ -1023,10 +1023,69 @@ bool OrtSplitNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   return true;
 }
 
+// A 16-bit activation with an 8-bit per-tensor output is built as a 16-bit op followed by a Convert.
+static bool IsSupportedActivationOutputTypePair(const OrtGraph* graph, const OrtApi& ort_api,
+                                                ONNXTensorElementDataType dt_input,
+                                                ONNXTensorElementDataType dt_output,
+                                                const OrtNode* q_node) {
+  if (dt_input == dt_output) {
+    return true;
+  }
+  const bool is_16bit_input = dt_input == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16 ||
+                              dt_input == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+  const bool is_8bit_output = dt_output == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 ||
+                              dt_output == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  return is_16bit_input && is_8bit_output && IsQOrDQScalePositiveConstantScalar(graph, ort_api, q_node);
+}
+
+// Float activation with a weight-only DQ of a constant per-channel initializer. QNN takes the weight as a
+// static quantized tensor, whereas a standalone per-channel DQ is unsupported and would leave the weight
+// as a graph input.
+static bool IsPerChannelConstantWeightOnlyGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                                const std::vector<const OrtNode*>& dq_nodes,
+                                                const std::vector<const OrtNode*>& q_nodes) {
+  if (dq_nodes.size() != 1 || !q_nodes.empty()) {
+    return false;
+  }
+  size_t num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+  if (num_inputs < 2) {
+    return false;
+  }
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api);
+  if (inputs[1] == nullptr) {
+    return false;
+  }
+  const OrtNode* weight_producer = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(inputs[1], &weight_producer, nullptr), ort_api);
+  const OrtNode* weight_consumer = nullptr;
+  if (weight_producer != dq_nodes[0] || !GetSoleNonOutputConsumer(ort_api, inputs[1], weight_consumer) ||
+      weight_consumer != node) {
+    return false;
+  }
+
+  size_t dq_num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(dq_nodes[0], &dq_num_inputs), ort_api);
+  if (dq_num_inputs < 2) {
+    return false;
+  }
+  std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(dq_nodes[0], dq_inputs.data(), dq_inputs.size()), ort_api);
+  if (GetInitializerFromValueInfo(graph, ort_api, dq_inputs[0]) == nullptr) {
+    return false;
+  }
+  std::vector<int64_t> scale_shape;
+  return GetValueInfoShape(ort_api, dq_inputs[1], scale_shape) && scale_shape.size() == 1 && scale_shape[0] > 1;
+}
+
 bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
+  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes)) {
+    return true;
+  }
   // Conv allows the bias (input[2]) to lack a DQ node; inputs[0] (data) and inputs[1] (weight)
   // must always be DQ-produced. Unlike ORT-core ConvNodeGroupSelector (which requires all inputs
   // to be quantized), we relax the count to [2,3] to support a float bias at input[2].
@@ -1063,7 +1122,6 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // Input and output types need to be same
   auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
   auto dt_weight = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
@@ -1072,7 +1130,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
+  if (!IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0])) {
     return false;
   }
 
@@ -1158,6 +1216,9 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
                                        const OrtNode* redundant_clip_node,
                                        const std::vector<const OrtNode*>& dq_nodes,
                                        const std::vector<const OrtNode*>& q_nodes) const {
+  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes)) {
+    return true;
+  }
   if (dq_nodes.size() != 2) {
     return false;
   }
@@ -1185,7 +1246,8 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-  return dt_output.has_value() && dt_input.value() == dt_output.value();
+  return dt_output.has_value() &&
+         IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]);
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
