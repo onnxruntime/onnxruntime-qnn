@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -94,6 +95,20 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   const auto& node_name = utils::UniqueNameGenerator().New(dq_node_unit);
   const OrtNodeUnitIODef& input_def = dq_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& output_def = q_node_unit.Outputs()[0];
+
+  // A runtime Convert would demote a constant to an activation, which blocks HTP from folding
+  // the layout Transposes and elementwise ops that consume it.
+  // Sub-byte Q outputs are excluded because they are stored as 8-bit on HTP and would saturate to the 8-bit range.
+  const bool is_sub_byte_output = output_def.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
+                                  output_def.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
+                                  output_def.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2 ||
+                                  output_def.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2;
+  if (!is_sub_byte_output && CanFoldConstantQdq(qnn_model_wrapper, dq_node_unit) &&
+      !qnn_model_wrapper.IsGraphOutput(output_def.name) &&
+      TryFoldConstantQDQ(qnn_model_wrapper, dq_node_unit).IsOK() &&
+      TryFoldConstantQDQ(qnn_model_wrapper, q_node_unit).IsOK()) {
+    return Ort::Status();
+  }
 
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;

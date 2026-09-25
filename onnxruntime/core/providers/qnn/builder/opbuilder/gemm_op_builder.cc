@@ -549,8 +549,14 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   }
 
   // Non-BQ path: decompose Gemm into FullyConnected + Add when C cannot be an FC bias.
+  // ProcessInputs reuses an already-folded bias without the [1, N] -> [N] reshape FullyConnected needs.
+  const auto is_unreshaped_folded_bias = [&qnn_model_wrapper](const std::string& name) {
+    return qnn_model_wrapper.IsFoldedConstant(name) &&
+           qnn_model_wrapper.GetQnnTensorWrapper(name).GetTensorDims().size() != 1;
+  };
   const bool is_native_bias = node_unit.Inputs().size() == 3 &&
-                              qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE;
+                              (qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE ||
+                               is_unreshaped_folded_bias(node_unit.Inputs()[2].name));
   const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias);
 
   if (requires_fc_add_decomposition) {
