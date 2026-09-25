@@ -247,6 +247,48 @@ TEST_F(QnnHTPBackendTests, SliceBoolOnHTP) {
                             TestInputDef<int64_t>({2}, true, {1, 1}),  // steps
                             ExpectedEPNodeAssignment::All);
 }
+
+// Reproduces a partial-RoPE ONNX export pattern where the "pass-through" (non-rotary) slice is
+// empty because rotary_dim == head_dim: starts == the sliced dim's size, so the computed Slice
+// output has a 0-sized dimension on axis 0 (2 -> 0). QNN HTP's StridedSlice rejects any op config
+// with a zero-sized output dimension (backendValidateOpConfig fails with error 3110). QNN EP must
+// skip building the QNN node for this Slice (see SliceOpBuilder::ProcessAttributesAndOutputs) so
+// the node stays assigned to QNN EP instead of failing graph finalization.
+//
+// The 0-sized Slice output feeds into Concat (as in the real RoPE pattern), since ConcatOpBuilder
+// already excludes 0-dim inputs and is the only consumer that can safely reference a Slice output
+// that QNN EP never registers as a QNN tensor.
+TEST_F(QnnHTPBackendTests, SliceEmptyOutputOnHTP) {
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input0", {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+
+    builder.Make1DInitializer<int64_t>("starts", {2});  // == dim size on axis 0
+    builder.Make1DInitializer<int64_t>("ends", {2});    // same as starts -> 0-sized output
+    builder.Make1DInitializer<int64_t>("axes", {0});
+    builder.Make1DInitializer<int64_t>("steps", {1});
+
+    builder.AddNode("Slice",
+                    "Slice",
+                    {"input0", "starts", "ends", "axes", "steps"},
+                    {"slice_output"});
+
+    builder.MakeOutput("Y");
+    builder.AddNode("Concat",
+                    "Concat",
+                    {"input0", "slice_output"},
+                    {"Y"},
+                    kOnnxDomain,
+                    {MakeAttribute("axis", static_cast<int64_t>(0))});
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
