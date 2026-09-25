@@ -2184,7 +2184,7 @@ Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
   for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
     const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
     if (current_offsets[i] != 0 ||
-        !CheckBiasScaleMatch(current_scales[i], w, activation_scale, 1e-5f)) {
+        !CheckBiasScaleMatch(current_scales[i], w, activation_scale)) {
       needs_requantization = true;
     }
   }
