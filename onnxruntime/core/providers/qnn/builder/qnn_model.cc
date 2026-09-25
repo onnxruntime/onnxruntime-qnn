@@ -543,23 +543,8 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
     if (!zero_copy_fallback_warned_ &&
         (uses_shared_memory || uses_imported_memory || qnn_allocator_type != QnnAllocatorType::NONE)) {
       zero_copy_fallback_warned_ = true;
-      if (uses_shared_memory && qnn_allocator_type == QnnAllocatorType::NONE) {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                    "a shared-memory tensor was bound but no QNN shared-memory allocator is enabled; "
-                    "falling back to clientBuf. Enable the corresponding QNN shared-memory allocator for zero-copy.");
-      } else if (uses_shared_memory) {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                    "a HOST_ACCESSIBLE tensor was bound, but its allocation is not tracked by the QNN shared-memory "
-                    "allocator enabled for this session; falling back to clientBuf.");
-      } else if (uses_imported_memory) {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                    "a GPU tensor was bound, but it is not backed by a QNN-imported resource; "
-                    "falling back to clientBuf.");
-      } else {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                    "zero-copy shared memory was requested but a CPU-backed tensor was bound; "
-                    "falling back to per-frame copy. Allocate from the QnnHtpShared allocator to enable zero-copy.");
-      }
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  "QNN zero-copy memory binding was not used; falling back to clientBuf.");
     }
   }
 

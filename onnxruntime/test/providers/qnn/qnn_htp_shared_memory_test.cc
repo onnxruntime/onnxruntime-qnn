@@ -75,12 +75,9 @@ void AttachLogCapture(Ort::SessionOptions& so, LogCapture& capture) {
 constexpr std::string_view kLogSubstrMemHandle = "Setting Qnn_Tensor_t memHandle";
 constexpr std::string_view kLogSubstrClientBuf = "Setting Qnn_Tensor_t clientBuf";
 
-// Leading substring of the one-shot WARNING emitted when shared-memory is
-// requested but a CPU-backed OrtValue is bound.
+// One-shot WARNING emitted when QNN zero-copy binding falls back to clientBuf.
 constexpr std::string_view kLogSubstrFallbackWarning =
-    "zero-copy shared memory was requested";
-constexpr std::string_view kLogSubstrUntrackedFallbackWarning =
-    "allocation is not tracked by the QNN shared-memory allocator";
+    "QNN zero-copy memory binding was not used; falling back to clientBuf";
 
 ProviderOptions MakeHtpOptions(bool enable_shared_memory = true) {
   ProviderOptions options;
@@ -678,7 +675,7 @@ TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_client
   }
   EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 2u);
   EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
-  EXPECT_EQ(capture.CountContaining(kLogSubstrUntrackedFallbackWarning), 1u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 1u);
 }
 
 // ---------------------------------------------------------------------------
