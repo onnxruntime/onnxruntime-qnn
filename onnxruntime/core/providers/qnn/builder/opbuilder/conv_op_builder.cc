@@ -434,7 +434,36 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
   const std::string act_name = input_names[0];  // activation (input 0)
   const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
-  const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
+  Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
+
+  // Bridge a mixed-precision activation/output pair with a Convert before Conv runs.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    // 1. Read the Conv's own declared (Q-node) output precision.
+    const auto& conv_output = node_unit.Outputs()[0];
+    Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(conv_output.quant_param.has_value(), conv_output.type,
+                                          declared_output_dtype));
+    // 2. A 16-bit activation feeding an 8-bit output is already handled losslessly downstream by
+    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output. Bridge
+    // only the other mismatched fixed-point pairs here; same-precision Conv is untouched.
+    const bool is_narrowing_output = utils::IsQuant16bit(act_dtype) && utils::IsQuant8bit(declared_output_dtype);
+    if (!is_narrowing_output && utils::IsMixedPrecisionBridge(act_dtype, declared_output_dtype)) {
+      RETURN_IF_NOT(act_wrapper.GetQnnQuantParams().IsPerTensor(),
+                    "Conv's mixed-precision activation Convert only supports per-tensor quantization");
+      // 3. Convert the activation to the output's precision before Conv consumes it.
+      const Qnn_QuantizeParams_t& act_quant_param = act_wrapper.GetQnnQuantParams().Get();
+      const std::string converted_act_name = utils::UniqueNameGenerator().New(act_name, "_convert");
+      RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper, act_name, converted_act_name,
+                                             act_dtype, declared_output_dtype,
+                                             act_quant_param.scaleOffsetEncoding.offset,
+                                             act_quant_param.scaleOffsetEncoding.scale,
+                                             act_wrapper.GetTensorDims(),
+                                             /*output_symmetric*/ false, do_op_validation));
+      // 4. Conv now computes/emits natively at declared_output_dtype; no further bridging needed.
+      input_names[0] = converted_act_name;
+      act_dtype = declared_output_dtype;
+    }
+  }
 
   // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight rank
   // with scale_shape[1] < weight_shape[1] (the blocked IC axis). Weight is always NCHW

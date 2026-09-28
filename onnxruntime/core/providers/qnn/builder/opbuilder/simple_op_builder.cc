@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/precision_bridge_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -17,6 +18,11 @@ class SimpleOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(SimpleOpBuilder);
 
  protected:
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
@@ -32,12 +38,6 @@ class SimpleOpBuilder : public BaseOpBuilder {
 
  private:
   Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
-  Ort::Status ProcessSigmoidOrTanhOutput(QnnModelWrapper& qnn_model_wrapper,
-                                         const OrtNodeUnit& node_unit,
-                                         std::vector<std::string>&& input_names,
-                                         std::vector<std::string>&& param_tensor_names,
-                                         const Ort::Logger& logger,
-                                         bool do_op_validation) const ORT_MUST_USE_RESULT;
 
   static constexpr std::array<std::string_view, 3> gridsample_supported_modes = {"bilinear", "nearest", "linear"};
   static constexpr std::array<std::string_view, 3> gridsample_supported_padding_modes = {"zeros", "border", "reflection"};
@@ -126,6 +126,17 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
   }
 
   return Ort::Status();
+}
+
+Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           const Ort::Logger& logger,
+                                           std::vector<std::string>& input_names,
+                                           bool do_op_validation) const {
+  RETURN_IF_ERROR(BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
+
+  // See OrtBinaryNodeGroupSelector's relaxation in qnn_ep_utils.cc for context.
+  return utils::AlignBinaryPrecisionInputs(qnn_model_wrapper, node_unit, input_names, do_op_validation);
 }
 
 // Limit to float type for now
@@ -490,57 +501,32 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                         GetQnnOpType(op_type), do_op_validation);
   }
 
+  // A bridgeable op's declared output precision may differ from what it now natively computes at
+  // (e.g. 16-bit in, declared 8-bit out); bridge with a native-precision compute + Convert.
+  // 1. Only applies to ops SimpleOpBuilder knows how to bridge.
+  if ((utils::IsUnaryPrecisionBridgeOp(op_type) || utils::IsBinaryPrecisionBridgeOp(op_type)) &&
+      !input_names.empty()) {
+    // 2. Read the declared (Q-node) output precision, applying any op-specific override first.
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+    if (output_info.quant_param.IsQuantized()) {
+      RETURN_IF_ERROR(OverrideOutputQuantParam(qnn_model_wrapper, node_unit, logger, input_names, 0,
+                                               output_info.qnn_data_type, output_info.quant_param));
+    }
+    // 3. Compare against the precision the op will actually compute at (input_names[0]'s dtype).
+    const Qnn_DataType_t native_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    const bool needs_bridge = utils::IsMixedPrecisionBridge(native_dtype, output_info.qnn_data_type);
+    if (needs_bridge) {
+      return utils::BridgeOutputPrecision(qnn_model_wrapper, node_unit, std::move(input_names),
+                                          std::move(param_tensor_names), do_op_validation,
+                                          GetQnnOpType(op_type), native_dtype, std::move(output_info));
+    }
+  }
+
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),
                         std::move(param_tensor_names),
                         logger, do_op_validation, GetQnnOpType(op_type));
-}
-
-/**
- * Overrides offset and scale quantization parameters for operators (e.g., Sigmoid or Tanh) that require
- * specific values. Returns true if the quantization parameters were overridden.
- *
- * \param op_type The ONNX operator type.
- * \param qnn_data_type The QNN tensor data type.
- * \param quant_params Output scale/offset parameter that may be overridden.
- * \return True if the offset and scale were overridden.
- */
-static bool OverrideQuantParams(const std::string& op_type, Qnn_DataType_t qnn_data_type,
-                                Qnn_ScaleOffset_t& quant_params) {
-  const int32_t orig_offset = quant_params.offset;
-  const float orig_scale = quant_params.scale;
-
-  if (op_type == "Sigmoid" || op_type == "HardSigmoid") {
-    switch (qnn_data_type) {
-      case QNN_DATATYPE_UFIXED_POINT_16:
-        quant_params.offset = 0;
-        quant_params.scale = 1.0f / 65536.0f;
-        break;
-      case QNN_DATATYPE_SFIXED_POINT_16:
-        quant_params.offset = 0;
-        quant_params.scale = 1.0f / 32768.0f;
-        break;
-      default:
-        break;  // Do nothing.
-    }
-  }
-
-  if (op_type == "Tanh") {
-    switch (qnn_data_type) {
-      case QNN_DATATYPE_UFIXED_POINT_16:
-        quant_params.offset = -32768;
-        quant_params.scale = 1.0f / 32768.0f;
-        break;
-      case QNN_DATATYPE_SFIXED_POINT_16:
-        quant_params.offset = 0;
-        quant_params.scale = 1.0f / 32768.0f;
-        break;
-      default:
-        break;  // Do nothing.
-    }
-  }
-
-  return quant_params.offset != orig_offset || quant_params.scale != orig_scale;
 }
 
 Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
@@ -565,7 +551,7 @@ Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model
     const std::string& output_name = output.name;
 
     if (quant_param.IsPerTensor(/*include_bw*/ false)) {
-      if (OverrideQuantParams(op_type, qnn_data_type, quant_param.Get().scaleOffsetEncoding)) {
+      if (utils::OverrideActivationFixedEncoding(op_type, qnn_data_type, quant_param.Get().scaleOffsetEncoding)) {
         const int32_t offset = quant_param.Get().scaleOffsetEncoding.offset;
         const float scale = quant_param.Get().scaleOffsetEncoding.scale;
 
