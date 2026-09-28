@@ -20,6 +20,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateCastOpBuilder("Cast", *this);
   CreateCastOpBuilder("CastLike", *this);
   CreateClipOpBuilder("Clip", *this);
+  CreateCompressOpBuilder("Compress", *this);
   CreateConcatOpBuilder("Concat", *this);
   CreateConvOpBuilder("Conv", *this);
   CreateConvOpBuilder("ConvTranspose", *this);
