@@ -32,6 +32,11 @@ on:
         description: "Optional gtest filter for a test-only diagnostic run"
         required: false
         type: string
+      diagnose_with_gdb:
+        description: "Run the selected diagnostic filter under gdb"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - dev/tzuhwei/linux-arm64-qnn-ut-internal-symbols
@@ -130,7 +135,14 @@ jobs:
           fi
           results_xml=qnn-tier-results.xml
           set +e
-          if [[ -n "$TEST_FILTER" ]]; then
+          if [[ '${{ inputs.diagnose_with_gdb }}' == 'true' ]]; then
+            command -v gdb
+            gdb --batch --return-child-result \
+              -ex run -ex "thread apply all bt full" \
+              --args "$test_bin" --gtest_filter="$filter" --gtest_color=no \
+              > "$GITHUB_WORKSPACE/gdb-backtrace.txt" 2>&1
+            cat "$GITHUB_WORKSPACE/gdb-backtrace.txt"
+          elif [[ -n "$TEST_FILTER" ]]; then
             "$test_bin" --gtest_filter="$filter" --gtest_color=no --gtest_output="xml:$results_xml"
           else
             # Keep per-test progress in the CI log. A process-level fault does
@@ -167,6 +179,13 @@ jobs:
               print(f"QNN_FAILURE tier {suite}.{case}: {reason}")
           PY
           exit "$test_rc"
+      - name: Upload gdb backtrace
+        if: ${{ always() && inputs.diagnose_with_gdb }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-qnn-gdb-backtrace
+          path: gdb-backtrace.txt
+          if-no-files-found: error
       - name: Run legacy QNN catch-all path
         if: ${{ inputs.test_filter == '' }}
         shell: bash
