@@ -57,6 +57,26 @@ std::optional<ONNXTensorElementDataType> GetNodeInputDataType(const OrtNode* nod
   return GetDataTypeFromValueInfo(ort_api, inputs[index]);
 }
 
+// 1.2.1 True if `type` is a bridgeable (4/8/16-bit, signed or unsigned) fixed-point encoding.
+bool IsBridgeableFixedPointType(ONNXTensorElementDataType type) {
+  switch (type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// 1.2.2 True if `a` and `b` are a mismatched pair of bridgeable fixed-point encodings.
+bool IsMixedPrecisionBridge(ONNXTensorElementDataType a, ONNXTensorElementDataType b) {
+  return a != b && IsBridgeableFixedPointType(a) && IsBridgeableFixedPointType(b);
+}
+
 // 1.3 Element type of `node`'s output[index].
 std::optional<ONNXTensorElementDataType> GetNodeOutputDataType(const OrtNode* node, const OrtApi& ort_api, int index) {
   size_t num_defs = 0;
@@ -911,7 +931,15 @@ bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   }
 
   if (dt_input.value() != dt_output.value()) {
-    return false;
+    // SimpleOpBuilder can bridge a precision mismatch for some unary ops via Convert.
+    // Other unary-shaped ops (Reduce*, Pool*, Softmax, Slice, LRN) have dedicated builders
+    // that don't implement this bridge, so stay strict for them.
+    // 1. Op must be one SimpleOpBuilder knows how to bridge.
+    // 2. The mismatch itself must be a bridgeable fixed-point pair (4/8/16-bit).
+    if (!qnn::utils::IsUnaryPrecisionBridgeOp(Ort::ConstNode(node).GetOperatorType()) ||
+        !IsMixedPrecisionBridge(dt_input.value(), dt_output.value())) {
+      return false;
+    }
   }
 
   return true;
@@ -994,7 +1022,16 @@ bool OrtBinaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
-    return false;
+    // SimpleOpBuilder can align a mismatched input pair for some binary ops via Convert.
+    // 1. Op must be one SimpleOpBuilder knows how to bridge.
+    const bool is_bridgeable_op = qnn::utils::IsBinaryPrecisionBridgeOp(Ort::ConstNode(node).GetOperatorType());
+    // 2. Every mismatched slot must itself be a bridgeable fixed-point type (4/8/16-bit).
+    const bool all_bridgeable = IsBridgeableFixedPointType(dt_input_1.value()) &&
+                                IsBridgeableFixedPointType(dt_input_2.value()) &&
+                                IsBridgeableFixedPointType(dt_output.value());
+    if (!is_bridgeable_op || !all_bridgeable) {
+      return false;
+    }
   }
 
   return true;
@@ -1184,7 +1221,13 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (!IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0])) {
+  // IsSupportedActivationOutputTypePair accepts 16-bit-in/8-bit-out: ConvOpBuilder narrows only the
+  // output after computing Conv at 16-bit (see AddOpWithQuantizedOutput), so that case is lossless
+  // and handled downstream. IsMixedPrecisionBridge accepts any other mismatched fixed-point pair
+  // (e.g. 8-bit-in/16-bit-out, 4-bit combos): ConvOpBuilder Converts the activation to the output's
+  // precision before Conv runs. See ConvOpBuilder::ProcessConv2D3DInputs.
+  if (!IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]) &&
+      !IsMixedPrecisionBridge(dt_input.value(), dt_output.value())) {
     return false;
   }
 
