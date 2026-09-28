@@ -148,6 +148,31 @@ inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
          qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
 }
 
+// Returns true if the QNN data type is an 8-bit fixed-point quantized type.
+inline bool IsQuant8bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8;
+}
+
+// Returns true if the QNN data type is a 4-bit fixed-point quantized type.
+inline bool IsQuant4bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_4 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4;
+}
+
+// Bit width (4, 8, 16) of a fixed-point QNN type, or 0 if not fixed-point.
+inline int FixedPointBitWidth(Qnn_DataType_t qnn_data_type) {
+  if (IsQuant4bit(qnn_data_type)) return 4;
+  if (IsQuant8bit(qnn_data_type)) return 8;
+  if (IsQuant16bit(qnn_data_type)) return 16;
+  return 0;
+}
+
+// True if `a` and `b` are a mismatched bridgeable (4/8/16-bit) fixed-point pair.
+inline bool IsMixedPrecisionBridge(Qnn_DataType_t a, Qnn_DataType_t b) {
+  return a != b && FixedPointBitWidth(a) != 0 && FixedPointBitWidth(b) != 0;
+}
+
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
 class UniqueNameGeneratorImpl {
@@ -214,6 +239,20 @@ static bool ArrayHasString(const std::array<std::string_view, N>& strings, std::
   return false;
 }
 
+// Unary ops SimpleOpBuilder can bridge to a differing declared output precision via Convert.
+inline bool IsUnaryPrecisionBridgeOp(std::string_view op_type) {
+  static constexpr std::array<std::string_view, 22> kOps = {
+      "Abs", "Asin", "Atan", "Ceil", "Cos", "Elu", "Exp", "Floor", "Gelu", "HardSigmoid", "HardSwish",
+      "LeakyRelu", "Log", "Neg", "Relu", "Round", "Sigmoid", "Sign", "Sin", "Softplus", "Sqrt", "Tanh"};
+  return ArrayHasString(kOps, op_type);
+}
+
+// Binary ops SimpleOpBuilder can bridge across a mismatched input or output precision.
+inline bool IsBinaryPrecisionBridgeOp(std::string_view op_type) {
+  static constexpr std::array<std::string_view, 5> kOps = {"Add", "Div", "Mul", "Pow", "Sub"};
+  return ArrayHasString(kOps, op_type);
+}
+
 std::pair<float, float> CheckMinMax(float rmin, float rmax);
 
 template <typename T>
@@ -233,6 +272,12 @@ Ort::Status GetQminQmax(const Qnn_DataType_t qnn_data_type,
   } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
     qmin = static_cast<T>(std::numeric_limits<uint16_t>::min());
     qmax = static_cast<T>(std::numeric_limits<uint16_t>::max());
+  } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4) {
+    qmin = static_cast<T>(-8 + static_cast<int32_t>(symmetric));
+    qmax = static_cast<T>(7);
+  } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    qmin = static_cast<T>(0);
+    qmax = static_cast<T>(15);
   } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32) {
     qmin = static_cast<T>(std::numeric_limits<int32_t>::min() + static_cast<int32_t>(symmetric));
     qmax = static_cast<T>(std::numeric_limits<int32_t>::max());
