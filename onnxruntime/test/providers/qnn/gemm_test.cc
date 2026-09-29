@@ -1228,7 +1228,7 @@ TEST_F(QnnGPUBackendTests, ReshapeGemmFusion) {
 
 #endif  // defined(_M_ARM64) GPU tests
 
-// Tests for the `disable_matmul_to_fc` session config option (AISW-202299).
+// Tests for the `use_native_matmul` session config option (AISW-202299).
 // When set to "1", the QNN EP routes float32 Gemm to QNN_OP_MAT_MUL (with transpose params)
 // instead of QNN_OP_FULLY_CONNECTED. Each test sets the flag and uses the JSON graph dump to
 // assert the exact op type in the compiled QNN graph.
@@ -1245,7 +1245,7 @@ TEST_F(QnnCPUBackendTests, GemmDisableFC_NoBias_TransB0) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
@@ -1279,7 +1279,7 @@ TEST_F(QnnCPUBackendTests, GemmDisableFC_NoBias_TransB1) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
@@ -1313,7 +1313,7 @@ TEST_F(QnnCPUBackendTests, GemmDisableFC_WithBias) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 

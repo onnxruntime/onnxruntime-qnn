@@ -196,7 +196,7 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
                                                      Qnn_DataType_t qnn_dtype_a,
                                                      Qnn_DataType_t qnn_dtype_b,
                                                      const QnnQuantParamsWrapper& quant_a) {
-  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
+  if (qnn_model_wrapper.GetModelSettings().use_native_matmul) {
     return false;
   }
 

@@ -105,7 +105,7 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                utils::IsQuant16bit(input_info_0.qnn_data_type);
 
   // Suppress FullyConnected lowering if disabled by session options.
-  if (qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc) {
+  if (qnn_model_wrapper.GetModelSettings().use_native_matmul) {
     use_fully_connected = false;
     return Ort::Status();
   }

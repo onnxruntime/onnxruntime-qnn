@@ -1013,13 +1013,13 @@ TEST_F(QnnCPUBackendTests, MatMulf32_PerChannelQDQChain_QwenQProj_MustFold) {
   AssertFp32StaticBytesAbove(graph_dir, /*min_bytes*/ 1024 * 1024);
 }
 
-// Tests for the `disable_matmul_to_fc` session config option (AISW-202299).
+// Tests for the `use_native_matmul` session config option (AISW-202299).
 // When set to "1", the QNN EP routes rank-2 static-weight MatMul to QNN_OP_MAT_MUL instead
 // of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type
 // present in the compiled QNN graph.
 
 // Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
-// disable_matmul_to_fc flag is set.
+// use_native_matmul flag is set.
 TEST_F(QnnCPUBackendTests, MatMulDisableFC_2D_StaticWeight) {
   namespace fs = std::filesystem;
 
@@ -1031,7 +1031,7 @@ TEST_F(QnnCPUBackendTests, MatMulDisableFC_2D_StaticWeight) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
@@ -1052,7 +1052,7 @@ TEST_F(QnnCPUBackendTests, MatMulDisableFC_2D_StaticWeight) {
 }
 
 // Rank-3 activation, rank-2 static weight: verify MatMul (not FullyConnected) when the
-// disable_matmul_to_fc flag is set.
+// use_native_matmul flag is set.
 TEST_F(QnnCPUBackendTests, MatMulDisableFC_3D_StaticWeight) {
   namespace fs = std::filesystem;
 
@@ -1064,7 +1064,7 @@ TEST_F(QnnCPUBackendTests, MatMulDisableFC_3D_StaticWeight) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
@@ -1096,7 +1096,7 @@ TEST_F(QnnCPUBackendTests, MatMulDefaultUsesFC) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  // disable_matmul_to_fc is intentionally NOT set; default is false (FullyConnected).
+  // use_native_matmul is intentionally NOT set; default is false (FullyConnected).
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
@@ -1116,7 +1116,7 @@ TEST_F(QnnCPUBackendTests, MatMulDefaultUsesFC) {
   AssertOpInQnnGraph(graph_dir, "MatMul", 0);
 }
 
-// Opt-in guard: explicitly setting disable_matmul_to_fc=1 enables MatMul routing.
+// Opt-in guard: explicitly setting use_native_matmul=1 enables MatMul routing.
 TEST_F(QnnCPUBackendTests, MatMulOptInUsesMatMul) {
   namespace fs = std::filesystem;
 
@@ -1128,7 +1128,7 @@ TEST_F(QnnCPUBackendTests, MatMulOptInUsesMatMul) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";  // explicit opt-in => native MatMul path
+  provider_options["use_native_matmul"] = "1";  // explicit opt-in => native MatMul path
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 

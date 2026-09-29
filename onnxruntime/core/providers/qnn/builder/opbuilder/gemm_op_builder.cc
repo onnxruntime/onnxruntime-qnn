@@ -154,7 +154,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   std::vector<int64_t> input_trans_flag(3, 0);
   input_trans_flag.at(0) = node_helper.Get("transA", (int64_t)0);
   auto transB = node_helper.Get("transB", (int64_t)0);
-  const bool use_matmul_path = qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc;
+  const bool use_matmul_path = qnn_model_wrapper.GetModelSettings().use_native_matmul;
   // FC path needs weight in [N,K]; MatMul path keeps weight in [K,N] and expresses the
   // transpose via QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1 instead of a host-side data transpose.
   input_trans_flag.at(1) = (!use_matmul_path && transB == 0) ? 1 : 0;
@@ -555,7 +555,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                               qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE;
   const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias);
 
-  const bool use_matmul = qnn_model_wrapper.GetModelSettings().disable_matmul_to_fc;
+  const bool use_matmul = qnn_model_wrapper.GetModelSettings().use_native_matmul;
   const int64_t trans_a_out = node_helper.Get("transA", static_cast<int64_t>(0));
 
   if (requires_fc_add_decomposition) {

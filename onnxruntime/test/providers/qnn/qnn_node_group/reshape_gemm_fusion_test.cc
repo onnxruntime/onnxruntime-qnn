@@ -858,7 +858,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_QDQ_NoFusion) {
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
 }
 
-// Test: Fusion should NOT happen when disable_matmul_to_fc=1.
+// Test: Fusion should NOT happen when use_native_matmul=1.
 // Verifies that TryFusion2/3/4 all respect the session option and fall back to
 // the standalone Gemm builder (which also checks the flag and routes to MatMul).
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DisableFC) {
@@ -869,7 +869,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DisableFC) {
   auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 

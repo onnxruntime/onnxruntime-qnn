@@ -366,12 +366,12 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
 
-// Tests for the `disable_matmul_to_fc` session config option on QLinearMatMul (AISW-202299).
+// Tests for the `use_native_matmul` session config option on QLinearMatMul (AISW-202299).
 // When set to "1", the QNN EP routes static-weight QLinearMatMul to QNN_OP_MAT_MUL instead
 // of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type.
 
 // Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
-// disable_matmul_to_fc flag is set.
+// use_native_matmul flag is set.
 TEST_F(QnnCPUBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
   namespace fs = std::filesystem;
 
@@ -383,7 +383,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["disable_matmul_to_fc"] = "1";
+  provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
@@ -413,7 +413,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulDefaultUsesFC) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
-  // disable_matmul_to_fc is intentionally NOT set; default is false (FullyConnected).
+  // use_native_matmul is intentionally NOT set; default is false (FullyConnected).
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
 
