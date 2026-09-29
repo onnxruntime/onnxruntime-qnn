@@ -541,19 +541,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
             per_block_int32_offset.assign(total_blocks, 0);
           } else {
             mapping = QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE;
-            // Unpack block-quantized zero-points and convert to int32 offsets per QNN convention.
-            std::vector<uint8_t> per_block_uint8_zp;
-            const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
-            RETURN_IF_NOT(zp_tensor_proto != nullptr, "MatMulNBits zero_points must be a constant initializer.");
-            RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp));
-            std::vector<float> per_block_float_zp;
-            UnpackDataToDatatype<float>(per_block_uint8_zp, bits, num_zp_per_uint8, per_block_float_zp);
-
-            const float offset_shift = static_cast<float>(1 << (bits - 1));
-            per_block_int32_offset.resize(per_block_float_zp.size());
-            for (size_t idx = 0; idx < per_block_float_zp.size(); ++idx) {
-              per_block_int32_offset[idx] = static_cast<int32_t>(-(per_block_float_zp[idx] - offset_shift));
-            }
+            per_block_int32_offset.assign(per_block_float_zp.begin(), per_block_float_zp.end());
           }
 
           quantize_param = QnnQuantParamsWrapper::BwBlockMapped(per_block_float_scale,
@@ -751,7 +739,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     // Determine the Conv2D output data type from the registered weight tensor's quant encoding.
     // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION), native BQ
     // (BLOCK), and BW_BLOCK_MAPPED all produce the actual output data type (e.g. uint16/int16) directly.
-    // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
+    // NOTE: IsBlockQuantized() is also true for BW_BLOCK_MAPPED, so match the encoding directly.
     bool is_bw_float_block = false;
     if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
       const auto& weight_quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
