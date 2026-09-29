@@ -31,13 +31,16 @@ namespace test {
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
 class HnrdTestHandle {
  public:
-  HnrdTestHandle(uint32_t htp_arch) : htp_arch_(htp_arch) {
+  HnrdTestHandle(uint32_t htp_arch, bool keep_prepare_lib = false) : htp_arch_(htp_arch) {
     // Move Prepare/Skel/Stub libraries to a temporary directory to trigger HNRD.
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
     temp_dir_ = std::string("temp_") + info->test_suite_name() + "-" + info->name();
 
     std::filesystem::create_directory(temp_dir_);
     for (const std::string& lib : GetRelatedLibs()) {
+      if (keep_prepare_lib && lib.find("HtpPrepare") != std::string::npos) {
+        continue;
+      }
       if (std::filesystem::exists(lib)) {
         std::filesystem::rename(lib, temp_dir_ / lib);
       }
@@ -319,18 +322,6 @@ struct CompatibilityTestInfoV2 {
   }
 };
 
-struct MallocAllocator : OrtAllocator {
-  MallocAllocator() {
-    OrtAllocator::Alloc = [](OrtAllocator* this_, size_t size) {
-      return static_cast<MallocAllocator*>(this_)->Alloc(size);
-    };
-  }
-
-  void* Alloc(size_t size) {
-    return malloc(size);
-  }
-};
-
 std::string GetInfoFromModelMetadata(const ORTCHAR_T* output_model_file) {
   ONNX_NAMESPACE::ModelProto model;
 
@@ -589,6 +580,61 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_Override
 #endif  // !defined(_M_ARM64) && !defined(__aarch64__)
 
 #if defined(_WIN32) && defined(_M_ARM64)
+TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
+#ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+#endif
+
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+  const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
+  // Host mode is not affected by missing Stub/Skel libraries.
+  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(htp_arch, /*keep_prepare_lib*/ true);
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions qnn_options = {{"backend_type", "htp"},
+                                 {"enable_htp_cross_device_prepare", "1"},
+                                 {"htp_arch", std::to_string(htp_arch)},
+                                 {"vtcm_mb", "8"},
+                                 {"num_graph_prepare_threads", "1"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  {
+    CompatibilityTestInfoV2 expected_info;
+    // Override SDK-dependent fields from runtime SDK.
+    expected_info.sdk_build_id = platform_attrs.sdk_version;
+    expected_info.backend_api_version_major = platform_attrs.backend_api_version.major;
+    expected_info.backend_api_version_minor = platform_attrs.backend_api_version.minor;
+    expected_info.backend_api_version_patch = platform_attrs.backend_api_version.patch;
+    // Set platform related fields.
+    expected_info.htp_archs.push_back(htp_arch);
+    expected_info.soc_models.push_back(0);
+    expected_info.vtcm_mbs.push_back(8);
+    // HNRD should be false due to host mode set.
+    expected_info.is_htp_usr_drv = false;
+
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
 template <typename INFO_VER>
 static void TestModelCompatibilityApiValidate(const INFO_VER& test_info,
                                               const OrtCompiledModelCompatibility expected_compatibility) {
