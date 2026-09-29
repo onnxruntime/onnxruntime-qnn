@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: MIT
 //
 // Session-level snapshot tests for MaxPool.
-//
-// Pool is layout-sensitive. These tests exercise the full ORT partition and
-// layout-transform path, which is the graph the QNN PoolOpBuilder receives.
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
@@ -36,13 +33,22 @@ std::vector<ONNX_NAMESPACE::AttributeProto> MakeMaxPoolAttributes(const MaxPoolS
   return attrs;
 }
 
+TestInputDef<float> MakeMaxPoolInput(const MaxPoolSpec& spec) {
+  const int64_t element_count = std::accumulate(spec.input_shape.begin(), spec.input_shape.end(),
+                                                int64_t{1}, std::multiplies<>{});
+  return TestInputDef<float>(spec.input_shape, false,
+                             GetFloatDataInRange(-10.0f, 10.0f, element_count));
+}
+
+GetTestModelFn BuildMaxPoolF32Model(const MaxPoolSpec& spec) {
+  return BuildOpTestCase<float>("maxpool", "MaxPool", {MakeMaxPoolInput(spec)}, {},
+                                MakeMaxPoolAttributes(spec));
+}
+
 template <typename QuantType>
 GetTestModelFn BuildMaxPoolQDQModel(const MaxPoolSpec& spec) {
   return [spec](ModelTestBuilder& builder) {
-    const int64_t element_count = std::accumulate(spec.input_shape.begin(), spec.input_shape.end(),
-                                                  int64_t{1}, std::multiplies<>{});
-    const TestInputDef<float> input_def(spec.input_shape, false,
-                                        GetFloatDataInRange(-10.0f, 10.0f, element_count));
+    const TestInputDef<float> input_def = MakeMaxPoolInput(spec);
     MakeTestInput(builder, "input", input_def);
 
     const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
@@ -58,15 +64,25 @@ GetTestModelFn BuildMaxPoolQDQModel(const MaxPoolSpec& spec) {
   };
 }
 
+GetTestModelFn BuildMaxPoolSessionModel(const MaxPoolSpec& spec) {
+  switch (spec.data_type) {
+    case MaxPoolDataType::Float:
+      return BuildMaxPoolF32Model(spec);
+    case MaxPoolDataType::UInt8:
+      return BuildMaxPoolQDQModel<uint8_t>(spec);
+    case MaxPoolDataType::UInt16:
+      return BuildMaxPoolQDQModel<uint16_t>(spec);
+  }
+
+  ADD_FAILURE() << "BuildMaxPoolSessionModel: unsupported data type";
+  return {};
+}
+
 void RunMaxPoolSessionSnapshot(const MaxPoolSpec& spec) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-
-  GetTestModelFn build = spec.quant_type == MaxPoolQuantType::UInt8
-                              ? BuildMaxPoolQDQModel<uint8_t>(spec)
-                              : BuildMaxPoolQDQModel<uint16_t>(spec);
-  AssertSessionSnapshotJson(build, provider_options, /*opset_version=*/18, spec.name);
+  AssertSessionSnapshotJson(BuildMaxPoolSessionModel(spec), provider_options, /*opset_version=*/18, spec.name);
 }
 
 }  // namespace
