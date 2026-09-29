@@ -7,6 +7,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -1965,6 +1966,30 @@ class QnnHTPBackendTests : public ::testing::Test {
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
   static BackendSupport cached_ir_support_;
 };
+
+// V79+ HTP devices use xQFloat internally and can resolve exact quantization
+// half-way cases differently from V73. Keep the default tolerance for pre-V79
+// targets so that V73 retains its stricter coverage.
+//
+// measured_max_output_quant_steps is obtained for each fixed test vector by
+// comparing its QNN and CPU QDQ outputs. It is the maximum end-to-end U8 code
+// difference after a tie-rounding difference propagates through the graph:
+// max(abs(qnn_qdq_output - cpu_qdq_output) / output_quant_scale), where
+// output_quant_scale = (rmax_output - rmin_output) / 255. The returned
+// normalized tolerance is therefore measured_max_output_quant_steps / 255 plus
+// a floating-point comparison slack. The slack is far below one U8 step (1 / 255),
+// so this does not admit an additional quantized output value.
+inline QDQTolerance GetV79OrLaterTieRoundingTolerance(unsigned int measured_max_output_quant_steps) {
+  if (!QnnHTPBackendTests::HasPlatformAttributes() ||
+      QnnHTPBackendTests::GetPlatformAttributes().htp_arch < QNN_HTP_DEVICE_ARCH_V79) {
+    return QDQTolerance{};
+  }
+
+  constexpr float kU8QuantizationRange = 255.0f;
+  constexpr float kFloatingPointComparisonSlack = 1.0e-5f;
+  return QDQTolerance(static_cast<float>(measured_max_output_quant_steps) / kU8QuantizationRange +
+                      kFloatingPointComparisonSlack);
+}
 
 // Testing fixture class for tests that require the QNN GPU backend. Checks if QNN GPU is available before the test
 // begins. The test is skipped if the GPU backend is unavailable (may occur on Windows ARM64).
