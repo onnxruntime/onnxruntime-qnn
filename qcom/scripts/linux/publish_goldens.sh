@@ -9,7 +9,7 @@
 #      then runs the accuracy tier to verify numerical correctness).
 #   2. Read the accuracy JSON report to find which op GROUPS actually PASSED.
 #   3. Package ONLY the passing groups' goldens + a version-stamped manifest.json.
-#   4. Upload to Artifactory: a write-once dated/sha archive, then the mutable
+#   4. Upload to Artifactory: a uniquely identified archive, then the mutable
 #      latest/ pointer the gate reads.
 #
 # A group is published iff every one of its QnnAcc_<Group>_Accuracy[_<Variant>]Test
@@ -296,12 +296,24 @@ ort_version="$(resolve_ort_version "${bin_dir}")" \
 
 git_sha="$(git -C "${REPO_ROOT}" rev-parse --short=10 HEAD)"
 generated_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+utc_date="$(date -u +%Y%m%d)"
+
+# Archive keys are unique per GitHub workflow run and rerun attempt.
+if [ -n "${GITHUB_RUN_ID:-}" ]; then
+    [[ "${GITHUB_RUN_ID}" =~ ^[0-9]+$ ]] || die "Invalid GITHUB_RUN_ID: ${GITHUB_RUN_ID}"
+    github_run_attempt="${GITHUB_RUN_ATTEMPT:-1}"
+    [[ "${github_run_attempt}" =~ ^[0-9]+$ ]] || die "Invalid GITHUB_RUN_ATTEMPT: ${github_run_attempt}"
+    archive_id="${utc_date}-${git_sha}-gh${GITHUB_RUN_ID}-a${github_run_attempt}"
+else
+    archive_id="${utc_date}-${git_sha}-local-$(date -u +%H%M%S)-$$"
+fi
 
 # Build the passing-groups JSON array and manifest via python3 (safe quoting).
 MANIFEST_QAIRT="${qairt_version}" \
 MANIFEST_ORT="${ort_version}" \
 MANIFEST_SHA="${git_sha}" \
 MANIFEST_UTC="${generated_utc}" \
+MANIFEST_ARCHIVE_ID="${archive_id}" \
 MANIFEST_COUNT="${golden_count}" \
 MANIFEST_GROUPS="$(IFS=,; printf '%s' "${pass_groups[*]}")" \
 python3 - "${staging}/manifest.json" <<'PYEOF'
@@ -313,6 +325,7 @@ manifest = {
     "ort_version": os.environ["MANIFEST_ORT"],
     "git_sha": os.environ["MANIFEST_SHA"],
     "generated_utc": os.environ["MANIFEST_UTC"],
+    "archive_id": os.environ["MANIFEST_ARCHIVE_ID"],
     "passing_groups": groups,
     "golden_count": int(os.environ["MANIFEST_COUNT"]),
     "generator": "publish_goldens.sh",
@@ -322,7 +335,7 @@ with open(sys.argv[1], "w") as f:
     f.write("\n")
 PYEOF
 
-log_info "manifest.json: qairt=${qairt_version} ort=${ort_version} sha=${git_sha} groups=[${pass_groups[*]}] count=${golden_count}"
+log_info "manifest.json: qairt=${qairt_version} ort=${ort_version} sha=${git_sha} archive=${archive_id} groups=[${pass_groups[*]}] count=${golden_count}"
 
 # ---------------------------------------------------------------------------
 # Zip the staging tree. Archive root = manifest.json + tier subdirs.
@@ -336,32 +349,26 @@ zip_path="${staging}/goldens.zip"
 log_info "Packaged: goldens.zip ($(du -h "${zip_path}" | cut -f1))"
 
 # ---------------------------------------------------------------------------
-# Upload: write-once archive first, then the mutable latest/ pointer.
+# Upload: uniquely keyed archive first, then the mutable latest/ pointer.
 # ---------------------------------------------------------------------------
-utc_date="$(date -u +%Y%m%d)"
 if [ "${publish}" = true ]; then
     dest_base="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}"
 else
     dest_base="<BUILD_ARTIFACTORY_REPO>/${repo_subpath}"
 fi
-archive_dest="${dest_base}/archive/${utc_date}-${git_sha}/goldens.zip"
+archive_dest="${dest_base}/archive/${archive_id}/goldens.zip"
 latest_dest="${dest_base}/latest/goldens.zip"
 
 if [ "${publish}" = true ]; then
     log_info "--- Uploading (archive, then latest) ---"
-    artifactory_ca="${REPO_ROOT}/qcom/scripts/upleveling/certs/artifactory-ca.pem"
-    [ -f "${artifactory_ca}" ] || die "Artifactory CA bundle not found: ${artifactory_ca}"
-    # Conditional PUT makes the archive write-once. If it already exists,
-    # Artifactory returns 412; -f makes that a command failure, and strict mode
-    # stops before the mutable latest pointer can be changed.
-    jf rt curl --cacert "${artifactory_ca}" -f -XPUT -H "If-None-Match: *" -T "${zip_path}" "/${archive_dest}"
+    jf rt upload --flat "${zip_path}" "${archive_dest}"
     jf rt upload --flat "${zip_path}" "${latest_dest}"
     log_info "=== Published ==="
     log_info "archive: ${archive_dest}"
     log_info "latest : ${latest_dest}"
 else
     log_info "--- DRY-RUN: would upload with these commands ---"
-    log_info "jf rt curl --cacert \"${REPO_ROOT}/qcom/scripts/upleveling/certs/artifactory-ca.pem\" -f -XPUT -H \"If-None-Match: *\" -T \"${zip_path}\" \"/${archive_dest}\""
+    log_info "jf rt upload --flat \"${zip_path}\" \"${archive_dest}\""
     log_info "jf rt upload --flat \"${zip_path}\" \"${latest_dest}\""
     log_warn "Dry-run: nothing uploaded. Re-run with --publish to upload."
 fi
