@@ -6,6 +6,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
 
 #include <cstdint>
+#include <functional>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -57,7 +58,7 @@ GetTestQDQModelFn<QuantType> BuildMaxPoolQDQModel(const MaxPoolSpec& spec) {
                                                             use_contrib_qdq);
     builder.AddNode("maxpool", "MaxPool", {input_qdq}, {"pool_out"}, "", attrs);
 
-    // Mirror the legacy MaxPool tests and QNN's equal-qparam requirement.
+    // Mirror the legacy MaxPool tests and QNN equal-qparam requirement.
     output_qparams[0] = input_qparams;
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "pool_out",
                                                      input_qparams.scale, input_qparams.zero_point,
@@ -65,17 +66,44 @@ GetTestQDQModelFn<QuantType> BuildMaxPoolQDQModel(const MaxPoolSpec& spec) {
   };
 }
 
+void CheckSingleQnnSubgraph(const Ort::Session& session) {
+  size_t num_qnn_subgraphs = 0;
+  for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+    if (subgraph.GetEpName() == kQnnExecutionProvider) {
+      ++num_qnn_subgraphs;
+    }
+  }
+  EXPECT_EQ(num_qnn_subgraphs, 1u) << "Expected one QNN fused node for MaxPool rank-3 input.";
+}
+
 void RunMaxPoolAccuracy(const MaxPoolSpec& spec) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  if (spec.quant_type == MaxPoolQuantType::UInt8) {
+  if (spec.data_type == MaxPoolDataType::Float) {
+    std::function<void(const Ort::Session&)> check;
+    EPVerificationParams verification{ExpectedEPNodeAssignment::All,
+                                      ElementwiseAbsoluteVerifier(1e-5f)};
+    if (spec.expect_single_qnn_subgraph) {
+      check = CheckSingleQnnSubgraph;
+      verification.graph_verifier = &check;
+    }
+    RunQnnModelTest(BuildMaxPoolF32Model(spec), provider_options, /*opset_version=*/18, verification);
+    return;
+  }
+
+  const QDQTolerance tolerance = spec.qdq_tolerance == 0.0f
+                                     ? QDQTolerance()
+                                     : QDQTolerance(spec.qdq_tolerance);
+  if (spec.data_type == MaxPoolDataType::UInt8) {
     TestQDQModelAccuracy(BuildMaxPoolF32Model(spec), BuildMaxPoolQDQModel<uint8_t>(spec),
-                         provider_options, /*opset_version=*/18, ExpectedEPNodeAssignment::All);
-  } else {
+                         provider_options, /*opset_version=*/18, ExpectedEPNodeAssignment::All, tolerance);
+  } else if (spec.data_type == MaxPoolDataType::UInt16) {
     TestQDQModelAccuracy(BuildMaxPoolF32Model(spec), BuildMaxPoolQDQModel<uint16_t>(spec),
-                         provider_options, /*opset_version=*/18, ExpectedEPNodeAssignment::All);
+                         provider_options, /*opset_version=*/18, ExpectedEPNodeAssignment::All, tolerance);
+  } else {
+    ADD_FAILURE() << "RunMaxPoolAccuracy: unsupported data type";
   }
 }
 
