@@ -1096,6 +1096,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulInvalidValue_LogsVerbo
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                "Invalid value for ep.qnnexecutionprovider.use_native_matmul");
+}
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {
   EpStubContext ctx;
