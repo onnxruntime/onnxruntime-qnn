@@ -198,6 +198,27 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
         }  // end is_block_quant
       }  // end else (weight shape obtainable)
     }  // end quant_param check
+    // HTP requires activation bitwidth >= weight bitwidth (a16w16, a16w8, a16w4, a8w8, a8w4). Checked
+    // here, not in ProcessInputs, so an unsatisfiable combo is rejected before layout transform runs.
+    // Conv's actual compute bitwidth is the activation's own bitwidth in the 16-in/8-out narrowing
+    // case (handled by AddOpWithQuantizedOutput), and the output's bitwidth otherwise (the activation
+    // is Converted up to it first). See ProcessConv2D3DInputs's is_narrowing_output.
+    Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
+                                          node_unit.Outputs()[0].type, declared_output_dtype));
+    Qnn_DataType_t act_dtype_check = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(input_0.quant_param.has_value(), input_0.type, act_dtype_check));
+    Qnn_DataType_t weight_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(inputs[1].quant_param.has_value(), inputs[1].type, weight_dtype));
+    const bool is_narrowing_output = utils::IsQuant16bit(act_dtype_check) && utils::IsQuant8bit(declared_output_dtype);
+    const int weight_bitwidth = utils::FixedPointBitWidth(weight_dtype);
+    const int compute_bitwidth = is_narrowing_output ? utils::FixedPointBitWidth(act_dtype_check)
+                                                     : utils::FixedPointBitWidth(declared_output_dtype);
+    RETURN_IF_NOT(weight_bitwidth <= compute_bitwidth,
+                  ("Conv's weight bitwidth (" + std::to_string(weight_bitwidth) +
+                   ") exceeds its compute bitwidth (" + std::to_string(compute_bitwidth) + ")")
+                      .c_str());
+
     // checking for per-channel quantization
     const auto& input_1 = inputs[1];  // weight
     bool is_per_axis_quant = false;
