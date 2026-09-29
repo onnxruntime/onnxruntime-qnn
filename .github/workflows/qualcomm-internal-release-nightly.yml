@@ -51,7 +51,7 @@ jobs:
   golden-publish:
     name: Publish Snapshot Golden Files
     needs: setup
-    if: ${{ !cancelled() }}
+    if: ${{ success() }}
     uses: ./.github/workflows/qualcomm-internal-snapshot-golden-publish.yml
     secrets: inherit
     with:

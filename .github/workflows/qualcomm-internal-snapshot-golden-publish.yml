@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Initialize submodules
         run: git submodule update --init --recursive
@@ -66,6 +66,7 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Publish goldens
+        id: publish-goldens
         env:
           FILTER_INPUT: ${{ inputs.filter }}
           REPO_SUBPATH_INPUT: ${{ inputs.repo_subpath }}
@@ -105,6 +106,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           echo "### Snapshot Golden Publish" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Result: ${{ steps.publish-goldens.outcome }}" >> "${GITHUB_STEP_SUMMARY}"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "Mode: **dry-run** (no upload)" >> "${GITHUB_STEP_SUMMARY}"
           else
