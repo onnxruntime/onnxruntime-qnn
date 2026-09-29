@@ -197,29 +197,15 @@ Ort::Status PoolOpBuilder::AddQnnPoolParamWrappers(const OrtNodeUnit& node_unit,
   }
 
   if (qnn_pool_params.rounding_mode != 0) {
-    Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
-    scalar_param.dataType = QNN_DATATYPE_UINT_32;
-    scalar_param.int32Value = qnn_pool_params.rounding_mode;
-    QnnParamWrapper rounding_mode_param(node_unit.Index(),
-                                        node_unit.Name(),
-                                        qnn_pool_config.param_rounding_mode,
-                                        scalar_param);
-    param_tensor_names.push_back(rounding_mode_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
-                  "Failed to add param rounding_mode.");
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           static_cast<uint32_t>(qnn_pool_params.rounding_mode),
+                                           qnn_pool_config.param_rounding_mode, param_tensor_names));
   }
 
   if (qnn_pool_config.param_count_pad_for_edges != nullptr) {
-    Qnn_Scalar_t scalar_param = QNN_SCALAR_INIT;
-    scalar_param.dataType = QNN_DATATYPE_BOOL_8;
-    scalar_param.bool8Value = static_cast<uint8_t>(qnn_pool_params.count_pad_for_edges);
-    QnnParamWrapper count_pad_param(node_unit.Index(),
-                                    node_unit.Name(),
-                                    qnn_pool_config.param_count_pad_for_edges,
-                                    scalar_param);
-    param_tensor_names.push_back(count_pad_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(count_pad_param)),
-                  "Failed to add param count_pad_for_edges.");
+    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                       qnn_pool_params.count_pad_for_edges,
+                                       qnn_pool_config.param_count_pad_for_edges, param_tensor_names));
   }
 
   return Ort::Status();

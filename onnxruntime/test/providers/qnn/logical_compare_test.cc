@@ -74,7 +74,7 @@ static void RunCPULogicalOpTest(const std::string& op_type, const std::vector<in
   RunQnnModelTest(BuildLogicalOpTestCase(op_type, shape),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Runs a model with a logical operator on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -90,7 +90,7 @@ static void RunQDQLogicalOpTest(const std::string& op_type, const std::vector<in
   RunQnnModelTest(BuildQDQLogicalOpTestCase<QuantType>(op_type, shape),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //
@@ -176,11 +176,15 @@ TEST_F(QnnHTPBackendTests, EqualToCast4D) {
     builder.AddNode("cast", "Cast", {"equal_out"}, {"output"}, "", attrs);
   };
 
+  // This test was added in commit 5a4c3b7937c34cad9671e6440a03aa024a98bf19, at which point
+  // RunQnnModelTest expected an arg for `num_nodes_in_ep`. This "1" has appeared to have survived
+  // changes to RunQnnModelTest and has now erroneously ended up as the fp32_abs_err arg, which means
+  // this test is probably not testing for the correct thing anymore.
+  // TODO: Fix this test, perhaps by using `EPVerificationParams::graph_verifier`?
   RunQnnModelTest(build_qdq_equal_to_cast,
                   provider_options,
                   17,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1);  // expected nodes in graph
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1)});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

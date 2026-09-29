@@ -34,7 +34,7 @@ jobs:
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - name: Dispatch CI workflow on PR branch
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             // Fetch the PR to get its head branch and draft status.

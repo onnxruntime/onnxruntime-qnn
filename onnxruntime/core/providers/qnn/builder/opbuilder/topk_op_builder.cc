@@ -86,7 +86,7 @@ Ort::Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // Add Transpose to permute axis to the last.
-  const std::string transpose_output_name = utils::UniqueNameGenerator().New(input_names[0], "_transpose");
+  const std::string transpose_output_name = input_names[0] + "_transpose";
   std::vector<uint32_t> transpose_perm;
   RETURN_IF_ERROR(utils::GetPermToLastAxis(static_cast<uint32_t>(axis),
                                            static_cast<uint32_t>(input_rank),
@@ -129,23 +129,14 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   } else {
     return MAKE_EP_FAIL("QNN TopK operator requires constant input parameter k.");
   }
-  Qnn_Scalar_t qnn_scalar_k = QNN_SCALAR_INIT;
-  qnn_scalar_k.dataType = QNN_DATATYPE_UINT_32;
-  qnn_scalar_k.uint32Value = k;
-  QnnParamWrapper k_param(node_unit.Index(), node_unit.Name(), QNN_OP_TOP_K_PARAM_K, qnn_scalar_k);
-  std::string k_param_name = k_param.GetParamTensorName();
-  qnn_model_wrapper.AddParamWrapper(std::move(k_param));
-  std::vector<std::string> param_tensor_names{k_param_name};
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), k,
+                                         QNN_OP_TOP_K_PARAM_K, param_tensor_names));
 
   // Add largest to TopK attr
   uint8_t largest = static_cast<uint8_t>(OrtNodeAttrHelper(node_unit).Get("largest", 1));
-  Qnn_Scalar_t qnn_largest_k = QNN_SCALAR_INIT;
-  qnn_largest_k.dataType = QNN_DATATYPE_BOOL_8;
-  qnn_largest_k.bool8Value = largest;
-  QnnParamWrapper k_largest(node_unit.Index(), node_unit.Name(), QNN_OP_TOP_K_PARAM_LARGEST, qnn_largest_k);
-  std::string k_largest_name = k_largest.GetParamTensorName();
-  qnn_model_wrapper.AddParamWrapper(std::move(k_largest));
-  param_tensor_names.push_back(k_largest_name);
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), largest != 0,
+                                     QNN_OP_TOP_K_PARAM_LARGEST, param_tensor_names));
 
   // HTP only supports TopK at the last axis, and thus check whether extra Transpose is required.
   TensorInfo input_info = {};
@@ -175,7 +166,7 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     // Since user may not be aware of the additional Transpose, the original output name of TopK node must be used by
     // the additional Transpose node which has the same output as original TopK node.
     const std::string& output_name = output.name;
-    const std::string transpose_input_name = utils::UniqueNameGenerator().New(output_name, "_transpose");
+    const std::string transpose_input_name = output_name + "_transpose";
     transpose_input_names.push_back(std::move(transpose_input_name));
 
     // Since the input of TopK node is permuted, its output shape must be manually calculated.
@@ -202,7 +193,8 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                 GetQnnOpType(node_unit.OpType()),
                                                 std::move(input_names),
                                                 std::vector<std::string>(transpose_input_names),
-                                                std::move(param_tensor_names)),
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
                 "Failed to add node.");
 
   // Add Transpose nodes for each output to permute back.
@@ -228,7 +220,7 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     bool is_cast_required = output_idx == 1 && output_info.qnn_data_type == QNN_DATATYPE_INT_64 && is_graph_output;
     std::string cast_input_name = "";
     if (is_cast_required) {
-      cast_input_name = utils::UniqueNameGenerator().New(transpose_output_name, "_cast");
+      cast_input_name = output_name + "_cast";
       // For the same reason described above, the original output name is now used by this Cast.
       transpose_output_name = cast_input_name;
       // Since additional Cast is added, below Transpose is no longer graph output.

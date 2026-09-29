@@ -160,11 +160,12 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       continue;
     }
 
-    // Get the Q/DQ axis attribute if available.
+    // Get the Q/DQ axis and block_size attributes if available.
     std::optional<int64_t> axis = OrtNodeAttrHelper(*node).GetInt64("axis");
+    std::optional<int64_t> block_size = OrtNodeAttrHelper(*node).GetInt64("block_size");
 
     // Quantization scale and zp are always the input[1, 2].
-    OrtNodeUnitIODef::QuantParam quant_param{node_inputs[1], num_node_inputs == 3 ? node_inputs[2] : nullptr, axis};
+    OrtNodeUnitIODef::QuantParam quant_param{node_inputs[1], num_node_inputs == 3 ? node_inputs[2] : nullptr, axis, block_size};
 
     OrtNodeUnitIODef io_def;
     if (is_input) {
@@ -241,11 +242,15 @@ OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api) : target_no
 OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& node_group, const OrtApi& ort_api)
     : dq_nodes_(node_group.dq_nodes),
       target_node_(node_group.target_node),
-      redundant_clip_node_(node_group.redundant_clip_node ? node_group.redundant_clip_node : nullptr),
+      redundant_clip_node_(node_group.redundant_clip_node),
+      output_reshape_node_(node_group.output_reshape_node),
       q_nodes_(node_group.q_nodes),
       type_(Type::QDQGroup),
       inputs_(GetQDQIODefs(target_node_, node_group, true, ort_api)),
-      outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)) {
+      outputs_(GetQDQIODefs(
+          (redundant_clip_node_ ? redundant_clip_node_
+                                : (output_reshape_node_ ? output_reshape_node_ : target_node_)),
+          node_group, false, ort_api)) {
 }
 
 OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
@@ -264,7 +269,8 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
 
   if (std::string(op_type) == "DequantizeLinear") {
     std::optional<int64_t> axis = OrtNodeAttrHelper(*target_node_).GetInt64("axis");
-    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis};
+    std::optional<int64_t> block_size = OrtNodeAttrHelper(*target_node_).GetInt64("block_size");
+    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis, block_size};
 
     OrtNodeUnitIODef input_def, output_def;
     auto input_status = ParseOrtValueInfo(inputs_data[0], quant_param, ort_api, input_def);
@@ -283,7 +289,8 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     outputs_.push_back(output_def);
   } else if (std::string(op_type) == "QuantizeLinear") {
     std::optional<int64_t> axis = OrtNodeAttrHelper(*target_node_).GetInt64("axis");
-    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis};
+    std::optional<int64_t> block_size = OrtNodeAttrHelper(*target_node_).GetInt64("block_size");
+    OrtNodeUnitIODef::QuantParam quant_param{inputs_data[1], num_inputs == 3 ? inputs_data[2] : nullptr, axis, block_size};
 
     OrtNodeUnitIODef input_def, output_def;
     auto input_status = ParseOrtValueInfo(inputs_data[0], std::nullopt, ort_api, input_def);
@@ -430,7 +437,11 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
     return target_consumers;
   };
 
-  const OrtNode* output_producer = redundant_clip_node_ ? redundant_clip_node_ : target_node_;
+  // Anchor precedence (matches GetOrtQDQSelection): clip > absorbed reshape > target.
+  // The reshape branch is defensive today — see TryAbsorbTrailingReshape reachability note.
+  const OrtNode* output_producer = redundant_clip_node_
+                                       ? redundant_clip_node_
+                                       : (output_reshape_node_ ? output_reshape_node_ : target_node_);
   std::vector<const OrtNode*> output_nodes;
 
   for (const OrtNode* output_node : get_consumers(output_producer)) {

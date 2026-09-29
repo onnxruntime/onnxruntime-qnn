@@ -2,15 +2,27 @@
 # SPDX-License-Identifier: MIT
 
 import hashlib
+import http.client
 import shutil
 import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
-from archive_testdata import OrtCoreDep, download_and_verify, parse_deps_txt, stage_sources, write_archives
+from archive_testdata import (
+    OrtCoreDep,
+    download_and_verify,
+    ort_core_cache_path,
+    parse_deps_txt,
+    stage_sources,
+    write_archives,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _sha1_of_file(path: Path) -> str:
+    return hashlib.sha1(path.read_bytes()).hexdigest()
 
 
 def test_parse_deps_txt_returns_url_and_sha1(tmp_path):
@@ -32,6 +44,13 @@ def test_parse_deps_txt_raises_when_ort_core_missing(tmp_path):
     deps_file.write_text("abseil_cpp;https://example.com/abseil.zip;deadbeef\n")
     with pytest.raises(ValueError, match="ort_core"):
         parse_deps_txt(deps_file)
+
+
+def test_ort_core_cache_path_matches_filecache_layout(tmp_path):
+    """The cache path must match package_manager.py's FileCache (<root>/ort_core/<url-basename>) so a
+    zip already fetched by fetch_cmake_deps.py is reused rather than re-downloaded."""
+    url = "https://github.com/microsoft/onnxruntime/archive/refs/tags/v1.27.0.zip"
+    assert ort_core_cache_path(tmp_path, url) == tmp_path / "ort_core" / "v1.27.0.zip"
 
 
 def _make_fake_zip(path: Path) -> str:
@@ -89,22 +108,67 @@ def test_download_and_verify_removes_stale_cache_and_redownloads(tmp_path, monke
 
 
 def test_download_and_verify_raises_on_fresh_download_sha_mismatch(tmp_path, monkeypatch):
-    """When the freshly downloaded file doesn't match the expected SHA, raise ValueError."""
+    """A persistent SHA mismatch is retried, then raises RuntimeError once attempts are exhausted."""
     cache = tmp_path / "ort_core.zip"
     downloaded = tmp_path / "downloaded.zip"
     _make_fake_zip(downloaded)  # has a real SHA1 ≠ "0"*40
 
+    calls: list[str] = []
+
     def fake_urlretrieve(url: str, path: str) -> None:
+        calls.append(path)
         shutil.copy(str(downloaded), path)
 
     monkeypatch.setattr("archive_testdata.urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr("archive_testdata.time.sleep", lambda _s: None)  # keep the retry loop fast
 
-    with pytest.raises(ValueError, match="SHA1 mismatch"):
+    with pytest.raises(RuntimeError, match="after 3 attempt"):
         download_and_verify(
             url="https://example.invalid/",
             sha1="0" * 40,
             cache_path=cache,
         )
+    assert len(calls) == 3, "a persistent SHA mismatch should exhaust all download attempts"
+    assert not cache.exists(), "the bad partial file must not be left in the cache"
+
+
+def test_download_and_verify_retries_incomplete_read_then_succeeds(tmp_path, monkeypatch):
+    """The observed CI failure (transient http.client.IncompleteRead) is retried and then succeeds."""
+    cache = tmp_path / "ort_core.zip"
+    good_zip = tmp_path / "good.zip"
+    good_sha1 = _make_fake_zip(good_zip)
+
+    attempts: list[str] = []
+
+    def flaky_urlretrieve(url: str, path: str) -> None:
+        attempts.append(path)
+        if len(attempts) == 1:
+            # Simulate a truncated transfer: write a partial file, then raise like urllib would.
+            Path(path).write_bytes(b"partial")
+            raise http.client.IncompleteRead(b"partial", 3451)
+        shutil.copy(str(good_zip), path)
+
+    monkeypatch.setattr("archive_testdata.urlretrieve", flaky_urlretrieve)
+    monkeypatch.setattr("archive_testdata.time.sleep", lambda _s: None)
+
+    result = download_and_verify(url="https://example.invalid/", sha1=good_sha1, cache_path=cache)
+    assert len(attempts) == 2, "must retry after the first IncompleteRead"
+    assert result == cache
+    assert _sha1_of_file(cache) == good_sha1
+
+
+def test_download_and_verify_content_addressed_cache_hit_skips_download(tmp_path, monkeypatch):
+    """A cache file already matching the expected SHA1 is returned without any network call."""
+    persistent = tmp_path / "ort_core-cachekey.zip"
+    sha1 = _make_fake_zip(persistent)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("urlretrieve must not run on a persistent-cache hit")
+
+    monkeypatch.setattr("archive_testdata.urlretrieve", fail_if_called)
+
+    result = download_and_verify(url="https://example.invalid/", sha1=sha1, cache_path=persistent)
+    assert result == persistent
 
 
 def _make_tree(root: Path, files: dict[str, str]) -> None:

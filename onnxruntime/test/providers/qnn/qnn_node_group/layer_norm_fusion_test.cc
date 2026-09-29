@@ -93,7 +93,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_1D_GammaBeta) {
           {-1}, 1e-5f,
           {C}, std::vector<float>(static_cast<size_t>(C), 1.0f),
           {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
-      opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
@@ -118,7 +120,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_PaddedGammaBeta) {
           {-1}, 1e-5f,
           {1, 1, C}, std::vector<float>(static_cast<size_t>(C), 1.0f),
           {1, 1, C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
-      opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
@@ -143,7 +147,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_1D_GammaBeta) {
           {-1}, 1e-5f,
           {C}, std::vector<float>(static_cast<size_t>(C), 1.0f),
           {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
-      opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
@@ -168,7 +174,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_TransformerShape) {
           {-1}, 1e-5f,
           {C}, std::vector<float>(static_cast<size_t>(C), 1.0f),
           {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
-      opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
@@ -193,7 +201,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
           {-1}, 1e-5f,
           {1, 64, 1}, std::vector<float>(64, 1.0f),
           {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
-      opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+      opts,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
 }

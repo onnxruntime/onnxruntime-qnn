@@ -204,30 +204,18 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   {  // axis
     std::optional<uint32_t> axis = GetPositiveSoftmaxAxis(mul_node_unit, softmax_node_unit, ort_api);
     if (axis.has_value()) {
-      Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
-      axis_scalar.dataType = QNN_DATATYPE_UINT_32;
-      axis_scalar.uint32Value = axis.value();
-      QnnParamWrapper param_wrapper(softmax_node_unit.Index(),
-                                    softmax_node_unit.Name(),
-                                    QNN_OP_SOFTMAX_PARAM_AXIS,
-                                    axis_scalar);
-      param_tensor_names.push_back(param_wrapper.GetParamTensorName());
-      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
+      RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, softmax_node_unit.Index(),
+                                             softmax_node_unit.Name(), axis.value(),
+                                             QNN_OP_SOFTMAX_PARAM_AXIS, param_tensor_names));
     }
   }
   {  // beta
     OrtNodeAttrHelper softmax_attr_helper(softmax_node_unit);
     float beta = softmax_attr_helper.Get("beta", 1.0f);
     float scale = ExtractScalarValueFromMul(qnn_model_wrapper, mul_node_unit, ort_api).value_or(1.0f);
-    Qnn_Scalar_t beta_scalar = QNN_SCALAR_INIT;
-    beta_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    beta_scalar.floatValue = scale * beta;
-    QnnParamWrapper param_wrapper(softmax_node_unit.Index(),
-                                  softmax_node_unit.Name(),
-                                  QNN_OP_SOFTMAX_PARAM_BETA,
-                                  beta_scalar);
-    param_tensor_names.push_back(param_wrapper.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add beta param");
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, softmax_node_unit.Index(),
+                                        softmax_node_unit.Name(), scale * beta,
+                                        QNN_OP_SOFTMAX_PARAM_BETA, param_tensor_names));
   }
 
   QnnTensorWrapper fused_softmax_input;

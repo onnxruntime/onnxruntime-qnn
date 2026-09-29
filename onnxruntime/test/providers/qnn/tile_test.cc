@@ -26,7 +26,7 @@ static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile_node", "Tile", {input_def}, {repeats_def}, {}),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Test that Tile with a dynamic repeats input is not supported by QNN EP.

@@ -119,6 +119,18 @@ bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape
   return total_input == total_output;
 }
 
+// Returns true if the input Reshape's output has more than one consumer.
+// If a graph-level CSE pass merges two Reshape nodes into one, claiming the
+// shared Reshape would remove it from the graph and break the other consumers.
+// TODO: Revisit — in principle each consumer could be fused independently by
+// duplicating the Reshape; for now we conservatively skip to keep correctness.
+static bool InputReshapeIsShared(const OrtNodeUnit* input_reshape) {
+  if (input_reshape == nullptr) return false;
+  const Ort::ConstNode reshape_node(&input_reshape->GetNode());
+  auto reshape_outputs = reshape_node.GetOutputs();
+  return !reshape_outputs.empty() && reshape_outputs[0].GetConsumers().size() > 1;
+}
+
 // Get the input Reshape node unit that feeds into the Gemm node
 const OrtNodeUnit* GetInputReshapeNodeUnit(
     const QnnModelWrapper& qnn_model_wrapper,
@@ -399,8 +411,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -409,6 +419,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
   const OrtNodeUnit* input_reshape = GetInputReshapeNodeUnit(
       qnn_model_wrapper, gemm_node_unit, node_to_node_unit, node_unit_to_qnn_node_group);
   if (!input_reshape) {
+    return nullptr;
+  }
+
+  if (InputReshapeIsShared(input_reshape)) {
     return nullptr;
   }
 
@@ -424,8 +438,14 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  // Validate on QNN before claiming the NodeUnits: a pattern that passes structural checks
+  // but the backend can't compile must fail soft here, otherwise it aborts Compile in Phase 2.
+  auto group = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit});
+  if (!group->CreateOrValidateOnQnn(qnn_model_wrapper, logger, /*validate=*/true).IsOK()) {
+    return nullptr;
+  }
+  return group;
 }
 
 // 3-node fusion: Reshape -> Gemm -> Reshape
@@ -434,8 +454,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -444,6 +462,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
   const OrtNodeUnit* input_reshape = GetInputReshapeNodeUnit(
       qnn_model_wrapper, gemm_node_unit, node_to_node_unit, node_unit_to_qnn_node_group);
   if (!input_reshape) {
+    return nullptr;
+  }
+
+  if (InputReshapeIsShared(input_reshape)) {
     return nullptr;
   }
 
@@ -466,8 +488,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto group = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape});
+  if (!group->CreateOrValidateOnQnn(qnn_model_wrapper, logger, /*validate=*/true).IsOK()) {
+    return nullptr;
+  }
+  return group;
 }
 
 // 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
@@ -476,8 +502,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
@@ -486,6 +510,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
   const OrtNodeUnit* input_reshape = GetInputReshapeNodeUnit(
       qnn_model_wrapper, gemm_node_unit, node_to_node_unit, node_unit_to_qnn_node_group);
   if (!input_reshape) {
+    return nullptr;
+  }
+
+  if (InputReshapeIsShared(input_reshape)) {
     return nullptr;
   }
 
@@ -521,8 +549,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusionGroup>(
+  auto group = std::make_unique<ReshapeGemmFusionGroup>(
       std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape1, output_reshape2});
+  if (!group->CreateOrValidateOnQnn(qnn_model_wrapper, logger, /*validate=*/true).IsOK()) {
+    return nullptr;
+  }
+  return group;
 }
 
 }  // namespace qnn

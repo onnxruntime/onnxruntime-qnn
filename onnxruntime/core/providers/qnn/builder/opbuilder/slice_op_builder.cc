@@ -231,7 +231,30 @@ Ort::Status SliceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   // Only need to add input 0. The other inputs (if any) contain static data that is passed to QNN APIs
   // as static parameters.
-  return ProcessInput(qnn_model_wrapper, node_unit.Inputs()[0], logger, input_names);
+  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, node_unit.Inputs()[0], logger, input_names));
+
+  // StridedSlice on HTP BE doesn't support BOOL input. Add Cast node to convert BOOL to UINT8.
+  const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+                                node_unit.Inputs()[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  if (needs_bool_cast) {
+    const std::string& input0_name = input_names[0];
+    TensorInfo input0_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input0_info));
+    const std::string cast_output_name = utils::UniqueNameGenerator().New(input0_name, "_bool_to_u8");
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
+      RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(input0_name, QNN_OP_CAST),
+                                                    input0_name,
+                                                    cast_output_name,
+                                                    QNN_TENSOR_TYPE_NATIVE,
+                                                    QNN_DATATYPE_UFIXED_POINT_8,
+                                                    QnnQuantParamsWrapper::PerTensor(1.0f, 0),
+                                                    std::vector<uint32_t>(input0_info.shape),
+                                                    do_op_validation));
+    }
+    input_names[0] = cast_output_name;
+  }
+
+  return Ort::Status();
 }
 
 Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
@@ -301,12 +324,56 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                                       true);
   std::string param_tensor_name(ranges_paramwrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(ranges_paramwrapper));
-  RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
-                                 node_unit,
-                                 std::move(input_names),
-                                 {param_tensor_name},
-                                 logger,
-                                 do_op_validation, GetQnnOpType(node_unit.OpType())));
+
+  const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+                                inputs[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  if (!needs_bool_cast) {
+    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
+                                   node_unit,
+                                   std::move(input_names),
+                                   {param_tensor_name},
+                                   logger,
+                                   do_op_validation, GetQnnOpType(node_unit.OpType())));
+    return Ort::Status();
+  }
+
+  // StridedSlice on HTP BE doesn't support BOOL output either. Run the op in UINT8 (done via the
+  // BOOL -> UINT8 input cast in ProcessInputs) and Cast the output back to BOOL.
+  const auto& slice_output = node_unit.Outputs()[0];
+  const auto& output_name = slice_output.name;
+  std::vector<uint32_t> output_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(slice_output.shape, output_shape), "Cannot get shape");
+  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+
+  const std::string slice_output_name = utils::UniqueNameGenerator().New(output_name, "_u8_to_bool_in");
+  QnnQuantParamsWrapper slice_quant_params = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
+  QnnTensorWrapper slice_output_wrapper(slice_output_name,
+                                        QNN_TENSOR_TYPE_NATIVE,
+                                        QNN_DATATYPE_UFIXED_POINT_8,
+                                        std::move(slice_quant_params),
+                                        std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(slice_output_wrapper)), "Failed to add tensor.");
+
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                GetQnnOpType(node_unit.OpType()),
+                                                std::move(input_names),
+                                                {slice_output_name},
+                                                {param_tensor_name},
+                                                do_op_validation),
+                "Failed to add node.");
+
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(slice_output, output_info));
+  Qnn_TensorType_t output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(output_name, "_u8_to_bool"),
+                                                slice_output_name,
+                                                output_name,
+                                                output_tensor_type,
+                                                output_info.qnn_data_type,
+                                                output_info.quant_param.Copy(),
+                                                std::vector<uint32_t>(output_shape),
+                                                do_op_validation));
   return Ort::Status();
 }
 

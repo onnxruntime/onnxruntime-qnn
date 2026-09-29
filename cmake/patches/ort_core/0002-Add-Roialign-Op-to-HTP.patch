@@ -1,7 +1,7 @@
-From ee1c81b3c9ddfe0d5568173ac6ace9988ffd7c09 Mon Sep 17 00:00:00 2001
-From: qti-hungjuiw <hungjuiw@qti.qualcomm.com>
-Date: Mon, 9 Mar 2026 12:03:21 +0800
-Subject: [PATCH 2/4] Add Roialign Op to HTP
+From 262f80a818fe75b0a2982fb5decae2fffbe54e2e Mon Sep 17 00:00:00 2001
+From: Badri Narayanan <mbadnara@qti.qualcomm.com>
+Date: Tue, 21 Jul 2026 11:32:57 -0700
+Subject: [PATCH 2/7] Add Roialign Op to HTP
 
 ---
  onnxruntime/test/onnx/TestCase.cc | 2 ++
@@ -9,10 +9,10 @@ Subject: [PATCH 2/4] Add Roialign Op to HTP
  2 files changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/onnxruntime/test/onnx/TestCase.cc b/onnxruntime/test/onnx/TestCase.cc
-index ba733a3751..1b8ac76042 100644
+index 96b19bc..600719b 100644
 --- a/onnxruntime/test/onnx/TestCase.cc
 +++ b/onnxruntime/test/onnx/TestCase.cc
-@@ -1411,6 +1411,8 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
+@@ -1533,6 +1533,8 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
      broken_tests->insert({"rotary_embedding_no_position_ids_rotary_dim", "unknown version"});
      broken_tests->insert({"rotary_embedding_with_interleaved_rotary_dim", "unknown version"});
      broken_tests->insert({"rotary_embedding_with_rotary_dim", "unknown version"});
@@ -22,7 +22,7 @@ index ba733a3751..1b8ac76042 100644
      // expected 7.70947 (40f6b3f3), got 7.84096 (40fae920), diff: 0.131491, tol=0.00870947 idx=419. 100 of 1715 differ
      broken_tests->insert({"facedetection_op8_qdq", "result differs"});
 diff --git a/onnxruntime/test/onnx/main.cc b/onnxruntime/test/onnx/main.cc
-index 8446f88639..f08b974d60 100644
+index 5740a40..484486a 100644
 --- a/onnxruntime/test/onnx/main.cc
 +++ b/onnxruntime/test/onnx/main.cc
 @@ -917,7 +917,12 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");

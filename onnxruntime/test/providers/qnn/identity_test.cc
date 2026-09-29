@@ -67,8 +67,7 @@ static void RunIdentityNonQDQOnHTP(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildIdentityTestCase<DataType>(input_def),
                   provider_options,
                   13,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 TEST_F(QnnHTPBackendTests, IdentityU8) {

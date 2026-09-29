@@ -75,8 +75,7 @@ static void RunOneHotTest(
   RunQnnModelTest(BuildOneHotTestCase<IndicesType, ValuesType>(indices_def, depth_def, values_def, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Runs a QDQ OneHot model on HTP and checks accuracy against a float32 reference.
@@ -257,8 +256,7 @@ static void RunOneHotHTPBF16Test(
   RunQnnModelTest(BuildOneHotTestCase<int64_t, float>(indices_def, depth_def, values_def, attrs),
                   provider_options,
                   11,
-                  expected_ep_assignment,
-                  tolerance);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis_Default) {

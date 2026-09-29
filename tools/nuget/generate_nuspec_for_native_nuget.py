@@ -358,7 +358,6 @@ def generate_files(line_list, args):
     build_dir = "buildTransitive" if "Gpu" in args.package_name else "build"
 
     if is_qnn_package:
-        files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnCpu.dll") + runtimes + " />")
         files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtp.dll") + runtimes + " />")
         if args.target_architecture != "x64":
             files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "Genie.dll") + runtimes + " />")

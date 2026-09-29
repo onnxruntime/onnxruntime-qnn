@@ -106,33 +106,21 @@ Ort::Status CumSumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   std::vector<std::string> param_tensor_names;
 
   // Add axis param
-  Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
   uint32_t onnx_axis = 0;
   RETURN_IF_ERROR(GetOnnxAxis(qnn_model_wrapper, node_unit, onnx_axis));
-  axis_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  axis_qnn_scalar.uint32Value = onnx_axis;
-  QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_CUMULATIVE_SUM_PARAM_AXIS, axis_qnn_scalar);
-  param_tensor_names.push_back(axis_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_axis,
+                                         QNN_OP_CUMULATIVE_SUM_PARAM_AXIS, param_tensor_names));
 
   // Add exclusive param
   OrtNodeAttrHelper node_helper(node_unit);
   int64_t exclusive = node_helper.Get("exclusive", static_cast<int64_t>(0));
-  Qnn_Scalar_t exclusive_qnn_scalar = QNN_SCALAR_INIT;
-  exclusive_qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;
-  exclusive_qnn_scalar.bool8Value = static_cast<uint8_t>(exclusive == 0 ? 0 : 1);
-  QnnParamWrapper exclusive_param(node_unit.Index(), node_unit.Name(), QNN_OP_CUMULATIVE_SUM_PARAM_EXCLUSIVE, exclusive_qnn_scalar);
-  param_tensor_names.push_back(exclusive_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(exclusive_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), exclusive != 0,
+                                     QNN_OP_CUMULATIVE_SUM_PARAM_EXCLUSIVE, param_tensor_names));
 
   // Add reverse param
   int64_t reverse = node_helper.Get("reverse", static_cast<int64_t>(0));
-  Qnn_Scalar_t reverse_qnn_scalar = QNN_SCALAR_INIT;
-  reverse_qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;
-  reverse_qnn_scalar.bool8Value = static_cast<uint8_t>(reverse == 0 ? 0 : 1);
-  QnnParamWrapper reverse_param(node_unit.Index(), node_unit.Name(), QNN_OP_CUMULATIVE_SUM_PARAM_REVERSE, reverse_qnn_scalar);
-  param_tensor_names.push_back(reverse_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(reverse_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), reverse != 0,
+                                     QNN_OP_CUMULATIVE_SUM_PARAM_REVERSE, param_tensor_names));
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),

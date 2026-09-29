@@ -2,13 +2,17 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import logging
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
 from archive_tests import (
     PerArchAcceptRules,
+    _iter_msvc_redist,
     archive_linux,
+    archive_windows,
 )
 
 
@@ -197,3 +201,189 @@ def test_archive_linux_excludes_testdata(tmp_path):
     assert not any("pytorch-converted" in n for n in names)
     assert not any("backend/test/data/node" in n for n in names)
     assert not any(n.endswith("libfoo.a") for n in names)
+
+
+# --- Windows MSVC redist bundling ---
+
+
+def _make_fake_windows_tree(repo_root: Path, plat: str) -> None:
+    """Minimal single-config build/ tree the archive_windows path can consume."""
+    rel = repo_root / "build" / plat / "Release"
+    _touch(rel / "onnxruntime.dll", "B")
+    _touch(rel / "onnxruntime_providers_qnn.dll", "B")
+    _touch(rel / "onnxruntime_provider_test.exe", "B")
+    _touch(rel / "CTestTestfile.cmake", "ctest")
+    _touch(rel / "run_tests.ps1", "ps")
+    _touch(repo_root / "qcom/scripts/all/foo.py", "B")
+
+
+def _make_fake_windows_tree_nested(repo_root: Path, plat: str) -> None:
+    """Multi-config (VS) build/ tree: binaries nest at build/<plat>/Release/Release/."""
+    outer = repo_root / "build" / plat / "Release"
+    nested = outer / "Release"
+    _touch(nested / "onnxruntime.dll", "B")
+    _touch(nested / "onnxruntime_providers_qnn.dll", "B")
+    _touch(nested / "onnxruntime_provider_test.exe", "B")
+    _touch(outer / "CTestTestfile.cmake", "ctest")
+    _touch(outer / "run_tests.ps1", "ps")
+    _touch(repo_root / "qcom/scripts/all/foo.py", "B")
+
+
+def _make_fake_vc_redist(redist_root: Path, arch_subdir: str) -> None:
+    crt = redist_root / arch_subdir / "Microsoft.VC143.CRT"
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        _touch(crt / name, "REDIST")
+    # Files we should NOT bundle (concrt140, vccorlib140, .props metadata, etc.)
+    _touch(crt / "concrt140.dll", "X")
+    _touch(crt / "Microsoft.VC143.CRT.manifest", "X")
+
+
+@pytest.mark.parametrize(
+    "plat,arch_subdir",
+    [
+        ("windows-x86_64", "x64"),
+        ("windows-arm64", "arm64"),
+        ("windows-arm64ec", "arm64"),  # arm64ec loads the native ARM64 CRT
+        ("windows-arm64x", "arm64"),  # arm64x is a hybrid arm64+arm64ec set; native ARM64 CRT
+    ],
+)
+def test_archive_windows_bundles_msvc_redist(tmp_path, plat, arch_subdir):
+    repo_root = tmp_path / "repo"
+    _make_fake_windows_tree(repo_root, plat)
+    redist_root = tmp_path / "redist"
+    _make_fake_vc_redist(redist_root, arch_subdir)
+
+    archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=redist_root)
+
+    archive = repo_root / "build" / f"onnxruntime-tests-{plat}.zip"
+    assert archive.exists()
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = sorted(zf.namelist())
+
+    redist_prefix = f"build/{plat}/Release/"
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        assert f"{redist_prefix}{name}" in names, f"missing {name} in {names}"
+    # Out-of-scope redist files must not leak in.
+    assert f"{redist_prefix}concrt140.dll" not in names
+    assert not any(n.endswith(".manifest") for n in names)
+
+
+def test_archive_windows_redist_colocates_with_binaries_nested_layout(tmp_path):
+    """Regression: in the VS multi-config layout binaries nest at Release/Release/, so the
+    redist must land there too — otherwise the loader can't find it on a clean machine."""
+    repo_root = tmp_path / "repo"
+    plat = "windows-arm64"
+    _make_fake_windows_tree_nested(repo_root, plat)
+    redist_root = tmp_path / "redist"
+    _make_fake_vc_redist(redist_root, "arm64")
+
+    archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=redist_root)
+
+    archive = repo_root / "build" / f"onnxruntime-tests-{plat}.zip"
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = set(zf.namelist())
+
+    # onnxruntime.dll lands in the doubled Release/Release/ dir; the redist must be in the SAME dir.
+    bin_dir = f"build/{plat}/Release/Release/"
+    assert f"{bin_dir}onnxruntime.dll" in names
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"):
+        assert f"{bin_dir}{name}" in names, f"redist not co-located with onnxruntime.dll: {name}"
+    # And NOT stranded in the outer Release/ directory off the loader's search path.
+    assert f"build/{plat}/Release/msvcp140.dll" not in names
+
+
+def test_archive_windows_omits_redist_when_dir_not_passed(tmp_path):
+    repo_root = tmp_path / "repo"
+    plat = "windows-x86_64"
+    _make_fake_windows_tree(repo_root, plat)
+
+    archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=None)
+
+    archive = repo_root / "build" / f"onnxruntime-tests-{plat}.zip"
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = zf.namelist()
+    assert not any("msvcp140" in n or "vcruntime140" in n for n in names)
+
+
+def test_archive_windows_raises_when_redist_supplied_but_incomplete(tmp_path):
+    """When --vc-redist-dir is given but the runtime can't be bundled, fail loudly rather
+    than ship a silently-broken archive. Here the arch dir doesn't exist under the redist root."""
+    repo_root = tmp_path / "repo"
+    plat = "windows-arm64"  # maps to arm64 subdir
+    _make_fake_windows_tree(repo_root, plat)
+    redist_root = tmp_path / "redist"
+    _make_fake_vc_redist(redist_root, "x64")  # populate a DIFFERENT arch -> arm64 not found
+
+    with pytest.raises(RuntimeError, match="incomplete"):
+        archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=redist_root)
+
+
+def test_iter_msvc_redist_unmapped_platform_yields_nothing(tmp_path, caplog):
+    """An unmapped target_platform warns and yields no DLLs (the warn-then-empty branch)."""
+    redist_root = tmp_path / "redist"
+    _make_fake_vc_redist(redist_root, "x64")
+
+    with caplog.at_level(logging.WARNING):
+        result = list(_iter_msvc_redist(redist_root, "windows-mips"))
+
+    assert result == []
+    assert any("No MSVC redist arch mapping" in r.message for r in caplog.records)
+
+
+def test_archive_windows_x64_floor_requires_vcruntime140_1(tmp_path):
+    """x64 onnxruntime.dll imports vcruntime140_1.dll, so the completeness guard must reject a
+    redist that lacks it — even though arm64 tolerates its absence."""
+    repo_root = tmp_path / "repo"
+    plat = "windows-x86_64"
+    _make_fake_windows_tree(repo_root, plat)
+    redist_root = tmp_path / "redist"
+    crt = redist_root / "x64" / "Microsoft.VC143.CRT"
+    # Everything the x64 floor needs EXCEPT vcruntime140_1.dll.
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"):
+        _touch(crt / name, "REDIST")
+
+    with pytest.raises(RuntimeError, match="vcruntime140_1.dll"):
+        archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=redist_root)
+
+
+def test_archive_windows_arm64_floor_tolerates_missing_vcruntime140_1(tmp_path):
+    """arm64 onnxruntime.dll does NOT import vcruntime140_1.dll; a redist without it must still
+    succeed (the arm64 floor must not over-require the x64-only DLL)."""
+    repo_root = tmp_path / "repo"
+    plat = "windows-arm64"
+    _make_fake_windows_tree(repo_root, plat)
+    redist_root = tmp_path / "redist"
+    crt = redist_root / "arm64" / "Microsoft.VC143.CRT"
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"):
+        _touch(crt / name, "REDIST")
+
+    archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=redist_root)
+
+    archive = repo_root / "build" / f"onnxruntime-tests-{plat}.zip"
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = zf.namelist()
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll"):
+        assert f"build/{plat}/Release/{name}" in names
+
+
+def test_archive_windows_dedupes_multiple_crt_versions(tmp_path):
+    """With side-by-side CRT version folders, the numerically-highest is bundled exactly once
+    (VC9 < VC143 — must not sort lexicographically)."""
+    repo_root = tmp_path / "repo"
+    plat = "windows-x86_64"
+    _make_fake_windows_tree(repo_root, plat)
+    redist_root = tmp_path / "redist"
+    # VC9 would sort AFTER VC143 lexicographically; the numeric sort must still pick VC143.
+    for ver in ("Microsoft.VC9.CRT", "Microsoft.VC142.CRT", "Microsoft.VC143.CRT"):
+        crt = redist_root / "x64" / ver
+        for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+            _touch(crt / name, "REDIST")
+
+    archive_windows(target_platform=plat, config="Release", repo_root=repo_root, vc_redist_dir=redist_root)
+
+    archive = repo_root / "build" / f"onnxruntime-tests-{plat}.zip"
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = zf.namelist()
+    # Each redist DLL must appear exactly once despite three CRT folders existing.
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        assert names.count(f"build/{plat}/Release/{name}") == 1, names

@@ -170,7 +170,7 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
 
   if (scales.size() == 1) {
     const int32_t offset = offsets.empty() ? 0 : offsets[0];
-    out_params = QnnQuantParamsWrapper(scales[0], offset);
+    out_params = QnnQuantParamsWrapper::PerTensor(scales[0], offset);
     return Ort::Status();
   }
 
@@ -186,10 +186,9 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
                   "B_zp length must equal B_scale length for per-channel");
   }
 
-  out_params = QnnQuantParamsWrapper(gsl::span<const float>(scales),
-                                     gsl::span<const int32_t>(offsets),
-                                     per_channel_axis,
-                                     /*is_int4=*/false);
+  out_params = QnnQuantParamsWrapper::PerChannel(gsl::span<const float>(scales),
+                                                 gsl::span<const int32_t>(offsets),
+                                                 per_channel_axis);
   return Ort::Status();
 }
 

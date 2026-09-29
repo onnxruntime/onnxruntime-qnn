@@ -130,8 +130,7 @@ TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
   RunQnnModelTest(BuildLPBQMatMulTestCase(),
                   provider_options,
                   /*opset_version=*/21,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/1e-2f,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)},
                   /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
 

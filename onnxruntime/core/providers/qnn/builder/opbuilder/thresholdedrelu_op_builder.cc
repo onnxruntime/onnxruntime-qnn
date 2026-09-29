@@ -174,12 +174,13 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(greater_output)),
                 "Failed to add ThresholdRelu - Greater output tensor.");
 
+  std::vector<std::string> greater_param_names;
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(greater_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_GREATER,
                                                 {input_name, alpha_tensor_name},
                                                 {greater_output_name},
-                                                {},
+                                                std::move(greater_param_names),
                                                 do_op_validation),
                 "Failed to add ThresholdRelu - Greater node.");
 

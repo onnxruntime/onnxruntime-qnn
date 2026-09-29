@@ -29,8 +29,7 @@ static void RunIsNanTest(const std::vector<TestInputDef<DataType>>& input_defs,
   RunQnnModelTest(BuildOpTestCase<DataType>("isnan_node", "IsNaN", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 //

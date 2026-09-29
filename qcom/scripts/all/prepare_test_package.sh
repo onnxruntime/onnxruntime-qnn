@@ -86,12 +86,16 @@ get_arch() {
 
 WINDOWS_FILES=(
     "ep_weight_sharing_ctx_gen.exe"
+    "msvcp140.dll"
+    "msvcp140_1.dll"
     "onnxruntime.dll"
     "onnxruntime_perf_test.exe"
     "onnxruntime_plugin_ep_onnx_test.exe"
     "onnxruntime_provider_test.exe"
     "onnxruntime_providers_qnn.dll"
     "onnxruntime_providers_shared.dll"
+    "vcruntime140.dll"
+    "vcruntime140_1.dll"
 )
 
 LINUX_FILES=(

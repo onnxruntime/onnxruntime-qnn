@@ -35,6 +35,6 @@ echo "Uploading $FILENAME"
 curl --fail -s -T "$ZIP_FILE" \
     --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
     --netrc-file "$NETRC_FILE" \
-    https://artifactory-las.qualcomm.com/artifactory/aisw-zip-testproj-generic-virtual/onnxruntime-qnn/"${VERSION}"/unsigned_libs/"$FILENAME" > /dev/null
+    https://artifactory-qdc-global.qualcomm.com/artifactory/aisw-zip-testproj-generic-virtual/onnxruntime-qnn/"${VERSION}"/unsigned_libs/"$FILENAME" > /dev/null
 
 echo "Successfully uploaded $FILENAME"

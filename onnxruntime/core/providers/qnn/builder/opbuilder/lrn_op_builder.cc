@@ -103,58 +103,39 @@ Ort::Status LRNOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   // Parameter 'radius'
   {
-    Qnn_Scalar_t qnn_radius = QNN_SCALAR_INIT;
-    qnn_radius.dataType = QNN_DATATYPE_INT_32;
-    qnn_radius.int32Value = SafeInt<int32_t>((onnx_size - 1) / 2);  // Convert ONNX size into QNN radius.
-
-    QnnParamWrapper qnn_param(node_unit.Index(), node_unit.Name(), QNN_OP_LRN_PARAM_RADIUS, qnn_radius);
-    param_tensor_names.push_back(qnn_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
+    const int32_t qnn_radius = SafeInt<int32_t>((onnx_size - 1) / 2);  // Convert ONNX size into QNN radius.
+    RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qnn_radius,
+                                          QNN_OP_LRN_PARAM_RADIUS, param_tensor_names));
   }
 
   // Parameter 'alpha'
   {
     float onnx_alpha = GetOnnxAttr(node_helper, onnx_alpha_attr);
-    Qnn_Scalar_t qnn_alpha = QNN_SCALAR_INIT;
-    qnn_alpha.dataType = QNN_DATATYPE_FLOAT_32;
-    qnn_alpha.floatValue = onnx_alpha / static_cast<float>(onnx_size);  // QNN doesn't scale alpha by size.
-
-    QnnParamWrapper qnn_param(node_unit.Index(), node_unit.Name(), QNN_OP_LRN_PARAM_ALPHA, qnn_alpha);
-    param_tensor_names.push_back(qnn_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
+    const float qnn_alpha = onnx_alpha / static_cast<float>(onnx_size);  // QNN doesn't scale alpha by size.
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qnn_alpha,
+                                        QNN_OP_LRN_PARAM_ALPHA, param_tensor_names));
   }
 
   // Parameter 'beta'
   {
-    Qnn_Scalar_t qnn_beta = QNN_SCALAR_INIT;
-    qnn_beta.dataType = QNN_DATATYPE_FLOAT_32;
-    qnn_beta.floatValue = GetOnnxAttr(node_helper, onnx_beta_attr);
-
-    QnnParamWrapper qnn_param(node_unit.Index(), node_unit.Name(), QNN_OP_LRN_PARAM_BETA, qnn_beta);
-    param_tensor_names.push_back(qnn_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
+    const float qnn_beta = GetOnnxAttr(node_helper, onnx_beta_attr);
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qnn_beta,
+                                        QNN_OP_LRN_PARAM_BETA, param_tensor_names));
   }
 
   // Parameter 'bias'
   {
-    Qnn_Scalar_t qnn_bias = QNN_SCALAR_INIT;
-    qnn_bias.dataType = QNN_DATATYPE_FLOAT_32;
-    qnn_bias.floatValue = GetOnnxAttr(node_helper, onnx_bias_attr);
-
-    QnnParamWrapper qnn_param(node_unit.Index(), node_unit.Name(), QNN_OP_LRN_PARAM_BIAS, qnn_bias);
-    param_tensor_names.push_back(qnn_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
+    const float qnn_bias = GetOnnxAttr(node_helper, onnx_bias_attr);
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qnn_bias,
+                                        QNN_OP_LRN_PARAM_BIAS, param_tensor_names));
   }
 
   // Parameter 'region'
   {
-    Qnn_Scalar_t qnn_region = QNN_SCALAR_INIT;
-    qnn_region.dataType = QNN_DATATYPE_UINT_32;
-    qnn_region.uint32Value = QNN_OP_LRN_REGION_ACROSS_CHANNEL;  // ONNX's LRN only supports "across channel".
-
-    QnnParamWrapper qnn_param(node_unit.Index(), node_unit.Name(), QNN_OP_LRN_PARAM_REGION, qnn_region);
-    param_tensor_names.push_back(qnn_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
+    // ONNX's LRN only supports "across channel".
+    const uint32_t qnn_region = QNN_OP_LRN_REGION_ACROSS_CHANNEL;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qnn_region,
+                                           QNN_OP_LRN_PARAM_REGION, param_tensor_names));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), std::move(param_tensor_names),

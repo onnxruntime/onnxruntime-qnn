@@ -9,19 +9,25 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_external_resource_importer.h"
 
 namespace onnxruntime::qnn {
 
 QnnContextMemHandleManager::QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                                                       Qnn_ContextHandle_t context)
-    : qnn_interface_{qnn_interface}, context_{context} {
+                                                       Qnn_ContextHandle_t context,
+                                                       QnnBackendType qnn_backend_type,
+                                                       QnnAllocatorType qnn_allocator_type)
+    : qnn_interface_{qnn_interface},
+      context_{context},
+      qnn_backend_type_{qnn_backend_type},
+      qnn_allocator_type_{qnn_allocator_type} {
 }
 
 QnnContextMemHandleManager::~QnnContextMemHandleManager() {
   Clear();
 }
 
-Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_address,
+Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
                                                       const Qnn_Tensor_t& qnn_tensor,
                                                       Qnn_MemHandle_t& qnn_mem_handle,
                                                       bool& did_register,
@@ -37,7 +43,7 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
     std::scoped_lock g{mem_handles_mutex_};
 
     // find existing mem handle
-    if (const auto mem_handles_it = mem_handles_.find(shared_memory_address);
+    if (const auto mem_handles_it = mem_handles_.find(memory_address);
         mem_handles_it != mem_handles_.end()) {
       const auto& mem_handle_record = mem_handles_it->second;
 
@@ -54,42 +60,96 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
     }
 
     // register a new mem handle
-    HtpSharedMemoryAllocator::SharedMemoryInfo shared_memory_info{};
-    RETURN_IF_ERROR(HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(shared_memory_address, shared_memory_info));
-
     Qnn_MemDescriptor_t mem_descriptor = QNN_MEM_DESCRIPTOR_INIT;
     mem_descriptor.memShape.dimSize = qnn_tensor_dims;
     mem_descriptor.memShape.numDim = qnn_tensor_rank;
     mem_descriptor.memShape.shapeConfig = nullptr;
     mem_descriptor.dataType = qnn_tensor_data_type;
-    mem_descriptor.memType = QNN_MEM_TYPE_CUSTOM;
+#ifdef _WIN32
+    if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address)) {
+      auto imp_mem_handle = static_cast<QnnExternalMemoryHandle*>(memory_address);
 
-    QnnMemHtp_Descriptor_t htp_mem_descriptor{};
-    htp_mem_descriptor.type = QNN_HTP_MEM_SHARED_BUFFER;
-    htp_mem_descriptor.size = shared_memory_info.total_size;
-    htp_mem_descriptor.sharedBufferConfig.fd = shared_memory_info.fd;
-    htp_mem_descriptor.sharedBufferConfig.offset = shared_memory_info.offset;
+      mem_descriptor.memType = QNN_MEM_TYPE_DX12;
+      mem_descriptor.dx12BufInfo.resourceHandle =
+          static_cast<Qnn_Dx12ResourceHandle_t>(imp_mem_handle->d3d12_resource_.Get());
 
-    mem_descriptor.customInfo = &htp_mem_descriptor;
+      std::ostringstream oss1;
+      oss1 << "Registering QNN mem handle for context: " << context_
+           << ", Imported memory (handle: " << memory_address
+           << ", resource: " << imp_mem_handle->d3d12_resource_
+           << ", offset: " << 0
+           << ")";
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
+    } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+      // DX12 path: QNN_MEM_TYPE_DX12 with Qnn_MemDx12BufInfo_t
+      Dx12SharedMemoryAllocator::Dx12AllocationInfo dx12_info{};
+      RETURN_IF_ERROR(Dx12SharedMemoryAllocator::GetAllocationDx12Info(memory_address, dx12_info));
 
-    std::ostringstream oss1;
-    oss1 << "Registering QNN mem handle for context: " << context_
-         << ", shared memory (address: " << shared_memory_address
-         << ", offset: " << shared_memory_info.offset
-         << ", fd: " << shared_memory_info.fd
-         << ")";
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
+      mem_descriptor.memType = QNN_MEM_TYPE_DX12;
+      mem_descriptor.dx12BufInfo.resourceHandle =
+          static_cast<Qnn_Dx12ResourceHandle_t>(dx12_info.resource);
+
+      std::ostringstream oss1;
+      oss1 << "Registering QNN mem handle for context: " << context_
+           << ", DX12 shared memory (address: " << memory_address
+           << ", resource: " << dx12_info.resource
+           << ", offset: " << dx12_info.offset
+           << ")";
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
+    } else
+#endif  // _WIN32
+      if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
+        mem_descriptor.memType = QNN_MEM_TYPE_CUSTOM;
+
+        HtpSharedMemoryAllocator::SharedMemoryInfo shared_memory_info{};
+        RETURN_IF_ERROR(HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(memory_address, shared_memory_info));
+
+        QnnMemHtp_Descriptor_t htp_mem_descriptor{};
+        htp_mem_descriptor.type = QNN_HTP_MEM_SHARED_BUFFER;
+        htp_mem_descriptor.size = shared_memory_info.total_size;
+        htp_mem_descriptor.sharedBufferConfig.fd = shared_memory_info.fd;
+        htp_mem_descriptor.sharedBufferConfig.offset = shared_memory_info.offset;
+
+        mem_descriptor.customInfo = &htp_mem_descriptor;
+
+        std::ostringstream oss1;
+        oss1 << "Registering QNN mem handle for context: " << context_
+             << ", shared memory (address: " << memory_address
+             << ", offset: " << shared_memory_info.offset
+             << ", fd: " << shared_memory_info.fd
+             << ")";
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
+      } else {
+        return MAKE_EP_FAIL("No HTP or DX12 allocation found for shared memory address.");
+      }
+
+    std::ostringstream oss2;
+    oss2 << "Registering QNN mem handle. context: " << context_;
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss2.str().c_str());
 
     Qnn_MemHandle_t raw_mem_handle{};
     const auto register_result = qnn_interface_.memRegister(context_, &mem_descriptor, 1, &raw_mem_handle);
+#ifdef _WIN32
+    if (IsGpuBackend(qnn_backend_type_) &&
+        IsDx12SharedMemoryAllocator(qnn_allocator_type_) &&
+        register_result == QNN_MEM_ERROR_MAPPING) {
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
+                  " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
+                  " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
+    }
+#else
+    std::ignore = qnn_backend_type_;
+#endif
     RETURN_IF_NOT(register_result == QNN_SUCCESS,
                   ("qnn_interface.memRegister() failed: " +
                    utils::GetVerboseQnnErrorMessage(qnn_interface_, register_result))
                       .c_str());
 
-    std::ostringstream oss2;
-    oss2 << "Registered QNN mem handle. mem_handle: " << raw_mem_handle;
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss2.str().c_str());
+    std::ostringstream oss3;
+    oss3 << "Registered QNN mem handle. mem_handle: " << raw_mem_handle;
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss3.str().c_str());
 
     // NOTE: Must use the default ORT logger inside this lambda. Don't capture logger because it may be deleted
     // by the time we need to unregister all memory handles. This happens when logger is a session logger:
@@ -110,7 +170,7 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
 
     UniqueQnnMemHandle mem_handle(raw_mem_handle, unregister_mem_handle);
     MemHandleRecord mem_handle_record{qnn_tensor_data_size, std::move(mem_handle)};
-    mem_handles_.emplace(shared_memory_address, std::move(mem_handle_record));
+    mem_handles_.emplace(memory_address, std::move(mem_handle_record));
 
     qnn_mem_handle = raw_mem_handle;
     did_register = true;
@@ -118,10 +178,10 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
   }
 }
 
-Ort::Status QnnContextMemHandleManager::Unregister(void* shared_memory_address) {
+Ort::Status QnnContextMemHandleManager::Unregister(void* memory_address) {
   std::scoped_lock g{mem_handles_mutex_};
 
-  auto mem_handles_it = mem_handles_.find(shared_memory_address);
+  auto mem_handles_it = mem_handles_.find(memory_address);
   RETURN_IF_NOT(mem_handles_it != mem_handles_.end(), "No mem handle found for address.");
 
   mem_handles_.erase(mem_handles_it);

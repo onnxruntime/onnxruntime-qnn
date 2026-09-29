@@ -39,6 +39,7 @@ from ep_build.tasks.build import (
     BuildEpWindowsTask,
     GenerateCoverageTask,
     GenerateDiffCoverageTask,
+    GenerateFileCoverageExcelTask,
     QdcTestsTask,
     RunAsanTask,
 )
@@ -54,6 +55,7 @@ from ep_build.typing import BuildConfigT, TargetPyVersionT
 from ep_build.util import (
     DEFAULT_PYTHON,
     REPO_ROOT,
+    git_head_sha,
     is_host_arm64,
     is_host_linux,
     is_host_mac,
@@ -979,6 +981,23 @@ class TaskLibrary:
                 ],
             )
         )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Generate per-file coverage Excel from coverage.xml (Linux x86_64)")
+        @depends(["coverage_linux_x86_64"])
+        def file_coverage_excel_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            excel_file = build_dir / "RelWithDebInfo" / "coverage" / "per_file_coverage.xlsx"
+            return plan.add_step(
+                GenerateFileCoverageExcelTask(
+                    "Generating per-file coverage Excel",
+                    self.__venv_path,
+                    build_dir,
+                    excel_file,
+                    git_head_sha(),
+                )
+            )
 
     if is_host_windows():
 

@@ -6,8 +6,8 @@
                     "repo": "${repo}",
                     "$and": [
                         {
-                            "created": { "$before": "30d" },
-                            "path": { "$match": "qa/*" }
+                            "created": { "$before": "60d" },
+                            "path": { "$match": "qa/nightly-*" }
                         }
                     ]
                 }

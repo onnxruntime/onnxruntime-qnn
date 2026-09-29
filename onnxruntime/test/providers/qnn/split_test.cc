@@ -84,7 +84,7 @@ static void RunSplitOpTestOnCPU(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 //
@@ -300,7 +300,7 @@ static void RunSplitOpTestOnHTP(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  EPVerificationParams{expected_ep_assignment});
 }
 
 // Runs a QDQ Split operator on the HTP backend.

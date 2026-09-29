@@ -45,8 +45,7 @@ static void RunQuickGeluTest(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(model_builder,
                   provider_options,
                   13,  // opset version for contrib ops
-                  expected_ep_assignment,
-                  fp32_abs_err);
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // Tests the accuracy of a QDQ QuickGelu model on QNN EP by comparing to CPU EP.

@@ -171,6 +171,12 @@ Ort::Status ProcessConstantValue(QnnModelWrapper& qnn_model_wrapper,
         constant_value_qnn_scalar.int64Value = int64_span.data()[0];
         break;
       }
+      case QNN_DATATYPE_FLOAT_16: {
+        const Ort::Float16_t fp16_value = *reinterpret_cast<const Ort::Float16_t*>(unpacked_tensor.data());
+        constant_value_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
+        constant_value_qnn_scalar.floatValue = fp16_value.ToFloat();
+        break;
+      }
       case QNN_DATATYPE_FLOAT_32: {
         auto float_span = ReinterpretAsSpan<const float>(gsl::make_span(unpacked_tensor));
         constant_value_qnn_scalar.floatValue = float_span.data()[0];
@@ -245,26 +251,24 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   RETURN_IF("reflect" == mode && has_negative, "reflect mode doesn't support negative padding value.");
 
-  Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
-  mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+  uint32_t mode_value = QNN_OP_PAD_SCHEME_CONSTANT;
   if ("constant" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_CONSTANT;
+    mode_value = QNN_OP_PAD_SCHEME_CONSTANT;
   } else if ("reflect" == mode) {
     for (size_t i = 0; i < input_shape.size(); i++) {
       RETURN_IF(pad_amount[i * 2] > input_shape[i] - 1 || pad_amount[(i * 2) + 1] > input_shape[i] - 1,
                 "Pad amount should not be greater than shape(input[0])[i] - 1");
     }
-    mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_MIRROR_REFLECT;
+    mode_value = QNN_OP_PAD_SCHEME_MIRROR_REFLECT;
   } else if ("edge" == mode) {
-    mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_EDGE;
+    mode_value = QNN_OP_PAD_SCHEME_EDGE;
   } else {
     return MAKE_EP_FAIL("Pad mode only support constant.");
   }
 
   std::vector<uint32_t> pad_amount_dim{static_cast<uint32_t>(pad_amount.size() / 2), static_cast<uint32_t>(2)};
-  QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_SCHEME, mode_qnn_scalar);
-  param_tensor_names.push_back(mode_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         mode_value, QNN_OP_PAD_PARAM_SCHEME, param_tensor_names));
 
   QnnParamWrapper pad_amount_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_PAD_AMOUNT,
                                    std::move(pad_amount_dim), std::vector<uint32_t>(pad_amount));
@@ -273,30 +277,12 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   if (opset_version < 11 && domain != kMSDomain && node_helper.HasAttr("value")) {
     // Process optional attribute value
-    Qnn_Scalar_t constant_value_qnn_scalar = QNN_SCALAR_INIT;
-    constant_value_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    constant_value_qnn_scalar.floatValue = node_helper.GetFloat("value").value();
-    QnnParamWrapper constant_value_param(node_unit.Index(),
-                                         node_unit.Name(),
-                                         QNN_OP_PAD_PARAM_PAD_CONSTANT_VALUE,
-                                         constant_value_qnn_scalar);
-    param_tensor_names.push_back(constant_value_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(constant_value_param));
+    RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                        node_helper.GetFloat("value").value(),
+                                        QNN_OP_PAD_PARAM_PAD_CONSTANT_VALUE, param_tensor_names));
   } else if ((opset_version >= 11 || domain == kMSDomain) && inputs.size() > 2 && inputs[2].Exists()) {
-    TensorInfo input_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], input_info));
-    // Pad doesn't support QNN_DATATYPE_FLOAT_16 pad_constant_value.
-    if (input_info.qnn_data_type != QNN_DATATYPE_FLOAT_16) {
-      // Process optional input constant_value
-      RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
-    } else {
-      // Qualcomm backends don't support QNN_DATATYPE_FLOAT_16 pad_constant_value. Will use default 0.
-      // Fail validation when a fp16 pad_constant_value is not 0.
-      std::vector<uint8_t> unpacked_pad_constant_tensor;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_pad_constant_tensor));
-      Ort::Float16_t fp16_value = *reinterpret_cast<const Ort::Float16_t*>(unpacked_pad_constant_tensor.data());
-      RETURN_IF_NOT(0 == static_cast<float>(fp16_value), "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
-    }
+    // Process optional input constant_value. FP16 values are converted to FP32 inside ProcessConstantValue.
+    RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
   }
 
   if (!has_negative) {

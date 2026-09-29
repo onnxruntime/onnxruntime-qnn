@@ -13,10 +13,12 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -44,9 +46,75 @@ DEFAULT_TOOLS_DIR = Path(os.environ.get("ORT_BUILD_TOOLS_PATH", REPO_ROOT / "bui
 
 CAFILE = os.environ.get("REQUESTS_CA_BUNDLE", certifi.where())
 
+# How many times to (re)download an archive before giving up, and the base backoff (seconds)
+# between attempts. A download is retried on network errors, checksum mismatches, or bytes that
+# don't look like a valid archive -- all of which indicate a bad/partial body worth re-fetching.
+DOWNLOAD_ATTEMPTS = int(os.environ.get("ORT_BUILD_DOWNLOAD_ATTEMPTS", "3"))
+DOWNLOAD_BACKOFF_BASE_SECONDS = float(os.environ.get("ORT_BUILD_DOWNLOAD_BACKOFF_SECONDS", "2"))
+
+
+def _looks_like_archive(path: Path) -> bool:
+    """Return True if the file is a readable tar or zip archive."""
+    return tarfile.is_tarfile(path) or zipfile.is_zipfile(path)
+
+
+def _peek_bytes(path: Path, count: int = 64) -> bytes:
+    """Read up to `count` bytes from the start of a file for diagnostics (best-effort)."""
+    try:
+        with path.open("rb") as f:
+            return f.read(count)
+    except OSError:
+        return b""
+
+
+def _hash_file(path: Path, sha_fn: Callable[[], "hashlib._Hash"]) -> str:
+    hasher = sha_fn()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(32768), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+@dataclass
+class ValidationSpec:
+    """
+    Describes how to decide whether a downloaded/cached file is trustworthy.
+
+    Built once in ``FileCache.fetch`` and threaded through the download chain so "what counts as a
+    valid file" lives in exactly one place.
+    """
+
+    # (expected_hash, algorithm_name, hashlib_constructor) for each configured checksum.
+    checksums: list[tuple[str | None, str, Callable[[], "hashlib._Hash"]]] = field(default_factory=list)
+    # Whether the file is expected to be an archive (installers and bare binaries are not).
+    expects_archive: bool = False
+
+    @property
+    def has_checksum(self) -> bool:
+        return any(expected is not None for expected, _, _ in self.checksums)
+
+    def validate(self, path: Path) -> str | None:
+        """Return None if `path` is trustworthy, otherwise a human-readable reason it isn't."""
+        for expected_sha, sha_name, sha_fn in self.checksums:
+            if expected_sha is not None:
+                actual = _hash_file(path, sha_fn)
+                logging.debug(f"{sha_name} hash for {path.name}: {actual}")
+                if expected_sha != actual:
+                    return f"{sha_name} mismatch (expected {expected_sha}, got {actual})"
+        # Defense-in-depth: even with a matching checksum, an archive that can't be opened means the
+        # bytes are unusable (e.g. a valid-hash-but-truncated mirror, or a future unhashed source).
+        if self.expects_archive and not _looks_like_archive(path):
+            return f"not a valid archive (size {path.stat().st_size} bytes, starts with {_peek_bytes(path, 16)!r})"
+        return None
+
 
 def is_host_windows():
     return platform.uname().system == "Windows"
+
+
+# Checksum keys a package may declare. Every package must pin at least one so FileCache can detect a
+# corrupt/partial/wrong download before it poisons the persistent cache.
+CHECKSUM_KEYS = ("sha256", "sha1", "md5")
 
 
 class FileCache:
@@ -78,53 +146,98 @@ class FileCache:
         url_path = PurePosixPath(url_parts.path)
         cache_dir = self.__cache_dir / cache_key
         cache_file_path = cache_dir / url_path.name
-        if not cache_file_path.exists():
-            logging.info(f"Downloading {url} to {cache_file_path}")
 
-            # Defer writing the final file so we don't leave partial downloads if we get killed.
-            with tempfile.SpooledTemporaryFile(mode="wr+b") as tmp_file:
-                with urllib.request.urlopen(url, context=ssl.create_default_context(cafile=CAFILE)) as response:
-                    content_length = response.getheader("content-length")
-                    length = (
-                        int(response.getheader("content-length")) / 1024 / 1024 if content_length is not None else 0
-                    )
-                    with tqdm.tqdm(
-                        total=length,
-                        unit="MiB",
-                        bar_format="{l_bar}{bar}| {n:.2f}/{total:.2f} [{remaining}, {rate_fmt}{postfix}]",
-                    ) as pbar:
-                        while True:
-                            chunk = response.read(64 * 1024)
-                            if not chunk:
-                                break
-                            tmp_file.write(chunk)
-                            pbar.update(len(chunk) / 1024 / 1024)
+        spec = ValidationSpec(
+            checksums=[
+                (expected_sha1, "SHA1", hashlib.sha1),
+                (expected_sha256, "SHA256", hashlib.sha256),
+                (expected_md5, "MD5", hashlib.md5),
+            ],
+            # Installers and bare binaries (.exe or no suffix) aren't archives, so don't archive-check them.
+            expects_archive=cache_file_path.suffix not in ("", ".exe"),
+        )
 
-                # Make sure the download's hash matches
-                for expected_sha, sha_name, sha_fn in [
-                    (expected_sha1, "SHA1", hashlib.sha1),
-                    (expected_sha256, "SHA256", hashlib.sha256),
-                    (expected_md5, "MD5", hashlib.md5),
-                ]:
-                    if expected_sha is not None:
-                        tmp_file.seek(0)
-                        actual_sha = sha_fn()
-                        for bytes in iter(lambda: tmp_file.read(32768), b""):
-                            actual_sha.update(bytes)
-                        logging.debug(f"{sha_name} hash for {cache_file_path.name}: {actual_sha.hexdigest()}")
-                        if expected_sha != actual_sha.hexdigest():
-                            raise ValueError(f"{sha_name} mismatch for {cache_file_path.name}")
+        # The package cache is persistent and shared across CI runs, so a single corrupt/partial
+        # download would otherwise poison every future build. Validate before trusting a cache hit
+        # and self-heal by discarding and re-downloading anything that doesn't check out.
+        if cache_file_path.exists():
+            problem = spec.validate(cache_file_path)
+            if problem is None:
+                logging.debug(f"{url} already exists at {cache_file_path}")
+                return cache_file_path
+            logging.warning(f"Discarding cached {cache_file_path} and re-downloading: {problem}")
+            cache_file_path.unlink(missing_ok=True)
 
-                # Write the final file. Note that SpooledTemporaryFile doesn't necessarily create a file
-                # so there's a good chance we're writing to disk for the first time.
-                cache_dir.mkdir(exist_ok=True)
-                tmp_file.seek(0)
-                with cache_file_path.open(mode="wb") as cache_file_stream:
-                    shutil.copyfileobj(tmp_file, cache_file_stream)
-
-        else:
-            logging.debug(f"{url} already exists at {cache_file_path}")
+        self.__download_with_retries(url, cache_dir, cache_file_path, spec)
         return cache_file_path
+
+    def __download_with_retries(
+        self,
+        url: str,
+        cache_dir: Path,
+        cache_file_path: Path,
+        spec: ValidationSpec,
+    ) -> None:
+        """Download `url` into the cache, retrying on transient failures and bad/partial bodies."""
+        last_error: Exception | None = None
+        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+            try:
+                self.__download_once(url, cache_dir, cache_file_path, spec)
+                return
+            except (OSError, ValueError) as e:
+                # OSError covers urllib.error.URLError/HTTPError and socket timeouts; ValueError is
+                # raised by our own checksum/archive validation on a corrupt body. Both are worth a retry.
+                last_error = e
+                if attempt < DOWNLOAD_ATTEMPTS:
+                    delay = DOWNLOAD_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+                    logging.warning(
+                        f"Download attempt {attempt}/{DOWNLOAD_ATTEMPTS} for {url} failed: {e}. "
+                        f"Retrying in {delay:.0f}s."
+                    )
+                    time.sleep(delay)
+        raise RuntimeError(f"Failed to download {url} after {DOWNLOAD_ATTEMPTS} attempt(s).") from last_error
+
+    def __download_once(
+        self,
+        url: str,
+        cache_dir: Path,
+        cache_file_path: Path,
+        spec: ValidationSpec,
+    ) -> None:
+        logging.info(f"Downloading {url} to {cache_file_path}")
+
+        # Defer writing the final file so we don't leave partial downloads if we get killed.
+        with tempfile.SpooledTemporaryFile(mode="wr+b") as tmp_file:
+            with urllib.request.urlopen(url, context=ssl.create_default_context(cafile=CAFILE)) as response:
+                getheader = getattr(response, "getheader", lambda _name, _default=None: None)
+                content_length = getheader("content-length")
+                length = int(content_length) / 1024 / 1024 if content_length is not None else 0
+                with tqdm.tqdm(
+                    total=length,
+                    unit="MiB",
+                    bar_format="{l_bar}{bar}| {n:.2f}/{total:.2f} [{remaining}, {rate_fmt}{postfix}]",
+                ) as pbar:
+                    while True:
+                        chunk = response.read(64 * 1024)
+                        if not chunk:
+                            break
+                        tmp_file.write(chunk)
+                        pbar.update(len(chunk) / 1024 / 1024)
+
+            # Write the final file. Note that SpooledTemporaryFile doesn't necessarily create a file
+            # so there's a good chance we're writing to disk for the first time.
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp_file.seek(0)
+            with cache_file_path.open(mode="wb") as cache_file_stream:
+                shutil.copyfileobj(tmp_file, cache_file_stream)
+
+        # Validate the freshly written file before leaving it in the cache. If it's a checksum
+        # mismatch or not a valid archive, we got a bad/partial/error-page response: purge it and
+        # raise so __download_with_retries can try again rather than caching garbage.
+        problem = spec.validate(cache_file_path)
+        if problem is not None:
+            cache_file_path.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded {cache_file_path.name} failed validation: {problem}")
 
     def prune(self) -> None:
         """Prune old entries from the cache until it's below our maximum size."""
@@ -258,7 +371,15 @@ class PackageManager:
                 elif zipfile.is_zipfile(package_path):
                     self.__install_zip(package_path, tmp_rootdir)
                 else:
-                    raise ValueError(f"{package_path.name} has unknown archive format.")
+                    # Backstop: a corrupt archive slipped past FileCache validation. Purge it so the
+                    # next run re-downloads instead of failing forever on the same poisoned cache file.
+                    size = package_path.stat().st_size if package_path.exists() else 0
+                    head = _peek_bytes(package_path, 16)
+                    package_path.unlink(missing_ok=True)
+                    raise ValueError(
+                        f"{package_path.name} has unknown archive format "
+                        f"(size {size} bytes, starts with {head!r}); purged {package_path} from cache."
+                    )
 
                 # Move fully extracted package to final location
                 logging.info(f"Moving {tmp_rootdir} to {self.__package_root}")
@@ -274,6 +395,15 @@ class PackageManager:
 
     def __fetch(self) -> Path:
         """Fetch the package archive."""
+        # Every package must pin a checksum. Without one FileCache cannot tell a good download from a
+        # corrupt/partial/wrong one, which is what let a poisoned entry get stuck in the persistent
+        # CI cache. Enforce it here, where the offending package is about to be downloaded, rather
+        # than at config-parse time (so read-only actions like clean/print-content-dir still work).
+        if not any(k in self.__config for k in CHECKSUM_KEYS):
+            raise ValueError(
+                f"Package {self.__package} is missing a required checksum "
+                f"({', '.join(CHECKSUM_KEYS)}) in {PACKAGE_CONFIG}."
+            )
         cache_key = str(self.get_rel_package_dir())
         url = self.__format(self.__config["url"])
         package_path = self.__cache.fetch(
